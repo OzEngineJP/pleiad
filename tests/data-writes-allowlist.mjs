@@ -208,7 +208,9 @@ export const DATA_WRITES = [
     { name: 'hooks.json', limit: 'hooks の登録・担当・場所ごとの設定。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'hooks.broken-<日時>.json', limit: '修復ボタンを押すたびに 1 個', reason: '壊れた設定の退避' },
   ] },
-  { file: 'core/hooks-agents.mjs', sites: 2, targets: [
+  { file: 'core/hooks-agents.mjs', sites: 5, targets: [
+    { name: 'hooks-agents.v1-backup.json', limit: '形式 1 から形式 2 へ移すときに 1 回だけ（flag wx。既にあれば残す）', reason: '移行の前の形式 1 の写し（ADR 0115）' },
+    { name: 'hooks-agents.json.migrate.<pid>.<乱数>.tmp', limit: '移行のあいだだけ 1 つ。確かめてから hooks-agents.json へ名前を変える（失敗したら消す）', reason: '移行の書きかけ（ADR 0115）' },
     { name: 'hooks-agents.json', limit: 'Hook × エージェントの選択。行（登録・エージェントの設定の定義）と場所の数まで。ユーザーが数十個まで。seen（書き換えた定義の突き合わせ）はエージェント・scope・ファイル・イベントの組の数まで', reason: '設定の台帳（ADR 0338）' },
     { name: 'hooks-agents.broken-<日時>.json', limit: '読めないファイルを修復・戻すの操作で直すたびに 1 個（名前を変えるだけで中身は書かない）', reason: '読めない選択のファイルの退避（ADR 0338「保存」）' },
   ] },

@@ -137,6 +137,9 @@ export const COMMANDS = new Set([
   'docMatrix', // { kind, cwd?, place? } -> 指示・Skills の一覧（項目 × エージェント。ADR 0337。読むだけ）
   'setDocAgent', // { kind, key, agent, on, place?, cwd? } -> 指示・Skills の 1 項目をエージェントごとに入れる・外す（ADR 0337）
   'setDocRow', // { kind, key?, keys?, on, place?, cwd? } -> 指示・Skills の 1 項目または束をまとめてオン・オフにする（ADR 0337）
+  'revertDocRows', // { kind, keys, place } -> フォルダーで変えた指示・Skills の行を上の設定へ戻す（ADR 0348）
+  'contextScopes', // {} -> 設定 › プラグインのフォルダーの一覧（見つかるか・上のフォルダー・変えた数。ADR 0348。読むだけ）
+  'removeContextPlace', // { place } -> フォルダーの設定（スキャン場所・指示・Skills・外部 MCP・Hooks）を全部消す（ADR 0348）
   'repairDocAgents', // {} -> 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（ADR 0337）
   'setContextSettings', // { place: null|path, kind, value|null } / { place, kind?, roots|null } / { place, add|remove } -> 即時保存し contextSettings と同じ形を返す
   'scanContext', // { cwd, place?: 'default', scope?: 'user' } -> bounded inventory (entries, the home / Git roots and the MCP config file bodies); never launches tools or changes agents
@@ -158,11 +161,13 @@ export const COMMANDS = new Set([
   'setHooksOwner',     // { place: null|path, value: { owner, disabled } | null, revision（確認票）, imports?: [{ id, digest }] } -> plyHooks と同じ形と added。取り込む定義はファイルから読み直し、digest と照合する
   'repairPlyHooks',    // { cwd? } -> plyHooks と同じ形。壊れた hooks.json を退避し、読めた部分だけで書き直す
   // Hook × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。外部 MCP の一覧と同じ形
-  'hooksMatrix',       // { cwd?, trust? } -> { agents, labels（列の短い名前）, adopted, revision, place, skipFrom, compat, groups, rows: [{ key, kind, group, agent, scope, event, matcher, command（伏せ字）, on, unused, switchable, here?, status?, cells: { <agent>: { state, mode, reason?, detail?, unknown?, warnings?, needsConfirm?, empty?（cwd つきで、この場所に定義が無い） } } }] }
+  'hooksMatrix',       // { cwd?, trust? } -> { agents, labels（列の短い名前）, adopted, revision, place, skipFrom, compat, compatFrom, groups, groupRows: [{ group, from, overridden, overriddenAt? }], changes, places: [{ path, changes }], rows: [{ key, kind, group, agent, scope, event, matcher, command（伏せ字）, root?, rootScope?, from（場所のパス。全体なら null）, overridden, overriddenAt?（cwd が無いとき）, on, unused, switchable, here?, status?, cells: { <agent>: { state, mode, reason?, detail?, unknown?, warnings?, needsConfirm?, empty?（cwd つきで、この場所に定義が無い） } } }] }
   'setHookAgent',      // { key, agent, on, cwd?, revision? } -> { ok, revision, place }。押せないセルは断る。移行前なら今の動きを写してから変える
   'setHookRow',        // { key, on, cwd?, revision? } -> { ok, revision, place }
   'setHookGroup',      // { group: ply|own|place, agent?, on, cwd?, revision? } -> { ok, revision, place }
   'setHookPlace',      // { place, key?, use?, reset?, revision? } -> { ok, revision }
+  'revertHookRow',     // { cwd, key? | keys?, dryRun?, revision? } -> { ok, removed: [行], revision, dryRun?, devinImportsStop? }（フォルダーの行の差分を消して受け継ぐ値へ）
+  'removeHookPlace',   // { cwd, dryRun?, revision? } -> { ok, removed: 真偽, revision, dryRun?, devinImportsStop? }（フォルダーの差分を全部消す。フォルダーが無くても消せる）
   'resetHooksAgents',  // {} -> { ok }。hooks-agents.json を消し、担当の 2 択の動きへ戻す
   "onboardingStatus",
   "onboardingSeen",

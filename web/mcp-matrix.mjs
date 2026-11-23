@@ -8,6 +8,9 @@
 //   - claude.ai のコネクター・プラグインの MCP は Claude にだけつながるので、Claude のアイコンだけを押せる
 // どのアイコンが on か・押せるかは、サーバーが決めた行（core/context-mcp-matrix.mjs の buildMcpMatrix）をそのまま描く。
 // 行の詳細（編集・名前の変更・ログイン・削除・取り込み）は web/mcp-config.mjs の peek。
+// フォルダー別の設定（ADR 0348）: ctx.place（null = 全体の設定）へ保存する。行の印（「● 変更」＋「戻す」・受け継いだ場所・
+// 全体の設定の「website で別の設定」）は ctx.rowMarks(row.key) が返す（web/context.mjs。4 つのタブで同じ印）。
+// 節は「スキャン場所」（ctx.scanSection）→「ユーザースコープの外部 MCP」→「Pleiad に登録」の順。足すのは全体の設定でだけ。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { agentName } from './agent-brands.mjs';
@@ -90,7 +93,7 @@ export function createMcpMatrix({ section, onCount }) {
   function apply(ctx, row, changes, keep = null, was = null) {
     applyLocal(ctx.matrix, row, changes, was);
     return save(ctx, row, async () => {
-      for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on, cwd: ctx.cwd });
+      for (const { agent, on } of changes) await ctx.cmd('setMcpAgent', { name: row.key, agent, on, place: ctx.place ?? null, cwd: ctx.cwd });
       return changes.map(c => c.agent);
     }, keep);
   }
@@ -122,7 +125,7 @@ export function createMcpMatrix({ section, onCount }) {
       : toggles(m, row).filter(a => row.cells[a].state === 'on').map(agent => ({ agent, on: false }));
     applyLocal(m, row, changes, on ? null : changes.map(c => c.agent));
     return save(ctx, row, async () => {
-      const res = await ctx.cmd('setMcpRow', { name: row.key, on, cwd: ctx.cwd });
+      const res = await ctx.cmd('setMcpRow', { name: row.key, on, place: ctx.place ?? null, cwd: ctx.cwd });
       return Array.isArray(res?.changed) ? res.changed : changes.map(c => c.agent);
     }, '.cx-sw');
   }
@@ -162,7 +165,10 @@ export function createMcpMatrix({ section, onCount }) {
     const body = el('span', 't');
     const line = el('span', 'nl'); line.append(el('span', 'nm', row.name));
     const from = originMarks(row); if (from) line.append(from);
+    const marks = ctx.rowMarks?.(row.key, row.name) ?? null;
+    if (marks?.marks?.length) line.append(...marks.marks);
     body.append(line);
+    if (marks?.sub) body.append(el('span', 'p ovs', marks.sub));
     const reg = row.registered ? (ctx.ply?.servers ?? []).find(s => s.name === row.name) : null;
     const note = row.kind === 'plugin' ? el('span', 'p', t('mcp.matrix.pluginNote', { plugin: row.plugin }))
       : row.kind === 'connector' ? (row.needsAuth ? section.connectorNote() : null) : section.authNote(reg, row.name);
@@ -201,7 +207,9 @@ export function createMcpMatrix({ section, onCount }) {
     for (const a of m.agents) ags.append(chip(ctx, row, a));
     if (!ags.querySelector('button')) ags.classList.add('empty');
     if (row.kind !== 'config') ags.classList.add('solo');   // 相手が Claude だけの行。狭い幅ではスイッチだけにする
-    n.append(head, sw, ags);
+    n.append(head);
+    if (marks?.revert) n.append(marks.revert);
+    n.append(sw, ags);
     list.append(n);
     if (ask?.key === row.key) list.append(askEl(ctx, row));
     if (peekable && ctx.opened.has(key)) {
@@ -227,9 +235,11 @@ export function createMcpMatrix({ section, onCount }) {
 
   function group(ctx, title, rows, { add = false, wait = false } = {}) {
     const block = el('div', 'cx-block');
-    const sec = el('div', 'cx-sec'); sec.append(el('span', 'n', title));
+    const sec = ctx.sectionHead ? ctx.sectionHead(title) : (() => { const x = el('div', 'cx-sec'); x.append(el('span', 'n', title)); return x; })();
     const list = el('div', 'cx-list'); list.setAttribute('role', 'group'); list.setAttribute('aria-label', title);
+    if (ctx.readOnly) list.classList.add('ro');
     for (const r of rows) rowEl(ctx, r, list);
+    if (!rows.length && !wait && !add) list.append(el('p', 'cx-empty', t('context.scope.sec.nothing')));
     if (wait) {   // コネクターの一覧を読んでいる間。読めたら、この行の所にコネクターの行が入る
       const n = el('div', 'cx-row wait');
       const ic = el('span', 'cx-ic'); ic.dataset.kind = 'connector'; ic.append(svg(ICON.connector));
@@ -401,13 +411,15 @@ export function createMcpMatrix({ section, onCount }) {
     if (!m || !ctx.scan) { onCount?.(null); host.append(ctx.loading()); return; }
     const legendNames = agentLegend(m.agents);
     host.append(legendNames);
+    if (ctx.scanSection) host.append(ctx.scanSection());
     // 同じサービスのコネクターが使われている間は、プラグインの MCP は一覧に出ない（コネクターを止めると現れる。Claude Code の動き）
     const lower = s => String(s ?? '').toLowerCase();
     const connectorOn = row => m.rows.some(c => c.kind === 'connector' && c.cells.claude?.state === 'on' && [lower(row.name), lower(row.plugin)].includes(lower(c.name)));
     const rows = m.rows.filter(r => r.kind !== 'plugin' || !connectorOn(r));
     onCount?.(rows.length);
-    host.append(group(ctx, t('mcp.matrix.groupPly'), rows.filter(r => r.group === 'ply'), { add: true }));
-    host.append(group(ctx, t('mcp.matrix.groupAgent'), rows.filter(r => r.group === 'agent'), { wait: m.connectors === 'reading' }));
+    // ユーザースコープ（エージェントの設定）→ Pleiad に登録。登録（足す）は全体の設定でだけ（Pleiad の登録はすべての場所に共通）
+    host.append(group(ctx, t('context.scope.sec.userMcp'), rows.filter(r => r.group === 'agent'), { wait: m.connectors === 'reading' }));
+    host.append(group(ctx, t('context.scope.sec.plyRegistered'), rows.filter(r => r.group === 'ply'), { add: !ctx.place }));
     const accts = Array.isArray(m.connectorAccounts) ? m.connectorAccounts : [];
     if (accts.length) host.append(accountGroup(ctx, accts));
     ensureLockTips();

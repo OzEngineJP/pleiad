@@ -103,19 +103,105 @@
 /* まとまり・タブ（承認済みモック 2026-11-15） */
 .cx-tabs{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:4px;margin:-6px 0;padding:6px 0;background:var(--surface-paper)}
 .settings-content .cx-tabs{top:-24px}
-.settings-content:has(#contextPanel:not([hidden])){scroll-padding-top:64px}
+.settings-content:has(#contextPanel:not([hidden])){scroll-padding-top:calc(var(--cx-band-h, 64px) - 16px)}
 .file-preview-content:has(.scx .cx-tabs){scroll-padding-top:64px}
 .scx .cx-tabs{background:var(--surface-0);margin:0;padding:4px 0 6px}
 .scx .cx-tab[aria-selected=true]{background:var(--surface-paper)}
 .scx-kind .cx-find{background:var(--surface-1)}
-.scx-edit-list{display:flex;flex-direction:column;gap:2px}
-.scx-edit-list .scx-grp{margin:6px 0 2px}
-.scx-edit-list .cx-row{padding:6px 4px}
 .cx-tab{display:inline-flex;align-items:baseline;gap:6px;min-height:32px;padding:6px 14px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;white-space:nowrap;
   transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .cx-tab:hover{background:var(--surface-hover);color:var(--ink)}
 .cx-tab[aria-selected=true]{background:var(--surface-1);color:var(--ink-blue);font-weight:600}
 .cx-tab .c{font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);font-variant-numeric:tabular-nums}
+.cx-tab .d{font-size:var(--fs-xs);font-weight:600;color:var(--ink-blue)}
+.cx-tab .d:empty{display:none}
+
+/* 範囲の帯（ADR 0348。承認済み 2026-11-24）: 範囲のボタンと状態の行、その下にタブ。帯ごと上に貼りつく */
+.band{position:sticky;top:0;z-index:5;display:flex;flex-direction:column;gap:8px;margin:-6px 0;padding:8px 0 6px;background:var(--surface-paper)}
+.settings-content .band{top:-24px}
+.band .cx-tabs{position:static;margin:0;padding:0;background:transparent}
+.scope{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0}
+.scope-btn{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;min-height:var(--hit);padding:4px 12px 4px 10px;border-radius:var(--r-pill);
+  background:var(--surface-1);color:var(--ink);text-align:left;cursor:pointer}
+.scope-btn:hover,.scope-btn[aria-expanded=true]{background:var(--surface-2)}
+.scope-btn .ic{flex:none;width:var(--icon);height:var(--icon);color:var(--ink-weak)}
+.scope-btn .nm{flex:none;font-weight:600;white-space:nowrap}
+.scope-btn .p{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:var(--fs-s);color:var(--ink-weak)}
+.scope-btn svg:last-child{flex:none;width:var(--icon-s);height:var(--icon-s);color:var(--ink-weak);transform:rotate(90deg)}
+.scope-st{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:var(--fs-ui);color:var(--ink-weak)}
+.scope-st .chg{color:var(--ink-blue);font-weight:600}
+.scope-st .gone{display:inline-flex;align-items:center;gap:4px;color:var(--ink-strong);font-weight:600}
+.scope-st .gone svg{flex:none;width:var(--icon-s);height:var(--icon-s)}
+/* 文字だけのボタン（戻す・外す・設定を消す…・やめる）。fill は主の操作 */
+.tbtn{display:inline-flex;align-items:center;min-height:28px;padding:3px 10px;border-radius:var(--r-pill);background:transparent;font-size:var(--fs-ui);color:var(--ink-blue);white-space:nowrap;cursor:pointer}
+.tbtn:hover{background:var(--surface-hover)}
+.tbtn.danger{color:var(--ink-danger)}
+.tbtn.weak{color:var(--ink-weak)}
+.tbtn.fill{background:var(--fill-primary);color:var(--on-fill)}
+.tbtn.fill:hover{background:var(--fill-primary-hover)}
+.tbtn:disabled{opacity:.5;cursor:default}
+/* 範囲の一覧（style.css の .clist と同じ部品。帯の下に開く） */
+.scope .clist{top:calc(100% + 6px);width:min(460px,100%);min-width:0;max-width:100%;max-height:420px;white-space:normal}
+.scope .clist:focus{outline:none}
+.scope .clist:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.scope .clist li{align-items:center}
+.scope .clist li .ic{flex:none;width:var(--icon);height:var(--icon);color:var(--ink-weak)}
+.scope .clist li .body{flex:1}
+.scope .clist li .lbl,.scope .clist li .sub{white-space:nowrap}
+.scope .clist li .sub .g{color:var(--ink-strong);font-weight:600}
+.scope .clist li .hint{color:var(--ink-blue);font-family:var(--font);font-variant-numeric:tabular-nums}
+.scope .clist li .ck{flex:none;width:var(--icon-s);height:var(--icon-s);color:var(--ink-blue)}
+.scope .clist li.add,.scope .clist li.add .ic{color:var(--ink-blue)}
+.scope .clist .head{padding:6px 10px 2px;letter-spacing:0}
+.scope .pick{display:flex;flex-direction:column;gap:6px;padding:4px}
+.scope .pick input{width:100%;padding:7px 12px;background:var(--surface-1);border-radius:var(--r-pill);font-family:var(--font-mono);font-size:var(--fs-s);color:var(--ink);outline:none}
+.scope .pick input:focus{background:var(--surface-2)}
+.scope .pick .cands{display:flex;flex-direction:column;gap:1px}
+.scope .pick .cand{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 10px;border-radius:var(--r-s);background:transparent;color:var(--ink);font-family:var(--font-mono);font-size:var(--fs-s);text-align:left;cursor:pointer}
+.scope .pick .cand>span:first-child{min-width:0;overflow-wrap:anywhere}
+.scope .pick .cand:hover,.scope .pick .cand:focus-visible{background:var(--surface-sel)}
+.scope .pick .cand .s{flex:none;font-family:var(--font);font-size:var(--fs-meta);color:var(--ink-weak)}
+.scope .pick .cx-sub{margin:0;padding:0 6px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.scope .pick .err{margin:0;padding:0 6px;font-size:var(--fs-xs);color:var(--ink-strong)}
+.scope .pick .err:empty{display:none}
+.scope .pick .acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+/* 節の頭の「?」と説明 */
+.cx-sec{position:relative}
+.cx-sec h5.n{margin:0}
+.qtip{position:relative;flex:none;align-self:center;display:grid;place-items:center;width:18px;height:18px;padding:0;border-radius:50%;background:var(--surface-2);
+  color:var(--ink-weak);font-size:var(--fs-xs);font-weight:700;line-height:1;cursor:help}
+.qtip::after{content:"";position:absolute;inset:-5px}
+.qtip:hover,.qtip[aria-expanded=true]{background:var(--surface-3);color:var(--ink)}
+.cx-sec .tip{display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:6;width:max-content;max-width:min(360px,100%);padding:8px 12px;border-radius:var(--r-m);
+  background:var(--surface-paper);color:var(--ink);font-size:var(--fs-xs);font-weight:400;line-height:1.6;box-shadow:0 4px 16px var(--shadow)}  /* .cx-tip と同じ吹き出し */
+.cx-sec .tip.on,.cx-sec .qtip:hover~.tip,.cx-sec .qtip:focus-visible~.tip{display:block}
+.cx-sec .tip.x{display:none!important}
+/* 行の印: 「● 変更」「● 追加」、受け継いだ場所（押すとその場所へ）、行の「戻す」 */
+.ovb{flex:none;display:inline-flex;align-items:center;gap:3px;padding:0 7px;border-radius:var(--r-pill);background:var(--surface-2);font-size:var(--fs-xs);font-weight:600;color:var(--ink-blue);white-space:nowrap} /* allow-blue: このフォルダーで変えた行の印（ボタンではない） */
+.ovb svg{width:9px;height:9px;fill:currentColor}
+.ovp{flex:none;padding:0 2px;background:transparent;font-size:var(--fs-xs);color:var(--ink-weak);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px;border-radius:4px;cursor:pointer}
+.ovp:hover{color:var(--ink-blue)}
+.cx-row .tbtn.rv{flex:none;min-height:22px;padding:0 6px;font-size:var(--fs-xs)}
+.cx-row .nl{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0}
+/* 追加したスキャン場所の頭の行 */
+.cx-row.hk-root .nm{font-family:var(--font-mono);font-size:var(--fs-s)}
+.cx-row.hk-root>.tbtn{flex:none;margin-left:auto}
+.hk-pending,.cx-card>.pending-label{margin:0;font-size:var(--fs-s);color:var(--ink-weak)}
+/* 見つからないフォルダー: 読むだけ */
+.cx-list.ro .cx-sw,.cx-list.ro .cx-ag{opacity:.55;cursor:not-allowed}
+.cx-list.ro .cx-add{display:none}
+/* 戻す・設定を消すの確認 */
+dialog.dlg{width:min(420px,calc(100vw - 32px));padding:20px;border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);box-shadow:0 12px 40px var(--shadow)}
+dialog.dlg::backdrop{background:var(--surface-veil)}
+dialog.dlg h4{margin:0 0 8px;font-size:var(--fs-l)}
+dialog.dlg p{margin:0 0 16px;font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
+dialog.dlg .acts{display:flex;justify-content:flex-end;gap:6px}
+@media (max-width:700px){
+  .scope-btn{width:100%}
+  .scope .clist li{min-height:var(--hit)}
+  .tbtn{min-height:var(--hit)}
+  .cx-row .tbtn.rv{min-height:32px}
+}
 .cx-tabpanel{display:flex;flex-direction:column;gap:16px;min-width:0}
 .cx-tabpanel[hidden]{display:none}
 .cx-lead0{flex:none;width:26px}
@@ -183,16 +269,9 @@
 .cx-sec{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
 .cx-sec .n{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
 .cx-sec .r{margin-left:auto;font-size:var(--fs-s);color:var(--ink-weak)}
-/* 担当の下の 2 段（ユーザー／作業場所）。見出しは候補一覧の見出しと同じ弱い小さな字 */
-.cx-tier{display:flex;flex-direction:column;gap:6px;min-width:0}
-.cx-tier+.cx-tier{margin-top:6px}
-.cx-tierh{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.cx-tierh .n{font-weight:600;letter-spacing:.06em}
 /* 探す形式。ラベルと札を 1 行に */
 .cx-fmt{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .cx-fmt>.cx-sub{flex:none}
-/* 足したのに何も見つからない場所の行 */
-.cx-root .nm{font-family:var(--font-mono);font-size:var(--fs-s)}
 /* Pleiad の指示の並べ替え。取っ手・空き・浮いた行は設定 › 委譲の候補と同じ部品（manage-panel.css の .rt-grip・.rt-order-*）。
    ここは、この一覧に置くための余白と、行と開いた中身のまとまり（.cx-item）だけ */
 .cx-ply .cx-list{position:relative}
@@ -296,7 +375,6 @@
 .scx-lines .del{background:var(--surface-3);color:var(--ink-weak)}
 .scx-lines .add{background:var(--surface-paper)}
 .scx-lines .skip{color:var(--ink-weak)}
-.scx-foot{margin:0;color:var(--ink-weak);line-height:1.7}
 /* Pleiad が入れた指示の文（畳んだ中）。本文は Markdown のまま、面の階調で区切る */
 .scx-added{margin-top:4px;padding:8px 10px;background:var(--surface-1);border-radius:var(--r-s);font-size:var(--fs-xs);line-height:1.7;overflow-wrap:anywhere}
 .scx-added>:first-child{margin-top:0}
@@ -382,14 +460,14 @@ details.scx-ply>summary:hover .n{color:var(--ink-blue)}
 .cx-budget>.cx-sub{flex:1 1 100%;margin:0}
 .cx-budget>.err{color:var(--ink-strong)}
 .cx-budget>.err:empty{display:none}
-/* 作業場所の面（この場所だけ変える） */
+/* 会話の右パネルの作業フォルダー（変えるのは 設定 › プラグイン のそのフォルダーで。ADR 0348） */
 .scx-place{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 14px;background:var(--surface-paper);border-radius:var(--r-m)}
-.scx-place .t{flex:1 1 180px;min-width:0}
-.scx-place .cx-path{font-size:var(--fs-s);color:var(--ink)}
-.scx-place .p{font-size:var(--fs-xs);color:var(--ink-weak)}
-.scx-place .p.over{color:var(--ink-blue)}
-.scx-place .acts{display:flex;flex-wrap:wrap;gap:4px;margin-left:auto}
-.scx-place .acts .btn{padding:3px 10px;font-size:var(--fs-s)}
+.scx-place .t{flex:1 1 180px;min-width:0;display:flex;flex-direction:column}
+.scx-place code{font-family:var(--font-mono);font-size:var(--fs-s);overflow-wrap:anywhere}
+.scx-place .s{font-size:var(--fs-xs);color:var(--ink-weak)}
+.scx-place .s.chg{color:var(--ink-blue);font-weight:600}
+.scx-place .tbtn{background:var(--surface-1);color:var(--ink)}
+.scx-place .tbtn:hover{background:var(--surface-2)}
 /* 変えているとき: 行の右にスイッチ、面の頭に担当の 2 択 */
 .scx-item .cx-sw{margin-top:2px}
 .scx-item.off .nm{color:var(--ink-weak)}

@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createPlyHooks, hooksWriteFailed } from '../../core/ply-hooks.mjs';
 import { createHooksConfig } from '../../core/hooks-config.mjs';
-import { createHooksAgents, nativeRowKey, parseState, WS_KEY, LOCK_REASONS, FILE_NAME } from '../../core/hooks-agents.mjs';
+import { createHooksAgents, nativeRowKey, parseState, effectiveAt, WS_KEY, LOCK_REASONS, FILE_NAME } from '../../core/hooks-agents.mjs';
 import { prepareHooksTurn } from '../../core/hooks-unify.mjs';
 import { classifyNativeRun, codexHooksState } from '../../core/hooks-plan.mjs';
 import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
@@ -57,6 +57,8 @@ export default async function (t) {
     const legacyTurn = (agent, cwd = repo) => prepareHooksTurn({ agent, cwd, ctx: { plyHooks, hooksConfig, dataDir: data, findNode, grokHome } });
     const newTurn = (agent, cwd = repo) => prepareHooksTurn({ agent, cwd, ctx: { plyHooks, hooksConfig, dataDir: data, findNode, grokHome, hooksAgents: ha } });
     const userUnchanged = async () => (await fs.readFile(claudeSettings, 'utf8')).includes('SECRET-HA-1');
+    // 形式 2: cwd を付けた操作はそのフォルダーに差分を書く。その場所で効く選択（全体 + 場所の差分）
+    const effAt = async (cwd = repo) => effectiveAt(await ha.read(), cwd).agents;
 
     // ---------------------------------------------------------------- 行 ID
     const inv0 = await ha.inventory({ cwd: repo, turn: true });
@@ -197,7 +199,10 @@ export default async function (t) {
     const firstTouch = await ha.setAgent({ key: reg.id, agent: CLAUDE, on: true, cwd: repo, expect: m1.revision });
     const saved = JSON.parse(await fs.readFile(path.join(data, FILE_NAME), 'utf8'));
     t.ok('最初の操作で写す: ファイルができ、押したセルだけが変わる（登録の Claude だけ入り、Codex は切れたまま）',
-      saved.version === 1 && saved.adoptedFrom?.owner === 'native' && saved.off[reg.id]?.join() === CODEX && !saved.spread[reg.id] && firstTouch.revision !== m1.revision);
+      saved.version === 2 && saved.adoptedFrom?.owner === 'native' && effectiveAt(parseState(saved), repo).agents.off[reg.id]?.join() === CODEX
+      && !effectiveAt(parseState(saved), repo).agents.spread[reg.id] && firstTouch.revision !== m1.revision
+      && Object.keys(saved.places[Object.keys(saved.places).find(k => containsPath(saved.places[k].path, repo) && containsPath(repo, saved.places[k].path))]?.rows ?? {}).join() === reg.id,
+      JSON.stringify(saved.places));
     t.ok('写した後: Claude のターンは止めずに登録だけ足す（ネイティブはそのまま）。Codex には渡さない',
       ids(await newTurn(CLAUDE)) === reg.id && (await newTurn(CLAUDE)).runtime.stopAll === false && await newTurn(CODEX) === null);
     t.ok('利用者の設定ファイルは書き換えない', await userUnchanged());
@@ -244,7 +249,7 @@ export default async function (t) {
       const afterKeys = await turnKeys(a);
       // 作業場所の 1 行: この場所に定義が無い（empty）エージェントは、保存（全体の off）が変わることを見る（ほかの作業場所で効く）
       const empty = m0.rows.find(r => r.key === key).cells[a].empty;
-      const effect = ws ? (empty ? ((await ha.read()).off[WS_KEY] ?? []).includes(a) === on : afterKeys.has(projRow.key) !== beforeKeys.has(projRow.key)) : afterKeys.has(key) === !on;
+      const effect = ws ? (empty ? ((await effAt()).off[WS_KEY] ?? []).includes(a) === on : afterKeys.has(projRow.key) !== beforeKeys.has(projRow.key)) : afterKeys.has(key) === !on;
       if (!effect) noEffect.push(`${a}:${key}`);
       for (const r of m2.rows) for (const b of AGENTS) {
         if (r.key === key && b === a) continue;
@@ -271,7 +276,7 @@ export default async function (t) {
     // ---------------------------------------------------------------- 切った行・入れていないエージェント・二重
     await ha.setRow({ key: reg.id, on: false, cwd: repo });
     const offAll = await Promise.all(AGENTS.map(a => turnKeys(a)));
-    t.ok('行を切ると、どのエージェントでも動かない（エージェントごとの選択は覚えたまま）', offAll.every(k => !k.has(reg.id)) && (await ha.read()).off[reg.id]?.join() === CODEX);
+    t.ok('行を切ると、どのエージェントでも動かない（エージェントごとの選択は覚えたまま）', offAll.every(k => !k.has(reg.id)) && (await effAt()).off[reg.id]?.join() === CODEX);
     await ha.setRow({ key: reg.id, on: true, cwd: repo });
     t.ok('入れていないエージェント（OpenCode・Grok・agy・Devin）では登録は動かない', (await Promise.all([OPENCODE, GROK, AGY, DEVIN].map(a => turnKeys(a)))).every(k => !k.has(reg.id)));
     const dup = await plyHooks.save({ name: 'dup', agent: CLAUDE, event: 'Stop', matcher: '', command: 'node user-stop.mjs --token SECRET-HA-1', targets: [CLAUDE] });
@@ -285,8 +290,8 @@ export default async function (t) {
     const dupOff = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === dup.id);
     const regKept = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === reg.id);
     t.ok('切った行の一覧: 覚えたエージェントごとの選択がある行は rowRestore: was、覚えが無い行は default',
-      !(await ha.read()).off[dup.id]?.length && dupOff.unused === true && dupOff.rowRestore === 'default'
-      && (await ha.read()).off[reg.id]?.join() === CODEX && regKept.rowRestore === 'was', JSON.stringify({ dup: [dupOff.unused, dupOff.rowRestore], reg: regKept.rowRestore }));
+      !(await effAt()).off[dup.id]?.length && dupOff.unused === true && dupOff.rowRestore === 'default'
+      && (await effAt()).off[reg.id]?.join() === CODEX && regKept.rowRestore === 'was', JSON.stringify({ dup: [dupOff.unused, dupOff.rowRestore], reg: regKept.rowRestore }));
     await ha.setRow({ key: dup.id, on: true, cwd: repo });
     const dupOn = (await ha.matrix({ cwd: repo })).rows.find(r => r.key === dup.id);
     t.ok('入れ直した行は切れるオンがあるので、押す向きは切る（rowChangeableOn）', dupOn.rowChangeableOn === true && dupOn.unused === false, JSON.stringify([dupOn.rowChangeableOn, dupOn.unused]));
@@ -342,14 +347,14 @@ export default async function (t) {
     t.ok('この場所で使わない: その場所の Claude のターンでは動かず（まとめて止めて残りを渡し直す）、外では動く',
       !(await turnKeys(CLAUDE, sub)).has(guardRow.key) && (await turnKeys(CLAUDE, tmp)).has(guardRow.key));
     await ha.setPlace({ place: repo, key: guardRow.key, use: true });
-    t.ok('使うに戻すと、場所の上書きは消える', !(await ha.read()).places[Object.keys((await ha.read()).places)[0]]?.skip?.length);
+    t.ok('使うに戻すと、場所の上書きは消える', !Object.values((await ha.read()).places).some(p => Object.values(p.rows ?? {}).some(r => 'skip' in r)));
 
     // ---------------------------------------------------------------- 読めないファイル（壊れた・知らない版）: 会話を断り、直す操作で退避して戻す
     const goodText = await fs.readFile(ha.file, 'utf8');
-    t.ok('知らない版は読めない扱い', parseState({ version: 2 }) === null && parseState({ version: 1 })?.version === 1);
+    t.ok('知らない版は読めない扱い', parseState({ version: 3 }) === null && parseState({ version: 1 }) === null && parseState({ version: 2 })?.version === 2);
     const brokenFiles = async () => (await fs.readdir(data)).filter(n => n.startsWith('hooks-agents.broken-')).sort();
     const sameTurn = (x, y) => JSON.stringify(x?.record?.supplied ?? null) === JSON.stringify(y?.record?.supplied ?? null) && (x === null) === (y === null);
-    for (const [label, text, fix] of [['壊れた JSON', '{"version":1,', 'repair'], ['知らない版', JSON.stringify({ version: 2, off: {} }), 'reset']]) {
+    for (const [label, text, fix] of [['壊れた JSON', '{"version":1,', 'repair'], ['知らない版', JSON.stringify({ version: 3, off: {} }), 'reset']]) {
       await fs.writeFile(ha.file, goodText);
       await ha.read(); // このプロセスで読めた選択（止めるものがある）
       await fs.writeFile(ha.file, text);
@@ -469,7 +474,8 @@ export default async function (t) {
       t.ok('(a) 外した Hook のコマンドを直しても外したまま（一覧と実行時）', A1.key !== A.key && cell(m, A1.key, CLAUDE).state === 'off' && !r1.has(A1.key) && r1.has(C.key) && !m.orphans.length,
         JSON.stringify({ cell: cell(m, A1.key, CLAUDE), orphans: m.orphans }));
       const saved1 = await hb.read();
-      t.ok('(a) 一覧を開いたときに引き継ぎを保存する（元の ID は残らない）', saved1.off[A1.key]?.includes(CLAUDE) && !saved1.off[A.key]);
+      t.ok('(a) 一覧を開いたときに引き継ぎを保存する（元の ID は残らない）', effectiveAt(saved1, rkRepo).agents.off[A1.key]?.includes(CLAUDE) && !effectiveAt(saved1, rkRepo).agents.off[A.key]
+        && !JSON.stringify(saved1).includes(A.key), JSON.stringify(saved1.places));
       // (a) matcher を直す
       await put(['node c.mjs', 'node b.mjs', 'node a.mjs --fixed'], [{ matcher: 'Bash|Edit', ...cmd('node g.mjs') }]);
       m = await hb.matrix({ cwd: rkRepo });
@@ -739,8 +745,9 @@ export default async function (t) {
       t.ok('Devin のマスを切って取り込みが戻ると、もう一度入れるときにまた印が付く（聞き直す）', await ha.devinImportsStopped(repo) === false && stops(m2, both.id));
 
       // この場所で使う（setPlace use: true）: この場所だけ外していた Devin の行を戻すと止まり始める
+      // 形式 2: 上の setRow（cwd: repo）は repo に「使っていない」の差分を書いた。入れ直すのも repo で（全体を入れても repo の差分が勝つ）。その後でこの場所だけ外す
+      await ha.setRow({ key: only.id, on: true, cwd: repo });
       await ha.setPlace({ place: repo, key: only.id, use: false });
-      await ha.setRow({ key: only.id, on: true });
       const m3 = await ha.matrix({ cwd: repo });
       const placeDry = await ha.setPlace({ place: repo, key: only.id, use: true, dry: true });
       const placeNote = await noteOf('hooks.setPlace', { place: repo, key: only.id, use: true });
@@ -751,6 +758,8 @@ export default async function (t) {
       t.ok('この場所で使う: 戻りに devinImportsStop、その場所で取り込みが止まる', placed.ok && placed.result.devinImportsStop === true && await ha.devinImportsStopped(repo) === true, JSON.stringify(placed));
 
       // 元に戻す（setPlace reset: true）: 止まらない場所の上書き（任せる）を消して、止まっている全体へ戻ると止まり始める
+      // 形式 2: 上の repo での操作は repo の差分に残る（全体は変えない）。全体で Devin へ入れておき、other の上書きを消すと全体を受け継いで止まり始める
+      await ha.setAgent({ key: both.id, agent: DEVIN, on: true });
       const resetDry = await ha.setPlace({ place: other, reset: true, dry: true });
       const resetNote = await noteOf('hooks.setPlace', { place: other, reset: true });
       const resetRan = await as('bypass', 'hooks.setPlace', { place: other, reset: true });

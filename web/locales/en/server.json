@@ -975,6 +975,7 @@
       "docNotPressable": "{{name}} cannot be switched for {{agent}}",
       "docRowLocked": "{{name}} cannot be switched with the row switch (no agent can be changed, or there is nothing to restore). If there is an unlocked cell, press the cell instead",
       "docTargetRequired": "Specify at least one item key to switch.",
+      "placeRequired": "Specify a folder.",
       "docAgentsWrite": {
         "failed": "Couldn't save the instructions and Skills table. {{reason}}",
         "isDir": "A folder named context-agents.json is in the place of the file in the data folder.",
@@ -993,6 +994,7 @@
       "kindInvalid": "The plugin settings are malformed.",
       "disabledMcpOnly": "Removing by name is only available for external MCP servers.",
       "rootsInvalid": "The additional search folders are malformed.",
+      "rootInherited": "This scan place was added by a higher-level setting. Remove it in the setting that added it (global or a folder).",
       "defaultPlace": "Default",
       "migrateDiffers": "Could not migrate the plugin settings to the new format (the result would change for {{place}}). The original settings were not changed.",
       "migrateUnverified": "Could not verify the plugin settings migration. The original settings were not changed.",
@@ -1526,6 +1528,7 @@
     "mcpRow": "Changes whether the external MCP \"{{name}}\" is used, for all its agents at once.",
     "docAgent": "Changes whether {{kind}} \"{{name}}\" is used by {{agent}}.",
     "docRow": "Changes whether {{kind}} \"{{name}}\" is used.",
+    "docRevert": "Returns {{kind}} \"{{name}}\" changed in {{place}} to the inherited setting.",
     "docAgentsRepair": "Moves the unreadable settings file of the instructions and Skills table (context-agents.json) to context-agents.broken-<time>.json (it is not deleted) and returns to the behaviour before the table was touched. Instructions and Skills turned off in the table are passed again as the legacy settings say.",
     "kind": {
       "instruction": "instruction",

@@ -1,21 +1,14 @@
 // コンテキストの画面の小さな部品（DOM を使わない部分）。
 //   - 開始時と今の差分（行単位）
 //   - MCP の追加シートのコマンドの分け方
-import { placeStatus } from '../../web/session-context.mjs';
 import { lineDiff } from '../../web/line-diff.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
 import { splitCommand, joinCommand } from '../../web/mcp-config.mjs';
 
 export const name = 'context-ui';
-export const title = 'この会話のコンテキストの作業場所の一言・差分・MCP のコマンドの分け方';
+export const title = 'この会話のコンテキストの差分・トークン数の見積もり・MCP のコマンドの分け方';
 
 export default function (t) {
-  // 右パネルの作業場所の面の一言（contextSettings の今の場所から）
-  const place = (overrides, from = null, saved = true) => ({ saved, overrides, kinds: { instruction: { from }, skill: { from: null }, mcp: { from: null } }, roots: { instruction: { from: null }, skill: { from: null }, mcp: { from: null } } });
-  t.ok('上書きが無ければ「全体の設定どおり」', placeStatus(place(0)).text === '全体の設定どおり' && !placeStatus(place(0)).over && placeStatus(null).text === '全体の設定どおり');
-  t.ok('このフォルダーだけの上書きは数を添えて青い字', placeStatus(place(2)).text === 'このフォルダーだけの設定 · 2 項目' && placeStatus(place(2)).over);
-  t.ok('上の場所の上書きに従っていれば、その場所の名前', placeStatus(place(0, 'D:\\dev', false)).text === 'D:\\dev の設定どおり', placeStatus(place(0, 'D:\\dev', false)).text);
-
   // トークン数の見積もり（設定の画面とサーバーで同じ数）
   t.ok('英数字は 4 文字で 1、それ以外は 1 文字で 1', estimateTokens('abcdefgh') === 2 && estimateTokens('日本語') === 3 && estimateTokens('') === 0 && estimateTokens('ab 日本') === 3);
 

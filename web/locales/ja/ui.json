@@ -1294,17 +1294,11 @@
     "notStarted": "この会話はまだ始まっていません。最初の送信で、何を渡したかをここに記録します。",
     "guarded": {
       "title": "この会話では Pleiad がそろえる設定を使っていません",
-      "unavailable": "{{backend}} は Pleiad が担当する指示・Skills・外部 MCP に対応していません。保存済みの担当は保持しますが、この会話では適用されません。",
-      "supportUnknown": "このエージェントが Pleiad 担当のコンテキストを受け取れるか確認できません。保存済みの担当は保持しています。再試行して対応状況を確認してください。",
       "reason": "{{backend}} は Pleiad がそろえるプラグインを受け取れないため、エージェント自身の読み込みに任せました"
     },
     "failed": {
       "title": "読み込みか実行が途中で失敗しました",
       "hint": "下の状態と、会話のエラーを確かめてください。"
-    },
-    "foot": {
-      "lead": "すべての場所の設定は ",
-      "link": "プラグインの設定を開く →"
     },
     "instruction": {
       "native": "{{agent}} が自分の決まりで読みます（Pleiad からは中身が見えません）",
@@ -1366,7 +1360,6 @@
     },
     "added": {
       "title": "Pleiad の指示",
-      "scope": "すべての場所に共通",
       "who_other": "入れた {{count}} 件",
       "none": "入れていない",
       "delegation": "委譲の指示",
@@ -1488,25 +1481,11 @@
     },
     "place": {
       "aria": "作業場所",
-      "default": "全体の設定どおり",
-      "from": "{{path}} の設定どおり",
-      "override_other": "このフォルダーだけの設定 · {{count}} 項目",
-      "willOverride": " · 変えると、このフォルダーだけの設定になります",
-      "start": "この場所だけ変える",
-      "reset": "全体の設定に戻す",
-      "done": "終わる",
-      "scanFailed": "探せませんでした：{{error}}",
-      "ownerAria": "この場所で{{kind}}を読み込むのは",
-      "plyWho": "Pleiad がそろえる",
-      "nativeNote": "{{agent}} が自分の決まりで読みます",
-      "mcpByAgentWho": "エージェントごと",
-      "mcpByAgent": "外部 MCP はエージェントごとに設定してあります。設定 › プラグインで変えます",
-      "loading": "読んでいます…",
-      "offHere": "この場所では外しています",
-      "offGlobal": "全体の設定で外しています",
-      "none": "見つかったものはありません",
-      "switchAria": "この場所で {{path}} の {{name}} を使う",
-      "switchName": "この場所の {{path}} の {{name}}"
+      "global": "全体の設定どおり",
+      "changed_other": "このフォルダーで {{count}} 件変更",
+      "changedFrom_other": "{{parent}} の設定から {{count}} 件変更",
+      "sameAs": "{{parent}} の設定どおり",
+      "open": "この場所の設定を開く"
     },
     "hooks": {
       "reading": "Hooks の設定を読み取っています…",
@@ -1531,19 +1510,75 @@
       "cancelled": "取り消し",
       "exit": "終了コード {{code}}",
       "ms": "{{ms}} ms",
-      "runsNote": "記録は受け取った通知だけです（出力は保存しません）。記録がないことは、実行されなかった証明ではありません。",
-      "placeWho": "この場所で使うか",
-      "offAll": "どのエージェントでも実行しない設定",
-      "runsOn": "{{agents}} で実行",
-      "placeSwitchAria": "この場所で {{name}} を使う",
-      "placeFoot": "どのエージェントで実行するかは、設定 › プラグイン › Hooks で選びます。",
-      "openSettings": "設定を開く →"
+      "runsNote": "記録は受け取った通知だけです（出力は保存しません）。記録がないことは、実行されなかった証明ではありません。"
     }
   },
   "context": {
-    "owner": {
-      "agent": "エージェントに任せる",
-      "ply": "Pleiad がそろえる"
+    "scope": {
+      "global": "全体の設定",
+      "buttonAria": "設定する範囲: {{name}}",
+      "listAria": "設定する範囲",
+      "folders": "フォルダー",
+      "missing": "見つかりません",
+      "used": "{{path}} · {{date}}",
+      "hint": "変更 {{n}}",
+      "pickOther": "別のフォルダーを選ぶ…",
+      "pickAria": "別のフォルダーを選ぶ",
+      "pickPath": "フォルダーのパス",
+      "pickOpen": "開く",
+      "pickUsed": "{{date}} の会話",
+      "pickNone": "候補はありません",
+      "pickSaveNote": "最初に変えたときに、このフォルダーの設定として保存します。",
+      "same": "{{from}}どおり",
+      "fromGlobal": "全体の設定",
+      "fromParent": "{{name}} の設定",
+      "changes_other": "{{count}} 件変更",
+      "changesFrom_other": "{{from}}から {{count}} 件変更",
+      "missingChanges_other": "見つかりません · 変更 {{count}} 件",
+      "revertAll": "{{from}}に戻す…",
+      "removeAll": "設定を消す…",
+      "confirmRevertTitle": "{{from}}に戻しますか？",
+      "confirmRemoveTitle": "{{name}} の設定を消しますか？",
+      "confirmBody": "{{name}} で{{what}}を消します。",
+      "confirmChanged_other": "変えた {{count}} 件",
+      "confirmRoots_other": "追加したスキャン場所 {{count}} か所",
+      "confirmJoin": "と、",
+      "confirmCancel": "やめる",
+      "confirmRevert": "戻す",
+      "confirmRemove": "消す",
+      "reverted": "{{from}}に戻しました",
+      "removed": "{{name}} の設定を消しました",
+      "readOnly": "フォルダーが見つからないため、変えられません。",
+      "tabChanges": "変更 {{n}}",
+      "revert": "戻す",
+      "revertToGlobalAria": "{{name}} を全体の設定に戻す",
+      "revertToParentAria": "{{name}} を {{parent}} の設定に戻す",
+      "tipAria": "{{name}}について",
+      "mark": {
+        "changed": "変更",
+        "added": "追加",
+        "from": "{{name}} の設定",
+        "fromAria": "{{name}} の設定を開く",
+        "elsewhereOne": "{{name}} で別の設定",
+        "elsewhereMany_other": "{{count}} か所で別の設定"
+      },
+      "sec": {
+        "scan": "スキャン場所",
+        "scanTip": "エージェントが読み込む場所です。Git のルートから作業フォルダーまでと、追加した場所を探します。",
+        "rule": "Git のルートから作業フォルダーまで",
+        "userInstruction": "ユーザースコープの指示",
+        "userSkill": "ユーザースコープの Skills",
+        "userMcp": "ユーザースコープの外部 MCP",
+        "userHooks": "ユーザースコープの Hooks",
+        "plyInstruction": "Pleiad の指示",
+        "plyRegistered": "Pleiad に登録",
+        "addScan": "スキャン場所を追加",
+        "addScanAria": "スキャン場所のパス",
+        "removeScan": "外す",
+        "removeScanAria": "{{path}} をスキャン場所から外す",
+        "missingFolder": "フォルダーが見つかりません",
+        "nothing": "見つかったものはありません"
+      }
     },
     "instruction": {
       "title": "指示",
@@ -1554,9 +1589,7 @@
       "none": "見つかった Skill はありません"
     },
     "mcp": {
-      "title": "外部 MCP",
-      "agent": "各エージェントが自分の MCP 設定どおりに接続する",
-      "ply": "どのエージェントにも同じ MCP をつなぐ"
+      "title": "外部 MCP"
     },
     "copyPath": "パスをコピー",
     "copied": "コピーしました",
@@ -1621,11 +1654,9 @@
     "workspaceRow": {
       "instruction": "CLAUDE.md・AGENTS.md",
       "skill": ".claude/skills・.agents/skills",
-      "instructionSub": "それぞれのエージェントが作業場所から読みます",
-      "skillSub": "作業場所の Skills をそのまま読み込みます"
+      "mcp": ".mcp.json"
     },
     "matrix": {
-      "agentSettings": "エージェントの設定",
       "tokensTotal": "約 {{n}} トークン",
       "agentsAria": "{{name}} を使うエージェント",
       "agentAria": "{{agent}} で {{name}} を使う",
@@ -1651,11 +1682,6 @@
     "lockAriaSentence": "{{reason}}。",
     "someAgent": "いずれかのエージェント",
     "roots": {
-      "add": "探す場所を足す",
-      "addAria": "探すフォルダーのパス",
-      "remove": "この場所を外す",
-      "removeAria": "{{path}} を探す場所から外す",
-      "extra": "追加した場所",
       "nothing": "足した場所 · 見つかったものはありません"
     },
     "scanFailed": "探せませんでした：{{error}}",
@@ -1663,9 +1689,6 @@
     "repairDocAgents": "壊れたファイルを退避して直す",
     "repairedDocAgents": "直しました。壊れたファイルは {{file}} として残しています",
     "tier": {
-      "user": "ユーザー",
-      "place": "作業場所",
-      "placeSub": "Git のルートから作業フォルダーまで",
       "listAria": "ユーザーで見つかった{{kind}}"
     },
     "ply": {
@@ -1772,8 +1795,6 @@
       }
     },
     "matrix": {
-      "groupPly": "Pleiad に登録",
-      "groupAgent": "エージェントの設定",
       "connector": "claude.ai のコネクター",
       "locked": "Pleiad からは止められません",
       "searching": "探しています…",
@@ -4625,7 +4646,6 @@
     }
   },
   "hooks": {
-    "lead": "イベントに合わせて処理を実行",
     "reason": {
       "sameAgent": "同じエージェントです。",
       "event": "{{event}} に当たるイベントがありません（別のイベントには読み替えません）。",
@@ -4690,11 +4710,9 @@
       "other": "このエージェントでは動きが少し違います（{{code}}）。"
     },
     "matrix": {
-      "section": "Pleiad に登録",
       "regAria": "Pleiad に登録した Hooks",
       "regEmpty": "Pleiad に登録した Hook はありません。",
       "userAria": "ユーザーの設定の Hooks",
-      "placeAria": "作業場所の Hooks",
       "wsRow": ".claude/settings.json・.codex/hooks.json",
       "wsSub": "場所ごとの中身と、その場所で使うかは、会話の右の欄で見ます",
       "runAria": "{{agent}} で {{name}} を実行する",
@@ -4711,7 +4729,6 @@
       "adopted": "まだ Hook × エージェントの選択を保存していません。今の動き（以前の担当「エージェントに任せる」「Pleiad がそろえる」）をこの一覧に写しています。開いただけでは何も保存せず、最初に押したときに今の動きのまま保存します。",
       "adoptedOff": "「エージェントに任せる」だった場所では、Pleiad に登録した Hook はどのエージェントにも渡していなかったため、登録していてもオフに見えます。使うときはスイッチを入れてください。",
       "orphans": "元の定義が見つからない選択が {{n}} 件あります（定義が書き換わったか、消えました）。同じ定義が戻れば効きます。",
-      "addNative": "エージェントの設定に追加",
       "fact": {
         "where": "書いてある場所",
         "runs": "動いているエージェント",
@@ -4760,7 +4777,8 @@
       "skill": "Skill {{name}}",
       "plugin": "プラグイン",
       "managed": "管理者",
-      "compat": "互換の読み込み元"
+      "compat": "互換の読み込み元",
+      "addUser": "ユーザースコープに追加"
     },
     "state": {
       "claude": "登録あり · 個別停止なし",

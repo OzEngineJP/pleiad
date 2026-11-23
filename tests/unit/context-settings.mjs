@@ -78,7 +78,7 @@ export default async function (t) {
 
     const settings = createContextSettings(dataDir, home);
     const migrated = await settings.get(ab);
-    t.ok('読み込むと形式 3 に置き換わる', JSON.parse(await fs.readFile(file, 'utf8')).version === 3 && migrated.owners.skill === 'ply');
+    t.ok('読み込むと形式 4 に置き換わる', JSON.parse(await fs.readFile(file, 'utf8')).version === 4 && migrated.owners.skill === 'ply');
     t.ok('移行の前にバックアップを取る（元のバイト列のまま）', (await fs.readFile(path.join(dataDir, 'context-scans.v1-backup.json'), 'utf8')) === original);
     let same = true;
     for (const dir of places) {

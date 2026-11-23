@@ -23,8 +23,12 @@ const CLAUDE = 'claude', CODEX = 'codex', AGY = 'antigravity', GROK = 'grok', DE
 
 export const FILE_NAME = 'hooks-agents.json';
 export const WS_KEY = 'ws:hooks';
-export const VERSION = 1;
+// 形式 2: 場所（フォルダー）は、受け継ぐ値（全体 → 祖先の場所）と違う行だけを持つ（行ごとの差分。ADR 0338・0348）。形式 1 は場所に丸ごとの写し
+export const VERSION = 2;
+export const BACKUP_V1 = 'hooks-agents.v1-backup.json';
 export const LOCK_REASONS = Object.freeze(['own', 'workspace', 'relay', 'admin']);
+// 一覧の組の並び（root: 設定 › プラグインの追加の探索フォルダーの Hooks）
+const GROUPS = ['ply', 'own', 'place', 'root', 'admin'];
 const ORDER = [CLAUDE, CODEX, AGY, 'opencode', DEVIN, GROK]; // backend-allow: 一覧の列の並び（外部 MCP の一覧と同じ）
 // 列の短い名前（エージェントの記述の shortLabel）。画面の短い名前は有効なエージェントの分しか届かないので、使っていないエージェントの列も短い名前で出せるよう一覧に載せる
 const COLUMNS = () => [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
@@ -66,21 +70,59 @@ export function normAgents(v) {
     unused: Array.isArray(src.unused) ? [...new Set(src.unused.filter(k => typeof k === 'string' && KEY_RE.test(k)))].sort() : [],
     compat: { grok: src.compat?.grok === 'off' ? 'off' : 'native', devin: src.compat?.devin === 'off' ? 'off' : 'native' } };
 }
-/** ファイルの中身を検査する。版が違う・形が違えば null（読めない扱い） */
+const COMPAT_FIELDS = Object.keys(normAgents({}).compat);
+const isRecord = v => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const parseFrom = raw => {
+  const from = isRecord(raw.adoptedFrom) ? raw.adoptedFrom : null;
+  return from ? { owner: from.owner === 'ply' ? 'ply' : 'native', at: typeof from.at === 'string' ? from.at : null } : null;
+};
+/**
+ * 場所の 1 行の差分。受け継ぐ値と違う欄だけを持つ（off: [] は「どのエージェントも外さない」と言い切る。受け継いだ外しを打ち消す）。
+ * 欄: off・spread（エージェントの並び）、unused・skip（真偽。skip はこの場所から下で使わない）。空なら null
+ */
+const ROW_FIELDS = ['off', 'spread', 'unused', 'skip'];
+function normRowDiff(v) {
+  if (!isRecord(v)) return null;
+  const out = {};
+  for (const f of ['off', 'spread']) if (Array.isArray(v[f])) out[f] = agentList(v[f]);
+  for (const f of ['unused', 'skip']) if (typeof v[f] === 'boolean') out[f] = v[f];
+  return Object.keys(out).length ? out : null;
+}
+const placeCompat = v => Object.fromEntries(COMPAT_FIELDS.filter(f => isRecord(v) && ['off', 'native'].includes(v[f])).map(f => [f, v[f]]));
+/**
+ * ファイルの中身を検査する（形式 2）。版が違う・形が違えば null（読めない扱い）。
+ * places: { <pathKey>: { path, rows?: { <行>: { off, spread, unused, skip } }, compat?: { grok?, devin? } } }（受け継ぐ値と違うものだけ）
+ */
 export function parseState(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.version !== VERSION) return null;
+  if (!isRecord(raw) || raw.version !== VERSION) return null;
   const places = {};
-  for (const [pk, p] of Object.entries(raw.places && typeof raw.places === 'object' ? raw.places : {})) {
-    if (!p || typeof p !== 'object' || typeof p.path !== 'string' || !path.isAbsolute(p.path) || pathKey(p.path) !== pk) continue;
+  for (const [pk, p] of Object.entries(isRecord(raw.places) ? raw.places : {})) {
+    if (!isRecord(p) || typeof p.path !== 'string' || !path.isAbsolute(p.path) || pathKey(p.path) !== pk) continue;
+    const place = { path: p.path };
+    const rows = {};
+    for (const [k, d] of Object.entries(isRecord(p.rows) ? p.rows : {}).sort(([a], [b]) => a.localeCompare(b))) {
+      const r = KEY_RE.test(k) ? normRowDiff(d) : null;
+      if (r) rows[k] = r;
+    }
+    if (Object.keys(rows).length) place.rows = rows;
+    const compat = placeCompat(p.compat);
+    if (Object.keys(compat).length) place.compat = compat;
+    if (place.rows || place.compat) places[pk] = place;
+  }
+  return { version: VERSION, ...normAgents(raw), places, adoptedFrom: parseFrom(raw), seen: parseSeen(raw.seen) };
+}
+/** 形式 1 の中身（場所は丸ごとの写し agents と、この場所で使わない skip の並び）。移行の材料。形が違えば null */
+export function parseStateV1(raw) {
+  if (!isRecord(raw) || raw.version !== 1) return null;
+  const places = {};
+  for (const [pk, p] of Object.entries(isRecord(raw.places) ? raw.places : {})) {
+    if (!isRecord(p) || typeof p.path !== 'string' || !path.isAbsolute(p.path) || pathKey(p.path) !== pk) continue;
     const place = { path: p.path };
     if (Array.isArray(p.skip)) place.skip = [...new Set(p.skip.filter(k => typeof k === 'string' && KEY_RE.test(k)))].sort();
     if (p.agents && typeof p.agents === 'object') place.agents = normAgents(p.agents);
     if (place.skip || place.agents) places[pk] = place;
   }
-  const from = raw.adoptedFrom && typeof raw.adoptedFrom === 'object' ? raw.adoptedFrom : null;
-  return { version: VERSION, ...normAgents(raw), places,
-    adoptedFrom: from ? { owner: from.owner === 'ply' ? 'ply' : 'native', at: typeof from.at === 'string' ? from.at : null } : null,
-    seen: parseSeen(raw.seen) };
+  return { version: 1, ...normAgents(raw), places, adoptedFrom: parseFrom(raw), seen: parseSeen(raw.seen) };
 }
 const plainState = s => ({ version: VERSION, off: s.off, spread: s.spread, unused: s.unused, compat: s.compat, places: s.places, adoptedFrom: s.adoptedFrom, seen: s.seen ?? [] });
 // 移行の時刻は入れない（移行前の一覧は開くたびに写し直すので、時刻を入れると revision が毎回変わる）。seen（下）は選択ではないので入れない
@@ -113,7 +155,7 @@ function refKeys(s) {
   const out = new Set();
   const add = a => { if (!a) return; for (const k of [...Object.keys(a.off ?? {}), ...Object.keys(a.spread ?? {}), ...(a.unused ?? [])]) if (isNativeKey(k)) out.add(k); };
   add(s);
-  for (const p of Object.values(s.places ?? {})) { add(p.agents); for (const k of p.skip ?? []) if (isNativeKey(k)) out.add(k); }
+  for (const p of Object.values(s.places ?? {})) for (const k of Object.keys(p.rows ?? {})) if (isNativeKey(k)) out.add(k);
   return out;
 }
 /** 行 ID の選択を別の行 ID へ移す（keep なら元にも残す: 同じ定義が 2 つあって 1 つだけ書き換えたとき） */
@@ -130,8 +172,11 @@ function moveKey(s, from, to, keep) {
   const places = {};
   for (const [pk, p] of Object.entries(s.places)) {
     const q = { ...p };
-    if (p.agents) q.agents = fix(p.agents);
-    if (p.skip?.includes(from)) q.skip = [...new Set([...p.skip.filter(k => keep || k !== from), to])].sort();
+    if (p.rows?.[from]) {
+      const rows = { ...p.rows, [to]: structuredClone(p.rows[from]) };
+      if (!keep) delete rows[from];
+      q.rows = Object.fromEntries(Object.entries(rows).sort(([a], [b]) => a.localeCompare(b)));
+    }
     places[pk] = q;
   }
   return { ...s, ...fix(s), places };
@@ -181,10 +226,13 @@ export function resolveRekeys(state, inv) {
       orphans.push({ key: k, agent: g.agent, scope: g.scope, path: g.path, event: g.event, reason, candidates: [...new Set(appeared)].filter(x => !refs.has(x)).sort() });
     }
   }
-  // 行き先の無い選択の中身（画面が「何が付かなくなったか」を出す）
+  // 行き先の無い選択の中身（画面が「何が付かなくなったか」を出す）。全体と、どこかの場所の差分で外した・広げたエージェントを合わせる（形式 2）
   for (const o of orphans) {
-    o.off = s.off[o.key] ?? []; o.spread = s.spread[o.key] ?? []; o.unused = s.unused.includes(o.key);
-    o.places = Object.values(s.places).filter(p => p.skip?.includes(o.key) || p.agents?.off?.[o.key] || p.agents?.spread?.[o.key] || p.agents?.unused?.includes(o.key)).map(p => p.path).sort();
+    const at = Object.values(s.places).filter(p => p.rows?.[o.key]);
+    o.off = agentList([...(s.off[o.key] ?? []), ...at.flatMap(p => p.rows[o.key].off ?? [])]);
+    o.spread = agentList([...(s.spread[o.key] ?? []), ...at.flatMap(p => p.rows[o.key].spread ?? [])]);
+    o.unused = s.unused.includes(o.key) || at.some(p => p.rows[o.key].unused === true);
+    o.places = at.map(p => p.path).sort();
   }
   return { state: s, orphans, moved };
 }
@@ -216,17 +264,129 @@ export function nextSeen(state, inv, orphans = []) {
   return [...out.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
 }
 
-/** cwd で効く選択（深い場所の上書きが勝つ）と「この場所では使わない」 */
-export function effectiveAt(state, cwd) {
-  let agents = { off: state.off, spread: state.spread, unused: state.unused, compat: state.compat }, agentsFrom = null, skip = [], skipFrom = null;
+/**
+ * cwd で効く選択と「この場所では使わない」（形式 2）。全体に、cwd を含む場所の差分を浅い順に、行の欄ごとに重ねる（深い場所が勝つ）。
+ * exclude: その場所の差分を重ねない（その場所が受け継ぐ値を出すとき）。
+ * 戻り: { agents: { off, spread, unused, compat }, skip: Set, from: { <行>: 場所の pathKey }（無い行は全体から）, compatFrom,
+ *        chain（重ねた場所の pathKey。浅い順）, agentsFrom（差分を持つ一番深い場所）, skipFrom（使わない行を持つ一番深い場所） }
+ */
+export function effectiveAt(state, cwd, { exclude = null } = {}) {
+  const off = { ...state.off }, spread = { ...state.spread }, unused = new Set(state.unused), compat = { ...state.compat }, skip = new Set();
+  const from = {}, compatFrom = { grok: null, devin: null };
+  const chain = cwd ? Object.keys(state.places).filter(k => k !== exclude && containsPath(state.places[k].path, cwd)).sort((a, b) => a.length - b.length) : [];
+  for (const pk of chain) {
+    const p = state.places[pk];
+    for (const [k, r] of Object.entries(p.rows ?? {})) {
+      if (r.off) { if (r.off.length) off[k] = [...r.off]; else delete off[k]; }
+      if (r.spread) { if (r.spread.length) spread[k] = [...r.spread]; else delete spread[k]; }
+      if (typeof r.unused === 'boolean') { if (r.unused) unused.add(k); else unused.delete(k); }
+      if (typeof r.skip === 'boolean') { if (r.skip) skip.add(k); else skip.delete(k); }
+      from[k] = pk;
+    }
+    for (const [f, v] of Object.entries(p.compat ?? {})) { compat[f] = v; compatFrom[f] = pk; }
+  }
+  const deep = [...chain].reverse();
+  const agentsFrom = deep.find(pk => Object.keys(state.places[pk].rows ?? {}).length || Object.keys(state.places[pk].compat ?? {}).length) ?? null;
+  const skipFrom = deep.find(pk => Object.values(state.places[pk].rows ?? {}).some(r => r.skip === true)) ?? null;
+  return { agents: { off, spread, unused: [...unused].sort(), compat }, skip, from, compatFrom, chain, agentsFrom, skipFrom };
+}
+/** 1 行の値（効く選択と使わない行から。全部の欄） */
+const rowOf = (a, skip, k) => ({ off: agentList(a.off[k]), spread: agentList(a.spread[k]), unused: a.unused.includes(k), skip: skip.has(k) });
+const sameField = (f, x, y) => (Array.isArray(x) ? x.join() === y.join() : x === y);
+/** want のうち have と違う欄だけ（無ければ null） */
+function diffRow(want, have) {
+  const out = {};
+  for (const f of ROW_FIELDS) if (f in want && !sameField(f, want[f], have[f])) out[f] = Array.isArray(want[f]) ? [...want[f]] : want[f];
+  return Object.keys(out).length ? out : null;
+}
+/** 選択と使わない行に出てくる行（全体・どこかの場所） */
+function knownKeys(state) {
+  const out = new Set([...Object.keys(state.off), ...Object.keys(state.spread), ...state.unused]);
+  for (const p of Object.values(state.places)) for (const k of Object.keys(p.rows ?? {})) out.add(k);
+  return out;
+}
+const placeOf = (p, rows, compat) => ({ path: p.path, ...(Object.keys(rows).length ? { rows } : {}), ...(Object.keys(compat).length ? { compat } : {}) });
+/**
+ * 受け継ぐ値と同じ差分（欄）を落とし、空になった行・場所を消す（書くたびに。効く値は変えない）。浅い場所から順に見る。state を変えて返す
+ */
+export function pruneState(state) {
+  for (const pk of Object.keys(state.places).sort((a, b) => a.length - b.length)) {
+    const p = state.places[pk];
+    const inh = effectiveAt(state, p.path, { exclude: pk });
+    const rows = {};
+    for (const k of Object.keys(p.rows ?? {}).sort()) { const d = diffRow(p.rows[k], rowOf(inh.agents, inh.skip, k)); if (d) rows[k] = d; }
+    const compat = Object.fromEntries(COMPAT_FIELDS.filter(f => p.compat?.[f] && p.compat[f] !== inh.agents.compat[f]).map(f => [f, p.compat[f]]));
+    const q = placeOf(p, rows, compat);
+    if (q.rows || q.compat) state.places[pk] = q; else delete state.places[pk];
+  }
+  state.places = Object.fromEntries(Object.keys(state.places).sort().map(k => [k, state.places[k]]));
+  return state;
+}
+/**
+ * フォルダー cwd に、効く選択を next・使わない行を nextSkip にする差分を書く（場所が無ければ作る）。変わった欄だけを書き、
+ * 受け継ぐ値と同じになった欄は落とす（pruneState）。state を変えて返す
+ */
+function writeAt(state, cwd, next, nextSkip) {
+  const pk = pathKey(cwd);
+  const was = effectiveAt(state, cwd);
+  const place = state.places[pk] ?? { path: path.resolve(cwd) };
+  const rows = { ...(place.rows ?? {}) };
+  const keys = new Set([...knownKeys(state), ...Object.keys(next.off), ...Object.keys(next.spread), ...next.unused, ...nextSkip, ...was.skip]);
+  for (const k of keys) {
+    const d = diffRow(rowOf(next, nextSkip, k), rowOf(was.agents, was.skip, k));
+    if (d) rows[k] = { ...(rows[k] ?? {}), ...d };
+  }
+  const compat = { ...(place.compat ?? {}) };
+  for (const f of COMPAT_FIELDS) if (next.compat?.[f] && next.compat[f] !== was.agents.compat[f]) compat[f] = next.compat[f];
+  state.places[pk] = { path: place.path, rows, compat };
+  return pruneState(state);
+}
+/** 形式 1 の効く選択（深い場所の丸ごとの写しが勝つ・使わない行の並びも深い場所が勝つ）。移行の照合だけに使う */
+function effectiveV1(state, cwd) {
+  let agents = { off: state.off, spread: state.spread, unused: state.unused, compat: state.compat }, skip = [];
   if (cwd) {
     const keys = Object.keys(state.places).filter(k => containsPath(state.places[k].path, cwd)).sort((a, b) => b.length - a.length);
-    agentsFrom = keys.find(k => state.places[k].agents) ?? null;
-    if (agentsFrom) agents = state.places[agentsFrom].agents;
-    skipFrom = keys.find(k => Array.isArray(state.places[k].skip)) ?? null;
-    if (skipFrom) skip = state.places[skipFrom].skip;
+    const a = keys.find(k => state.places[k].agents);
+    if (a) agents = state.places[a].agents;
+    const s = keys.find(k => Array.isArray(state.places[k].skip));
+    if (s) skip = state.places[s].skip;
   }
-  return { agents, agentsFrom, skip: new Set(skip), skipFrom };
+  return { agents, skip: new Set(skip) };
+}
+function knownKeysV1(v1) {
+  const out = new Set([...Object.keys(v1.off), ...Object.keys(v1.spread), ...v1.unused]);
+  for (const p of Object.values(v1.places)) {
+    for (const k of [...Object.keys(p.agents?.off ?? {}), ...Object.keys(p.agents?.spread ?? {}), ...(p.agents?.unused ?? []), ...(p.skip ?? [])]) out.add(k);
+  }
+  return out;
+}
+/**
+ * 形式 1 の選択を形式 2 へ移す（純粋）。場所を浅い順に、その場所で形式 1 が効かせていた値と、形式 2 で受け継ぐ値が違う欄だけを書く
+ */
+export function migrateV1(v1) {
+  const s = { version: VERSION, off: structuredClone(v1.off), spread: structuredClone(v1.spread), unused: [...v1.unused], compat: { ...v1.compat },
+    places: {}, adoptedFrom: v1.adoptedFrom ?? null, seen: v1.seen ?? [] };
+  const keys = [...knownKeysV1(v1)].sort();
+  for (const pk of Object.keys(v1.places).sort((a, b) => a.length - b.length)) {
+    const p = v1.places[pk];
+    const want = effectiveV1(v1, p.path), have = effectiveAt(s, p.path);
+    const rows = {};
+    for (const k of keys) { const d = diffRow(rowOf(want.agents, want.skip, k), rowOf(have.agents, have.skip, k)); if (d) rows[k] = d; }
+    const compat = Object.fromEntries(COMPAT_FIELDS.filter(f => want.agents.compat[f] !== have.agents.compat[f]).map(f => [f, want.agents.compat[f]]));
+    const q = placeOf(p, rows, compat);
+    if (q.rows || q.compat) s.places[pk] = q;
+  }
+  return pruneState(s);
+}
+/** 形式 1 と形式 2 が、全体とどの場所でも、どの行でも同じ選択になるか。違えば最初に違った場所（全体は '*'）、同じなら null */
+export function migrationDiffers(v1, v2) {
+  const keys = new Set([...knownKeysV1(v1), ...knownKeys(v2)]);
+  for (const where of [null, ...Object.values(v1.places).map(p => p.path), ...Object.values(v2.places).map(p => p.path)]) {
+    const a = effectiveV1(v1, where), b = effectiveAt(v2, where);
+    if (COMPAT_FIELDS.some(f => a.agents.compat[f] !== b.agents.compat[f])) return where ?? '*';
+    for (const k of keys) if (diffRow(rowOf(a.agents, a.skip, k), rowOf(b.agents, b.skip, k))) return where ?? '*';
+  }
+  return null;
 }
 
 // ---------- 元の集合とセル ----------
@@ -243,7 +403,8 @@ const has = (map, key, a) => (map[key] ?? []).includes(a);
 
 /** その行を、エージェント A が自分で動かすか（true | 'unknown' | false）。Pleiad の登録は渡すもの（false） */
 export function nativeOf(row, A, inv, s) {
-  if (row.kind === 'reg' || row.kind === 'ws') return false;
+  // 追加の探索フォルダーの定義（root）は、どのエージェントも自分では読まない（Pleiad が渡す）
+  if (row.kind === 'reg' || row.kind === 'ws' || row.kind === 'root') return false;
   if (row.kind === 'grokOwn') return A === GROK;
   if (row.fate === 'inactive') return false;
   if (row.agent === CLAUDE) {
@@ -258,8 +419,13 @@ export function nativeOf(row, A, inv, s) {
   }
   return A === row.agent;
 }
-/** 元の集合（エージェントの並び）。確かなものだけ */
-const baseOf = (row, inv, s) => row.kind === 'reg' ? row.hook.targets.filter(a => UNIFY_TARGETS.includes(a)) : UNIFY_TARGETS.filter(a => nativeOf(row, a, inv, s) === true);
+/**
+ * 元の集合（エージェントの並び）。確かなものだけ。追加の探索フォルダーの定義（root）は、Pleiad が渡せるエージェントの全部
+ * （広げた定義と同じく渡すが、元から入っている。渡せないエージェントは鍵つきでオフ）
+ */
+const baseOf = (row, inv, s) => row.kind === 'reg' ? row.hook.targets.filter(a => UNIFY_TARGETS.includes(a))
+  : row.kind === 'root' ? UNIFY_TARGETS.filter(a => !('blocked' in asDelivery(row, a, inv)))
+    : UNIFY_TARGETS.filter(a => nativeOf(row, a, inv, s) === true);
 
 /** 1 つずつは止められず、保存に関わらず元の集合のとおりのセル。{ reason, detail } か null */
 function fixedOf(row, A) {
@@ -598,19 +764,21 @@ export function agentsFromLegacy({ config, rows, platform = process.platform, no
     return a;
   };
   const def = resolveOwner(config, null).value;
-  const state = { version: VERSION, ...calc(def.owner, def.disabled ?? [], true), places: {}, adoptedFrom: { owner: def.owner, at: now.toISOString() } };
+  // 場所ごとの丸ごとの写し（形式 1 の形）を作ってから、受け継ぐ値と違う行だけの差分（形式 2）へ移す（migrateV1。意味は同じ）
+  const state = { version: 1, ...calc(def.owner, def.disabled ?? [], true), places: {}, adoptedFrom: { owner: def.owner, at: now.toISOString() }, seen: [] };
   for (const [pk, p] of Object.entries(config.places ?? {})) {
     state.places[pk] = { path: p.path, skip: [...new Set(p.disabled ?? [])].sort(), agents: calc(p.owner, p.disabled ?? [], false) };
   }
-  return state;
+  return migrateV1(state);
 }
 
 // ---------- 置き場と操作 ----------
 /**
- * deps: { dataDir, hooksConfig, plyHooks, platform, findNode, grokHome, codexTrust(report, cwd)（一覧のときだけ。ターンでは呼ばない）, now }
+ * deps: { dataDir, hooksConfig, plyHooks, platform, findNode, grokHome, codexTrust(report, cwd)（一覧のときだけ。ターンでは呼ばない）, now,
+ *         scanRoots(cwd) → { user: [絶対パス], directory: [絶対パス] }（追加の探索フォルダー。設定 › プラグインの hooks のルート。無ければ読まない） }
  */
 export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = process.platform, findNode = async () => null,
-  grokHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok'), codexTrust = null, now = () => new Date() }) {
+  grokHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok'), codexTrust = null, now = () => new Date(), scanRoots = null }) {
   const file = path.join(dataDir, FILE_NAME);
   let queue = Promise.resolve();
   const run = fn => { const next = queue.catch(() => {}).then(fn); queue = next; return next; };
@@ -620,15 +788,50 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   let lastGood = null;
   async function exists() { try { await fs.stat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; return true; } }
   /** null = 移行していない。読めなければ投げる（今までの担当で動かすと、止めたはずの定義が動くため）。知らない version も読めない扱い */
+  // 形式 1 は読むときに形式 2 へ移す（下の migrateFile）
   async function read() {
-    let text;
-    try { text = await fs.readFile(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw unreadable(); }
-    let raw;
-    try { raw = JSON.parse(text); } catch { throw unreadable(); }
-    const s = parseState(raw);
-    if (!s) throw unreadable();
-    lastGood = s;
-    return s;
+    for (let i = 0; ; i++) {
+      let text;
+      try { text = await fs.readFile(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw unreadable(); }
+      let raw;
+      try { raw = JSON.parse(text); } catch { throw unreadable(); }
+      let s;
+      if (raw?.version === 1) {
+        try { s = await migrateFile(text, raw); }
+        catch (e) { if (e.retry && i < 3) continue; if (e.retry) throw unreadable(); throw e; }
+      } else s = parseState(raw);
+      if (!s) throw unreadable();
+      lastGood = s;
+      return s;
+    }
+  }
+  /**
+   * 形式 1 → 2（ADR 0115 と同じ手順。core/context-settings.mjs の migrate）: バックアップ（hooks-agents.v1-backup.json。既にあれば残す）→ 移す →
+   * 全体とどの場所でも、どの行でも同じ選択かを確かめる → 一時ファイルに書いて読み直して確かめる → 元が変わっていなければ置き換える。
+   * 確かめられなければ何も書かず、読めない扱い（UNREADABLE・migration: true）。ターンは断り、一覧は直す操作を出す
+   */
+  async function migrateFile(text, raw) {
+    const v1 = parseStateV1(raw);
+    if (!v1) throw unreadable();
+    const v2 = migrateV1(v1);
+    const failed = () => Object.assign(unreadable(), { migration: true });
+    if (migrationDiffers(v1, v2)) throw failed();
+    const out = JSON.stringify(plainState(v2), null, 2);
+    const tmp = `${file}.migrate.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    try {
+      await fs.writeFile(path.join(dataDir, BACKUP_V1), text, { encoding: 'utf8', mode: 0o600, flag: 'wx' }).catch(e => { if (e.code !== 'EEXIST') throw e; });
+      await fs.writeFile(tmp, out, { encoding: 'utf8', mode: 0o600 });
+      let check;
+      try { check = parseState(JSON.parse(await fs.readFile(tmp, 'utf8'))); } catch { check = null; }
+      if (!check || migrationDiffers(v1, check) || stateRevision(check) !== stateRevision(v2)) throw failed();
+      // 読んでから置き換えるまでの間に別の Pleiad が書き換えていないか（同じ内容のときだけ置き換える）
+      if ((await fs.readFile(file, 'utf8').catch(() => null)) !== text) throw Object.assign(new Error('changed'), { retry: true });
+      await fs.rename(tmp, file);
+      return check;
+    } catch (e) {
+      if (e.code === 'UNREADABLE' || e.retry) throw e;
+      throw hooksWriteFailed(e, FILE_NAME);
+    } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
   }
   /**
    * 読めないファイルを、消さずに隣へ退避する（hooks-agents.broken-<時刻>.json）。中身を読まずに名前だけ変える（読めない理由が権限でも残る）。
@@ -684,6 +887,28 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       const o = rows.find(x => x.kind === 'native' && x.agent === p.from && x.key !== r.key && x.rawCommand.trim() === p.command.trim());
       if (o) { (o.copies ??= {})[r.agent] = r; r.copyOf = o.key; }
     }
+    // 追加の探索フォルダー（設定 › プラグインの hooks のルート。ユーザーの段はいつも、フォルダーの段は cwd があるときだけ）。
+    // エージェントは読まないので Pleiad が渡す（row.kind: 'root'）。いつもの探索で読んだファイルと同じなら並べない（二重に渡さない）
+    if (scanRoots && hooksConfig.scanRoots) {
+      let given = { user: [], directory: [] };
+      try { given = (await scanRoots(cwd)) ?? given; } catch {}
+      const list = [...(Array.isArray(given.user) ? given.user : []).map(root => ({ root, scope: 'user' })),
+        ...(cwd && Array.isArray(given.directory) ? given.directory : []).map(root => ({ root, scope: 'directory' }))];
+      const scanned = new Set((report.files ?? []).map(f => pathKey(f.path)));
+      const extra = list.length ? await hooksConfig.scanRoots(list).catch(() => null) : null;
+      for (const e of extra?.entries ?? []) {
+        if (scanned.has(pathKey(e.path))) continue;
+        const raw = rawOf(e);
+        const command = typeof raw?.handler?.command === 'string' ? raw.handler.command : (e.command ?? '');
+        const key = nativeRowKey(e, command);
+        const have = byKey.get(key);
+        if (have) { if (have.kind === 'root') have.members.push({ entry: e, raw }); continue; }
+        const row = { key, kind: 'root', group: 'root', agent: e.agent, scope: 'root', rootScope: e.rootScope, root: e.root, event: e.event, matcher: e.matcher ?? null,
+          command: e.command ?? '', path: e.path, ...(e.name ? { name: e.name } : {}), entry: e, raw, rawCommand: command, members: [{ entry: e, raw }] };
+        rows.push(row); byKey.set(key, row);
+      }
+      if (extra) report.rootFiles = extra.files.filter(f => !scanned.has(pathKey(f.path)));
+    }
     for (const g of await grokNativeHooks(GROK, cwd, grokHome)) {
       const key = nativeRowKey(g, g.command);
       if (byKey.has(key)) continue;
@@ -726,29 +951,30 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
   };
 
   /**
-   * 選択を変えて保存する。edit(agents, inv, eff) は新しい agents を返す。place があればその場所の上書きを、無ければ全体を変える。
+   * 選択を変えて保存する。edit(agents, inv, eff) は、cwd で効く選択から新しい agents を返す。cwd があればそのフォルダーに、
+   * 受け継ぐ値と違う行（欄）だけを書く（場所が無ければ作る）。無ければ全体を変える。どちらも受け継ぐ値と同じになった差分は落とす（pruneState）。
    * dry: 書かずに結果だけ返す（承認のカードの試算）。戻りの devinImportsStop: この変更で Devin の取り込みが止まり始める
    */
   function change({ cwd = null, expect = null, dry = false }, edit) {
     return run(async () => {
       const { state: stored } = await current();
       const inv = await inventory({ cwd });
-      const { state, orphans } = resolveRekeys(stored, inv);
-      checkExpect(expect, stored, state);
+      const { state: read0, orphans } = resolveRekeys(stored, inv);
+      checkExpect(expect, stored, read0);
+      const state = structuredClone(read0);
       const eff = effectiveAt(state, cwd);
-      const target = eff.agentsFrom ? state.places[eff.agentsFrom].agents : state;
-      const next = await edit({ off: target.off, spread: target.spread, unused: target.unused, compat: target.compat }, inv, eff);
+      const a = eff.agents;
+      const next = await edit({ off: a.off, spread: a.spread, unused: a.unused, compat: a.compat }, inv, eff);
       const devinImportsStop = devinStopStarts(inv, eff.agents, eff.skip, { ...next, enable: next.enable ?? [] });
-      if (dry) return { devinImportsStop, revision: stateRevision(state) };
+      if (dry) return { devinImportsStop, revision: stateRevision(read0) };
       const enable = next.enable ?? [];
-      delete next.enable;
       const clean = normAgents(next);
-      if (eff.agentsFrom) state.places[eff.agentsFrom].agents = clean;
-      else Object.assign(state, clean);
+      if (cwd) writeAt(state, cwd, clean, eff.skip);
+      else pruneState(Object.assign(state, clean));
       for (const id of enable) await plyHooks.toggle(id, true);
       state.seen = nextSeen(state, inv, orphans);
       await write(state);
-      return { state, place: eff.agentsFrom ? state.places[eff.agentsFrom].path : null, revision: stateRevision(state), devinImportsStop };
+      return { state, place: cwd ? state.places[pathKey(cwd)]?.path ?? null : null, revision: stateRevision(state), devinImportsStop };
     });
   }
   const pressCell = (inv, eff, key, A) => {
@@ -796,33 +1022,90 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     }
     return cur;
   });
-  /** この場所で使う（hooks.setPlace）。reset: true は移行で書いた場所の上書き（agents）を消す。dry・devinImportsStop は change と同じ */
+  /**
+   * この場所で使う（hooks.setPlace）。その行の skip の欄だけをこの場所に書く。reset: true はこの場所の、使う・使わない（skip）以外の
+   * 差分（エージェントの選択・互換）を消す（受け継ぐ値へ戻す）。dry・devinImportsStop は change と同じ
+   */
   const setPlace = ({ place, key = null, use = true, reset = false, expect = null, dry = false }) => run(async () => {
     if (typeof place !== 'string' || !path.isAbsolute(place)) throw invalid('hooksAgents.badPlace');
     const { state: stored } = await current();
     const inv = await inventory({ cwd: place, turn: true });
     const { state: read0, orphans } = resolveRekeys(stored, inv);
     checkExpect(expect, stored, read0);
-    // dry: 写しで試す（読んだ選択・lastGood を変えない）
-    const state = dry ? structuredClone(read0) : read0;
+    // 写しで試す（読んだ選択・lastGood を変えない）
+    const state = structuredClone(read0);
     const pk = pathKey(place);
     const was = effectiveAt(state, place);
-    const entry = state.places[pk] ?? { path: path.resolve(place) };
-    if (reset) delete entry.agents;
-    else {
+    if (reset) {
+      const entry = state.places[pk];
+      if (entry) {
+        const rows = {};
+        for (const [k, r] of Object.entries(entry.rows ?? {})) if (typeof r.skip === 'boolean') rows[k] = { skip: r.skip };
+        state.places[pk] = { path: entry.path, rows };
+        pruneState(state);
+      }
+    } else {
       if (typeof key !== 'string' || !KEY_RE.test(key)) throw invalid('hooksAgents.noRow', { key });
-      const inherited = effectiveAt(state, place).skip;
-      const list = new Set(entry.skip ?? inherited);
-      if (use) list.delete(key); else list.add(key);
-      entry.skip = [...list].sort();
+      const skip = new Set(was.skip);
+      if (use) skip.delete(key); else skip.add(key);
+      writeAt(state, place, was.agents, skip);
     }
-    if (entry.skip || entry.agents) state.places[pk] = entry; else delete state.places[pk];
     const now = effectiveAt(state, place);
     const devinImportsStop = devinStopStarts(inv, was.agents, was.skip, now.agents, now.skip);
     if (dry) return { devinImportsStop, revision: stateRevision(stored) };
     state.seen = nextSeen(state, inv, orphans);
     await write(state);
     return { state, revision: stateRevision(state), devinImportsStop };
+  });
+  /**
+   * フォルダーの行の差分を消して、受け継ぐ値へ戻す（hooks.revertRow）。key か keys。差分が無ければ書かない。
+   * 戻り: { removed: [行], revision, devinImportsStop }
+   */
+  const revertRow = ({ cwd, key = null, keys = null, expect = null, dry = false }) => run(async () => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw invalid('hooksAgents.badPlace');
+    const list = [...new Set([...(key ? [key] : []), ...(Array.isArray(keys) ? keys : [])])];
+    if (!list.length) throw invalid('hooksAgents.noRow', { key: '' });
+    for (const k of list) if (typeof k !== 'string' || !KEY_RE.test(k)) throw invalid('hooksAgents.noRow', { key: String(k) });
+    const { state: stored } = await current();
+    const inv = await inventory({ cwd, turn: true });
+    const { state: read0, orphans } = resolveRekeys(stored, inv);
+    checkExpect(expect, stored, read0);
+    const state = structuredClone(read0);
+    const pk = pathKey(cwd);
+    const was = effectiveAt(state, cwd);
+    const removed = list.filter(k => state.places[pk]?.rows?.[k]).sort();
+    for (const k of removed) delete state.places[pk].rows[k];
+    pruneState(state);
+    const now = effectiveAt(state, cwd);
+    const devinImportsStop = devinStopStarts(inv, was.agents, was.skip, now.agents, now.skip);
+    if (dry || !removed.length) return { removed, devinImportsStop, revision: stateRevision(read0) };
+    state.seen = nextSeen(state, inv, orphans);
+    await write(state);
+    return { state, removed, revision: stateRevision(state), devinImportsStop };
+  });
+  /**
+   * フォルダーの差分を全部消す（hooks.removePlace）。場所は pathKey で引くので、フォルダーが消えていても消せる（その場所の定義は読まない）。
+   * 戻り: { removed: 真偽, revision, devinImportsStop }
+   */
+  const removePlace = ({ cwd, expect = null, dry = false }) => run(async () => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw invalid('hooksAgents.badPlace');
+    const { state: stored } = await current();
+    // フォルダーが無くても読めるよう、定義の一覧は読めたときだけ使う（書き換えた定義の引き継ぎと、Devin の取り込みの試算）
+    const inv = await inventory({ cwd, turn: true }).catch(() => null);
+    const { state: read0, orphans } = inv ? resolveRekeys(stored, inv) : { state: stored, orphans: [] };
+    checkExpect(expect, stored, read0);
+    const state = structuredClone(read0);
+    const pk = pathKey(cwd);
+    const removed = Boolean(state.places[pk]);
+    const was = effectiveAt(state, cwd);
+    delete state.places[pk];
+    pruneState(state);
+    const now = effectiveAt(state, cwd);
+    const devinImportsStop = inv ? devinStopStarts(inv, was.agents, was.skip, now.agents, now.skip) : false;
+    if (dry || !removed) return { removed, devinImportsStop, revision: stateRevision(read0) };
+    if (inv) state.seen = nextSeen(state, inv, orphans);
+    await write(state);
+    return { state, removed, revision: stateRevision(state), devinImportsStop };
   });
   /** 移行前へ戻す（ファイルを消す。旧の担当の動きへ戻る）。読めないファイルは消さずに退避する（backup に退避先） */
   const reset = () => run(async () => {
@@ -1023,11 +1306,15 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       // 読めない: 投げずに、画面が直す操作（hooks.repair・hooks.resetAgents）を出せる形で返す。止めたはずの Hook が動かないよう、会話は断ったまま
       if (e.code !== 'UNREADABLE') throw e;
       return { unreadable: true, error: e.message, repair: ['hooks.repair', 'hooks.resetAgents'], agents: COLUMNS(), labels: COLUMN_LABELS(),
-        adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], rows: [], orphans: [] };
+        adopted: true, revision: '', cwd, place: null, skipFrom: null, compat: null, compatFrom: null, grok: null, claudeAllOff: false, trustPending: false, groups: [], groupRows: [],
+        changes: 0, places: [], rows: [], orphans: [] };
     }
     await keepSeen(v);
     const { inv, eff, cells } = v;
     const s = eff.agents;
+    const here = cwd ? v.state.places[pathKey(cwd)] ?? null : null;
+    const pathOf = pk => (pk ? v.state.places[pk]?.path ?? null : null);
+    const countOf = p => Object.keys(p?.rows ?? {}).length + Object.keys(p?.compat ?? {}).length;
     const before = Object.fromEntries(UNIFY_TARGETS.map(A => [A, cellsFor(inv, s, eff.skip, A)]));
     // 行のスイッチ・この場所で使うを押すと Devin の取り込みが止まり始めるか（compat.devin: 'off' のときだけ試す）
     const stopNow = s.compat?.devin === 'off' && devinStopsAt(inv, s, eff.skip);
@@ -1049,7 +1336,11 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
       const hereSkip = () => { const k = new Set(eff.skip); if (useHere) k.add(row.key); else k.delete(row.key); return k; };
       const out = { key: row.key, kind: row.kind, group: row.group, agent: row.agent, scope: row.scope, event: row.event, matcher: row.matcher ?? null,
         command: row.command ? maskText(row.command) : '', ...(row.name ? { name: row.name } : {}), ...(row.path ? { path: row.path } : {}),
-        ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.copyOf ? { copyOf: row.copyOf } : {}),
+        ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.copyOf ? { copyOf: row.copyOf } : {}), ...(row.root ? { root: row.root, rootScope: row.rootScope } : {}),
+        // from: この行の選択がどこから来たか（場所のパス。全体なら null）。overridden: このフォルダーに差分がある（cwd があるときだけ真になりうる）。
+        // overriddenAt: cwd が無い一覧で、差分を持つ場所のパス
+        from: pathOf(eff.from[row.key]), overridden: Boolean(here?.rows?.[row.key]),
+        ...(cwd ? {} : { overriddenAt: Object.values(v.state.places).filter(p => p.rows?.[row.key]).map(p => p.path).sort() }),
         // 行の全体のスイッチ（MCP と同じく、どれかのセルが入っていれば入り）。切ってもエージェントごとの選択は覚えたまま
         on: rowOn, unused: s.unused.includes(row.key) || (row.kind === 'reg' && !row.hook.enabled),
         // rowMixed: 一部だけオン（横の棒）／ rowFixed: 切ってもオンのまま残るマス（鍵つき）／ rowChangeableOn: 切れるオン ／ rowNextOn: 押すと入れる向き
@@ -1066,12 +1357,30 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
         ...(row.kind === 'native' ? { status: row.fate, scanIds: row.members.map(m => m.entry?.id).filter(x => typeof x === 'string') } : {}),
         ...(row.kind === 'reg' ? { targets: row.hook.targets, enabled: row.hook.enabled } : {}),
         cells: byAgent };
+      // この場所で使わない（場所の差分 rows[k].skip）にした行: 行のスイッチは「この場所で使う」に戻す向きで押せる（hooks.setPlace use: true）。
+      // 押すと取り込みが止まり始めるなら、行のスイッチと同じ確認の帯を出す
+      if (cwd && pressable && !useHere) {
+        Object.assign(out, { switchable: true, rowNextOn: true, rowRestore: 'was', skipHere: true });
+        delete out.switchLock;
+        if (out.here.confirm) out.switchConfirm = out.here.confirm; else delete out.switchConfirm;
+      }
       return out;
     });
     return { agents: COLUMNS(), labels: COLUMN_LABELS(), adopted: v.adopted, revision: v.revision, cwd,
       place: eff.agentsFrom ? v.state.places[eff.agentsFrom].path : null, skipFrom: eff.skipFrom ? v.state.places[eff.skipFrom].path : null,
       compat: s.compat, grok: inv.grokEnv, claudeAllOff: inv.claudeAllOff, trustPending: inv.report.trustPending === true,
-      groups: ['ply', 'own', 'place', 'admin'].filter(g => rows.some(r => r.group === g)), rows,
+      compatFrom: { grok: pathOf(eff.compatFrom.grok), devin: pathOf(eff.compatFrom.devin) },
+      groups: GROUPS.filter(g => rows.some(r => r.group === g)),
+      // 組の行: from は組の行の選択が来た一番深い場所（全部が全体からなら null）、overridden は組のどれかの行にこのフォルダーの差分がある
+      groupRows: GROUPS.filter(g => rows.some(r => r.group === g)).map(g => {
+        const rs = rows.filter(r => r.group === g);
+        const from = rs.map(r => eff.from[r.key]).filter(Boolean).sort((a, b) => b.length - a.length)[0] ?? null;
+        return { group: g, from: pathOf(from), overridden: rs.some(r => r.overridden), ...(cwd ? {} : { overriddenAt: [...new Set(rs.flatMap(r => r.overriddenAt))].sort() }) };
+      }),
+      // changes: このフォルダーの差分の数（cwd が無ければ全部の場所の合計）。places: 差分を持つ場所とその数
+      changes: cwd ? countOf(here) : Object.values(v.state.places).reduce((n, p) => n + countOf(p), 0),
+      places: Object.values(v.state.places).map(p => ({ path: p.path, changes: countOf(p) })).sort((a, b) => a.path.localeCompare(b.path)),
+      rows,
       // 行き先の無くなった選択（外した・広げた定義を書き換えて、どれに当たるか決められない・消えた）。黙って捨てず、画面が出す
       orphans: v.orphans.map(o => ({ key: o.key, agent: o.agent, scope: o.scope, path: o.path, event: o.event, reason: o.reason, candidates: o.candidates,
         off: o.off, spread: o.spread, unused: o.unused, places: o.places })) };
@@ -1087,5 +1396,5 @@ export function createHooksAgents({ dataDir, hooksConfig, plyHooks, platform = p
     });
   }
 
-  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, reset, repair, turnPlan, forTurn, hooksForTurn, devinImportsStopped, importsStoppedFor };
+  return { file, exists, read, current, inventory, view, matrix, setAgent, setRow, setGroup, setPlace, revertRow, removePlace, reset, repair, turnPlan, forTurn, hooksForTurn, devinImportsStopped, importsStoppedFor };
 }

@@ -12,6 +12,8 @@ export default async function (t) {
   globalThis.requestAnimationFrame = () => { throw new Error('印で rAF を使わない'); };
   const oldTextNode = document.createTextNode;
   document.createTextNode = (text) => { const node = new N('span'); node.textContent = text; return node; };
+  const oldListen = document.addEventListener;
+  document.addEventListener = () => {}; // 節の「?」は外を押したら閉じる（document に聞く）
   try {
     const arc = runMark('実行中');
     assert.equal(arc.className, 'run');
@@ -37,5 +39,6 @@ export default async function (t) {
   } finally {
     globalThis.requestAnimationFrame = oldRaf;
     document.createTextNode = oldTextNode;
+    document.addEventListener = oldListen;
   }
 }

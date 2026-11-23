@@ -33,8 +33,18 @@ const plus = () => {
 
 // i18n-dynamic: context.ply.target.
 // i18n-dynamic: context.ply.targetOpt.
-export function createPlyInstructions({ cmd, work, saved, openDelegation, opened, showMenu, onCount }) {
+// scope(): 設定 › プラグインの今の範囲（ADR 0348）。null = 全体の設定。Pleiad の指示はすべての場所に共通なので、
+// フォルダーの範囲では見るだけ（足すボタン・スイッチ・並べ替えを止め、見出しの右は量だけ）
+export function createPlyInstructions({ cmd, work, saved, openDelegation, opened, showMenu, onCount, scope = () => null }) {
   const root = el('div', 'cx-block cx-ply');
+  // フォルダーの範囲では、行を開く以外の操作を受け付けない（スイッチ・エージェント・並べ替え・メニュー）
+  root.addEventListener('click', e => {
+    if (!scope()) return;
+    if (e.target.closest?.('.cx-sw, .cx-ag, .rt-grip, .cx-add')) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  for (const type of ['keydown', 'pointerdown']) root.addEventListener(type, e => {
+    if (scope() && e.target.closest?.('.rt-grip')) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
   // 並べ替えの結果の読み上げ。描き直しても外さない
   const status = el('div', 'visually-hidden');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
@@ -110,9 +120,13 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
     wantFocus = '';
     for (const child of [...root.children]) if (child !== status) child.remove();
     const sec = el('div', 'cx-sec');
-    const title = el('span', 'n', t('context.ply.title'));
+    const folder = Boolean(scope());
+    const title = el('h5', 'n', t('context.scope.sec.plyInstruction'));
     title.id = 'cxPlyTitle';
-    sec.append(title, el('span', 'r', state ? t('context.ply.scope', { tokens: fmt.number(state.total) }) : t('context.ply.scopePlain')));
+    const right = !state ? t('context.ply.scopePlain')
+      : folder ? t('context.matrix.tokensTotal', { n: fmt.number(state.total) })
+        : t('context.ply.scope', { tokens: fmt.number(state.total) });
+    sec.append(title, el('span', 'r', right));
     root.append(sec);
     if (!state) { root.append(el('p', 'cx-empty', t('context.ply.unavailable'))); return; }
     if (state.agents?.length) root.append(agentLegend(state.agents));
@@ -126,10 +140,16 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       if (opened.has(key(item.id))) box.append(peek(item));
       list.append(box);
     }
-    const add = button('', 'cx-add', () => openSheet(null, add));
-    add.dataset.fk = 'add';
-    add.append(plus(), document.createTextNode(t('context.ply.add')));
-    list.append(add);
+    if (!folder) {
+      const add = button('', 'cx-add', () => openSheet(null, add));
+      add.dataset.fk = 'add';
+      add.append(plus(), document.createTextNode(t('context.ply.add')));
+      list.append(add);
+    } else {
+      list.classList.add('ro');
+      for (const b of list.querySelectorAll('.cx-sw, .cx-ag')) b.setAttribute('aria-disabled', 'true');
+      for (const b of list.querySelectorAll('.rt-grip')) b.disabled = true;
+    }
     root.append(list);
     if (state.total > HEAVY) root.append(el('p', 'cx-sub', t('context.ply.heavy')));
     if (focus) [...root.querySelectorAll('button')].find(b => b.dataset?.fk === focus)?.focus({ preventScroll: true });

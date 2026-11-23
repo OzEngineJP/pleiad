@@ -353,7 +353,7 @@ const defs = [
     id: 'hooks.setGroup', summary: 'agent:ops.hooks.setGroup.summary', risk: 'write', riskReason: NARROWS,
     riskOf: (_ctx, { on, group }) => (on === false && group === 'ply' ? 'write' : 'guarded'),
     input: z.object({
-      group: z.enum(['ply', 'own', 'place']).describe(D('setGroup', 'group')),
+      group: z.enum(['ply', 'own', 'place', 'root']).describe(D('setGroup', 'group')),
       agent: agentKey.optional().describe(D('setGroup', 'agent')),
       on: z.boolean().describe(D('setRow', 'on')),
       cwd, revision, reason,
@@ -400,6 +400,53 @@ const defs = [
       return { ok: true, revision: r.revision, ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
     }),
   }),
+  // フォルダーの差分（形式 2）。行の差分を消して受け継ぐ値へ戻す・フォルダーの差分を全部消す。戻すと切った Hook がまた動きうるので、書くときは guarded
+  defineOp({
+    id: 'hooks.revertRow', summary: 'agent:ops.hooks.revertRow.summary', risk: 'write', riskReason: WRITE_PREVIEW,
+    riskOf: unlessDryRun,
+    input: z.object({
+      cwd: z.string().min(1).max(4096).describe(A('cwd')),
+      key: z.string().min(1).max(40).optional().describe(D('setAgent', 'key')),
+      keys: z.array(z.string().min(1).max(40)).max(500).optional().describe(D('revertRow', 'keys')),
+      dryRun: z.boolean().optional().describe(A('dryRun')),
+      revision, reason,
+    }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { cwd: dir, key, keys }) => {
+      const m = await ctx.hooks.agents.matrix({ cwd: dir, trust: false }).catch(() => null);
+      const list = [...new Set([...(key ? [key] : []), ...(keys ?? [])])];
+      const names = list.map((k) => rowLabel(m?.rows.find((r) => r.key === k) ?? null, k));
+      return { key: null, before: m?.revision ?? null, rows: list.map((k) => ({ path: `hooks.agents.places.${dir}.${k}`, before: JSON.stringify(m?.rows.find((r) => r.key === k)?.overridden ?? null), after: 'false' })),
+        note: await withStopNote(t('opsApproval.hooksPlace', { place: dir, name: names.join(', ') || '*' }),
+          () => ctx.hooks.agents.revertRow({ cwd: dir, key: key ?? null, keys: keys ?? null, dry: true })),
+        loosens: true };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'revert'], positional: ['cwd', 'key'] } },
+    legacyCommand: 'revertHookRow',
+    handler: (ctx, { cwd: dir, key, keys, dryRun, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.revertRow({ cwd: dir, key: key ?? null, keys: keys ?? null, expect: expect ?? null, dry: dryRun === true });
+      return { ok: true, removed: r.removed, revision: r.revision, ...(dryRun === true ? { dryRun: true } : {}), ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
+    }),
+  }),
+  defineOp({
+    id: 'hooks.removePlace', summary: 'agent:ops.hooks.removePlace.summary', risk: 'write', riskReason: WRITE_PREVIEW,
+    riskOf: unlessDryRun,
+    input: z.object({ cwd: z.string().min(1).max(4096).describe(A('cwd')), dryRun: z.boolean().optional().describe(A('dryRun')), revision, reason }),
+    approvalWords: 'hooks',
+    confirm: async (ctx, { cwd: dir }) => {
+      const m = await ctx.hooks.agents.matrix({ cwd: null, trust: false }).catch(() => null);
+      const at = (m?.places ?? []).find((p) => typeof p.path === 'string' && p.path.toLowerCase() === String(dir).toLowerCase()) ?? null;
+      return { key: null, before: m?.revision ?? null, rows: [{ path: `hooks.agents.places.${dir}`, before: JSON.stringify(at?.changes ?? 0), after: '0' }],
+        note: await withStopNote(t('opsApproval.hooksPlace', { place: dir, name: '*' }), () => ctx.hooks.agents.removePlace({ cwd: dir, dry: true })),
+        loosens: true };
+    },
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['hooks', 'remove-place'], positional: ['cwd'] } },
+    legacyCommand: 'removeHookPlace',
+    handler: (ctx, { cwd: dir, dryRun, revision: expect }) => run(ctx, async () => {
+      const r = await ctx.hooks.agents.removePlace({ cwd: dir, expect: expect ?? null, dry: dryRun === true });
+      return { ok: true, removed: r.removed, revision: r.revision, ...(dryRun === true ? { dryRun: true } : {}), ...(r.devinImportsStop ? { devinImportsStop: true } : {}) };
+    }),
+  }),
   defineOp({
     id: 'hooks.resetAgents', summary: 'agent:ops.hooks.resetAgents.summary', risk: 'guarded',
     input: z.object({ reason }),
@@ -419,7 +466,7 @@ const defs = [
  * 設定のページ・会話の右のパネルを取り直す。指示・Skills の表の Devin の取り込むマスも Hooks で変わる。ADR 0338）。書く前の確認（dryRun）は配らない
  */
 const CHANGES = new Set(['hooks.saveNative', 'hooks.copy', 'hooks.save', 'hooks.remove', 'hooks.toggle', 'hooks.setOwner', 'hooks.repair',
-  'hooks.setAgent', 'hooks.setRow', 'hooks.setGroup', 'hooks.setPlace', 'hooks.resetAgents']);
+  'hooks.setAgent', 'hooks.setRow', 'hooks.setGroup', 'hooks.setPlace', 'hooks.revertRow', 'hooks.removePlace', 'hooks.resetAgents']);
 export const hookOps = defs.map((op) => (!CHANGES.has(op.id) ? op : Object.freeze({
   ...op,
   handler: async (ctx, args) => {

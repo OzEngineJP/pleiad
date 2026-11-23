@@ -74,6 +74,9 @@ function contextChange(view, args) {
   const where = args.place ? 'context.place' : 'context.default';
   if (args.remove) return diffRows(where, { path: args.place }, null);
   if (args.add) return diffRows(where, null, { path: args.place });
+  if (Object.hasOwn(args, 'addRoot')) return diffRows(`${where}.roots.${args.kind ?? ''}`, null, args.addRoot);
+  if (Object.hasOwn(args, 'removeRoot')) return diffRows(`${where}.roots.${args.kind ?? ''}`, args.removeRoot, null);
+  if (Array.isArray(args.revertRows)) return diffRows(`${where}.${args.kind ?? ''}.rows`, args.revertRows, null);
   if (Object.hasOwn(args, 'roots')) {
     const kinds = args.kind ? [args.kind] : Object.keys(level?.roots ?? {});
     return diffRows(`${where}.roots`, Object.fromEntries(kinds.map((k) => [k, level?.roots?.[k]?.value ?? null])), Object.fromEntries(kinds.map((k) => [k, args.roots])));
@@ -157,9 +160,12 @@ export const contextOps = [
     id: 'context.setSettings', summary: 'agent:ops.context.setSettings.summary', risk: 'guarded',
     input: z.object({
       place: z.string().max(4096).nullable().optional().describe(D('setSettings', 'place')),
-      kind: z.enum(['instruction', 'skill', 'mcp']).optional().describe(D('setSettings', 'kind')),
+      kind: z.enum(['instruction', 'skill', 'mcp', 'hooks']).optional().describe(D('setSettings', 'kind')),
       value: z.unknown().optional().describe(D('setSettings', 'value')),
       roots: z.array(z.string().max(4096)).max(50).nullable().optional().describe(D('setSettings', 'roots')),
+      addRoot: z.string().min(1).max(4096).optional().describe(D('setSettings', 'addRoot')),
+      removeRoot: z.string().min(1).max(4096).optional().describe(D('setSettings', 'removeRoot')),
+      revertRows: z.array(z.string().min(1).max(128)).max(500).optional().describe(D('setSettings', 'revertRows')),
       add: z.boolean().optional().describe(D('setSettings', 'add')),
       remove: z.boolean().optional().describe(D('setSettings', 'remove')),
       cwd: z.string().max(4096).optional().describe(A('cwd')),
@@ -342,6 +348,49 @@ export const contextOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-row'], positional: ['kind'] } },
     legacyCommand: 'setDocRow',
     handler: (ctx, { kind, key, keys, on, place, cwd }) => run(ctx, () => ctx.context.setDocRow({ kind, key, keys, on, place, cwd }, ctx.actor)),
+  }),
+  defineOp({
+    id: 'context.revertDocRows', summary: 'agent:ops.context.revertDocRows.summary', risk: 'guarded',
+    input: z.object({
+      kind: z.enum(['instruction', 'skill']).describe(D('setDocRow', 'kind')),
+      keys: z.array(z.string().min(1).max(4096)).min(1).max(1000).describe(D('revertDocRows', 'keys')),
+      place: z.string().min(1).max(4096).describe(D('revertDocRows', 'place')),
+      reason,
+    }),
+    approvalWords: 'context',
+    confirm: async (_ctx, { kind, keys, place }) => ({
+      key: null, before: null,
+      rows: keys.map((k) => ({ path: `context.${kind}.${k}`, before: JSON.stringify('place'), after: JSON.stringify('inherited') })),
+      note: t('opsApproval.docRevert', { kind: t(`opsApproval.kind.${kind}`), name: keys.length > 1 ? `${keys[0]} (+${keys.length - 1})` : keys[0], place }),
+      // 戻すと、この場所で外していた物がまた渡りうる
+      loosens: true,
+    }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'doc-revert'], positional: ['kind'] } },
+    legacyCommand: 'revertDocRows',
+    handler: (ctx, { kind, keys, place }) => run(ctx, () => ctx.context.revertDocRows({ kind, keys, place }, ctx.actor)),
+  }),
+  defineOp({
+    id: 'context.scopes', summary: 'agent:ops.context.scopes.summary', risk: 'read',
+    input: z.object({}),
+    output: z.object({ places: z.array(loose) }).passthrough(),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'scopes'] } },
+    legacyCommand: 'contextScopes',
+    uiHandler: (ctx) => exclusive(ctx, () => ctx.context.scopes()),
+    handler: (ctx) => run(ctx, () => exclusive(ctx, () => ctx.context.scopes())),
+  }),
+  defineOp({
+    id: 'context.removePlace', summary: 'agent:ops.context.removePlace.summary', risk: 'guarded',
+    input: z.object({ place: z.string().min(1).max(4096).describe(D('removePlace', 'place')), reason }),
+    approvalWords: 'context',
+    confirm: async (_ctx, { place }) => ({
+      key: null, before: null,
+      rows: diffRows('context.place', { path: place }, null),
+      note: t('opsApproval.contextSettings', { place }),
+      loosens: true,
+    }),
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['context', 'remove-place'], positional: ['place'] } },
+    legacyCommand: 'removeContextPlace',
+    handler: (ctx, { place }) => run(ctx, () => ctx.context.removePlace({ place }, ctx.actor)),
   }),
   defineOp({
     id: 'context.repairDocAgents', summary: 'agent:ops.context.repairDocAgents.summary', risk: 'guarded',

@@ -523,6 +523,7 @@ const SUITES = [
   './unit/server-hooks-unify-review.mjs',
   // Hook × エージェントの一覧（ADR 0338）: 行 ID・移行の式・旧の保存と同じ動き・一覧と実行時の一致
   './unit/hooks-agents.mjs',
+  './unit/hooks-agents-places.mjs',
   // 同じく、更新しただけの人のターンを main の値で固定して比べる（期待値をこのブランチの旧い道から作らない）
   './unit/hooks-main-pinned.mjs',
   // Claude の起動の記録を main の値で固定する（段 0。ADR 0340）
@@ -561,6 +562,8 @@ const SUITES = [
   './unit/context-roots.mjs',
   './unit/server-context.mjs',
   './unit/context-ui.mjs',
+  './unit/session-context-place.mjs',
+  './unit/context-scope-marks.mjs',
   // 設定 › プラグイン・右パネルの 4 タブ・フォルダーまとまり・絞り込み・鍵の吹き出し（web/context-tabs.mjs・lock-tip.mjs・context.mjs・session-context.mjs）
   './unit/context-tabs-and-lock-tip.mjs',
   './unit/context-panel-tabs.mjs',

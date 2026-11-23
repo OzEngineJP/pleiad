@@ -1,9 +1,13 @@
-// ==================== 設定 › プラグイン › Hooks: Hook × エージェントの表（ADR 0338） ====================
+// ==================== 設定 › プラグイン › Hooks: Hook × エージェントの表（ADR 0338・フォルダー別の設定は ADR 0348） ====================
 // docs/design-system.md「Hooks」。指示・Skills・外部 MCP と同じ一覧の部品（web/context-matrix.mjs）で、アイコンの意味だけを
 // 「そのエージェントのターンで実行する」と読み替える。表の中身はサーバーが組む（hooks.matrix。core/hooks-agents.mjs）。
-//   - Pleiad に登録: <data>/hooks.json の登録。追加・編集・削除はシート（web/hooks-unify-ui.mjs）
-//   - エージェントの設定 › ユーザー: 各エージェントの設定の Hook（管理者・Grok Build の設定は鍵つき）。詳細は行を開く（web/hooks-card.mjs の peekHook）
-//   - エージェントの設定 › 作業場所: 1 行（.claude/settings.json と .codex/hooks.json）。場所ごとの中身と「この場所で使うか」は会話の右の欄
+// 並びはほかのタブとそろえる（節の頭と印は web/context-scope-marks.mjs）:
+//   - スキャン場所: 作業場所の 1 行（Git のルートから作業フォルダーまで。.claude/settings.json と .codex/hooks.json）と、
+//     追加したスキャン場所ごとの Hook（row.kind: 'root'）。追加の操作は呼ぶ側（scan.addControl）
+//   - ユーザースコープの Hooks: 各エージェントの設定の Hook（管理者・Grok Build の設定は鍵つき）。詳細は行を開く（web/hooks-card.mjs の peekHook）
+//   - Pleiad に登録: <data>/hooks.json の登録。追加・編集・削除はシート（web/hooks-unify-ui.mjs）。追加は全体の設定のときだけ
+// フォルダーの設定（scope().place）では、一覧と保存に cwd を付け、この場所で変えた行に「● 変更」と「戻す」、上の場所から受け継いだ行に
+// 「website の設定」を添える。全体の設定では、別の設定にした場所を下の段に添える。フォルダーが見つからないときは読むだけ。
 // 押せないセル・スイッチは鍵（web/lock-tip.mjs）で、文は理由の細目（detail）ごと（hooks.matrix.tip.*）。
 // ほかのエージェントへ初めて広げるときは、その場で 1 回だけ確かめ、渡すときの注意（warnings）を並べる（それでも入れられる）。
 // 押した瞬間に見た目を変え、保存できなければ元へ戻して、下の固定の位置に理由を出す（work → context.saveFailed）。
@@ -16,6 +20,7 @@ import { addButton, agentLabel, eventLabel, openHookSheet, peekHook, scopeLabel 
 import { originMarks } from './context-tabs.mjs';
 import { openPlyHookSheet, plyPeek, reasonText, warnText } from './hooks-unify-ui.mjs';
 import { joinLockReasons } from './lock-tip.mjs';
+import { elsewhereText, overrideBadge, parentLink, placeName, revertButton, sectionHead, textButton } from './context-scope-marks.mjs';
 
 function button(text, className = 'btn', onClick) {
   const b = el('button', className, text);
@@ -122,20 +127,37 @@ function hooksFreshChanged(before, after) {
   return false;
 }
 
-export function createHooksMatrix({ cmd, work, saved, failed, status, opened = new Set(), onCount }) {
+/** パスの比べ方（区切り・末尾の区切り・大文字小文字をそろえる） */
+const samePath = (a, b) => {
+  const n = p => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return n(a) === n(b);
+};
+
+/**
+ * scope(): 設定する範囲 { place, parent, missing }（place: null は全体の設定）。onGo(path): その場所の設定へ移る（「website の設定」）。
+ * scanPlaces: 追加したスキャン場所 { added() → [{ path, from, here }], addControl() → 要素, remove(path) → Promise }。
+ * onCount(n, { changes }): タブの件数と、この場所の差分の数（全体なら全部の場所の合計。hooks.matrix の changes）
+ */
+export function createHooksMatrix({ cmd, work, saved, failed, status, opened = new Set(), onCount, scope = null, onGo = null, scan: scanPlaces = null }) {
   const root = el('section', 'cx-card hk-card');
   root.dataset.kind = 'hooks';
   let grid = null, ply = null, scan = null, loading = false, loadError = null, home = '';
   let ask = null, focus = null, ticket = 0;
   const confirmed = new Set();
   const short = p => (home && String(p ?? '').toLowerCase().replace(/\\/g, '/').startsWith(home.toLowerCase().replace(/\\/g, '/')) ? `~${String(p).slice(home.length)}` : String(p ?? ''));
+  const where = () => ({ place: null, parent: null, missing: false, ...(scope?.() ?? {}) });
+  const at = () => where().place ?? null;
+  /** フォルダーが見つからない: 読むだけ（押しても保存しない。追加・戻す・外すも出さない） */
+  const readOnly = () => Boolean(at() && where().missing);
+  /** フォルダーの設定なら、一覧と保存に cwd を付ける */
+  const withCwd = args => (at() ? { ...args, cwd: at() } : args);
 
   /** 一覧（hooks.matrix）・登録（hooks.list）・定義の詳細（hooks.scan）を読む。Codex の信頼状態（app-server を待つ）は後から重ねる */
   async function load() {
     const mine = ++ticket;
     loading = true; render();
     try {
-      const [m, view, sc] = await Promise.all([cmd('hooksMatrix', { trust: false }), cmd('plyHooks', {}).catch(() => null), cmd('scanHooks', { scope: 'user' }).catch(() => null)]);
+      const [m, view, sc] = await Promise.all([cmd('hooksMatrix', withCwd({ trust: false })), cmd('plyHooks', {}).catch(() => null), cmd('scanHooks', { scope: 'user' }).catch(() => null)]);
       if (mine !== ticket) return;
       grid = m; ply = view; scan = sc; home = sc?.home ?? home; loadError = null;
       rememberAgentLabels(m?.labels);
@@ -146,7 +168,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     } finally { if (mine === ticket) loading = false; }
     render();
     if (!grid?.trustPending && !scan?.trustPending) return;
-    const [m2, sc2] = await Promise.all([grid?.trustPending ? cmd('hooksMatrix', { trust: true }).catch(() => null) : null,
+    const [m2, sc2] = await Promise.all([grid?.trustPending ? cmd('hooksMatrix', withCwd({ trust: true })).catch(() => null) : null,
       scan?.trustPending ? cmd('scanHooks', { scope: 'user', trust: true }).catch(() => null) : null]);
     if (mine !== ticket) return;
     if (m2) { grid = m2; rememberAgentLabels(m2.labels); forgetGone(); }
@@ -161,9 +183,10 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     for (const c of [...confirmed]) if (!keys.has(c.slice(0, c.lastIndexOf(':')))) confirmed.delete(c);
   }
 
-  /** タブの件数: どれかのエージェントで実行する Hook の数（作業場所のまとめの行は Hook ではないので数えない）。読めないときは隠す */
+  /** タブの件数: どれかのエージェントで実行する Hook の数（作業場所のまとめの行は Hook ではないので数えない）。読めないときは隠す。2 つ目は差分の数 */
   function count() {
-    onCount?.(Array.isArray(grid?.rows) && !grid.unreadable ? grid.rows.filter(r => r.on && r.kind !== 'ws').length : null);
+    const ok = Array.isArray(grid?.rows) && !grid.unreadable;
+    onCount?.(ok ? grid.rows.filter(r => r.on && r.kind !== 'ws').length : null, { changes: ok ? (grid.changes ?? 0) : 0 });
   }
 
   /** 押した操作を送る。押す前の表を取っておき、失敗したら戻して描き直し、理由は work が下の固定の位置に出す */
@@ -188,7 +211,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
    */
   function toggleCell(row, agent, fk, now = false) {
     const cell = row.cells[agent];
-    if (!cell || cell.mode !== 'toggle') return;
+    if (!cell || cell.mode !== 'toggle' || readOnly()) return;
     const on = cell.state !== 'on';
     if (!now && cell.needsConfirm && (cell.stopsDevinImports || (on && !confirmed.has(`${row.key}:${agent}`)))) {
       ask = { key: row.key, agent, fk };
@@ -200,12 +223,13 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     const staysOn = on || Object.entries(row.cells).some(([a, c]) => a !== agent && c.state === 'on');
     focus = `[data-cx-fk="${CSS.escape(staysOn ? fk : `sw:${row.key}`)}"]`;
     mutate(g => { const r = g.rows.find(x => x.key === row.key); if (r) applyCellLocal(r, agent, on); },
-      revision => cmd('setHookAgent', { key: row.key, agent, on, revision }));
+      revision => cmd('setHookAgent', withCwd({ key: row.key, agent, on, revision })));
   }
   /** 行のスイッチ。押すと Devin の取り込みが止まり始める行（core の switchConfirm）は、保存の前に確認の帯を出す（覚えない）。now: 帯で押した後 */
   function toggleRow(row, now = false) {
     // 押すと、切れるオンがあればそれだけをまとめてオフにする（rowNextOn: false）。残っていなければ外す前の選択に戻す（rowNextOn: true）
     const on = Boolean(row.rowNextOn);
+    if (readOnly()) return;
     if (!now && row.switchConfirm) {
       ask = { key: row.key, agent: null, fk: `sw:${row.key}`, row: true };
       focus = '.cx-ask .btn-primary';
@@ -214,8 +238,38 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     }
     if (ask?.key === row.key) ask = null;
     focus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
+    // この場所で使わない（skipHere）にした行は、この場所で使うに戻す（hooks.setPlace）。表は保存の後に読み直す
+    if (row.skipHere && at()) {
+      mutate(() => {}, revision => cmd('setHookPlace', { place: at(), key: row.key, use: true, revision }), { rowSwitch: true });
+      return;
+    }
     mutate(g => { const r = g.rows.find(x => x.key === row.key); if (r) applyRowLocal(r, on); },
-      revision => cmd('setHookRow', { key: row.key, on, revision }), { rowSwitch: true });
+      revision => cmd('setHookRow', withCwd({ key: row.key, on, revision })), { rowSwitch: true });
+  }
+  /** 行の「戻す」: このフォルダーの差分を消して、上の場所（無ければ全体の設定）の選択に戻す。戻すと取り込みが止まり始めるなら先に確認の帯 */
+  function revertRow(row, now = false) {
+    const place = at();
+    if (!place || readOnly()) return;
+    if (!now && row.skipHere && row.switchConfirm) {
+      ask = { key: row.key, agent: null, fk: `rv:${row.key}`, row: true, revert: true };
+      focus = '.cx-ask .btn-primary';
+      render();
+      return;
+    }
+    const { parent } = where();
+    const from = parent ? t('context.scope.fromParent', { name: placeName(parent) }) : t('context.scope.fromGlobal');
+    if (ask?.key === row.key) ask = null;
+    focus = `[data-cx-fk="${CSS.escape(`sw:${row.key}`)}"]`;
+    work(async () => {
+      await cmd('revertHookRow', { cwd: place, key: row.key, revision: grid?.revision });
+      await load();
+      saved(t('context.scope.reverted', { from }));
+    });
+  }
+  /** 追加したスキャン場所を外す（保存は呼ぶ側の scan.remove） */
+  function removePlace(p) {
+    if (readOnly() || !scanPlaces?.remove) return;
+    work(async () => { await scanPlaces.remove(p); await load(); });
   }
   /** 全体のスイッチの鍵（切ってもオンのまま残るマス）の理由。理由ごとに 1 回 */
   function fixedReasons(row) {
@@ -245,7 +299,8 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
         if (!a.row && cell?.needsConfirm) confirmed.add(`${a.key}:${a.agent}`);
         ask = null;
         const r = findRow(a.key);
-        if (r && a.row) toggleRow(r, true);
+        if (r && a.revert) revertRow(r, true);
+        else if (r && a.row) toggleRow(r, true);
         else if (r) toggleCell(r, a.agent, a.fk, true);
       },
     });
@@ -272,6 +327,8 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
         const label = short3(a);
         const ariaLabel = t('hooks.matrix.runAria', { agent: label, name });
         if (v.state === 'lockon' || v.state === 'lockoff') return lockedAgentChip(a, v.cell, name, { ariaLabel, key: fk, keyAttr: 'cxFk', agentLabel: label });
+        // フォルダーが見つからない: 押せるマスも鍵にする（今の選択は見せる）
+        if (readOnly()) return lockedAgentChip(a, { ...v.cell, on: v.state === 'on', locked: true, tip: t('context.scope.readOnly') }, name, { ariaLabel, key: fk, keyAttr: 'cxFk', agentLabel: label });
         const note = v.cell?.note;
         return agentChip({ agent: a, state: v.state, cell: v.cell, name, agentLabel: label, key: fk, keyAttr: 'cxFk', onToggle: () => toggleCell(row, a, fk),
           ariaLabel: note ? t('hooks.matrix.noteAria', { label: ariaLabel, note }) : ariaLabel, title: note ? `${label}: ${note}` : label });
@@ -324,6 +381,29 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     return box;
   }
 
+  /**
+   * 行の下の段。作業場所の 1 行はスキャンの決まり（見つからないフォルダーではそのことを出す）。
+   * 全体の設定では、別の設定にした場所（overriddenAt）を添える
+   */
+  function rowSub(row) {
+    if (row.kind === 'ws') return readOnly() ? t('context.scope.sec.missingFolder') : t('context.scope.sec.rule');
+    const bits = [hookRowSub(row)];
+    if (!at()) { const s = elsewhereText(row.overriddenAt); if (s) bits.push(s); }
+    return bits.join(' · ');
+  }
+  /** 行の印（名前の右）: この場所で変えた「● 変更」＋「戻す」、上の場所から受け継いだ「website の設定」。全体の設定では付けない */
+  function rowMarks(row, name) {
+    const place = at();
+    if (!place) return [];
+    if (row.overridden) {
+      const out = [overrideBadge('changed')];
+      if (!readOnly()) out.push(revertButton({ parent: where().parent, name, key: `rv:${row.key}`, onRevert: () => revertRow(row) }));
+      return out;
+    }
+    if (row.from && !samePath(row.from, place)) return [parentLink(row.from, onGo)];
+    return [];
+  }
+
   function hookRow(list, row) {
     const name = hookRowName(row);
     const r = el('div', 'cx-row ag' + (row.on ? '' : ' off'));
@@ -339,7 +419,7 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     else if (['plugin', 'skill'].includes(row.scope)) nl.append(el('span', 'cbadge', row.scope === 'plugin' && row.plugin ? row.plugin : scopeLabel(row)));
     if (row.copyOf) { const from = grid.rows.find(x => x.key === row.copyOf)?.agent; if (from) nl.append(el('span', 'cbadge', t('hooks.row.copied', { agent: short3(from) }))); }
     if (row.kind !== 'reg' && row.kind !== 'ws' && row.agent) { const from = originMarks([row.agent]); if (from) nl.append(from); }
-    body.append(nl, el('span', 'p', hookRowSub(row)));
+    body.append(nl, el('span', 'p', rowSub(row)));
     if (row.kind === 'ws') r.append(body);
     else {
       const open = button('', 'cx-open');
@@ -349,13 +429,15 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
       open.onclick = () => { const k = `hook:${row.key}`; if (opened.has(k)) opened.delete(k); else opened.add(k); focus = `[data-cx-fk="${CSS.escape(`open:${row.key}`)}"]`; render(); };
       r.append(open);
     }
+    r.append(...rowMarks(row, name));
     const sw = wholeSwitch({
       state: row.rowMixed ? 'mixed' : row.on ? 'true' : 'false',
       fixed: Boolean(row.rowFixed) && !row.rowChangeableOn,
       fixedReason: fixedReasons(row),
       name,
       next: row.rowChangeableOn ? 'off' : row.rowRestore === 'was' ? 'restore' : 'on',
-      disabledReason: row.switchable ? null : (hookTip(row.switchLock ?? {}) ?? t('context.lockReason.own', { agent: short3(row.switchLock?.agent ?? row.agent) })),
+      disabledReason: readOnly() ? t('context.scope.readOnly')
+        : row.switchable ? null : (hookTip(row.switchLock ?? {}) ?? t('context.lockReason.own', { agent: short3(row.switchLock?.agent ?? row.agent) })),
       key: `sw:${row.key}`,
       keyAttr: 'cxFk',
       onToggle: () => toggleRow(row),
@@ -366,8 +448,62 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     if (row.kind !== 'ws' && opened.has(`hook:${row.key}`)) list.append(details(row));
   }
 
-  const tierHead = (name, sub) => { const h = el('div', 'cx-tierh'); h.append(el('span', 'n', name)); if (sub) h.append(el('span', null, sub)); return h; };
   const listOf = label => { const l = el('div', 'cx-list'); l.setAttribute('role', 'group'); l.setAttribute('aria-label', label); return l; };
+
+  /** 追加したスキャン場所の頭の行: フォルダー名（下の段にパス）と、この場所で足したなら「● 追加」＋「外す」、上の場所で足したなら「website の設定」 */
+  function placeHead(list, p, info) {
+    const r = el('div', 'cx-row hk-root');
+    r.dataset.root = p;
+    const ic = el('span', 'cx-ic'); ic.setAttribute('aria-hidden', 'true'); ic.append(matrixSvg(MATRIX_ICON.folder));
+    const body = el('span', 't');
+    const nl = el('span', 'nl');
+    const nm = el('span', 'nm mono', placeName(p)); nm.title = p;
+    nl.append(nm);
+    body.append(nl, el('span', 'p', short(p)));
+    r.append(ic, body);
+    if (info?.here) {
+      if (at()) r.append(overrideBadge('added'));
+      if (!readOnly() && scanPlaces?.remove) {
+        const b = textButton(t('context.scope.sec.removeScan'), 'weak', () => removePlace(p));
+        b.setAttribute('aria-label', t('context.scope.sec.removeScanAria', { path: p }));
+        b.dataset.cxFk = `rm:${p}`;
+        r.append(b);
+      }
+    } else if (info?.from && at()) r.append(parentLink(info.from, onGo));
+    list.append(r);
+  }
+
+  /** スキャン場所: 作業場所の 1 行と、追加した場所ごとの Hook（足した場所の一覧は scanPlaces.added、Hook は一覧の root の行）。最後に追加の操作 */
+  function scanSection() {
+    const box = el('div', 'cx-block');
+    box.append(sectionHead(t('context.scope.sec.scan'), { tip: t('context.scope.sec.scanTip') }));
+    const ws = grid.rows.find(r => r.kind === 'ws');
+    const placeRows = grid.rows.filter(r => r.group === 'place' && r.kind !== 'ws');
+    if (ws || placeRows.length) {
+      const list = listOf(t('context.scope.sec.rule'));
+      if (ws) hookRow(list, ws);
+      for (const row of placeRows) hookRow(list, row);
+      box.append(list);
+    }
+    const rootRows = grid.rows.filter(r => r.group === 'root');
+    const added = Array.isArray(scanPlaces?.added?.()) ? scanPlaces.added() : [];
+    const used = new Set();
+    const roots = [...added.map(a => ({ path: a.path, info: a })),
+      ...[...new Set(rootRows.map(r => r.root).filter(Boolean))].filter(p => !added.some(a => samePath(a.path, p))).map(p => ({ path: p, info: null }))];
+    for (const { path: p, info } of roots) {
+      const list = listOf(placeName(p));
+      placeHead(list, p, info);
+      const rs = rootRows.filter(r => samePath(r.root, p));
+      for (const row of rs) { used.add(row.key); hookRow(list, row); }
+      if (!rs.length) list.append(el('p', 'cx-empty', t('context.scope.sec.nothing')));
+      box.append(list);
+    }
+    // 場所の分からない root の行（古い一覧）も落とさない
+    const rest = rootRows.filter(r => !used.has(r.key));
+    if (rest.length) { const list = listOf(t('context.scope.sec.scan')); for (const row of rest) hookRow(list, row); box.append(list); }
+    if (!readOnly()) { const add = scanPlaces?.addControl?.(); if (add) box.append(add); }
+    return box;
+  }
 
   /** 読めなかったファイル・全体の停止。0 件と取り違えないよう一覧の上に出す */
   function fileNotes(host) {
@@ -406,12 +542,9 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     const fk = active && root.contains(active) ? active.dataset?.cxFk : '';
     root.replaceChildren();
     count();
-    const head = el('div', 'cx-khead');
-    const title = el('h4', null, 'Hooks'); title.id = 'cxKind-hooks';
-    root.setAttribute('aria-labelledby', title.id);
-    head.append(title, el('span', 'cx-sub hk-lead', t('hooks.lead')));
-    if (loading && grid) { const label = el('span', 'pending-label'); label.append(runMark(t('pending.searching')), t('pending.searching')); head.append(label); }
-    root.append(head);
+    // 見出し（「Hooks」）は呼ぶ側のタブが持つ。読み直しの間だけ、上に「探しています」を置く
+    root.setAttribute('aria-label', 'Hooks');
+    if (loading && grid) { const label = el('p', 'pending-label hk-pending'); label.append(runMark(t('pending.searching')), t('pending.searching')); root.append(label); }
     if (!grid) {
       if (loadError) {
         const repairable = ['UNREADABLE', 'HOOKS_BROKEN'].includes(loadError.code);
@@ -429,40 +562,33 @@ export function createHooksMatrix({ cmd, work, saved, failed, status, opened = n
     }
     if (grid.orphans?.length) root.append(el('p', 'cx-note', t('hooks.matrix.orphans', { n: grid.orphans.length })));
 
-    // Pleiad に登録
+    const global = !at();
+
+    // 1. スキャン場所
+    root.append(scanSection());
+
+    // 2. ユーザースコープの Hooks（各エージェントの設定。管理者の Hook も）
+    const own = el('div', 'cx-block');
+    own.append(sectionHead(t('context.scope.sec.userHooks')));
+    fileNotes(own);
+    const userList = listOf(t('hooks.matrix.userAria'));
+    const userRows = grid.rows.filter(r => r.group === 'own' || r.group === 'admin');
+    for (const row of userRows) hookRow(userList, row);
+    if (!userRows.length) userList.append(el('p', 'cx-empty', t('context.scope.sec.nothing')));
+    if (scan && !readOnly()) userList.append(addButton(t('hooks.scope.addUser'), () => openHookSheet(sheetCtx(), {})));
+    own.append(userList);
+    root.append(own);
+
+    // 3. Pleiad に登録（追加は全体の設定のときだけ。フォルダーでは、どのエージェントで実行するかだけを変える）
     const reg = el('div', 'cx-block');
-    const sec1 = el('div', 'cx-sec'); sec1.append(el('span', 'n', t('hooks.matrix.section')));
-    reg.append(sec1);
+    reg.append(sectionHead(t('context.scope.sec.plyRegistered'), { right: global ? [el('span', null, t('context.ply.scopePlain'))] : [] }));
     const regList = listOf(t('hooks.matrix.regAria'));
     const regRows = grid.rows.filter(r => r.group === 'ply');
     for (const row of regRows) hookRow(regList, row);
     if (!regRows.length) regList.append(el('p', 'cx-empty', t('hooks.matrix.regEmpty')));
-    regList.append(addButton(t('hooks.add'), () => openPlyHookSheet({ cmd, onSaved: async () => { saved(t('hooks.saved')); await reload(); } })));
+    if (global) regList.append(addButton(t('hooks.add'), () => openPlyHookSheet({ cmd, onSaved: async () => { saved(t('hooks.saved')); await reload(); } })));
     reg.append(regList);
     root.append(reg);
-
-    // エージェントの設定
-    const own = el('div', 'cx-block');
-    const sec2 = el('div', 'cx-sec'); sec2.append(el('span', 'n', t('context.matrix.agentSettings')));
-    own.append(sec2);
-    const user = el('div', 'cx-tier');
-    user.append(tierHead(t('context.tier.user')));
-    fileNotes(user);
-    const userList = listOf(t('hooks.matrix.userAria'));
-    for (const row of grid.rows.filter(r => r.group === 'own' || r.group === 'admin')) hookRow(userList, row);
-    if (scan) userList.append(addButton(t('hooks.matrix.addNative'), () => openHookSheet(sheetCtx(), {})));
-    user.append(userList);
-    own.append(user);
-    const ws = grid.rows.find(r => r.kind === 'ws');
-    if (ws) {
-      const place = el('div', 'cx-tier');
-      place.append(tierHead(t('context.tier.place'), t('context.tier.placeSub')));
-      const placeList = listOf(t('hooks.matrix.placeAria'));
-      hookRow(placeList, ws);
-      place.append(placeList);
-      own.append(place);
-    }
-    root.append(own);
     root.append(agentLegend(grid.agents));
 
     const pending = focus;

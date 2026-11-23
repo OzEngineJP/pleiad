@@ -1598,6 +1598,13 @@
         "group": "The group. ply is Pleiad registrations, own is agent settings, place is the workspace.",
         "agent": "The agent id. Omit to change the switch of every row in the group."
       },
+      "revertRow": {
+        "summary": "Return hook rows changed in a folder to the inherited setting (the parent folder or global). Reverting can make hooks that were off run again, so writing needs the user's approval.",
+        "keys": "Row keys to revert."
+      },
+      "removePlace": {
+        "summary": "Delete all hook changes of a folder so it follows the inherited settings. Works for folders that no longer exist. Writing needs the user's approval."
+      },
       "setPlace": {
         "summary": "Decides per place whether a hook is used there. Using it, not using an agent's own definition or the workspace hooks, or dropping the override needs the user's approval.",
         "place": "The absolute path of the workspace.",
@@ -1639,7 +1646,10 @@
         "value": "The setting for that kind ({ owner, user, directory, disabled?, prefer? }). null goes back to the setting above.",
         "roots": "Extra folders to search. null goes back to the setting above.",
         "add": "true adds the place to the list.",
-        "remove": "true removes the place from the list (its overrides go too)."
+        "remove": "true removes the place from the list (its overrides go too).",
+        "addRoot": "Path of a scan place to add (needs kind; hooks is allowed).",
+        "removeRoot": "Path of a scan place to remove (only ones added at this place).",
+        "revertRows": "Row names to return to the inherited setting (kind mcp or skill)."
       },
       "plyInstructions": {
         "summary": "Pleiad's instructions (the items added to the agent in each conversation, and the size guideline)."
@@ -1689,6 +1699,18 @@
         "key": "Item key (__workspace__, skill:<name>, or file:<path>). Omit when passing keys.",
         "keys": "Array of item keys to switch together.",
         "on": "true to turn on, false to turn off."
+      },
+      "revertDocRows": {
+        "summary": "Return instruction or Skill rows changed in a folder to the inherited setting (the parent folder or global). Reverting can deliver items that were off again, so the user must approve.",
+        "keys": "Item keys to revert (__workspace__, skill:<name>, file:<path>).",
+        "place": "Folder path."
+      },
+      "scopes": {
+        "summary": "Folders in Settings › Plugins: for each saved folder, whether it exists, its parent folder and how many settings it changes (per kind)."
+      },
+      "removePlace": {
+        "summary": "Delete all settings of a folder (scan places, instructions, Skills, external MCP and Hooks) so it follows the inherited settings. Works for folders that no longer exist. The user must approve.",
+        "place": "Folder path."
       },
       "repairDocAgents": {
         "summary": "Move an unreadable instructions and Skills table settings file (context-agents.json) to context-agents.broken-<time>.json (not deleted) and return to the behaviour before the table was touched. Does nothing when the file is readable. Needs the user's approval."

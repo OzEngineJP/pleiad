@@ -62,7 +62,8 @@ export default async function (t) {
     // 名前で外した設定・同じ名前の定義の選択も新しい名前へ追随する（既定と場所の両方）
     const registry = (await client.cmd('listPlyMcp', {})).file ?? (await client.cmd('scanContext', { cwd })).entries.find(e => e.name === 'remote' && e.origins[0].source === 'ply')?.path;
     await client.cmd('setContextSettings', { place: null, kind: 'mcp', value: { owner: 'native', user: null, directory: null, disabled: ['remote'], prefer: { remote: registry, other: path.join(cwd, '.mcp.json') } } });
-    await client.cmd('setContextSettings', { cwd, place: cwd, kind: 'mcp', value: { owner: 'native', user: null, directory: null, disabled: ['remote'] } });
+    // 場所は受け継ぐ値との差分だけを持つ（形式 4）。既定と同じ disabled は持たないので、場所でも別の名前を外して場所の disabled を残す
+    await client.cmd('setContextSettings', { cwd, place: cwd, kind: 'mcp', value: { owner: 'native', user: null, directory: null, disabled: ['remote', 'local-only'] } });
     const follow = await client.cmd('renamePlyMcp', { name: 'remote', to: 'remote3' });
     const followView = await client.cmd('contextSettings', { cwd });
     const def = followView.defaults.kinds.mcp.value, here = followView.places.find(p => p.current)?.kinds.mcp.value;

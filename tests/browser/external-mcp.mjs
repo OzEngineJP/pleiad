@@ -87,7 +87,8 @@ try {
   const { ctx, page } = await session();
   const text = await page.locator(card).innerText();
   check(!text.includes('エージェントに任せる') && !text.includes('Pleiad がそろえる'), '担当の 2 択は無い');
-  check(text.includes('Pleiad に登録') && text.includes('エージェントの設定'), '2 つの組（Pleiad に登録・エージェントの設定）');
+  check(text.includes('Pleiad に登録') && text.includes('ユーザースコープの外部 MCP') && text.indexOf('ユーザースコープの外部 MCP') < text.indexOf('Pleiad に登録'),
+    '2 つの組（ユーザースコープの外部 MCP → Pleiad に登録の順）');
   if (process.env.EXTERNAL_MCP_ROWS) console.log(await page.locator(`${card} .cx-row`).evaluateAll(rs => rs.map(r => r.className + ' | ' + r.querySelector('.nm')?.textContent + ' | ' + r.innerText.length)));
   check(await row(page, 'reg').count() === 1 && await row(page, 'cl').count() === 1 && await row(page, 'cx').count() === 1, '名前ごとに 1 行（登録・Claude だけ・Codex だけ）');
   check(await row(page, 'both').locator('.cx-src[role=img]').count() === 1 && await row(page, 'both').locator('.cx-src .sm.be-claude, .cx-src .sm.be-codex').count() === 2 && await row(page, 'both').locator('.cx-src a, .cx-src button').count() === 0, 'Claude と Codex の設定にある名前は、出どころのロゴに両方が入る（1 つの img で、押せない）');

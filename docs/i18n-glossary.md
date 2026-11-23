@@ -161,12 +161,22 @@
 | エージェント任せ | Left to the agent |
 | 指示 / 指示ファイル | Instructions / Instruction files |
 | 全体の設定 / すべての場所に共通 | Global settings / Shared by all locations |
-| この場所だけ変える / このフォルダーだけの設定 | Change for this location only / Settings for this folder only |
+| 範囲（設定 › プラグインのタブの上。全体の設定か、どのフォルダーの設定か） | Settings scope |
+| <フォルダー> の設定 / 別のフォルダーを選ぶ… | <folder> settings / Choose another folder… |
+| 全体の設定どおり / このフォルダーで n 件変更 / <親> の設定から n 件変更（右パネルの場所の 1 行） | Same as global settings / n changes in this folder / n changes from <parent> settings |
+| この場所の設定を開く（右パネル） | Open this location's settings |
+| 変更（この範囲で変えた行の札） / 追加（このフォルダーで追加したスキャン場所の札） | Changed / Added |
+| 戻す（行の差分を消して上の設定に戻す） / <上> に戻す…（範囲の丸ごと） | Revert / Return to <parent>… |
+| 設定を消す…（見つからないフォルダーの設定） | Delete settings… |
+| <場所> で別の設定 / n か所で別の設定（全体の設定の行の注記） | Different in <place> / Different in n places |
 | Pleiad の指示 / ファイルの指示 | Pleiad's instructions / Instructions from files |
 | 既定 / 既定から変更 / 委譲と連動（Pleiad の指示の札） | Default / Changed from default / Linked to delegation |
 | 入れる会話（すべて / 依頼元だけ / 委譲された会話だけ） | Add to (All / Requesting conversations only / Delegated conversations only) |
 | ユーザー / 作業場所（コンテキストの段） | User / Working directory |
-| 探す場所を足す / 追加した場所 | Add a location to search / Added location |
+| スキャン場所 / スキャン場所を追加 / 外す（追加したスキャン場所を一覧から外す） | Scan locations / Add scan location / Remove |
+| Git のルートから作業フォルダーまで（すべてのフォルダーに共通の規則） | From the Git root to the working folder |
+| ユーザースコープの指示 / Skills / 外部 MCP / Hooks | User-scope instructions / Skills / external MCP / Hooks |
+| 追加した場所（足した場所で見つかったもの） | Added location |
 | 手元で動かす / URL につなぐ | Run locally / Connect to URL |
 | 伏せ字（で表示） | masked |
 | 鍵の保管庫 / OS の資格情報 | keychain / OS credential store |

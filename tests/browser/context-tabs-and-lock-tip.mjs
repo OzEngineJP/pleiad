@@ -195,7 +195,7 @@ try {
       && await page.locator('#cx-panel-instruction .cx-legend.names').count() >= 1,
       '段 2・3: 指示・Skills・Hooks に担当 2 択が無く、量の目安は初期折りたたみ、作業場所 summaryRow・凡例を表示',
     );
-    const instTotal = await page.locator('#cx-panel-instruction .cx-sec > .cx-doc-total').textContent();
+    const instTotal = await page.locator('#cx-panel-instruction .cx-sec .cx-doc-total').textContent();
     check(/^約 [\d,]+ トークン$/.test(instTotal ?? ''), '「エージェントの設定」の見出しの右に、渡っているファイルの指示の量の合計を出す（モックどおり）', instTotal);
     await page.locator('#cx-panel-instruction details.cx-fold > summary').click();
     check(await page.locator('#cx-panel-instruction details.cx-fold').evaluate(el => el.open) === true, '量の目安の折りたたみを開くと中身が見える');
@@ -517,7 +517,7 @@ try {
     await page.setViewportSize({ width: 1280, height: 820 });
     check(true, 'スクロールで鍵アイコンが隠れると吹き出しを閉じる');
 
-    // ==================== 2. Desktop 1280 Light: 会話の右パネル ====================
+    // ==================== 2. Desktop 1280 Light: 会話の右パネル（ADR 0348: 場所の 1 行と「この場所の設定を開く」だけ） ====================
     await closeSettings(page);
     await page.waitForSelector(`[data-session="${managed.sessionId}"]`, { state: 'visible', timeout: 15000 });
     await page.locator(`[data-session="${managed.sessionId}"]`).first().click();
@@ -525,107 +525,116 @@ try {
     await page.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
     await page.locator('#sessionMore').click();
     await page.getByRole('menuitem', { name: /プラグイン/ }).click();
-    await page.waitForSelector('.file-preview-content .scx [data-act="placeStart"]', { state: 'visible', timeout: 15000 });
+    await page.waitForSelector('.file-preview-content .scx [data-act="placeOpen"]', { state: 'visible', timeout: 15000 });
     await page.setViewportSize({ width: 1280, height: 820 });
-    check((await page.locator('.file-preview-content .scx .cx-tabs').count()) === 0, '右パネル通常面（編集前）には 4 タブを出さない');
+    await page.waitForFunction(() => document.querySelector('.file-preview-content .scx-place .s'), null, { timeout: 15000 });
+    const face = await page.locator('.file-preview-content .scx-place').evaluate(n => ({
+      code: n.querySelector('code')?.textContent, s: n.querySelector('.s')?.textContent ?? '', chg: Boolean(n.querySelector('.s.chg')),
+      sw: n.querySelectorAll('.cx-sw, .cx-ag').length,
+    }));
+    check((await page.locator('.file-preview-content .scx .cx-tabs').count()) === 0
+      && (await page.locator('.file-preview-content .scx [data-act="placeStart"]').count()) === 0
+      && face.code === repo && face.sw === 0,
+      '右パネルは 4 タブも編集の入口も出さず、場所の 1 行（パス・状態）と「この場所の設定を開く」だけ', face);
+    check(face.chg && face.s.length > 0, '右パネルの場所の 1 行は、このフォルダーに変更があることを示す（外部 MCP をこのフォルダーで変えてある）', face);
+    await shoot(page, 'context-agents-1280-light-panel-place.png');
 
-    await page.locator('.file-preview-content .scx [data-act="placeStart"]').click();
-    await page.waitForFunction(() => Number(document.querySelector('#scx-tab-instruction .c')?.textContent) >= 10, null, { timeout: 15000 });
-    const scxTabs = await page.locator('.file-preview-content .scx .cx-tabs [role="tab"]').evaluateAll(els =>
-      els.map(e => ({ id: e.dataset.tab, cnt: e.querySelector('.c')?.textContent })));
-    check(scxTabs.map(x => x.id).join(',') === 'instruction,skill,mcp,hooks' && Number(scxTabs[0].cnt) >= 10 && Number(scxTabs[1].cnt) >= 9,
-      '右パネル「この場所だけ変える」に入ると 4 タブ・件数が出る', scxTabs);
-    // Hooks の表（hooks.matrix の cwd つき）は遅れて届く
-    await page.waitForFunction(() => document.querySelector('#scx-panel-hooks [data-row] .cx-sw'), null, { timeout: 15000 }).catch(() => {});
+    // 「この場所の設定を開く」→ 設定 › プラグインを、範囲をこのフォルダーにして開く
+    await page.locator('.file-preview-content .scx [data-act="placeOpen"]').click();
+    await page.waitForFunction(name => document.body.classList.contains('settings')
+      && (document.querySelector('#contextPanel .scope-btn')?.textContent ?? '').includes(name), path.basename(repo), { timeout: 15000 });
+    check(true, '右パネルの「この場所の設定を開く」で、設定 › プラグインが範囲をこのフォルダーにして開く');
+    await page.locator('#cx-tab-instruction').click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.grp'), null, { timeout: 15000 });
     check(
-      await page.locator('#scx-panel-instruction .cx-seg, #scx-panel-skill .cx-seg').count() === 0
-      && await page.locator('#scx-panel-instruction .cx-ags, #scx-panel-skill .cx-ags').count() === 0
-      && await page.locator('#scx-panel-hooks .cx-seg, #scx-panel-hooks .cx-ags').count() === 0
-      && await page.locator('#scx-panel-hooks [data-row] .cx-sw').count() === 1
-      && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'CLAUDE.md' }).first().locator('.cx-sw').count() === 1
-      && await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-sw').count() === 1,
-      '右パネル編集: 指示・Skills・Hooks には担当 2 択とエージェント列を出さず、利用者 CLAUDE.md・作業場所 AGENTS.md・利用者の Hook の行スイッチを出す',
-      await page.locator('#scx-panel-hooks').textContent(),
-    );
-    const scxTok = await page.locator('#scx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-tok').textContent().catch(() => null);
-    check(/^約 [\d,]+$/.test(scxTok ?? '') && await page.locator('#scx-panel-skill .cx-tok').count() === 0,
-      '右パネル編集: 指示の行の右に量を出し（モックどおり）、Skills には出さない', scxTok);
-    await shoot(page, 'context-agents-1280-light-panel-inst.png');
+      await page.locator('#cx-panel-instruction .cx-seg, #cx-panel-skill .cx-seg').count() === 0
+      && await page.locator('#cx-panel-instruction .cx-row', { hasText: 'AGENTS.md' }).first().locator('.cx-sw').count() === 1,
+      'フォルダーの設定: 指示には担当 2 択を出さず、作業場所の AGENTS.md の行スイッチを出す');
+    await shoot(page, 'context-agents-1280-light-folder-inst.png');
 
-    // 右パネルの 9 件 rules まとまりの開閉と mixed 一括切替（リポジトリの .claude/rules は鍵で押せないので、探す場所に足した team-rules で試す）
-    const scxArchGrp = page.locator('#scx-panel-instruction .cx-row.grp', { hasText: 'team-rules' }).last();
-    await scxArchGrp.locator('.cx-tw').click();
-    const scxKids = page.locator('#scx-panel-instruction .cx-row.kid');
-    check((await scxKids.count()) >= 9, '右パネルでも >8 のまとまりを開いて子行を出せる');
-    // 右パネルも左と同じ動き（ADR 0337 §決定 4 の 2026-11-17 改訂）: 子を 1 つ外す → まとまりは一部オン → 押すと変えられるオンをまとめてオフ
-    // → もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）
-    const scxGrpSw = scxArchGrp.locator('.cx-sw');
-    const scxFirstKid = scxKids.first().locator('.cx-sw');
-    await scxFirstKid.click();
-    await page.waitForFunction(() => document.querySelector('#scx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
-    check((await scxGrpSw.getAttribute('aria-checked')) === 'mixed' && (await scxGrpSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
-      '右パネルでも、子を 1 つ外すとまとまりは一部オン（押すと変えられる分をまとめてオフ）', await scxGrpSw.getAttribute('aria-label'));
-    await scxGrpSw.click();
+    // フォルダーの設定でも、まとまり（>8 の rules）の開閉と一部オンの一括切替は全体の設定と同じ動き（ADR 0337 §決定 4）
+    const fArchGrp = page.locator('#cx-panel-instruction .cx-row.grp', { hasText: 'team-rules' }).last();
+    await fArchGrp.locator('.cx-tw').click();
+    const fKids = page.locator('#cx-panel-instruction .cx-row.kid');
+    check((await fKids.count()) >= 9, 'フォルダーの設定でも >8 のまとまりを開いて子行を出せる');
+    const fGrpSw = fArchGrp.locator('.cx-sw');
+    const fFirst = fKids.first();
+    const fFirstKey = await fFirst.getAttribute('data-key');
+    await fFirst.locator('.cx-sw').click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.kid .ovb'), null, { timeout: 10000 });
+    check((await fFirst.locator('.ovb').count()) === 1 && (await fFirst.locator('.tbtn.rv').count()) === 1,
+      'フォルダーの設定で変えた行に「● 変更」と「戻す」が付く', await fFirst.innerText());
+    const globalRow = (await client.cmd('docMatrix', { kind: 'instruction', cwd: home, place: null })).rows.find(r => r.key === fFirstKey);
+    check(globalRow?.agents?.claude?.on !== false && (globalRow?.on ?? true) !== false, 'フォルダーで外しても、全体の設定の行はそのまま', globalRow);
+    check((await fGrpSw.getAttribute('aria-checked')) === 'mixed' && (await fGrpSw.getAttribute('aria-label')).includes('変更できる分をまとめてオフにする'),
+      'フォルダーの設定でも、子を 1 つ外すとまとまりは一部オン（押すと変えられる分をまとめてオフ）', await fGrpSw.getAttribute('aria-label'));
+    await fGrpSw.click();
     await page.waitForFunction(() => {
-      const kids = [...document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')];
+      const kids = [...document.querySelectorAll('#cx-panel-instruction .cx-row.kid .cx-sw')];
       return kids.length >= 9 && kids.every(s => s.getAttribute('aria-checked') === 'false');
     }, null, { timeout: 10000 });
-    check((await scxGrpSw.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
-      '右パネルでも、まとまりを押すと全部の子がオフになり、次は「外す前の選択に戻す」', await scxGrpSw.getAttribute('aria-label'));
-    await scxGrpSw.click();
-    await page.waitForFunction(() => (document.querySelectorAll('#scx-panel-instruction .cx-row.kid .cx-sw')[1])?.getAttribute('aria-checked') !== 'false', null, { timeout: 10000 });
-    check((await scxFirstKid.getAttribute('aria-checked')) === 'false' && (await scxGrpSw.getAttribute('aria-checked')) === 'mixed',
-      '右パネルでも、もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）');
+    check((await fGrpSw.getAttribute('aria-checked')) === 'false' && (await fGrpSw.getAttribute('aria-label')).includes('外す前の選択に戻す'),
+      'フォルダーの設定でも、まとまりを押すと全部の子がオフになり、次は「外す前の選択に戻す」', await fGrpSw.getAttribute('aria-label'));
+    await fGrpSw.click();
+    await page.waitForFunction(() => (document.querySelectorAll('#cx-panel-instruction .cx-row.kid .cx-sw')[1])?.getAttribute('aria-checked') !== 'false', null, { timeout: 10000 });
+    check((await fFirst.locator('.cx-sw').getAttribute('aria-checked')) === 'false' && (await fGrpSw.getAttribute('aria-checked')) === 'mixed',
+      'フォルダーの設定でも、もう一度押すと外す前の選択に戻る（最初に外していた 1 件はオンにしない）');
+    await shoot(page, 'context-agents-1280-light-folder-changed.png');
+    // 「戻す」: このフォルダーの差分を消して、全体の設定の選択に戻る
+    await fFirst.locator('.tbtn.rv').click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-instruction .cx-row.kid .cx-sw')?.getAttribute('aria-checked') !== 'false', null, { timeout: 10000 });
+    await page.waitForFunction(k => !document.querySelector(`#cx-panel-instruction .cx-row.kid[data-key="${CSS.escape(k)}"] .ovb`), fFirstKey, { timeout: 10000 });
+    check(true, '「戻す」で、その行はフォルダーの差分が消えて全体の設定の選択（オン）に戻り、「● 変更」も消える');
 
-    // 右パネルの sticky & Skills 絞り込み
-    await page.locator('#scx-tab-skill').click();
-    await page.waitForSelector('#scx-panel-skill .cx-find input', { state: 'visible', timeout: 10000 });
-    await shoot(page, 'context-agents-1280-light-panel-skills.png');
-    const scxFind = page.locator('#scx-panel-skill .cx-find input');
-    await scxFind.click();
-    await scxFind.pressSequentially('r-skill-4');
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.kid .nm')].some(n => n.textContent === 'r-skill-4'), null, { timeout: 5000 });
-    await scxFind.fill('no-right-skill-xyz');
-    check((await page.locator('#scx-panel-skill').innerText()).includes('見つかりません'), '右パネル Skills でも 0 件で「見つかりません」が出る');
-    await scxFind.press('Escape');
-    check((await scxFind.inputValue()) === '', '右パネル Skills の Escape で入力が空に戻る');
-
-    // 右パネルでも、絞り込み中のまとまりスイッチは当たった行だけを切り替える
-    await scxFind.fill('r-skill-1');
-    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
-    const scxOnly = page.locator('#scx-panel-skill .cx-row.grp .cx-sw');
+    // フォルダーの設定の Skills 絞り込み
+    await page.locator('#cx-tab-skill').click();
+    await page.waitForSelector('#cx-panel-skill .cx-find input', { state: 'visible', timeout: 10000 });
+    const fFind = page.locator('#cx-panel-skill .cx-find input');
+    await fFind.click();
+    await fFind.pressSequentially('r-skill-4');
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.kid .nm')].some(n => n.textContent === 'r-skill-4'), null, { timeout: 5000 });
+    await fFind.fill('no-right-skill-xyz');
+    check((await page.locator('#cx-panel-skill').innerText()).includes('見つかりません'), 'フォルダーの設定の Skills でも 0 件で「見つかりません」が出る');
+    await fFind.press('Escape');
+    check((await fFind.inputValue()) === '', 'フォルダーの設定の Skills の Escape で入力が空に戻る');
+    await fFind.fill('r-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    const fOnly = page.locator('#cx-panel-skill .cx-row.grp .cx-sw');
     // .codex/skills の行は Codex だけがオン（鍵なしのマス 5 つのうち 1 つ）なので、見えている 1 行だけから「一部オン」と決まる
-    check((await scxOnly.count()) === 1 && (await scxOnly.getAttribute('aria-checked')) === 'mixed', '右パネルの絞り込み中のスイッチは見えている行だけから「一部オン」と決まる', await scxOnly.getAttribute('aria-label'));
-    await scxOnly.click();
-    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
-    await scxFind.press('Escape');
-    await page.waitForFunction(() => [...document.querySelectorAll('#scx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
-    check(true, '右パネルでも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
-    // 外した 1 件は、もう一度絞り込んでスイッチを押すと外す前の選択に戻る
-    await scxFind.fill('r-skill-1');
-    await page.waitForFunction(() => document.querySelectorAll('#scx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
-    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 5000 });
-    await scxOnly.click();
-    await page.waitForFunction(() => document.querySelector('#scx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
-    await scxFind.press('Escape');
+    check((await fOnly.count()) === 1 && (await fOnly.getAttribute('aria-checked')) === 'mixed', 'フォルダーの設定の絞り込み中のスイッチは見えている行だけから「一部オン」と決まる', await fOnly.getAttribute('aria-label'));
+    await fOnly.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    await fFind.press('Escape');
+    await page.waitForFunction(() => [...document.querySelectorAll('#cx-panel-skill .cx-row.grp .cx-sw')].some(s => s.getAttribute('aria-checked') === 'mixed'), null, { timeout: 5000 });
+    check(true, 'フォルダーの設定でも、絞り込み中の一括切替は当たった 1 件だけで、消すと「一部」に戻る');
+    await fFind.fill('r-skill-1');
+    await page.waitForFunction(() => document.querySelectorAll('#cx-panel-skill .cx-row.kid').length === 1, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'false', null, { timeout: 5000 });
+    await fOnly.click();
+    await page.waitForFunction(() => document.querySelector('#cx-panel-skill .cx-row.grp .cx-sw')?.getAttribute('aria-checked') === 'mixed', null, { timeout: 10000 });
+    await fFind.press('Escape');
+    await closeSettings(page);
 
     // ==================== 3. 360px 狭幅 & ダークモードの横はみ出し・サイズ検査 ====================
     await page.setViewportSize({ width: 360, height: 760 });
     await page.waitForFunction(() => innerWidth === 360);
+    // 設定を閉じると狭い幅では会話が前に出る。右パネル（プラグイン）を開き直して場所の 1 行を見る
+    if (!(await page.locator('.scx [data-act="placeOpen"]').isVisible().catch(() => false))) {
+      await page.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('#sessionMore').click();
+      await page.getByRole('menuitem', { name: /プラグイン/ }).click();
+      await page.waitForSelector('.file-preview-content .scx [data-act="placeOpen"]', { state: 'visible', timeout: 15000 });
+    }
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });
-      if (scheme === 'dark') {
-        await page.locator('#scx-tab-instruction').click();
-        await page.waitForFunction(() => !document.getElementById('scx-panel-instruction')?.hidden
-          && getComputedStyle(document.getElementById('scx-tab-skill')).backgroundColor === 'rgba(0, 0, 0, 0)', null, { timeout: 5000 });
-        await shoot(page, 'context-agents-360-dark-panel-inst.png');
-      }
+      if (scheme === 'dark') await shoot(page, 'context-agents-360-dark-panel-place.png');
       const rpLayout = await page.evaluate(() => {
         const sc = document.querySelector('.file-preview-content');
-        const tabH = Math.min(...[...document.querySelectorAll('.scx .cx-tab')].map(e => e.getBoundingClientRect().height));
-        return { pageOver: document.documentElement.scrollWidth > innerWidth, scOver: sc.scrollWidth > sc.clientWidth, tabH };
+        const go = document.querySelector('.scx [data-act="placeOpen"]')?.getBoundingClientRect();
+        return { pageOver: document.documentElement.scrollWidth > innerWidth, scOver: sc ? sc.scrollWidth > sc.clientWidth : false, goH: go?.height ?? 0 };
       });
-      check(!rpLayout.pageOver && !rpLayout.scOver && rpLayout.tabH >= 38, `360px ${scheme} 右パネル編集で横にはみ出さない`, rpLayout);
+      check(!rpLayout.pageOver && !rpLayout.scOver && rpLayout.goH >= 32, `360px ${scheme} 右パネルの場所の 1 行が横にはみ出さず、ボタンが押せる大きさ`, rpLayout);
     }
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });

@@ -51,7 +51,7 @@ export default async function (t) {
     const settings = createContextSettings(dataDir, home);
     const now = await settings.get(sub);
     const stored = JSON.parse(await fs.readFile(file, 'utf8'));
-    t.ok('読み込むと形式 3 に置き換わる', stored.version === 3);
+    t.ok('読み込むと形式 4 に置き換わる', stored.version === 4);
     t.ok('移行の前に形式 2 のバックアップを取る（元のバイト列のまま）', (await fs.readFile(path.join(dataDir, 'context-scans.v2-backup.json'), 'utf8')) === original);
     t.ok('既定の追加ルートは 3 種すべてへ写す', KINDS.every(k => stored.defaults.roots[k]?.[0] === extra), JSON.stringify(stored.defaults.roots));
     t.ok('場所の追加ルートも 3 種すべてへ写す', KINDS.every(k => stored.places[pathKey(repo)].roots[k]?.[0] === extra2));

@@ -98,8 +98,8 @@ import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
-import { DEFAULT_OWNERS, normalizeKind, pathKey, pruneInherited, scanDirectory } from './context-settings.mjs';
-import { DOC_KINDS, createContextAgents, resolveEffectiveDocSource } from './context-agents.mjs';
+import { DEFAULT_OWNERS, ROOT_KINDS, containsPath, normalizeKind, pathKey, pruneInherited, resolveConfig, scanDirectory, setKindValue } from './context-settings.mjs';
+import { DOC_KINDS, WORKSPACE_SUMMARY_KEY, createContextAgents, pathIsGone, resolveEffectiveDocSource } from './context-agents.mjs';
 import { createMcpWas } from './context-mcp-was.mjs';
 import { DocTouchError, applyDocTouch, buildDocMatrix, docScanPlan } from './context-doc-matrix.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
@@ -1187,7 +1187,13 @@ const plyHooks = createPlyHooks(store.dataDir);
 // Hooks × エージェント（<data>/hooks-agents.json。core/hooks-agents.mjs、ADR 0338）。在れば担当の 2 択の代わりにこれでターンの Hooks を決める
 // Codex の信頼は一覧のときだけ app-server で重ねる（ターンの直前には確かめない）
 const hooksAgents = createHooksAgents({ dataDir: store.dataDir, hooksConfig, plyHooks, findNode: findNodeOnPath,
-  codexTrust: (report, cwd, trust) => withCodexTrust(report, cwd ?? os.homedir(), { trust: trust !== false }) });
+  codexTrust: (report, cwd, trust) => withCodexTrust(report, cwd ?? os.homedir(), { trust: trust !== false }),
+  // 設定 › 探す場所の Hooks の追加ルート（ユーザーの範囲・作業場所の範囲）。各ルートの .claude/settings.json・.codex/hooks.json を行にする（無ければ []）
+  scanRoots: async (cwd) => {
+    const s = await contextSettings.get(cwd ?? os.homedir(), cwd ? {} : { level: 'default' }).catch(() => null);
+    const list = v => (Array.isArray(v) ? v.filter(p => typeof p === 'string') : []);
+    return { user: list(s?.plan?.user?.roots?.hooks), directory: cwd ? list(s?.plan?.directory?.roots?.hooks) : [] };
+  } });
 const HOOK_LEAKS_MAX = 20;
 /**
  * 切り替えの確認の材料。cwd があればその場所（ユーザーと Git のルートから cwd まで）、無ければユーザーの範囲だけ。
@@ -5796,8 +5802,8 @@ async function refuseIneffectiveLegacy(args = {}, actor = null) {
   if (!resolveEffectiveDocSource(legacy, docAgents, dir, kind).touched) return;
   const next = structuredClone(legacy);
   const key = dir ? pathKey(dir) : null;
-  const target = key ? (next.places[key] ??= { path: dir, kinds: {} }) : next.defaults;
-  try { target.kinds[kind] = normalizeKind(kind, args.value, dir ?? SCAN_OPTIONS.home ?? os.homedir(), SCAN_OPTIONS.home ?? os.homedir()); }
+  // 場所は受け継ぐ値からの差分だけを持つ（形式 4）。保存の set と同じ書き方で、保存した後の形を作る
+  try { setKindValue(next, key, kind, normalizeKind(kind, args.value, dir ?? SCAN_OPTIONS.home ?? os.homedir(), SCAN_OPTIONS.home ?? os.homedir()), dir); }
   catch { return; } // 形の誤りは保存の側（contextSettings.set）の誤りで返す
   if (key) pruneInherited(next, key);
   if (!resolveEffectiveDocSource(next, docAgents, dir, kind).touched) return;
@@ -5865,16 +5871,27 @@ async function docScanContext({ kind, cwd, place }) {
   const defaultDir = SCAN_OPTIONS.home
     ? await fs.access(SCAN_OPTIONS.home).then(() => SCAN_OPTIONS.home, () => store.dataDir)
     : os.homedir();
-  const scanDir = isDefault ? defaultDir : await scanDirectory(place ?? cwd);
-  const scopes = isDefault ? ['user'] : ['user', 'directory'];
-  const effective = await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
+  // 見つからなくなった場所（ADR 0348）: ユーザーの範囲だけを探し、その場所の保存した設定を重ねて見せる（読むだけ。書く操作は scanDirectory で断る）
+  let scanDir = defaultDir, gone = null;
+  if (!isDefault) {
+    const want = place ?? cwd;
+    try { scanDir = await scanDirectory(want); }
+    catch (e) {
+      if (!(await pathIsGone(want).catch(() => false))) throw e;
+      gone = path.resolve(want);
+    }
+  }
+  const scopes = isDefault || gone ? ['user'] : ['user', 'directory'];
+  const effective = gone
+    ? { cwd: gone, ...resolveConfig(await contextSettings.read(), pathKey(gone)) }
+    : await contextSettings.get(scanDir, isDefault ? { level: 'default' } : {});
   const scanPlan = docScanPlan(effective.plan, kind);
   const [scan, rawConfig, docAgents] = await Promise.all([
     scanContext({ cwd: scanDir, plan: scanPlan }, { ...SCAN_OPTIONS, plyServers: await plyMcp.scanInput(), scopes }),
     contextSettings.read(),
     contextAgents.read(),
   ]);
-  const matrixCwd = isDefault ? null : scanDir;
+  const matrixCwd = isDefault ? null : gone ?? scanDir;
   // その場所の Devin のターンで、Pleiad が Hook を渡すため Devin の取り込みが止まるか（指示・Skills の表の Devin のマスを事実に合わせる。段 2 のレビュー S2）
   const devinImportsStopped = await hooksAgents.devinImportsStopped(matrixCwd);
   return { scan, rawConfig, docAgents, scanDir, isDefault, matrixCwd, devinImportsStopped };
@@ -5915,6 +5932,95 @@ function serializeDocRow(row) {
     // 行のスイッチの押す向きと戻し先（ADR 0337 §決定 4 の 2026-11-17 改訂）。画面は rowNextOn を setDocRow の on に送る
     rowFixed: row.rowFixed, rowChangeableOn: row.rowChangeableOn, rowNextOn: row.rowNextOn, rowRestore: row.rowRestore,
   };
+}
+
+/** 行の見かけ（エージェントごとのマスの状態と選んだ写し）。同じなら「受け継ぐ値どおり」 */
+const docRowSig = (agents, row) => row ? `${agents.map((a) => row.cells[a]?.mode ?? '-').join(',')}|${row.chosen?.path ?? ''}` : null;
+
+/** 場所の段（表と旧い設定の両方の、cwd を含む保存済みの場所）。浅い順 */
+function docChainOf(rawConfig, docAgents, cwdKey) {
+  if (!cwdKey) return [];
+  return [...new Set([...Object.keys(docAgents.places ?? {}), ...Object.keys(rawConfig.places ?? {})])]
+    .filter((p) => containsPath(p, cwdKey)).sort((a, b) => a.length - b.length);
+}
+
+/** 段 keep だけを残した設定（cwd を含むほかの場所を外す）。全体だけなら keep は [] */
+function docConfigsUpTo(rawConfig, docAgents, chain, keep) {
+  const legacy = structuredClone(rawConfig), agents = structuredClone(docAgents);
+  for (const p of chain) {
+    if (keep.includes(p)) continue;
+    if (legacy.places) delete legacy.places[p];
+    if (agents.places) delete agents.places[p];
+  }
+  return { legacy, agents };
+}
+
+/**
+ * 指示・Skills の行ごとの出どころ（ADR 0348）。全体 → 上の場所 → この場所と段を重ねて表を作り、行の見かけが変わった最後の段を出どころにする。
+ *   here:  この場所で変えた（この場所の段で見かけが変わった）行の key
+ *   from:  上の保存済みの場所で変えた行の key → その場所のパス（全体からの受け継ぎは載せない）
+ *   changes: この場所で変えた行の数（まとめの行も 1 つに数える）
+ * 保存の中身（触ったときに写した基準）は変更の数に使わない。写しは受け継ぐ値と同じことが多い
+ */
+function docRowMarks({ kind, entries, rawConfig, docAgents, matrixCwd, home, devinImportsStopped }) {
+  const pk = matrixCwd ? pathKey(matrixCwd) : null;
+  const chain = docChainOf(rawConfig, docAgents, pk);
+  const empty = { here: new Set(), from: new Map(), changes: 0 };
+  if (!chain.length) return empty;
+  const pathOf = (p) => rawConfig.places?.[p]?.path ?? docAgents.places?.[p]?.path ?? p;
+  const build = (keep) => {
+    const { legacy, agents } = docConfigsUpTo(rawConfig, docAgents, chain, keep);
+    return buildDocMatrix({ kind, entries, legacyConfig: legacy, docAgentsConfig: agents, cwd: matrixCwd, home, devinImportsStopped });
+  };
+  const levels = [build([])];
+  for (let i = 0; i < chain.length; i++) levels.push(build(chain.slice(0, i + 1)));
+  const agents = levels.at(-1).agents;
+  const sigAt = (m, key) => docRowSig(agents, key === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(key));
+  const keys = [WORKSPACE_SUMMARY_KEY, ...levels.at(-1).rows.map((r) => r.key)];
+  const here = new Set(), from = new Map();
+  for (const key of keys) {
+    for (let i = levels.length - 1; i >= 1; i--) {
+      if (sigAt(levels[i], key) === sigAt(levels[i - 1], key)) continue;
+      if (chain[i - 1] === pk) here.add(key); else from.set(key, pathOf(chain[i - 1]));
+      break;
+    }
+  }
+  return { here, from, changes: here.size };
+}
+
+/**
+ * 場所の表（context-agents.json の places[pk][kind]）から、消しても見かけが変わらない規則を消す。全部消えたら場所の種類ごと消す。
+ * 触ったときに写した基準が残ると、全体の設定を変えても下の場所へ届かない（ADR 0348: 受け継ぐ値と同じ上書きは持たない）。
+ * まとめの行（__workspace__）は、作業場所の行すべての見かけが変わらないときだけ消す。表に出ていない名前の規則は残す
+ */
+function pruneDocPlace(cfg, { kind, entries, legacyConfig, matrixCwd, home, devinImportsStopped }) {
+  const pk = matrixCwd ? pathKey(matrixCwd) : null;
+  const holder = pk ? cfg.places?.[pk]?.[kind] : null;
+  if (!holder) return cfg;
+  const build = (c) => buildDocMatrix({ kind, entries, legacyConfig, docAgentsConfig: c, cwd: matrixCwd, home, devinImportsStopped });
+  const now = build(cfg);
+  const agents = now.agents;
+  const sigs = (m) => [docRowSig(agents, m.summaryRow), ...m.rows.map((r) => docRowSig(agents, r))].join('\n');
+  const want = sigs(now);
+  // 種類ごと消して同じなら、それで終わり（上の段・旧い設定の値と同じ）
+  const without = structuredClone(cfg);
+  delete without.places[pk][kind];
+  if (!Object.keys(without.places[pk]).length) delete without.places[pk];
+  if (sigs(build(without)) === want) return without;
+  // 名前の規則は、その名前の行にしか効かない。まとめて消して、見かけが変わった名前だけ戻す
+  const listed = new Set(now.rows.map((r) => r.key));
+  const trial = structuredClone(cfg);
+  const rules = trial.places[pk][kind].agents;
+  const dropped = Object.keys(rules).filter((k) => k !== WORKSPACE_SUMMARY_KEY && listed.has(k));
+  for (const k of dropped) delete rules[k];
+  const after = build(trial);
+  for (const k of dropped) if (docRowSig(agents, after.byKey.get(k)) !== docRowSig(agents, now.byKey.get(k))) rules[k] = holder.agents[k];
+  if (Object.hasOwn(rules, WORKSPACE_SUMMARY_KEY)) {
+    const ws = structuredClone(trial);
+    delete ws.places[pk][kind].agents[WORKSPACE_SUMMARY_KEY];
+    if (sigs(build(ws)) === want) return ws;
+  }
+  return trial;
 }
 
 const accountConnectorProbes = new Map(); // accountId -> Promise<void>
@@ -6171,12 +6277,30 @@ const opsContext = {
       const base = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: legacyBase, docAgentsConfig: agentsBase, cwd: matrixCwd, home: scan.home, devinImportsStopped });
       inherited = new Map(base.rows.map((r) => [r.key, r.rowSwitchOn]));
     }
+    // 行の出どころ（ADR 0348）。場所: この場所で変えた（here）・上の場所の設定（from）。全体: 別の設定にした保存済みの場所（elsewhere）
+    const marks = docRowMarks({ kind, entries: scan.entries, rawConfig, docAgents, matrixCwd, home: scan.home, devinImportsStopped });
+    const elsewhere = new Map();
+    if (!pk) {
+      const places = [...new Set([...Object.keys(docAgents.places ?? {}), ...Object.keys(rawConfig.places ?? {})])];
+      for (const p of places) {
+        const at = rawConfig.places?.[p]?.path ?? docAgents.places?.[p]?.path ?? p;
+        // ユーザーの物は場所に関わらず同じ写しなので、全体の探索の結果のまま、その場所の段を重ねて比べる
+        const m = buildDocMatrix({ kind, entries: scan.entries, legacyConfig: rawConfig, docAgentsConfig: docAgents, cwd: at, home: scan.home, devinImportsStopped });
+        for (const r of matrix.rows) {
+          if (docRowSig(matrix.agents, m.byKey.get(r.key)) === docRowSig(matrix.agents, r)) continue;
+          if (!elsewhere.has(r.key)) elsewhere.set(r.key, []);
+          elsewhere.get(r.key).push(at);
+        }
+      }
+    }
+    const markOf = (key) => ({ changedHere: marks.here.has(key), ruleFrom: marks.from.get(key) ?? null, elsewhere: elsewhere.get(key) ?? [] });
     return {
       kind, cwd: scan.cwd, home: scan.home, root: scan.root,
       touched: matrix.touched, agentsPlace: matrix.agentsPlace, legacyPlace: matrix.legacyPlace,
       legacyOwner: matrix.legacyOwner, prefer: matrix.legacyRule?.prefer ?? {},
-      agents: matrix.agents, summaryRow: matrix.summaryRow,
-      rows: matrix.rows.map((r) => ({ ...serializeDocRow(r), inheritedOn: inherited?.has(r.key) ? inherited.get(r.key) : r.rowSwitchOn })),
+      agents: matrix.agents, summaryRow: { ...matrix.summaryRow, ...markOf(WORKSPACE_SUMMARY_KEY) },
+      changes: marks.changes,
+      rows: matrix.rows.map((r) => ({ ...serializeDocRow(r), inheritedOn: inherited?.has(r.key) ? inherited.get(r.key) : r.rowSwitchOn, ...markOf(r.key) })),
       searched: scan.searched, skipped: scan.skipped, diagnostics: scan.diagnostics, limited: scan.limited,
     };
   },
@@ -6187,10 +6311,14 @@ const opsContext = {
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
-      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home, devinImportsStopped,
-      place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
-    }), where, scanDir);
+    const nextCfg = await touchDocPlace(async (cfg) => {
+      const legacyConfig = await contextSettings.read();
+      const next = docTouch(cfg, {
+        kind, entries: scan.entries, legacyConfig, matrixCwd, home: scan.home, devinImportsStopped,
+        place: where, placeKey: where ? pathKey(where) : null, agent, keys: list, on,
+      });
+      return where ? pruneDocPlace(next, { kind, entries: scan.entries, legacyConfig, matrixCwd, home: scan.home, devinImportsStopped }) : next;
+    }, where, scanDir);
     settingsChanged(['context.default'], actor);
     return { ok: true, defaults: nextCfg.config.defaults, pruned: nextCfg.pruned, ...(where ? { place: where } : {}) };
   },
@@ -6200,12 +6328,100 @@ const opsContext = {
     if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
     const where = !place || place === 'default' ? null : await scanDirectory(place);
     const { scan, scanDir, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: where ?? cwd, place: where ?? 'default' });
-    const nextCfg = await touchDocPlace(async (cfg) => docTouch(cfg, {
-      kind, entries: scan.entries, legacyConfig: await contextSettings.read(), matrixCwd, home: scan.home, devinImportsStopped,
-      place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
-    }), where, scanDir);
+    const nextCfg = await touchDocPlace(async (cfg) => {
+      const legacyConfig = await contextSettings.read();
+      const next = docTouch(cfg, {
+        kind, entries: scan.entries, legacyConfig, matrixCwd, home: scan.home, devinImportsStopped,
+        place: where, placeKey: where ? pathKey(where) : null, keys: list, on,
+      });
+      return where ? pruneDocPlace(next, { kind, entries: scan.entries, legacyConfig, matrixCwd, home: scan.home, devinImportsStopped }) : next;
+    }, where, scanDir);
     settingsChanged(['context.default'], actor);
     return { ok: true, defaults: nextCfg.config.defaults, pruned: nextCfg.pruned, ...(where ? { place: where } : {}) };
+  },
+  // 場所の行を受け継ぐ値へ戻す（ADR 0348 の「戻す」）。表の規則を消し、消して見かけが変わる名前は受け継ぐ規則を写す。Skills の選んだ写し（prefer）も戻す
+  revertDocRows: async ({ kind, keys, place } = {}, actor) => {
+    if (!DOC_KINDS.includes(kind)) throw new OpError('INVALID', t('context.settings.unknownKind'));
+    const list = [...new Set(Array.isArray(keys) ? keys : [])];
+    if (!list.length) throw new OpError('INVALID', t('context.settings.docTargetRequired'));
+    if (!place || place === 'default') throw new OpError('INVALID', t('context.settings.placeRequired'));
+    const where = await scanDirectory(place);
+    const pk = pathKey(where);
+    const { scan, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: where, place: where });
+    await contextAgents.mutate(async (cfg) => {
+      const holder = cfg.places?.[pk]?.[kind];
+      if (!holder) return cfg;
+      const legacyConfig = await contextSettings.read();
+      const build = (c) => buildDocMatrix({ kind, entries: scan.entries, legacyConfig, docAgentsConfig: c, cwd: matrixCwd, home: scan.home, devinImportsStopped });
+      const without = structuredClone(cfg);
+      delete without.places[pk][kind];
+      const base = build(without);
+      const rowOf = (m, k) => (k === WORKSPACE_SUMMARY_KEY ? m.summaryRow : m.byKey.get(k));
+      for (const k of list) delete holder.agents[k];
+      const now = build(cfg);
+      for (const k of list) {
+        const want = rowOf(base, k);
+        if (!want || docRowSig(base.agents, rowOf(now, k)) === docRowSig(base.agents, want)) continue;
+        const { was: _w, ...rule } = want.rule ?? { off: [], spread: [] };
+        holder.agents[k] = { off: [...(rule.off ?? [])], spread: [...(rule.spread ?? [])] };
+      }
+      return pruneDocPlace(cfg, { kind, entries: scan.entries, legacyConfig, matrixCwd, home: scan.home, devinImportsStopped });
+    });
+    if (kind === 'skill') await contextSettings.set({ place: where, kind: 'skill', revertRows: list.filter((k) => k !== WORKSPACE_SUMMARY_KEY) }).catch(() => {});
+    settingsChanged(['context.default'], actor);
+    return { ok: true, place: where };
+  },
+  /**
+   * 設定 › プラグインの場所の一覧（ADR 0348）。保存した場所（設定・表・Hooks のどれかを持つ）ごとに、見つかるか・上の場所・変えた数。
+   *   changes: { settings（外部 MCP と種類の設定）, roots（足した・使わないスキャン場所）, instruction, skill, hooks, total }
+   * 指示・Skills の数は、その場所を探して行の見かけで数える（見つからない場所は保存の数）
+   */
+  scopes: async () => {
+    const [v, docAgents, rawConfig, hooksM] = await Promise.all([
+      contextSettings.view(null), contextAgents.read(), contextSettings.read(),
+      hooksAgents.matrix({ cwd: null, trust: false }).catch(() => null),
+    ]);
+    const byKey = new Map();
+    const at = (key, p) => { if (!byKey.has(key)) byKey.set(key, { id: key, path: p }); return byKey.get(key); };
+    for (const p of v.places) if (p.saved) at(pathKey(p.path), p.path).level = p;
+    for (const [k, e] of Object.entries(docAgents.places ?? {})) at(k, rawConfig.places?.[k]?.path ?? e.path ?? k).doc = true;
+    for (const h of hooksM?.places ?? []) at(pathKey(h.path), h.path).hooks = h.changes ?? 0;
+    const keys = [...byKey.keys()];
+    const list = [];
+    for (const key of keys) {
+      const e = byKey.get(key);
+      const missing = await pathIsGone(e.path).catch(() => false);
+      const lv = e.level;
+      const roots = lv ? ROOT_KINDS.reduce((n, k) => n + (lv.roots?.[k]?.changes ?? 0), 0) : 0;
+      const settings = lv ? Object.values(lv.kinds ?? {}).reduce((n, k) => n + (k.changes ?? 0), 0) : 0;
+      const docs = {};
+      for (const kind of DOC_KINDS) {
+        if (!docAgents.places?.[key]?.[kind]) { docs[kind] = 0; continue; }
+        if (missing) { docs[kind] = Object.keys(docAgents.places[key][kind].agents ?? {}).length; continue; }
+        try {
+          const { scan, matrixCwd, devinImportsStopped } = await docScanContext({ kind, cwd: e.path, place: e.path });
+          docs[kind] = docRowMarks({ kind, entries: scan.entries, rawConfig, docAgents, matrixCwd, home: scan.home, devinImportsStopped }).changes;
+        } catch { docs[kind] = Object.keys(docAgents.places[key][kind].agents ?? {}).length; }
+      }
+      // 同じ数を 2 度数えない: 指示・Skills の種類の設定の数は表の数に含める（旧い設定の差分は Skills の選んだ写しだけ）
+      const changes = { settings, roots, instruction: docs.instruction, skill: docs.skill, hooks: e.hooks ?? 0 };
+      changes.total = changes.settings + changes.roots + changes.instruction + changes.skill + changes.hooks;
+      const parent = keys.filter((k) => k !== key && containsPath(k, key)).sort((a, b) => b.length - a.length)[0] ?? null;
+      list.push({ id: key, path: e.path, missing, changes, parent: parent ? { id: parent, path: byKey.get(parent).path } : null });
+    }
+    list.sort((a, b) => (a.missing - b.missing) || a.path.localeCompare(b.path));
+    return { places: list };
+  },
+  // 場所の設定を全部消す（ADR 0348 の「全体の設定に戻す」「設定を消す」）。設定（context-scans）・表（context-agents）・Hooks（hooks-agents）。見つからない場所も消せる
+  removePlace: async ({ place } = {}, actor) => {
+    if (!place || place === 'default') throw new OpError('INVALID', t('context.settings.placeRequired'));
+    await setContextSettingsWithDocAgents({ place, remove: true }, actor);
+    const key = pathKey(place);
+    const docAgents = await contextAgents.read();
+    if (docAgents.places?.[key]) await contextAgents.removePlace(place, null);
+    await hooksAgents.removePlace({ cwd: path.resolve(place) });
+    settingsChanged(['context.default'], actor);
+    return { ok: true };
   },
   // 読めない context-agents.json を context-agents.broken-<時刻>.json へ退避し、表を触る前の動きに戻す（レビュー M6）。読めるなら何もしない
   repairDocAgents: async (actor) => {
@@ -11016,6 +11232,12 @@ wss.on("connection", (ws, req) => {
           return await viaOp('context.setDocAgent');
         case 'setDocRow':
           return await viaOp('context.setDocRow');
+        case 'revertDocRows':
+          return await viaOp('context.revertDocRows');
+        case 'contextScopes':
+          return await viaOp('context.scopes');
+        case 'removeContextPlace':
+          return await viaOp('context.removePlace');
         case 'repairDocAgents':
           return await viaOp('context.repairDocAgents');
         case 'nativeInstructions':
@@ -11071,6 +11293,10 @@ wss.on("connection", (ws, req) => {
           return await viaOp('hooks.setGroup');
         case 'setHookPlace':
           return await viaOp('hooks.setPlace');
+        case 'revertHookRow':
+          return await viaOp('hooks.revertRow');
+        case 'removeHookPlace':
+          return await viaOp('hooks.removePlace');
         case 'resetHooksAgents':
           return await viaOp('hooks.resetAgents');
         // 探索は接続ごとに 1 つずつ（context.scan・context.skills。ADR 0105）。走っている間の 2 つ目は SCAN_BUSY

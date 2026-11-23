@@ -1847,6 +1847,29 @@
       "input": "d25acaa13541"
     },
     {
+      "id": "context.removePlace",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "remove-place"
+          ],
+          "positional": [
+            "place"
+          ]
+        }
+      },
+      "legacyCommand": "removeContextPlace",
+      "input": "b12685b7cb5e"
+    },
+    {
       "id": "context.repairDocAgents",
       "risk": "guarded",
       "riskOf": false,
@@ -1867,6 +1890,29 @@
       "input": "ce3e34a61c8e"
     },
     {
+      "id": "context.revertDocRows",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "doc-revert"
+          ],
+          "positional": [
+            "kind"
+          ]
+        }
+      },
+      "legacyCommand": "revertDocRows",
+      "input": "0f74bbbb8cda"
+    },
+    {
       "id": "context.scan",
       "risk": "read",
       "riskOf": false,
@@ -1885,6 +1931,26 @@
       },
       "legacyCommand": "scanContext",
       "input": "46a528fd1b26"
+    },
+    {
+      "id": "context.scopes",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "context",
+            "scopes"
+          ]
+        }
+      },
+      "legacyCommand": "contextScopes",
+      "input": "25c7d85c859a"
     },
     {
       "id": "context.session",
@@ -2062,7 +2128,7 @@
         }
       },
       "legacyCommand": "setContextSettings",
-      "input": "d5af065783bd"
+      "input": "a094bc8ea782"
     },
     {
       "id": "context.settings",
@@ -2718,6 +2784,29 @@
       "input": "4a04b07e235a"
     },
     {
+      "id": "hooks.removePlace",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "remove-place"
+          ],
+          "positional": [
+            "cwd"
+          ]
+        }
+      },
+      "legacyCommand": "removeHookPlace",
+      "input": "ea8a5bcb8de3"
+    },
+    {
       "id": "hooks.repair",
       "risk": "guarded",
       "riskOf": false,
@@ -2756,6 +2845,30 @@
       },
       "legacyCommand": "resetHooksAgents",
       "input": "af780a94a65d"
+    },
+    {
+      "id": "hooks.revertRow",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "hooks",
+            "revert"
+          ],
+          "positional": [
+            "cwd",
+            "key"
+          ]
+        }
+      },
+      "legacyCommand": "revertHookRow",
+      "input": "b35b916bf9ce"
     },
     {
       "id": "hooks.save",
@@ -2882,7 +2995,7 @@
         }
       },
       "legacyCommand": "setHookGroup",
-      "input": "c15548e025a8"
+      "input": "bf3f4a356639"
     },
     {
       "id": "hooks.setOwner",
@@ -6439,6 +6552,13 @@
       "positional": []
     },
     {
+      "id": "context.revertDocRows",
+      "path": "context doc-revert",
+      "positional": [
+        "kind"
+      ]
+    },
+    {
       "id": "context.setDocRow",
       "path": "context doc-row",
       "positional": [
@@ -6486,8 +6606,20 @@
       "positional": []
     },
     {
+      "id": "context.removePlace",
+      "path": "context remove-place",
+      "positional": [
+        "place"
+      ]
+    },
+    {
       "id": "context.scan",
       "path": "context scan",
+      "positional": []
+    },
+    {
+      "id": "context.scopes",
+      "path": "context scopes",
       "positional": []
     },
     {
@@ -6724,6 +6856,13 @@
       ]
     },
     {
+      "id": "hooks.removePlace",
+      "path": "hooks remove-place",
+      "positional": [
+        "cwd"
+      ]
+    },
+    {
       "id": "hooks.repair",
       "path": "hooks repair",
       "positional": []
@@ -6732,6 +6871,14 @@
       "id": "hooks.resetAgents",
       "path": "hooks reset-agents",
       "positional": []
+    },
+    {
+      "id": "hooks.revertRow",
+      "path": "hooks revert",
+      "positional": [
+        "cwd",
+        "key"
+      ]
     },
     {
       "id": "hooks.setRow",

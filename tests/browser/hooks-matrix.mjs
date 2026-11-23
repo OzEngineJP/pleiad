@@ -324,8 +324,8 @@ try {
         lead: (() => { const l = document.querySelector('#contextPanel .cx-lead'); return l ? { hidden: l.hidden, shown: l.getClientRects().length > 0 } : null; })(),
       };
     }, { regKey, nativeKey });
-    check(shape.seg === 0 && shape.blocks === 2 && shape.reg && shape.regOff && shape.native && !shape.repoStop && shape.legend,
-      'Hooks は「Pleiad に登録」と「エージェントの設定」の 2 つのまとまりで、担当の 2 択は無く、作業場所の定義は設定のページに並べない', shape);
+    check(shape.seg === 0 && shape.blocks === 3 && shape.reg && shape.regOff && shape.native && !shape.repoStop && shape.legend,
+      'Hooks は「スキャン場所」「ユーザースコープの Hooks」「Pleiad に登録」の 3 つのまとまりで、担当の 2 択は無く、作業場所の定義は設定のページに並べない', shape);
     check(shape.ws === T('hooks.matrix.wsRow') && !shape.ws.includes('\\'), '作業場所は 1 行（.claude/settings.json と .codex/hooks.json。区切りは / で、OS で変えない）', shape.ws);
     check(shape.lead && shape.lead.hidden && !shape.lead.shown, 'Hooks のタブでは、プラグインの見出しの文（反映の時点は指示・Skills・外部 MCP の話）を出さない', shape.lead);
     check(shape.adopt === T('hooks.matrix.adopted') && shape.adoptOff === T('hooks.matrix.adoptedOff'),
@@ -547,11 +547,9 @@ try {
     await ctx.close();
   }
 
-  // ==================== 4. 会話の右の欄: 行ごとの「この場所で使うか」 ====================
-  {
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
-    const page = await ctx.newPage();
-    page.on('pageerror', e => errors.push(e.message));
+  // ==================== 4. フォルダーの設定（ADR 0348）: 右の欄の「この場所の設定を開く」→ 行ごとの差分・「戻す」 ====================
+  /** 会話の右の欄から、範囲をこのフォルダーにした設定 › プラグイン › Hooks を開く */
+  async function openFolderHooks(page) {
     await page.goto(baseUrl, { waitUntil: 'load' });
     await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
     await page.waitForSelector(`[data-session="${managed.sessionId}"]`, { state: 'visible', timeout: 15000 });
@@ -560,37 +558,51 @@ try {
     await page.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
     await page.locator('#sessionMore').click();
     await page.getByRole('menuitem', { name: /プラグイン/ }).click();
-    await page.waitForSelector('.file-preview-content .scx [data-act="placeStart"]', { state: 'visible', timeout: 15000 });
+    await page.waitForSelector('.file-preview-content .scx [data-act="placeOpen"]', { state: 'visible', timeout: 15000 });
     await page.setViewportSize({ width: 1280, height: 900 });
     const normalText = await page.locator('.file-preview-content .scx').innerText();
+    await page.locator('.file-preview-content .scx [data-act="placeOpen"]').click();
+    await page.waitForFunction(name => (document.querySelector('#contextPanel .scope-btn')?.textContent ?? '').includes(name), path.basename(repo), { timeout: 15000 });
+    await page.locator('#cx-tab-hooks').click();
+    await page.waitForSelector('#cx-panel-hooks .cx-row[data-key] .cx-sw', { state: 'visible', timeout: 15000 });
+    return normalText;
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(e.message));
+    const normalText = await openFolderHooks(page);
     check(/Hooks/.test(normalText), '右の欄のふだんの面には、今までどおり Hooks の欄がある');
-    await page.locator('.file-preview-content .scx [data-act="placeStart"]').click();
-    await page.locator('#scx-tab-hooks').click();
-    await page.waitForSelector('#scx-panel-hooks [data-row] .cx-sw', { state: 'visible', timeout: 15000 });
-    const facts = await page.locator('#scx-panel-hooks [data-row]').evaluateAll(rows => rows.map(r => ({
-      key: r.dataset.row, name: r.querySelector('.nm')?.textContent, sub: r.querySelector('.p')?.textContent,
-      checked: r.querySelector('.cx-sw')?.getAttribute('aria-checked'), aria: r.querySelector('.cx-sw')?.getAttribute('aria-label'),
+    const facts = await page.locator('#cx-panel-hooks .cx-row[data-key]').evaluateAll(rows => rows.map(r => ({
+      key: r.dataset.key, name: r.querySelector('.nm')?.textContent, checked: r.querySelector('.cx-sw')?.getAttribute('aria-checked'),
+      changed: Boolean(r.querySelector('.ovb')),
     })));
     const repoRow = facts.find(f => f.name === 'echo repo-stop');
-    check(facts.length === 3 && repoRow && facts.every(f => f.checked === 'true') && !facts.some(f => f.key === 'ws:hooks')
-      && await page.locator('#scx-panel-hooks .cx-seg, #scx-panel-hooks .cx-ags, #scx-panel-hooks .cx-ag').count() === 0,
-      '右の欄の Hooks は、この場所の中身（登録・利用者・作業場所の定義）を行ごとに並べ、スイッチは「この場所で使うか」だけ（エージェントのマスは無い）', facts);
-    check(repoRow.aria === T('sessionContext.hooks.placeSwitchAria', { name: 'echo repo-stop' }) && repoRow.sub.includes('Claude'),
-      '右の欄の行の読み上げ名は「この場所で {名前} を使う」、下の段に実行するエージェント', repoRow);
-    await shoot(page, 'hooks-agents-panel.png', page.locator('.file-preview-content .scx'));
-    await page.locator(`#scx-panel-hooks [data-row="${repoRow.key}"] .cx-sw`).click();
-    await page.waitForFunction(k => document.querySelector(`#scx-panel-hooks [data-row="${CSS.escape(k)}"] .cx-sw`)?.getAttribute('aria-checked') === 'false', repoRow.key, { timeout: 10000 });
-    const placed = await client.cmd('hooksMatrix', { cwd: repo, trust: false });
-    const placedRow = placed.rows.find(r => r.key === repoRow.key);
-    const sub2 = await page.locator(`#scx-panel-hooks [data-row="${repoRow.key}"] .p`).textContent();
-    check(placedRow.here.use === false && placed.rows.filter(r => r.here && r.key !== repoRow.key && r.kind !== 'ws').every(r => r.here.use === true)
-      && sub2.includes(T('sessionContext.place.offHere')),
-      '右の欄のスイッチは、その行だけをこの場所で使わない（hooks.setPlace）にし、下の段に「この場所では使わない」', { here: placedRow.here, sub2 });
-    const settingsRow = (await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === repoRow.key);
-    check(!settingsRow, '作業場所の定義は、設定のページの一覧には出ない（場所ごとの中身は右の欄だけ）');
-    await page.locator(`#scx-panel-hooks [data-row="${repoRow.key}"] .cx-sw`).click();
-    await page.waitForFunction(k => document.querySelector(`#scx-panel-hooks [data-row="${CSS.escape(k)}"] .cx-sw`)?.getAttribute('aria-checked') === 'true', repoRow.key, { timeout: 10000 });
-    check((await client.cmd('hooksMatrix', { cwd: repo, trust: false })).rows.find(r => r.key === repoRow.key).here.use === true, '右の欄のスイッチを入れ直すと、この場所で使うに戻る');
+    const userRow = facts.find(f => f.name === 'echo hook-ok');
+    check(repoRow && userRow && userRow.checked === 'mixed' && facts.every(f => !f.changed),
+      'フォルダーの設定の Hooks: このフォルダーの定義（作業場所の Hook）も行に並び、まだ変更の印は無い', facts);
+    check(!(await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === repoRow.key),
+      '作業場所の定義は、全体の設定の一覧には出ない（フォルダーの設定でだけ並ぶ）');
+    await shoot(page, 'hooks-agents-folder.png');
+    const rowSel = k => `#cx-panel-hooks .cx-row[data-key=${JSON.stringify(k)}]`;
+    await page.locator(rowSel(userRow.key)).locator('.cx-sw').click();
+    // 変えられるオンをまとめて切る（Devin の取り込みの鍵つきのオンは残るので、スイッチは「一部オン」のまま次は「外す前の選択に戻す」）
+    await page.waitForFunction(sel => document.querySelector(`${sel} .ovb`)
+      && (document.querySelector(`${sel} .cx-sw`)?.getAttribute('aria-label') ?? '').includes('外す前の選択に戻す'), rowSel(userRow.key), { timeout: 10000 });
+    const placedRow = (await client.cmd('hooksMatrix', { cwd: repo, trust: false })).rows.find(r => r.key === userRow.key);
+    const globalRow = (await client.cmd('hooksMatrix', { trust: false })).rows.find(r => r.key === userRow.key);
+    check(placedRow.overridden === true && globalRow.overridden === false && globalRow.rowMixed && (globalRow.overriddenAt ?? []).length === 1
+      && await page.locator(rowSel(userRow.key)).locator('.tbtn.rv').count() === 1,
+      'フォルダーの設定で行を切ると、このフォルダーだけの差分として保存し（全体の行はそのまま・別の設定の場所として数える）、行に「● 変更」と「戻す」が付く',
+      { placedRow: placedRow.overridden, global: globalRow.overriddenAt });
+    await page.waitForFunction(() => document.querySelector('#cx-tab-hooks .d'), null, { timeout: 5000 }).catch(() => {});
+    check(await page.locator('#cx-tab-hooks .d').count() === 1, 'フォルダーで変えたタブに変更の印が付く');
+    await shoot(page, 'hooks-agents-folder-changed.png');
+    await page.locator(rowSel(userRow.key)).locator('.tbtn.rv').click();
+    await page.waitForFunction(sel => document.querySelector(`${sel} .cx-sw`)?.getAttribute('aria-checked') === 'mixed' && !document.querySelector(`${sel} .ovb`),
+      rowSel(userRow.key), { timeout: 10000 });
+    const reverted = (await client.cmd('hooksMatrix', { cwd: repo, trust: false })).rows.find(r => r.key === userRow.key);
+    check(reverted.overridden === false, '「戻す」で、このフォルダーの差分が消えて全体の設定の選択に戻る', reverted);
     await ctx.close();
   }
 
@@ -681,37 +693,26 @@ try {
     check((await noOverflow(page)).ok, '帯を出した後も横にはみ出さない');
     await ctx.close();
 
-    // (3) 会話の右の欄の「この場所で使う」: この場所だけ外していた Devin の行を戻すと止まり始める
+    // (3) フォルダーの設定の行のスイッチ: この場所だけ外していた Devin の行を戻すと止まり始める
     await client.cmd('setHookPlace', { place: repo, key: onlyKey, use: false });
     check(await waitStopped(repo, false), '試験の置き場: この場所だけ Devin の行を使わない（この場所では止まっていない）');
     const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: 'light', locale: 'ja-JP' });
     const p3 = await ctx3.newPage();
     p3.on('pageerror', e => errors.push(e.message));
-    await p3.goto(baseUrl, { waitUntil: 'load' });
-    await p3.evaluate(() => document.getElementById('onboardingDialog')?.close());
-    await p3.waitForSelector(`[data-session="${managed.sessionId}"]`, { state: 'visible', timeout: 15000 });
-    await p3.locator(`[data-session="${managed.sessionId}"]`).first().click();
-    await p3.setViewportSize({ width: 700, height: 900 });
-    await p3.locator('#sessionMore').waitFor({ state: 'visible', timeout: 10000 });
-    await p3.locator('#sessionMore').click();
-    await p3.getByRole('menuitem', { name: /プラグイン/ }).click();
-    await p3.waitForSelector('.file-preview-content .scx [data-act="placeStart"]', { state: 'visible', timeout: 15000 });
-    await p3.setViewportSize({ width: 1280, height: 900 });
-    await p3.locator('.file-preview-content .scx [data-act="placeStart"]').click();
-    await p3.locator('#scx-tab-hooks').click();
-    const placeSw = p3.locator(`#scx-panel-hooks [data-row="${onlyKey}"] .cx-sw`);
+    await openFolderHooks(p3);
+    const placeSw = p3.locator(`#cx-panel-hooks .cx-row[data-key="${onlyKey}"] .cx-sw`);
     await placeSw.waitFor({ state: 'visible', timeout: 15000 });
-    const pAsk = p3.locator('#scx-panel-hooks .scx-hooks-ask');
+    const pAsk = p3.locator('#cx-panel-hooks .cx-ask');
     await placeSw.click();
     await pAsk.waitFor({ state: 'visible', timeout: 3000 });
     // フォーカスは次の描画（requestAnimationFrame）で［実行する］へ移る
-    await p3.waitForFunction(() => document.activeElement?.closest?.('.scx-hooks-ask'), null, { timeout: 3000 }).catch(() => {});
+    await p3.waitForFunction(() => document.activeElement?.closest?.('.cx-ask'), null, { timeout: 3000 }).catch(() => {});
     const a3 = await pAsk.evaluate(el => ({ q: el.querySelector('.q')?.textContent, warns: [...el.querySelectorAll('.hk-warns li')].map(li => li.textContent), focus: document.activeElement?.textContent }));
     check(a3.q === T('hooks.matrix.askStop') && a3.warns.includes(T('hooks.warn.devinImportsStop')) && a3.focus === T('hooks.matrix.confirm'),
-      '(3) 右の欄の「この場所で使う」: 押すと取り込みが止まり始める行は、保存の前に同じ帯', a3);
+      '(3) フォルダーの設定の行のスイッチ: 押すと取り込みが止まり始める行は、保存の前に同じ帯', a3);
     const file3 = fs.readFileSync(agentsFile, 'utf8');
     await pAsk.locator('button', { hasText: T('context.matrix.cancel') }).click();
-    await p3.waitForFunction(() => !document.querySelector('#scx-panel-hooks .scx-hooks-ask'), { timeout: 3000 });
+    await p3.waitForFunction(() => !document.querySelector('#cx-panel-hooks .cx-ask'), { timeout: 3000 });
     await p3.waitForTimeout(300);
     check(fs.readFileSync(agentsFile, 'utf8') === file3 && await placeSw.getAttribute('aria-checked') === 'false' && await stoppedAt(repo) === false,
       '(3)［やめる］は何も保存しない');

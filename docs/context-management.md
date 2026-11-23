@@ -2,19 +2,23 @@
 
 2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
 2026-09-12。第1段階として、設定の「コンテキスト」ページから探索元を保存し、指示ファイル・Skills・MCP の候補を確認できる。
-2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。2026-09-27 から設定の画面は**全体の設定だけ**を扱う（範囲のプルダウンを廃止）。その後、外部 MCP（2026-11-14、[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）と指示・Skills（2026-11-15、[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）は設定 › プラグインで担当の 2 択と「探す形式」の札を廃し、**名前ごと・エージェントごと**の一覧（全体スイッチ＋6 エージェントのアイコン）へ移行した（Hooks だけは引き続き担当の 2 択を残す）。指示・Skills のセル単位ルールは `<data>/context-agents.json`（`version: 1`）に持ち、最初の操作まで既存の `context-scans.json`（`version: 3`）の実効設定のまま動かして挙動を変えない。追加ルートの追加・削除と自分で書いた指示の目安、既定設定の土台は引き続き `context-scans.json` に保存する。場所ごとの上書きは会話の右パネルの「この場所だけ変える」から行い（指示・Skills は `setDocRow` で行スイッチごとに上書き、`docs/context-runtime.md`「利用記録と検証」）、変更はその場で保存して「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。過去の土台は [ADR 0014](adr/0014-context-default-agent-managed.md)・[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)。
+2026-09-15 にツリーとプレビューの 2 列にした画面は、2026-09-20 に承認済みの 1 画面へ置き換えた（ツリー・「読み込み担当」「探索の設定」・保存ボタン 4 つを廃止）。2026-09-27 から 2026-11-23 まで設定の画面は**全体の設定だけ**を扱った（範囲のプルダウンを廃止）。2026-11-24 から設定 › プラグインのタブの上に**範囲（全体の設定・フォルダー）**を戻し、フォルダーの設定もそこで行ごとに直す（承認済み（2026-11-24）、[ADR 0348](adr/0348-context-folder-scope-in-settings.md)）。その後、外部 MCP（2026-11-14、[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）と指示・Skills（2026-11-15、[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）は設定 › プラグインで担当の 2 択と「探す形式」の札を廃し、**名前ごと・エージェントごと**の一覧（全体スイッチ＋6 エージェントのアイコン）へ移行した（Hooks だけは引き続き担当の 2 択を残す）。指示・Skills のセル単位ルールは `<data>/context-agents.json`（`version: 1`）に持ち、最初の操作まで既存の `context-scans.json`（今は `version: 4`）の実効設定のまま動かして挙動を変えない。追加ルートの追加・削除と自分で書いた指示の目安、既定設定の土台は引き続き `context-scans.json` に保存する。場所ごとの上書きは設定 › プラグインで範囲をそのフォルダーにして行ごとに行い（指示・Skills は `setDocRow`、外部 MCP は `setMcpAgent`、Hooks は `setHookPlace`。2026-11-23 までは会話の右パネルの「この場所だけ変える」）、変更はその場で保存して「保存しました · 次のターンから反映」を出す（2026-09-23 から、始まっている会話にも次のターンから効く）。見た目の規則は `docs/design-system.md` §9「コンテキスト」。過去の土台は [ADR 0014](adr/0014-context-default-agent-managed.md)・[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)。
 「指示」のカードの上には「Pleiad の指示」（Pleiad が毎ターン入れる指示の一覧。ファイルの担当・場所によらず、項目ごとに 6 エージェントを選べる）。仕様は [共通コンテキストの実行](context-runtime.md)「Pleiad の指示」。
 探索 API は `previewOnly: true` の候補一覧を返し、`docMatrix`（`core/context-doc-matrix.mjs`）と `resolveDocForAgent` が画面の表示状態と実行時の受け渡しを同じ規則で導出する。実行時の抑止・適用時期・利用記録・会話の右パネルは [共通コンテキストの実行](context-runtime.md) を参照。既定（未操作の既定設定）はエージェント任せの挙動を保つ。
 
-## 保存と継承（形式 3）
+## 保存と継承（形式 4）
 
-- `${AGENT_HOST_DATA}/context-scans.json`（既定 `~/.agent-host/`）に `version: 3` で保存する。
+- `${AGENT_HOST_DATA}/context-scans.json`（既定 `~/.agent-host/`）に `version: 4` で保存する（2026-11-24、[ADR 0348](adr/0348-context-folder-scope-in-settings.md)）。既定（全体の設定）は丸ごと、場所（フォルダー）は**受け継ぐ値との差分だけ**を持つ。
   ```jsonc
-  { "version": 3,
-    "defaults": { "roots": { "instruction": [], "skill": [], "mcp": [] },   // どの場所でも探す追加ルート（ユーザーの範囲）。種類ごと
+  { "version": 4,
+    "defaults": { "roots": { "instruction": [], "skill": [], "mcp": [], "hooks": [] },   // どの場所でも探す追加ルート（ユーザーの範囲）。種類ごと
                   "kinds": { "instruction": K, "skill": K, "mcp": K } },
-    "places": { "<pathKey>": { "path": "<表示用の実体パス>", "roots": { /* 上書きした種類だけ */ "skill": [] },  // その場所から下で探す追加ルート
-                               "kinds": { /* 上書きした種類だけ */ "skill": K } } } }
+    "places": { "<pathKey>": { "path": "<表示用の実体パス>",
+                               "roots":    { /* 足した種類だけ */ "skill": [] },     // この場所で足した追加ルート（その場所から下で探す）
+                               "rootsOff": { /* 外した種類だけ */ "mcp": [] },       // 上から受け継ぐ追加ルートのうち、この場所から下では使わないもの
+                               "kinds":    { /* 変えた種類だけ */ "skill": D } } } }
+  // D = K の差分。owner・user・directory・disabled は項目ごと、prefer は名前ごと（null は「選ばない」）、
+  //     agents（外部 MCP の名前 × エージェント）は名前（行）ごと: off か spread に名前があればこの場所で変えた行（値は off[名前] ?? [] と spread[名前] ?? []）
   // K = { owner: "native" | "ply",
   //       user:      { sources: ["common"|"claude"|"codex"], excludePaths: [...] } | null,   // home の探索。対応を終えたエージェントの探索元（RETIRED_SOURCES）は読んだところで落とす
   //       directory: { sources: [...], excludePaths: [...] } | null,                                   // Git ルート〜作業場所の探索
@@ -22,14 +26,19 @@
   //       prefer?:   { "名前": "設定ファイル" } }  // 外部 MCP と Skills（SKILL.md）。同じ名前の定義が複数あるときに使う方（無ければ先に見つかった方）
   ```
 - **追加ルート（探す場所を足す）は種類ごと**（2026-09-27、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。足した場所はその種類だけを、その範囲の探す形式（`sources`）で、プロジェクトと同じ置き方（`AGENTS.md`・`.claude/`・`.codex/`・`.agents/skills`・`.mcp.json`）で探す。見つかった行には `root`（足した場所）が付き、画面は「追加した場所」として分ける。既定の追加ルートの行はユーザーの範囲（`scope: 'user'`）、場所の追加ルートの行は作業場所の範囲。
-- **種類ごとに継承する。** 作業場所に一番近い（深い）上書きを持つ場所の値、無ければ既定。追加ルートも種類ごとに同じ（`roots[kind]` を持つ一番近い場所）。場所の上書きを消す（「全体の設定に戻す」。上の場所に上書きがあれば「上のフォルダーの設定に戻す」）と上の値に戻る。画面では「全体の設定どおり／<親の場所> の設定どおり／このフォルダーだけの設定」。
-- **受け継ぐ値と同じ上書きは持たない**（2026-09-23、issue #19）。`set` は保存のたびに、変えた場所の上書きのうち上の場所（または既定）から受け継ぐ値と同じものを消す（`pruneInherited`。移行の `migrateV1` と同じ規則）。この保存で作った場所に上書きが残らなければ場所も作らない（一覧に足した場所は残す）。違いの無い上書きが残ると、その場所は「個別に変更」扱いになり、あとで既定を変えてもその場所に効かない。前の版で保存された同じ上書きは、読み込んだときに消して書き戻す（`pruneAll`。上書きが無くなった場所は一覧からも外す。はじめから上書きの無い場所は残す）。
+- **行ごとに継承する**（2026-11-24 から。それまでは種類ごとに、作業場所に一番近い上書きの丸ごとの写しが勝った）。効く値は、既定に作業場所の祖先の場所の差分を浅い順に重ねたもの（`resolveConfig`）。追加ルートは祖先の場所で足したものを合わせ、`rootsOff` の分を除く。全体の値を変えると、その行（項目・名前）を変えていない場所にも届く。行を戻す（`revertRows`）・場所を消す（`remove`）と上の値に戻る。画面では「全体の設定どおり／<親の場所> の設定どおり／n 件変更」、行の印は「● 変更」「<上> の設定」（`docs/design-system.md` §9）。
+- **`hooks` の追加ルート**（`roots.hooks`）は Hooks の読み込み（`core/hooks-config.mjs`）が読む。足した場所の `.claude/settings.json`・`.codex/hooks.json` などを読むだけで、エージェントの設定ファイルは書かない。外部 MCP の追加ルートも同じく、その場所の `.mcp.json` などを読むだけ。
+- **受け継ぐ値と同じ上書きは持たない**（2026-09-23、issue #19。2026-11-24 から項目・名前・追加ルートごと）。`set` は保存のたびに、変えた場所の差分のうち上の場所（または既定）から受け継ぐ値と同じものを消す（`pruneInherited`。外して足し直した追加ルートは受け継いだままとして両方消す）。この保存で作った場所に上書きが残らなければ場所も作らない（一覧に足した場所は残す）。違いの無い上書きが残ると、その場所は「個別に変更」扱いになり、あとで既定を変えてもその場所に効かない。前の版で保存された同じ上書きは、読み込んだときに消して書き戻す（`pruneAll`。上書きが無くなった場所は一覧からも外す。はじめから上書きの無い場所は残す）。
 - `user` / `directory` が `null` の種類はその範囲を探さない。形式 1 の「対象（kinds）」から外していた種類を移行で表すためだけに残る（画面の札を押すと両方が同じ探す形式にそろう）。
 - **旧 `kinds` は廃止。** 実行時に Pleiad が探すのは担当が Pleiad の種類だけ（`runtimeSettings`）。
 - `excludePaths` はファイルまたはディレクトリのパス（glob ではない）。ディレクトリ配下にも適用し、リンクの参照元・実体の両方で照合する。画面のスイッチは、その行が見つかった範囲（home なら `user`、それ以外は `directory`）の除外を出し入れする。スイッチを入れるとき、その行を含むフォルダーごとの除外も外す。
 - 相対パスは保存時に絶対パス化する。既定はホーム、場所は保存先ディレクトリが基準。継承先で意味が変わらない。
 - 書き込みは読み込みと同じ列に直列化し、一時ファイルから rename。壊れた JSON はエラーにして保存を拒否し、ファイルはそのまま残す。
 - これらはサーバーのファイルシステム上のパス。別端末のブラウザーで操作しても、ブラウザー側のファイルは探索しない。
+
+### 形式 3 からの移行（2026-11-24）
+
+形式 3（`version: 3`）は場所に種類の設定の丸ごとの写しを持ち、作業場所に一番近い写しが勝った。読み込んだときに形式 4 へ移す: 元のバイト列を `context-scans.v3-backup.json` に書き（既にあれば残す）、メモリ上のコピーで浅い場所から順に、形式 3 でその場所に効いていた値を形式 4 で受け継ぐ値からの差分にし（`migrateV3`。同じなら持たない。追加ルートは受け継ぐ並びに無いものを `roots`、使わないものを `rootsOff`）、既定と保存されていたすべての場所で担当と探索の計画（種類ごとの追加ルートを含む。`hooks` は空）が同じかを確かめ（`sameMeaningV3`）、一時ファイルに書いて読み直してもう一度確かめてから rename で置き換える。確かめられなければ元のファイルは変えずに読み込みを断る。形式 1・2 は形式 3 を経て同じ手順で 4 へ移す（バックアップは `context-scans.v1-backup.json`・`v2-backup.json`）。一覧に足しただけの場所も残す。古い版の Pleiad は形式 4 を読めないので、戻すときは `context-scans.v3-backup.json` を使う。
 
 ### 形式 2 からの移行（2026-09-27）
 
@@ -80,8 +89,11 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
 
 ## API と構成
 
-- `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、種類ごとの追加ルート `roots: { <kind>: { value, override, from } }`、「個別に変更」の数（`overrides`。種類と種類ごとの追加ルート・セル設定の上書きの数）、`current`（今の場所）、`saved`。設定の画面は `defaults` だけ、会話の右パネルは今の場所（`current`）を使う。
-- `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, kind?, roots: [...] | null }`（`kind` を省くと 3 種すべて）、`{ place, add: true }` / `{ place, remove: true }`（右パネルの「全体の設定に戻す」は `remove`）。
+- `contextSettings { cwd? }`：画面の形。`defaults` と `places[]`（保存した場所と今の場所）それぞれで、種類ごとの `{ value, override, from }`、種類ごとの追加ルート `roots: { <kind>: { value, override, from } }`、「個別に変更」の数（`overrides`。種類と種類ごとの追加ルート・セル設定の上書きの数）、`current`（今の場所）、`saved`。2026-11-24 から、種類ごとに `diff`（この場所の差分）・`rows`（名前ごとに変えた場所）・`changes`（変えた数）、追加ルートごとに `added: [{ path, from, here }]`・`off`・`changes`、場所ごとに `changes`・`parent`（一番近い保存済みの上の場所）も返す。設定の画面は範囲（`defaults` かフォルダー）、会話の右パネルは今の場所（`current`）の状態の 1 行を使う。
+- `setContextSettings`：1 か所だけ変えて即時保存し、`contextSettings` と同じ形（と `place`）を返す。`{ place: null | パス, kind, value: K | null }`（場所で `null` は既定に戻す）、`{ place, kind?, roots: [...] | null }`（`kind` を省くと 3 種すべて）、`{ place, add: true }` / `{ place, remove: true }`、2026-11-24 から `{ place, kind: 'mcp' | 'skill', revertRows: [名前] }`（行を上の設定に戻す）と `{ place, kind, addRoot | removeRoot: パス }`（追加ルートを 1 つ足す・外す。`kind` は `hooks` も可。受け継いだものを外すと `rootsOff`）。
+- `contextScopes {}`（2026-11-24）: 範囲の一覧に出す保存済みのフォルダー（`context-scans.json`・`context-agents.json`・`hooks-agents.json` のどれかに設定のある場所）。`{ places: [{ id, path, missing, changes: { settings, roots, instruction, skill, hooks, total }, parent }] }`。読むだけ。
+- `removeContextPlace { place }`（2026-11-24、`guarded`）: フォルダーの設定を全部消す（`context-scans.json` の場所・`context-agents.json` の場所・`hooks-agents.json` の場所）。フォルダーが見つからなくても消せる。画面の「全体の設定に戻す…」「<上> の設定に戻す…」「設定を消す…」。
+- `revertDocRows { kind, keys, place }`（2026-11-24、`guarded`）: フォルダーで変えた指示・Skills の行（`context-agents.json` の場所の規則と、Skills の選んだ写し）を上の設定に戻す。
 - `scanContext { cwd, place?: "default", scope?: "user" }`：保存済み設定から候補・出典・診断・探索場所・根（`home` / `root`）・MCP 設定ファイルごとの登録の書き出し（`configs`）を返す。`place: "default"` は場所の上書きを使わず既定だけで探す。`scope: "user"` はユーザーの範囲（home と既定の追加ルート）だけを探す（設定の画面のユーザーの段。作業場所のファイルを混ぜない）。同一接続の重複スキャンは拒否する。
 - `docMatrix { kind, cwd?, place? }`（`kind`: `'instruction' | 'skill'`）：`context-agents.json` と `scanContext`・レガシー既定設定から、名前 × エージェント 6 者のマトリクス（`agents`, `summaryRow`, `rows` と各セルの状態・鍵理由）を返す。
 - `setDocAgent { kind, key, agent, on, place?, cwd? }` / `setDocRow { kind, key?, keys?, on, place?, cwd? }`：指示・Skills の 1 セルまたは行（フォルダまとまりは `keys` で複数）を即時保存する。未操作の `(place, kind)` を初めて触った瞬間に、現在効いている実効状態（`docAgentsFromLegacy`）を `context-agents.json` へ写してから更新する。AI・CLI から呼ぶときは、入れる・外すのどちらも `guarded`（会話の承認の札。紐づかない CLI は画面へ回す）で、今の除外（`setContextSettings`）と同じ強さ（ADR 0337 §決定 6）。
@@ -104,12 +116,12 @@ Agent Skills の仕様は `SKILL.md` の形式を定め、`.agents/skills/` は�
   - **操作**: `context.setDocRow`・`hooks.setRow`・`context.setMcpRow`。MCP の行は、マスの切り替え `toggleMcpAgent` を組み合わせて 1 回で保存する。
   - **まとまり（Skills の置き場フォルダーなど）**: 子の全マスを同じ規則で数え、子ごとに戻す。もともとオフだった子は入れない（戻すときに、そのとき入れなかった物や新しく見つかった物を黙って足さない）。
   - **通知**: 「保存しました」。変えたマスに、会話の始まりでだけ反映するエージェント（`contextAt`）が含まれるときだけ「Antigravity と Grok は、新しい会話から反映します」を足す。
-- **（以下は旧来の担当の 2 択。設定 › プラグインでは 2026-11-14 から使わず、`agents` が無い保存と会話の右パネルの場所ごとの 2 択に残る）**
+- **（以下は旧来の担当の 2 択。設定 › プラグインでは 2026-11-14 から使わず、`agents` が無い保存に残る。会話の右パネルの場所ごとの 2 択は 2026-11-24 に無くした）**
 - **エージェントに任せる**: `agentMcp` で各エージェントの登録を 2 列で見比べる。片方にしか無いものに「Claude だけ」。Pleiad は読むだけで変えない。
 - **Pleiad がそろえる**: ユーザーの段に、どの場所でもつなぐもの（Pleiad の登録と、ユーザーの範囲のエージェントの登録）を名前ごとに 1 行。作業場所の `.mcp.json` などは場所ごとなので、会話の右パネルで見る。手元で動かす／URL の区別、どの設定由来か（Pleiad に登録・Claude だけに登録・両方に登録）、ログインの状態と「ログイン」、同じ名前で中身の違う定義があれば「どちらの定義を使いますか」（`prefer`）、スイッチ（オフ = `disabled`）。行を押すと中身: Pleiad の登録は編集・名前を変える・ログイン／ログアウト・接続を確認・削除、エージェントの登録は伏せ字の定義と「Pleiad に取り込む」（`importPlyMcp`。トークンは引き継がない）。読み込む設定ファイルは段の探す形式（ユーザーは Claude の設定・Codex の設定、作業場所は `.mcp.json`・`.codex/config.toml`）。「ログインの詳細設定」（Client ID Metadata Document の URL。既定は空）は折りたたみの奥。暗号化されない起動では平文で保存することを注記する。
 - **名前を変えたとき**（`renamePlyMcp`）: 既定と各場所の設定で名前で指したものも追随させる（`contextSettings.renameMcp`）。`disabled` は新しい名前も外す（古い名前は残す。同じ名前のエージェント側の登録は前と同じく外れたまま）。`prefer` は Pleiad の登録を選んでいたものだけ新しい名前へ移す。戻り値の `settingsUpdated` は書き換えた箇所の数。始まっている会話も次のターンから今の設定（`plan.mcp`）に従う。「この会話では外す」（`removedMcp`）は会話の方針なので名前のまま変えない。
 - **同じ名前の定義が複数あるとき**: 選んだ定義（`prefer`）、無ければ先に見つかった方を使い、残りは `shadowedBy: 'choice'` で渡さない（以前は実行時に「同名の MCP があります」で止めていた）。どれを使ったかは設定の行（「〜の定義を使っています」）と会話の右パネル（「渡していないもの」に理由）に出す。Pleiad の登録と同じ名前のエージェント側の登録は、従来どおり Pleiad の登録が優先。
-- **＋ MCP を追加**（シート）: 名前（エージェントの登録から候補を出し、選ぶとつなぎ方を写す）、つなぎ方（URL につなぐ／手元で動かす）、コマンド・環境変数、または URL・認証（ブラウザでログイン／トークン／ヘッダー／なし。アプリ登録が要るときの clientId は折りたたみ）、保存先と暗号化の説明（登録はすべての場所に効く。この場所だけ外すのは会話の右パネルの「この場所だけ変える」）、「追加してログイン」（OAuth）または「追加して試しにつなぐ」。JSON で直接書きたいときは「JSON で編集（上級者向け）」を開く。
+- **＋ MCP を追加**（シート）: 名前（エージェントの登録から候補を出し、選ぶとつなぎ方を写す）、つなぎ方（URL につなぐ／手元で動かす）、コマンド・環境変数、または URL・認証（ブラウザでログイン／トークン／ヘッダー／なし。アプリ登録が要るときの clientId は折りたたみ）、保存先と暗号化の説明（登録はすべての場所に効く。このフォルダーだけ外すのは、範囲をそのフォルダーにした外部 MCP のタブの行）、「追加してログイン」（OAuth）または「追加して試しにつなぐ」。JSON で直接書きたいときは「JSON で編集（上級者向け）」を開く。
 
 以下はエージェント側の設定ファイルを書く API（`saveMcpServer`）の仕様。画面からは使わなくなったが、API は残している。
 
@@ -172,20 +184,20 @@ Claude の Skill の frontmatter の `hooks`（ユーザーの `skills/*/SKILL.m
   **厳密に読む**（`parseConfig`）: 検査に通らない登録・重複した id・上限（200 件）超え・壊れた既定や場所の担当は、黙って落とさずに `problems` として返す（読めた部分は使える）。`problems` がある間は上書き保存しない（`plyHooks.brokenSave`）。ファイルが丸ごと読めなければ画面の形は `{ unreadable: true }`。直すのは `repairPlyHooks`（元のファイルを `hooks.broken-<時刻>.json` に退避し、読めた部分だけで書き直す。担当を読めなかった場所・既定はエージェント任せになる）。
   **ターンの前の担当**（`resolveForTurn`）: 既定か効くはずの場所の担当が壊れていれば担当は分からない（`plyHooks.ownerUnknown`。ターンを始めない）。担当が Pleiad なのに登録に壊れた部分があれば始めない（`plyHooks.brokenEntries`）。担当が確かにエージェント任せなら、登録が壊れていても始める。ファイルが丸ごと読めなくなったら、このプロセスで最後に読めた内容でエージェント任せだった場所だけ続ける（`stale`）。
 - **API**: `plyHooks { cwd? }`（担当と登録。コマンドは伏せ字）、`readPlyHook { id }`（編集のシートだけ元のコマンド）、`savePlyHook { value }`、`removePlyHook { id }`、`togglePlyHook { id, enabled }`、`plyHookPreview { value }`（エージェントごとの渡し方。保存しない）、`hooksUnifyPreview { cwd?, direction: ply|native }`、`setHooksOwner { place, value, revision, imports?: [{ id, digest }] }`、`repairPlyHooks {}`。`plyHooks` の場所の形には、上書きを外したときの担当（`inherited`）と、担当が確かに決まるか（`certain`）、壊れた部分（`problems`）を載せる。
-- **切り替えの確認**（`hooksUnifyPreview`。ADR 0031 に倣う。戻す向きでも出す）: 設定の画面はユーザーの範囲、右パネルの「この場所だけ変える」はその場所（ユーザーと Git のルートから cwd まで）を探し、Codex は `hooks/list` のプラグイン・管理者の定義を重ねる。行を `stops`（止まる。戻すときは再開する）・`inactive`（元の設定で動いていない: agy の `enabled: false`・同じ名前で止まっている、Codex の `/hooks` で止めた・未審査・変更あり。止めても戻しても変わらない）・`keeps`（止め方の無い出どころ: Codex・agy のプラグイン、管理者）に分け、`stops`・`inactive` には取り込めるか（`importable` と理由）と確認票の `digest`（元の定義の hash）を付ける。Claude はプラグインと Skill の hooks も `stops`（Skill は止まる見込み・未確認）。`registry` は登録ごとの、エージェントごとの渡し方（`deliverable`）。ほかに確認票の `revision`（登録と担当の版）、止める一覧を作れないエージェント（`incomplete`。agy のファイルを読めないとき）、その場所で Skills も Pleiad 担当か（`agySkillsConflict`。そろえた agy の会話は始まらない）。
+- **切り替えの確認**（`hooksUnifyPreview`。ADR 0031 に倣う。戻す向きでも出す）: 全体の範囲はユーザーの範囲、フォルダーの範囲（2026-11-23 までは右パネルの「この場所だけ変える」）はその場所（ユーザーと Git のルートから cwd まで）を探し、Codex は `hooks/list` のプラグイン・管理者の定義を重ねる。行を `stops`（止まる。戻すときは再開する）・`inactive`（元の設定で動いていない: agy の `enabled: false`・同じ名前で止まっている、Codex の `/hooks` で止めた・未審査・変更あり。止めても戻しても変わらない）・`keeps`（止め方の無い出どころ: Codex・agy のプラグイン、管理者）に分け、`stops`・`inactive` には取り込めるか（`importable` と理由）と確認票の `digest`（元の定義の hash）を付ける。Claude はプラグインと Skill の hooks も `stops`（Skill は止まる見込み・未確認）。`registry` は登録ごとの、エージェントごとの渡し方（`deliverable`）。ほかに確認票の `revision`（登録と担当の版）、止める一覧を作れないエージェント（`incomplete`。agy のファイルを読めないとき）、その場所で Skills も Pleiad 担当か（`agySkillsConflict`。そろえた agy の会話は始まらない）。
 - **取り込み**（`setHooksOwner` の `imports`）: 画面が送るのは行の id と確認票の digest だけで、サーバーが元のファイルを読み直して登録にし、digest が同じときだけ保存する（違えば `hooksUnify.importChanged`。確認し直す）。`revision` が今の版と違っても保存しない（`plyHooks.changedSinceReview`）。取り込めないもの: command 以外、実行の条件や知らないキー（`if`・`once` など）、matcher group のほかのキー、Skill、管理者・Codex の `hooks/list` だけの行、プラグインのデータの置き場（`CLAUDE_PLUGIN_DATA`）を使うもの、複数行のコマンド、Claude の SessionStart（コールバックで渡せない）。取り込み済みかは同じ出どころ・同じ定義（`importedFrom.digest`）で決め、取り込み済みの登録がオフ・この場所で外しているなら `alreadyOff`。重ねて送った・再送した取り込みは 1 件にする。元の設定で動いていない定義はオフの登録にする。プラグインの `${CLAUDE_PLUGIN_ROOT}` は実際のパスに置き換える。取り込んだ登録は元のエージェントだけに渡す（`targets` は元のエージェント）。担当と取り込みは 1 回の書き込みで、取り込みに失敗したら担当も変えない。
 
 ### Hook × エージェントの一覧（2026-11-15、[ADR 0338](adr/0338-hooks-by-hook-and-agent.md)）
 
-担当の 2 択を、外部 MCP（ADR 0327）と同じ「行 × 6 つのエージェント」の一覧に置き換える。画面は設定 › プラグイン › Hooks の表と、会話の右の欄の「この場所で使うか」（design-system.md「Hooks」。`web/hooks-matrix.mjs`）。
+担当の 2 択を、外部 MCP（ADR 0327）と同じ「行 × 6 つのエージェント」の一覧に置き換える。画面は設定 › プラグイン › Hooks の表（2026-11-24 から範囲をフォルダーにすると、そのフォルダーの行。それまでは会話の右の欄の「この場所で使うか」。design-system.md「Hooks」。`web/hooks-matrix.mjs`）。
 
 - **行 ID**: 登録は `h-…`、エージェントの設定の定義は `hk-` + sha256(`[エージェント, scope, ファイル, イベント, matcher, コマンド, 名前]`) の 16 桁（並びの位置を入れないので、前に足しても変わらない）、作業場所の Hooks は 1 行 `ws:hooks`。一覧の行には `hooks.scan` の `id`（`scanIds`）も入れる。
 - **書き換えた定義**: 利用者がコマンドや matcher を直すと `hk-` が変わるので、エージェント・scope・ファイル・イベントごとに見えていた ID を `seen` に覚え、消えた 1 つと現れた 1 つが対応するときだけ外した・広げた選択を移す。対応が決められない（2 つ以上直した・既存の定義と同じになった）ときや消えただけのときは移さず、`hooksMatrix` の `orphans`（`reason: ambiguous|gone`・`candidates`）で返す（広げた状態は実行する側へ倒さない）。読めない・一部だけのファイルは比べない。`seen` は一覧を開いたときと書くときに保存し、`revision` には入れない。式は ADR 0338「書き換えた定義へ選択を引き継ぐ」。
-- **保存**（`core/hooks-agents.mjs`）: `<data>/hooks-agents.json`（0600）。`{ version: 1, off, spread, unused, compat: { grok, devin }, places, adoptedFrom, seen }`。`hooks.json` には書かない（古い版はこのファイルを知らず、担当で今までどおり動く）。無ければ移行前。読めない（壊れた・知らない `version`）ときは会話を断り（最後に読めた選択でそのターンに変えるものが無かったエージェントは続ける）、`hooksMatrix` は `{ unreadable: true, error, repair: ['hooks.repair', 'hooks.resetAgents'], rows: [] }` を返す。`repairPlyHooks`（`hooks.repair`）と `hooks.resetAgents` は、壊れたファイルを `hooks-agents.broken-<時刻>.json` へ名前を変えて残し、移行前の動きに戻す（`hooks.repair` の返り値の `agentsBackup`。`hooks.json` が無事なら書き直さない）。理由は ADR 0338「保存」。
+- **保存**（`core/hooks-agents.mjs`）: `<data>/hooks-agents.json`（0600）。`{ version: 2, off, spread, unused, compat: { grok, devin }, places, adoptedFrom, seen }`。`places` は 2026-11-24 から受け継ぐ値（全体 → 祖先のフォルダー）と違う行だけを持つ（`{ <pathKey>: { path, rows?: { <行>: { off, spread, unused, skip } }, compat? } }`。[ADR 0348](adr/0348-context-folder-scope-in-settings.md)）。実行時は祖先から行ごとに解決する。形式 1（場所ごとの丸ごとの写し）は `hooks-agents.v1-backup.json` を取ってから移す。`revertHookRow { cwd, key | keys }` は行の差分を、`removeHookPlace { cwd }` は場所の差分を全部消す（フォルダーが無くても消せる）。`hooks.json` には書かない（古い版はこのファイルを知らず、担当で今までどおり動く）。無ければ移行前。読めない（壊れた・知らない `version`）ときは会話を断り（最後に読めた選択でそのターンに変えるものが無かったエージェントは続ける）、`hooksMatrix` は `{ unreadable: true, error, repair: ['hooks.repair', 'hooks.resetAgents'], rows: [] }` を返す。`repairPlyHooks`（`hooks.repair`）と `hooks.resetAgents` は、壊れたファイルを `hooks-agents.broken-<時刻>.json` へ名前を変えて残し、移行前の動きに戻す（`hooks.repair` の返り値の `agentsBackup`。`hooks.json` が無事なら書き直さない）。理由は ADR 0338「保存」。
 - **触るまで何も変えない**: 移行前の一覧は、開くたびに今の担当の動きを写して見せるだけ。最初に押したとき、写した状態に押した変更を足して保存する。式（旧「任せる」は登録を `off = targets`、旧「そろえる」は止めていた定義と作業場所を `off`・Grok の互換を `off` など）は ADR 0338「移行」。4 つの組で、移行の前後に各エージェントのターンで動く Hook が同じことを試験で確かめる。
 - **セル**: `{ state: on|off, mode: toggle|locked|none, reason?: own|workspace|relay|admin, detail?, warnings?, needsConfirm?, stopsDevinImports? }`。Devin の取り込みが止まっていない場所を止まる状態に変える操作は、どの入口（マス・行のスイッチ・まとまりのスイッチ・会話の右の欄の「この場所で使う」・場所の上書きを戻す（`setPlace` の `reset`））でも保存の前に知らせる。一覧が印を付け（セルの `stopsDevinImports`、行の `switchConfirm`、右の欄の行の `here.confirm`。どれも `warnings` に `devinImportsStop`）、画面はその印で確認の帯を出す（作り直さない）。既に止まっている場所の 2 つ目の Devin には付かない。一覧と実行時は同じ関数（`cellsFor`・`decideModes`）で決める。押してもそのセルが変わらない・ほかのセルが黙って止まるものは鍵。鍵の `detail` の一覧は ADR 0338「鍵と理由」。
 - **操作**（`core/ops/hooks.mjs`）: `hooks.matrix`（`hooksMatrix`）・`hooks.setAgent`（`setHookAgent { key, agent, on, cwd?, revision? }`）・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`・`hooks.resetAgents`。Pleiad の登録（`h-…`）・組 `ply` を外す向きは `write`（`togglePlyHook` の無効と同じ）。エージェントの設定の定義・作業場所の Hooks・組 `own`/`place` を外す向き、場所の上書きを消す向き、入れる・広げる・戻す向きは承認（`guarded`、`approvalWords: 'hooks'`。`setHooksOwner` と同じ強さ）。`revision` は保存の中身の hash（移行の時刻は入れない）で、違えば `CONFLICT`。`hooks.setAgent`・`setRow`・`setGroup`・`setPlace` は `dry: true` で何も書かずに `{ devinImportsStop, revision }` を返し、エージェント・CLI からの止まり始める操作は承認のカードの文と戻り（`devinImportsStop: true`）で知らせる。
-- **画面が呼ぶ操作**: 表は `hooksMatrix`・`setHookAgent`・`setHookRow`、右の欄は `hooksMatrix { cwd }` の行（`here`）と `setHookPlace`、直すのは `repairPlyHooks`。担当の 2 択・取り込み・写す（`setHooksOwner`・`hooksUnifyPreview`・`copyHooks`）と `hooks.resetAgents` は画面から呼ばない（`hooks.resetAgents` は操作として残し、CLI・MCP から呼べる）。人が画面で押したときは承認のカードを出さず、エージェント・CLI から呼ぶと guarded の操作は承認を求める（ADR 0338「操作」）。
+- **画面が呼ぶ操作**: 表は `hooksMatrix`・`setHookAgent`・`setHookRow`、フォルダーの範囲は `hooksMatrix { cwd }` と `setHookPlace`・`revertHookRow`・`removeHookPlace`、直すのは `repairPlyHooks`。担当の 2 択・取り込み・写す（`setHooksOwner`・`hooksUnifyPreview`・`copyHooks`）と `hooks.resetAgents` は画面から呼ばない（`hooks.resetAgents` は操作として残し、CLI・MCP から呼べる）。人が画面で押したときは承認のカードを出さず、エージェント・CLI から呼ぶと guarded の操作は承認を求める（ADR 0338「操作」）。
 - **移行済みの人の旧の操作**: 担当の切り替え（`setHooksOwner`。場所ごとの担当・取り込みも）・切り替えの確認（`hooksUnifyPreview`）・「写す」（`copyHooks`）は、人の操作でもエージェントの操作でも `HOOKS_MOVED` で断り、何もしない（効かないのに効いたように見えるのを防ぐ）。エラーの文に一覧の操作（`hooks.matrix`・`hooks.setAgent`・`hooks.setRow`・`hooks.setGroup`・`hooks.setPlace`）と、旧の担当へ戻す `hooks.resetAgents` を書く。断るのは承認より前（承認のカードは出ない）。登録の追加・編集・オンオフ（`savePlyHook`・`togglePlyHook`）とネイティブの編集はそのまま使う。
 
 ### 他のエージェントへ写す（第 2 段）

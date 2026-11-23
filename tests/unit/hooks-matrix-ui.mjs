@@ -406,6 +406,118 @@ export default async function (t) {
         await fs.rm(tmp, { recursive: true, force: true });
       }
     }
+
+    // ---- 9. フォルダー別の設定（ADR 0348）: 節の並び・この場所で変えた行の「● 変更」と「戻す」・受け継いだ行・cwd つきの保存 ----
+    {
+      const btnText = b => [b._text ?? '', ...b.children.map(c => c.textContent)].join(''); // 代役は textContent = '' の後に足した字を数えない
+      const EV = { stopPropagation() {} }; // 印のボタンは押した事の伝わりを止める（代役の click は事を渡さない）
+      const place = 'C:\\dev\\website', parent = 'C:\\dev';
+      const scanRoot = 'C:\\dev\\website\\hooks-extra';
+      const grid9 = () => {
+        const g = makeGrid('h-9');
+        const [regRow, adminRow, grokOwnRow, ws] = g.rows;
+        regRow.overridden = true; regRow.from = place;
+        grokOwnRow.from = parent;
+        const rootRow = { key: 'hk-root', kind: 'root', group: 'root', agent: 'claude', scope: 'root', rootScope: 'directory', root: scanRoot, event: 'Stop', matcher: null, command: 'node extra.mjs',
+          on: true, switchable: true, from: null, overridden: false, cells: Object.fromEntries(AG.map(a => [a, a === 'claude' ? { mode: 'toggle', state: 'on' } : none()])) };
+        return { ...g, cwd: place, changes: 2, rows: [regRow, adminRow, grokOwnRow, rootRow, ws] };
+      };
+      let cur = { place, parent, missing: false };
+      const calls9 = [], counts9 = [], gone = [], removed = [], saved9 = [];
+      const card9 = createHooksMatrix({
+        cmd: async (op, args) => { calls9.push([op, args]); return op === 'hooksMatrix' ? grid9() : op === 'plyHooks' ? structuredClone(fixtureView) : op === 'scanHooks' ? { files: [], entries: [] } : { ok: true }; },
+        work: fn => fn(), saved: s => saved9.push(s), failed: () => {}, opened: new Set(), onCount: (n, extra) => counts9.push([n, extra]),
+        scope: () => cur, onGo: p => gone.push(p),
+        scan: { added: () => [{ path: scanRoot, from: null, here: true }], addControl: () => { const b = document.createElement('button'); b.className = 'hk-add-scan'; return b; }, remove: async p => { removed.push(p); } },
+      });
+      dom.body.append(card9.root);
+      await card9.load();
+      const r9 = key => card9.root.querySelector(`.cx-row[data-key="${key}"]`);
+      assert.deepEqual(calls9.filter(c => c[0] === 'hooksMatrix').map(c => c[1].cwd), [place], 'フォルダーの一覧は cwd を付けて読む');
+      assert.deepEqual(counts9.at(-1), [4, { changes: 2 }], '件数の 2 つ目は、この場所の差分の数');
+      assert.deepEqual(card9.root.querySelectorAll('.cx-sec .n').map(n => n.textContent),
+        [tr('context.scope.sec.scan'), tr('context.scope.sec.userHooks'), tr('context.scope.sec.plyRegistered')], '節は スキャン場所 → ユーザースコープの Hooks → Pleiad に登録');
+      assert.equal(card9.root.querySelector('h4'), null, '表の中に h4 の見出しを置かない');
+      assert.equal(card9.root.querySelectorAll('.cx-tierh').length, 0, '古い段の見出しは無い');
+      assert.ok(card9.root.querySelector('.qtip'), 'スキャン場所の「?」');
+      assert.ok(!card9.root.textContent.includes(tr('context.ply.scopePlain')), 'フォルダーでは「すべての場所に共通」を出さない');
+      assert.ok(!card9.root.querySelectorAll('button').some(b => btnText(b).includes(tr('hooks.add'))), 'フォルダーでは Pleiad の登録の追加を出さない');
+      assert.ok(card9.root.querySelectorAll('button').some(b => btnText(b).includes(tr('hooks.scope.addUser'))), 'ユーザースコープの追加は「ユーザースコープに追加」');
+      // スキャン場所の節: 作業場所の 1 行・足した場所の頭（● 追加＋外す）・その場所の Hook・追加の操作（最後）
+      const scanBox = card9.root.querySelector('.cx-block');
+      assert.ok(scanBox.querySelector('.cx-row[data-key="ws:hooks"]'), '作業場所の 1 行はスキャン場所の節');
+      assert.equal(r9('ws:hooks').querySelector('.p').textContent, tr('context.scope.sec.rule'));
+      const head = scanBox.querySelector('.hk-root');
+      assert.equal(head.querySelector('.nm').textContent, 'hooks-extra');
+      assert.equal(head.querySelector('.ovb').textContent, tr('context.scope.mark.added'));
+      assert.ok(scanBox.querySelector('.cx-row[data-key="hk-root"]'), '足した場所の Hook はその場所の下');
+      assert.equal(scanBox.children.at(-1).className, 'hk-add-scan', '「＋ スキャン場所を追加」は節の最後');
+      head.querySelector('.tbtn').click();
+      await settle();
+      assert.deepEqual(removed, [scanRoot], '「外す」は scan.remove');
+      // この場所で変えた行: 「● 変更」と「戻す」。受け継いだ行: 「dev の設定」（押すとその場所へ）。全体どおりの行: 印なし
+      assert.equal(r9('h-9').querySelector('.ovb').textContent, tr('context.scope.mark.changed'));
+      const rv = r9('h-9').querySelector('.rv');
+      assert.equal(rv.textContent, tr('context.scope.revert'));
+      assert.equal(rv.getAttribute('aria-label'), tr('context.scope.revertToParentAria', { name: 'node fmt.js', parent: 'dev' }));
+      assert.equal(r9('hk-grok').querySelector('.ovp').textContent, tr('context.scope.mark.from', { name: 'dev' }));
+      r9('hk-grok').querySelector('.ovp').onclick(EV);
+      assert.deepEqual(gone, [parent], '「dev の設定」を押すとその場所へ移る');
+      assert.equal(r9('hk-admin').querySelector('.ovb, .ovp, .rv'), null, '全体の設定どおりの行は印なし');
+      rv.onclick(EV);
+      await settle();
+      assert.deepEqual(calls9.filter(c => c[0] === 'revertHookRow').map(c => [c[1].cwd, c[1].key]), [[place, 'h-9']], '「戻す」は cwd と行で revertHookRow');
+      assert.equal(saved9.at(-1), tr('context.scope.reverted', { from: tr('context.scope.fromParent', { name: 'dev' }) }));
+      // 保存は cwd つき
+      card9.root.querySelector('.cx-row[data-key="h-9"] .cx-sw').click();
+      await settle();
+      card9.root.querySelector('.cx-row[data-key="hk-root"] .cx-ag[data-agent="claude"]').click();
+      await settle();
+      assert.deepEqual(calls9.filter(c => c[0] === 'setHookRow' || c[0] === 'setHookAgent').map(c => [c[0], c[1].key, c[1].cwd]),
+        [['setHookRow', 'h-9', place], ['setHookAgent', 'hk-root', place]], 'フォルダーでの保存は cwd を付ける');
+      t.ok('フォルダーの設定: 節の並び、この場所で変えた行の「● 変更」と「戻す」（revertHookRow に cwd）、受け継いだ行の「dev の設定」、足した場所の「● 追加」と「外す」、保存に cwd', true);
+
+      // フォルダーが見つからない: 読むだけ。押しても保存せず、追加・戻す・外すを出さない
+      cur = { place, parent, missing: true };
+      await card9.reload();
+      const n0 = calls9.filter(c => c[0] !== 'hooksMatrix' && c[0] !== 'plyHooks' && c[0] !== 'scanHooks').length;
+      assert.equal(r9('ws:hooks').querySelector('.p').textContent, tr('context.scope.sec.missingFolder'), '作業場所の行に「フォルダーが見つかりません」');
+      assert.equal(card9.root.querySelectorAll('.rv').length, 0, '「戻す」を出さない');
+      assert.ok(r9('h-9').querySelector('.ovb'), '変えた印は見せる');
+      assert.equal(card9.root.querySelectorAll('.hk-root .tbtn').length, 0, '「外す」を出さない');
+      assert.equal(card9.root.querySelector('.hk-add-scan'), null, 'スキャン場所の追加を出さない');
+      assert.ok(!card9.root.querySelectorAll('button').some(b => btnText(b).includes(tr('hooks.scope.addUser')) || btnText(b).includes(tr('hooks.add'))), '追加の操作を出さない');
+      for (const key of ['h-9', 'hk-root']) {
+        const s = card9.root.querySelector(`.cx-row[data-key="${key}"] .cx-sw`);
+        assert.equal(s.getAttribute('aria-disabled'), 'true', `${key} の行のスイッチは押せない`);
+        assert.equal(s.dataset.tip, tr('context.scope.readOnly'));
+        s.click?.();
+        const c = card9.root.querySelector(`.cx-row[data-key="${key}"] .cx-ag[data-agent="claude"]`);
+        assert.equal(c.getAttribute('aria-disabled'), 'true', `${key} のマスは押せない`);
+        c.click?.();
+      }
+      await settle();
+      assert.equal(calls9.filter(c => c[0] !== 'hooksMatrix' && c[0] !== 'plyHooks' && c[0] !== 'scanHooks').length, n0, '押しても保存しない');
+      t.ok('見つからないフォルダー: 作業場所の行に「フォルダーが見つかりません」、スイッチとマスは鍵、追加・戻す・外すを出さず、押しても保存しない', true);
+
+      // 全体の設定: 印は付けず、別の設定にした場所を下の段に添える。「すべての場所に共通」と Pleiad の登録の追加を出す
+      cur = { place: null, parent: null, missing: false };
+      const calls10 = [];
+      const card10 = createHooksMatrix({
+        cmd: async (op, args) => { calls10.push([op, args]); if (op !== 'hooksMatrix') return null; const g = makeGrid('h-10'); g.rows[0].overriddenAt = [place]; g.rows[2].overriddenAt = [place, parent]; return { ...g, changes: 3 }; },
+        work: fn => fn(), saved: () => {}, failed: () => {}, opened: new Set(), scope: () => cur,
+      });
+      await card10.load();
+      const r10 = key => card10.root.querySelector(`.cx-row[data-key="${key}"]`);
+      assert.equal(calls10.find(c => c[0] === 'hooksMatrix')[1].cwd, undefined, '全体の一覧は cwd を付けない');
+      assert.ok(r10('h-10').querySelector('.p').textContent.endsWith(tr('context.scope.mark.elsewhereOne', { name: 'website' })), r10('h-10').querySelector('.p').textContent);
+      assert.ok(r10('hk-grok').querySelector('.p').textContent.endsWith(tr('context.scope.mark.elsewhereMany', { count: 2 })), r10('hk-grok').querySelector('.p').textContent);
+      assert.equal(card10.root.querySelectorAll('.ovb, .ovp, .rv').length, 0, '全体の設定では行の印を付けない');
+      assert.ok(card10.root.textContent.includes(tr('context.ply.scopePlain')), '全体では「すべての場所に共通」');
+      assert.ok(card10.root.querySelectorAll('button').some(b => btnText(b).includes(tr('hooks.add'))), '全体では Pleiad の登録を追加できる');
+      t.ok('全体の設定: 行の印は付けず、別の設定にした場所を下の段に添え、「すべての場所に共通」と登録の追加を出す', true);
+      card9.root.remove?.();
+    }
   } finally {
     dom.restore();
     await fs.rm(fixtureDir, { recursive: true, force: true });

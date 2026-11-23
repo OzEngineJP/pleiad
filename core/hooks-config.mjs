@@ -158,6 +158,8 @@ export function jsonLossy(text) {
   return false;
 }
 const handlerType = h => (typeof h?.type === 'string' ? h.type : 'command');
+// 全体の停止（Claude の disableAllHooks・Codex の [features] hooks = false）。行ごとの状態ではないので、ファイルに付ける
+const allHooksOff = (file, data) => (file.kind === 'claude' && data.config?.disableAllHooks === true) || (file.kind === 'codex-toml' && data.config?.features?.hooks === false);
 const commandOf = h => typeof h?.command === 'string' ? h.command : Array.isArray(h?.args) ? h.args.join(' ') : '';
 
 /**
@@ -383,8 +385,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
         const data = await load(file, scope === 'user' ? null : base);
         const info = { agent, scope, base: base ?? null, path: file.path, format: file.format, kind: file.kind, exists: data.exists, revision: data.revision ?? null };
         if (data.error) { files.push({ ...info, status: 'error', error: data.error, count: 0 }); continue; }
-        // 全体の停止（Claude の disableAllHooks・Codex の [features] hooks = false）は行ごとの状態ではないので、ファイルに付ける
-        const off = (file.kind === 'claude' && data.config?.disableAllHooks === true) || (file.kind === 'codex-toml' && data.config?.features?.hooks === false);
+        const off = allHooksOff(file, data);
         const { rows, problems } = rowsOf(agent, data.map, { agent, scope, base: base ?? null, path: file.path, format: file.format, kind: file.kind,
           readOnly: false, stop: agent === 'claude' ? 'none' : agent === 'codex' ? 'codex' : 'name' });
         if (problems.length) diagnostics.push({ path: file.path, message: t('hooks.file.partial') });
@@ -445,6 +446,34 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
     for (const e of entries) if (e.agent === 'antigravity' && e.enabled && offNames.has(e.name)) e.stoppedBySameName = true;
     for (const e of entries) e.id = digest([e.agent, pathKey(e.path), e.name ?? '', e.event, e.group, e.handler].join('\0')).slice(0, 24);
     return { cwd, root, home, scopes, files, entries, diagnostics, events: HOOK_EVENTS, order: HOOK_ORDER };
+  }
+  /**
+   * 追加の探索フォルダー（設定 › プラグインの hooks のルート。core/context-settings.mjs の plan.<段>.roots.hooks）の Hooks を読む（読むだけ）。
+   * roots: [{ root（絶対パス）, scope: 'user' | 'directory' }]。ルートごとに、Hooks の機構を持つエージェント（HOOK_AGENTS）のプロジェクトの設定ファイル
+   * （<root>/.claude/settings.json・<root>/.codex/hooks.json など）。エージェントはこのフォルダーを自分では読まないので、行は scope: 'root'（Pleiad が渡す）。
+   * 全体の停止を書いたファイルは行にしない
+   */
+  async function scanRoots(roots = []) {
+    const files = [], entries = [], diagnostics = [], done = new Set();
+    for (const { root, scope } of Array.isArray(roots) ? roots : []) {
+      if (typeof root !== 'string' || !path.isAbsolute(root) || done.has(pathKey(root))) continue;
+      done.add(pathKey(root));
+      const rootScope = scope === 'directory' ? 'directory' : 'user';
+      for (const [agent, file] of HOOK_AGENTS.flatMap(a => hookFiles(places, a, 'project', root).map(f => [a, f]))) {
+        const data = await load(file, root);
+        const info = { agent, scope: 'root', rootScope, root, base: root, path: file.path, format: file.format, kind: file.kind, exists: data.exists, revision: data.revision ?? null };
+        if (data.error) { files.push({ ...info, status: 'error', error: data.error, count: 0 }); continue; }
+        const off = allHooksOff(file, data);
+        const { rows, problems } = off ? { rows: [], problems: [] } : rowsOf(agent, data.map, { agent, scope: 'root', rootScope, root, base: root, path: file.path,
+          format: file.format, kind: file.kind, readOnly: true, stop: 'none' });
+        if (problems.length) diagnostics.push({ path: file.path, message: t('hooks.file.partial') });
+        files.push({ ...info, status: !data.exists ? 'missing' : rows.length ? 'ok' : 'none', count: rows.length, declared: data.declared, ...(off ? { allOff: true } : {}),
+          ...(problems.length ? { partial: true } : {}) });
+        entries.push(...rows);
+      }
+    }
+    for (const e of entries) e.id = digest([e.agent, pathKey(e.path), e.name ?? '', e.event, e.group, e.handler].join('\0')).slice(0, 24);
+    return { files, entries, diagnostics };
   }
 
   /** JSON のファイルを読む（無い・壊れている・大きすぎるなら null） */
@@ -892,7 +921,7 @@ export function createHooksConfig({ home = os.homedir(), codexHome = process.env
       editable: handlerType(h) === 'command' && typeof h.command === 'string',
       ...(agent === 'antigravity' ? { enabled: data.map[where.name]?.enabled !== false } : {}) };
   }
-  return { scan, save, read, targets, copy, raw, places };
+  return { scan, scanRoots, save, read, targets, copy, raw, places };
 }
 
 // 1 つの会話に残す hooks の発火の記録の上限（core/server.mjs）

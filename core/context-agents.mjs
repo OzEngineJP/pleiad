@@ -17,6 +17,7 @@ import { writeAtomic } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
 import {
   DEFAULT_SOURCES,
+  applyKindDiff,
   containsPath,
   pathKey,
 } from './context-settings.mjs';
@@ -183,9 +184,15 @@ export function resolveEffectiveDocSource(legacyConfig, docAgentsConfig, cwd, ki
   const cwdKey = cwd ? pathKey(cwd) : null;
   const defaultRule = legacyConfig?.defaults?.kinds?.[kind] ?? legacyConfig?.defaults?.[kind] ?? null;
   const legacyChain = [{ depth: 0, place: null, rule: defaultRule }];
+  // 形式 4（context-scans.json）の場所は差分だけを持つ。浅い場所から重ね、差分を持つ場所ではそこで効く値を規則にする。
+  // 形式 3 までの場所（丸ごとの写し）は、そのまま規則（テストと移行前の読み取り）
+  const diffs = legacyConfig?.version >= 4;
+  let rule = defaultRule;
   for (const p of ancestorKeys(legacyConfig?.places, cwdKey)) {
-    const rule = legacyConfig.places[p]?.kinds?.[kind];
-    if (rule) legacyChain.push({ depth: placeDepth(p), place: p, rule });
+    const own = legacyConfig.places[p]?.kinds?.[kind];
+    if (!own) continue;
+    rule = diffs && rule ? applyKindDiff(rule, own) : own;
+    legacyChain.push({ depth: placeDepth(p), place: p, rule });
   }
 
   const agentsChain = [];

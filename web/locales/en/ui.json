@@ -1313,17 +1313,11 @@
     "notStarted": "This conversation hasn't started yet. What Pleiad provides is recorded here on the first send.",
     "guarded": {
       "title": "This conversation doesn't use the settings Pleiad provides",
-      "unavailable": "{{backend}} does not support Pleiad-managed instructions, Skills, or external MCP. Saved ownership settings are kept, but do not apply to this conversation.",
-      "supportUnknown": "Could not confirm whether this agent supports Pleiad-managed context. Saved ownership settings are kept. Retry to check support.",
       "reason": "{{backend}} can't receive the plugins Pleiad provides, so loading was left to the agent itself."
     },
     "failed": {
       "title": "Loading or running failed partway",
       "hint": "Check the status below and the errors in the conversation."
-    },
-    "foot": {
-      "lead": "Settings for all locations: ",
-      "link": "Open plugin settings →"
     },
     "instruction": {
       "native": "{{agent}} reads them by its own rules (Pleiad can't see the contents).",
@@ -1393,7 +1387,6 @@
     },
     "added": {
       "title": "Pleiad's instructions",
-      "scope": "Shared by all locations",
       "who_one": "{{count}} added",
       "who_other": "{{count}} added",
       "none": "Not added",
@@ -1521,26 +1514,13 @@
     },
     "place": {
       "aria": "Working directory",
-      "default": "Follows the global settings",
-      "from": "Follows the settings of {{path}}",
-      "override_one": "Settings for this folder only · {{count}} item",
-      "override_other": "Settings for this folder only · {{count}} items",
-      "willOverride": " · Changes apply to this folder only",
-      "start": "Change for this location only",
-      "reset": "Reset to the global settings",
-      "done": "Done",
-      "scanFailed": "Couldn't search: {{error}}",
-      "ownerAria": "Who loads {{kind}} in this location",
-      "plyWho": "Managed by Pleiad",
-      "nativeNote": "{{agent}} reads them by its own rules",
-      "mcpByAgentWho": "Per agent",
-      "mcpByAgent": "External MCP is set per agent. Change it in Settings › Plugins",
-      "loading": "Loading…",
-      "offHere": "Turned off for this location",
-      "offGlobal": "Turned off in the global settings",
-      "none": "Nothing found",
-      "switchAria": "Use {{name}} in {{path}} for this location",
-      "switchName": "{{name}} in {{path}} (this location)"
+      "global": "Same as the global settings",
+      "changed_one": "{{count}} change in this folder",
+      "changed_other": "{{count}} changes in this folder",
+      "changedFrom_one": "{{count}} change from {{parent}} settings",
+      "changedFrom_other": "{{count}} changes from {{parent}} settings",
+      "sameAs": "Same as {{parent}} settings",
+      "open": "Open settings for this folder"
     },
     "hooks": {
       "reading": "Reading hooks settings…",
@@ -1565,19 +1545,81 @@
       "cancelled": "Cancelled",
       "exit": "exit code {{code}}",
       "ms": "{{ms}} ms",
-      "runsNote": "Only notifications received are listed (output isn't saved). No record doesn't prove a hook didn't run.",
-      "placeWho": "Use in this place",
-      "offAll": "Set to run in no agent",
-      "runsOn": "Runs in {{agents}}",
-      "placeSwitchAria": "Use {{name}} in this place",
-      "placeFoot": "Choose which agents run each hook in Settings › Plugins › Hooks.",
-      "openSettings": "Open settings →"
+      "runsNote": "Only notifications received are listed (output isn't saved). No record doesn't prove a hook didn't run."
     }
   },
   "context": {
-    "owner": {
-      "agent": "Leave to the agent",
-      "ply": "Managed by Pleiad"
+    "scope": {
+      "global": "Global settings",
+      "buttonAria": "Settings scope: {{name}}",
+      "listAria": "Settings scope",
+      "folders": "Folders",
+      "missing": "Not found",
+      "used": "{{path}} · {{date}}",
+      "hint": "{{n}} changed",
+      "pickOther": "Choose another folder…",
+      "pickAria": "Choose another folder",
+      "pickPath": "Folder path",
+      "pickOpen": "Open",
+      "pickUsed": "Conversation on {{date}}",
+      "pickNone": "No suggestions",
+      "pickSaveNote": "Saved as this folder's settings when you first change something.",
+      "same": "Same as {{from}}",
+      "fromGlobal": "global settings",
+      "fromParent": "{{name}} settings",
+      "changes_one": "{{count}} change",
+      "changes_other": "{{count}} changes",
+      "changesFrom_one": "{{count}} change from {{from}}",
+      "changesFrom_other": "{{count}} changes from {{from}}",
+      "missingChanges_one": "Not found · {{count}} change",
+      "missingChanges_other": "Not found · {{count}} changes",
+      "revertAll": "Return to {{from}}…",
+      "removeAll": "Delete settings…",
+      "confirmRevertTitle": "Return to {{from}}?",
+      "confirmRemoveTitle": "Delete the settings for {{name}}?",
+      "confirmBody": "This deletes {{what}} in {{name}}.",
+      "confirmChanged_one": "{{count}} change",
+      "confirmChanged_other": "{{count}} changes",
+      "confirmRoots_one": "{{count}} added scan location",
+      "confirmRoots_other": "{{count}} added scan locations",
+      "confirmJoin": " and ",
+      "confirmCancel": "Cancel",
+      "confirmRevert": "Return",
+      "confirmRemove": "Delete",
+      "reverted": "Returned to {{from}}",
+      "removed": "Deleted the settings for {{name}}",
+      "readOnly": "This folder can't be found, so its settings can't be changed.",
+      "tabChanges": "{{n}} changed",
+      "revert": "Revert",
+      "revertToGlobalAria": "Return {{name}} to the global settings",
+      "revertToParentAria": "Return {{name}} to the {{parent}} settings",
+      "tipAria": "About {{name}}",
+      "mark": {
+        "changed": "Changed",
+        "added": "Added",
+        "from": "{{name}} settings",
+        "fromAria": "Open the {{name}} settings",
+        "elsewhereOne": "Different in {{name}}",
+        "elsewhereMany_one": "Different in {{count}} place",
+        "elsewhereMany_other": "Different in {{count}} places"
+      },
+      "sec": {
+        "scan": "Scan locations",
+        "scanTip": "Where agents load from: every folder from the Git root down to the working folder, plus the locations you add.",
+        "rule": "From the Git root to the working folder",
+        "userInstruction": "User-scope instructions",
+        "userSkill": "User-scope Skills",
+        "userMcp": "User-scope external MCP",
+        "userHooks": "User-scope Hooks",
+        "plyInstruction": "Pleiad instructions",
+        "plyRegistered": "Registered in Pleiad",
+        "addScan": "Add scan location",
+        "addScanAria": "Scan location path",
+        "removeScan": "Remove",
+        "removeScanAria": "Remove {{path}} from the scan locations",
+        "missingFolder": "Folder not found",
+        "nothing": "Nothing found"
+      }
     },
     "instruction": {
       "title": "Instructions",
@@ -1588,9 +1630,7 @@
       "none": "No skills found"
     },
     "mcp": {
-      "title": "External MCP",
-      "agent": "Each agent connects according to its own MCP settings",
-      "ply": "Connect the same MCP servers to every agent"
+      "title": "External MCP"
     },
     "copyPath": "Copy path",
     "copied": "Copied",
@@ -1657,11 +1697,9 @@
     "workspaceRow": {
       "instruction": "CLAUDE.md · AGENTS.md",
       "skill": ".claude/skills · .agents/skills",
-      "instructionSub": "Read from the workspace by each agent",
-      "skillSub": "Skills read from the workspace"
+      "mcp": ".mcp.json"
     },
     "matrix": {
-      "agentSettings": "Agent settings",
       "tokensTotal": "~{{n}} tokens",
       "agentsAria": "Agents using {{name}}",
       "agentAria": "Use {{name}} in {{agent}}",
@@ -1687,11 +1725,6 @@
     "lockAriaSentence": "{{reason}}.",
     "someAgent": "an agent",
     "roots": {
-      "add": "Add a location to search",
-      "addAria": "Path of the folder to search",
-      "remove": "Remove this location",
-      "removeAria": "Remove {{path}} from the search locations",
-      "extra": "Added location",
       "nothing": "Added location · nothing found"
     },
     "scanFailed": "Couldn't search: {{error}}",
@@ -1699,9 +1732,6 @@
     "repairDocAgents": "Move the broken file aside and repair",
     "repairedDocAgents": "Repaired. The broken file is kept as {{file}}",
     "tier": {
-      "user": "User",
-      "place": "Working directory",
-      "placeSub": "From the Git root to the working folder",
       "listAria": "{{kind}} found for the user"
     },
     "ply": {
@@ -1808,8 +1838,6 @@
       }
     },
     "matrix": {
-      "groupPly": "Registered in Pleiad",
-      "groupAgent": "Agent settings",
       "connector": "claude.ai connectors",
       "locked": "Pleiad cannot turn this off",
       "searching": "Looking…",
@@ -4737,7 +4765,6 @@
     }
   },
   "hooks": {
-    "lead": "Run commands at agent events",
     "reason": {
       "sameAgent": "It is the same agent.",
       "event": "There is no event matching {{event}} (it is not mapped to a different event).",
@@ -4802,11 +4829,9 @@
       "other": "It behaves slightly differently in this agent ({{code}})."
     },
     "matrix": {
-      "section": "Registered in Pleiad",
       "regAria": "Hooks registered in Pleiad",
       "regEmpty": "No hooks are registered in Pleiad.",
       "userAria": "Hooks in user settings",
-      "placeAria": "Workspace hooks",
       "wsRow": ".claude/settings.json, .codex/hooks.json",
       "wsSub": "Contents for each place, and whether to use them there, are in the conversation's right panel",
       "runAria": "Run {{name}} in {{agent}}",
@@ -4823,7 +4848,6 @@
       "adopted": "Your hook × agent choices are not saved yet. This list shows how hooks run now (the previous owner: leave to agents / Pleiad aligns). Opening it saves nothing; your first press saves the current behaviour as is.",
       "adoptedOff": "Where hooks were left to agents, hooks registered in Pleiad were not given to any agent, so they show as off even though they are registered. Turn on the switch to use them.",
       "orphans": "{{n}} choices point to definitions that can no longer be found (the definition changed or was removed). They take effect again if the same definition comes back.",
-      "addNative": "Add to an agent's settings",
       "fact": {
         "where": "Written in",
         "runs": "Running in",
@@ -4872,7 +4896,8 @@
       "skill": "Skill {{name}}",
       "plugin": "Plugin",
       "managed": "Managed",
-      "compat": "Compatibility sources"
+      "compat": "Compatibility sources",
+      "addUser": "Add to user scope"
     },
     "state": {
       "claude": "Registered · No per-hook off switch",

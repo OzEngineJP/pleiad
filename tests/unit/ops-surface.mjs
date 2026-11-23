@@ -216,6 +216,7 @@ export default async function (t) {
       claudeExtras: async () => ({ plugins: [], connectors: [], reading: false }),
       nativeInstructions: async () => ({ cwd: 'c', agent: 'claude', entries: [{ id: 'i', ...secret }] }),
       docMatrix: async () => ({ kind: 'instruction', agents: ['claude', 'codex'], summaryRow: null, rows: [{ key: 'k', kind: 'instruction', name: 'CLAUDE.md', path: 'p', content: 'x', scope: 'directory', tokens: 1, ...secret }], ...secret }),
+      scopes: async () => ({ places: [{ id: 'p', path: 'C:/w', missing: false, changes: { total: 1 }, parent: null, ...secret }], ...secret }),
       findings: async () => ({ duplicates: [], missing: [], ...secret }) },
     notify: { status: async () => ({ pc: { done: true, reply: true, failed: true }, relayConnected: true, devices: [{ id: 'd', platform: 'ios', notify: { muted: true } }], ...secret }) },
     worktrees: { check: async () => ({ git: true, current: null, conflicts: [], canSplit: true, ...secret }) },

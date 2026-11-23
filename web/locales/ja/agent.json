@@ -1597,6 +1597,13 @@
         "group": "組。ply は Pleiad の登録、own はエージェントの設定、place は作業場所。",
         "agent": "エージェントの id。省くと組の全部の行のスイッチ。"
       },
+      "revertRow": {
+        "summary": "フォルダーで変えた Hook の行を、上の設定（親のフォルダーか全体）へ戻す。戻すと切っていた Hook がまた動きうるので、書くときはユーザーの承認が要る。",
+        "keys": "戻す行のキーの並び。"
+      },
+      "removePlace": {
+        "summary": "フォルダーの Hooks の変更を全部消して、上の設定どおりに戻す。見つからないフォルダーも消せる。書くときはユーザーの承認が要る。"
+      },
       "setPlace": {
         "summary": "場所ごとに、Hook をその場所で使うか決める。使うとき、エージェントの設定の定義・作業場所の Hooks を使わないとき、上書きを消すときはユーザーの承認が要る。",
         "place": "作業場所の絶対パス。",
@@ -1638,7 +1645,10 @@
         "value": "その種類の設定（{ owner, user, directory, disabled?, prefer? }）。null で上の設定に戻す。",
         "roots": "追加で探すフォルダーの並び。null で上の設定に戻す。",
         "add": "true で場所を一覧に足す。",
-        "remove": "true で場所を一覧から外す（上書きも消える）。"
+        "remove": "true で場所を一覧から外す（上書きも消える）。",
+        "addRoot": "足すスキャン場所のパス（kind が要る。hooks も可）。",
+        "removeRoot": "外すスキャン場所のパス（この場所で足したものだけ）。",
+        "revertRows": "上の設定に戻す行の名前（kind が mcp か skill）。"
       },
       "plyInstructions": {
         "summary": "Pleiad の指示（会話ごとにエージェントへ足す指示の項目と、量の目安）。"
@@ -1688,6 +1698,18 @@
         "key": "項目のキー（__workspace__・skill:<名前>・file:<パス>）。keys を渡すときは省ける。",
         "keys": "まとめて切り替える項目のキーの並び。",
         "on": "true でオン、false でオフ。"
+      },
+      "revertDocRows": {
+        "summary": "フォルダーで変えた指示・Skills の行を、上の設定（親のフォルダーか全体）へ戻す。戻すと外していた物がまた渡りうるので、ユーザーの承認が要る。",
+        "keys": "戻す項目のキーの並び（__workspace__・skill:<名前>・file:<パス>）。",
+        "place": "フォルダーのパス。"
+      },
+      "scopes": {
+        "summary": "設定 › プラグインのフォルダーの一覧。保存したフォルダーごとに、見つかるか・上のフォルダー・変えた数（種類ごと）。"
+      },
+      "removePlace": {
+        "summary": "フォルダーの設定（スキャン場所・指示・Skills・外部 MCP・Hooks）を全部消して、上の設定どおりに戻す。見つからないフォルダーも消せる。ユーザーの承認が要る。",
+        "place": "フォルダーのパス。"
       },
       "repairDocAgents": {
         "summary": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消さない）、表を触る前の動きに戻す。読めるときは何もしない。ユーザーの承認が要る。"

@@ -9188,10 +9188,10 @@ function groupMenu(st, x, y) {
 // タイトル行の入口と、共通読み込みの会話に残る一行（docs/design-system.md §9）。
 // 出所はどちらも sessionContext の記録で、ターンの開始に届く contextUsage で更新する。
 
-/** 設定のコンテキストのページ（全体の設定）を開く */
-function openContextPage() {
+/** 設定のコンテキストのページを開く。place（フォルダーのパス）を渡すと、範囲をそのフォルダーにして開く（無ければ全体の設定。ADR 0348） */
+function openContextPage(place = null) {
   onboarding.open('context');
-  context.openPage();
+  context.openPage({ place });
 }
 /** 頭の行の右の欄のボタンと「…」の点を描き直す。会話が替わったとき・読み込み記録が届いたとき */
 function paintHeaderEntries() {
@@ -11018,7 +11018,7 @@ const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
   refreshInfo: (force) => refreshContextInfo({ force }),
-  openSettings: () => openContextPage(), labelOf,
+  openSettings: (place) => openContextPage(place), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview,
   openAccount: o => claudeAccounts.open(o) });
 // 会話の目次と検索（右パネル。狭い画面は下からのシート）。見出しの虫眼鏡と、会話の画面にいるときの Ctrl+F（macOS は ⌘F）で開く

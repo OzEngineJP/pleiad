@@ -163,7 +163,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 
 ### 外部 MCP の名前ごとの中継（[ADR 0327](adr/0327-external-mcp-by-name-and-agent.md)）
 
-`context-scans.json` の外部 MCP に `agents: { off: { 名前: [エージェント] }, spread: { 名前: [エージェント] } }` があると、担当は常に Pleiad（中継は常に開く）として解決し、`agentMcpRules`（`core/context-runtime.mjs`）が名前ごとに決める。無ければ従来の 2 択のまま動き、最初の操作で実効の状態を `agents` に写す（`mcpAgentsFromLegacy`）。
+`context-scans.json` の外部 MCP に `agents: { off: { 名前: [エージェント] }, spread: { 名前: [エージェント] } }` があると、担当は常に Pleiad（中継は常に開く）として解決し、`agentMcpRules`（`core/context-runtime.mjs`）が名前ごとに決める。無ければ従来の 2 択のまま動き、最初の操作で実効の状態を `agents` に写す（`mcpAgentsFromLegacy`）。フォルダーの `places[].kinds.mcp.agents` は名前（行）ごとの差分で、祖先の場所の差分を浅い順に重ねて名前ごとに解く（形式 4、2026-11-24、[ADR 0348](adr/0348-context-folder-scope-in-settings.md)）。
 - Pleiad の登録は、`off[名前]` にそのエージェントが無ければ渡す。エージェント自身の定義は渡さない。他のエージェントの定義は `spread[名前]` にそのエージェントがあるときだけ渡す。
 - エージェント自身の MCP を名前ごとに止めるのは起動のとき: Claude は `settings.deniedMcpServers`（`claude.ai <名前>`・`plugin:<プラグイン>:<名前>` も同じ）、Codex は `-c mcp_servers.<名前>.enabled=false`、OpenCode は定義を `enabled:false` で渡す。Devin は設定の置き場の写しで止める（上の「バックエンドの抑止」、[ADR 0336](adr/0336-grok-devin-native-mcp-off.md)。作業場所の定義は止められず、シンボリックリンクを作れない PC では止めない）。Grok・Antigravity は止める口が無い（`nativeMcpOff: impossible`）。エージェントの設定ファイルは書き換えない。
 - 一覧の鍵のセルには理由（`reason`）が付く: `'own'`（止める手が無い）・`'workspace'`（作業場所の定義を止められないエージェントで、作業場所にも定義がある）・`'nolinks'`（定義を止めるのに必要なシンボリックリンクを作れない）。
@@ -208,7 +208,7 @@ Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad
 - **Devin の `--config`**: Devin CLI は起動の後（`session/new`）にファイルを読むので、ファイルは Devin のプロセスを閉じるときに消す（`openClient` の `close`）。閉じずに残ったもの（`<data>/devin/turn-configs/<uuid>.json`）は次の起動で 1 日を過ぎた分だけ消す（`pruneTurnConfigs`）。2026-11-15 までは起動の直後に消していて、旧「そろえる」でも渡したものが載っていなかった。
 - **記録**: `sessionHooks` の `unify` は `{ owner: 'ply', mode: 'agents', at, agent, revision, supplied: [{ id, name, from, event, matcher, adapter, via }], stopped, kept, skipped, unsupported, stopAll? }`。
 - **第 2 段の入口**: `hooksForTurn(agent, cwd)` は、そのターンで動く Hook（行 ID・出どころ・イベント・コマンド）を返す（`inheritCustomizations` 用）。
-- **右の欄の「この場所で使うか」**: 「この場所だけ変える」の Hooks の面は `hooksMatrix { cwd }` のうち `here` を持つ行（作業場所のまとめの行 `ws:hooks` は除く）を出し、スイッチは `setHookPlace { place, key, use, revision }`（`places[].skip`）を 1 回書く。次のターンの `forTurn` が同じセルの規則で読む。
+- **フォルダーの行**（2026-11-24、[ADR 0348](adr/0348-context-folder-scope-in-settings.md)。それまでは右の欄の「この場所だけ変える」の Hooks の面「この場所で使うか」）: 設定 › プラグイン › Hooks で範囲をフォルダーにすると、`hooksMatrix { cwd }` の行を受け継いで出し、そのフォルダーで変えたセル・行は `hooks-agents.json` 形式 2 の `places[].rows[<行>]`（受け継ぐ値と違うものだけ）に書く。この場所で使わないにした行は `setHookPlace { place, key, use: true, revision }` で戻し、行の「戻す」は `revertHookRow { cwd, key }`、フォルダーの設定を全部消すのは `removeHookPlace { cwd }`（`removeContextPlace` からも呼ぶ）。次のターンの `forTurn` が全体 → 祖先のフォルダーの差分を行ごとに重ねて読む。
 
 ## 圧縮と会話 ID
 
@@ -222,7 +222,7 @@ Codex の未送信会話や、ホストが履歴を写した分岐・バック�
 
 `sessionContext {sessionId}` と会話の右パネル「この会話のプラグイン」（会話の頭の札・タイトル行の入口から開く）で、指示の供給元、Skills の案内／使ったもの、MCP の接続成否・ツール数・呼び出し回数、要ログイン・失敗の理由、除外理由を確認できる。記録は「モデルが理解した」という推定ではなく、Pleiad が渡した／接続した事実。ネイティブ担当の内部一覧を共通記録に含めたとは扱わない。エージェント任せの MCP は、そのエージェントの設定に登録されているもの（`agentMcp`）を読み取りのみで並べ、接続の成否は Pleiad から見えないと書く。antigravity で Pleiad 担当を扱わなかった会話は、記録の `guardedBackend` と `reason` を出す。
 
-右パネルは種類ごとの行を出どころで分ける: 記録の行の `root`（足した場所で見つかった）→「追加した場所」、`scope: 'user'` →「ユーザー」、それ以外 →「この場所と親フォルダー」（記録の行は `scope` と `root` を持つ。前の版の記録は `origins[0].scope` で分ける）。一番上の作業場所の面は `contextSettings { cwd }` の今の場所から「全体の設定どおり／<親> の設定どおり／このフォルダーだけの設定 · n 項目」を出す。「この場所だけ変える」を押すと、指示・Skills は `docMatrix { cwd, place: cwd }` に基づいて担当の 2 択や「探す形式」を出さず行ごとのスイッチ（`setDocRow { kind, key | keys, on, place: cwd, cwd }`）で `context-agents.json` に場所ごとの上書きを保存する（外部 MCP は `agents` 未移行時に `setContextSettings { place: cwd, kind, value }` を保存し、移行済み行では設定画面へ案内する）。「全体の設定に戻す」はその場所の上書き（`context-scans.json` と `context-agents.json` の双方）を消す（`{ place: cwd, remove: true }`）。効くのは次のターンから。
+右パネルは種類ごとの行を出どころで分ける: 記録の行の `root`（足した場所で見つかった）→「追加した場所」、`scope: 'user'` →「ユーザー」、それ以外 →「この場所と親フォルダー」（記録の行は `scope` と `root` を持つ。前の版の記録は `origins[0].scope` で分ける）。一番上の作業場所の面は、保存したフォルダーの一覧（`contextScopes`）から今の場所の状態「全体の設定どおり／<親> の設定どおり／このフォルダーで n 件変更／<親> の設定から n 件変更」を出し、「この場所の設定を開く」で範囲をその場所にした設定 › プラグインを開く（2026-11-24、[ADR 0348](adr/0348-context-folder-scope-in-settings.md)）。右パネルには編集の面を置かない。2026-11-23 までの「この場所だけ変える」（行ごとのスイッチ `setDocRow { kind, key | keys, on, place: cwd, cwd }`、外部 MCP の旧い 2 択、「全体の設定に戻す」= `{ place: cwd, remove: true }`）は無くした。フォルダーの行は設定 › プラグインで `setDocRow`・`setMcpAgent`・`setHookAgent` など（フォルダーを `place`・`cwd` で渡す）で変え、行を戻すのは `revertDocRows`・`setContextSettings { revertRows }`・`revertHookRow`、フォルダーの設定を全部消すのは `removeContextPlace`。効くのは次のターンから。
 戻りは `{ report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added }`（`added` は上の「Pleiad の指示」）。`report` が記録（外部 MCP の行には Pleiad の登録の認証方式 `auth` も付く）、`owners` はその会話が始まった時点の担当、`pinned` は固定の有無。`changed` は固定された会話でだけ行う今のファイルとの突き合わせで、`{ differs, paths, files }`（`differs` が正否、`paths` は変わったと分かったファイルの手掛かり、`files` は `{ path, name, kind, before, after, modifiedAt }`。会話中に `instructions_for_path` で読み足した子階層の指示が混じることがある）。ネイティブ担当の会話では探索を走らせず `null` を返す（`docs/design-system.md` §9）。
 
 - `npm test -- context-runtime`：実 MCP クライアントと fixture、セッション分離・永続化・遅延読み込み。

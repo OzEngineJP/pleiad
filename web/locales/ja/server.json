@@ -972,6 +972,7 @@
       "docNotPressable": "{{name}} は {{agent}} では切り替えられません",
       "docRowLocked": "{{name}} は行のスイッチでは切り替えられません（切り替えられるエージェントが無いか、戻す先がありません）。鍵の無いマスがあれば、マスを押して切り替えてください",
       "docTargetRequired": "切り替える項目を指定してください",
+      "placeRequired": "フォルダーを指定してください",
       "docAgentsWrite": {
         "failed": "指示・Skills の表の設定を保存できませんでした。{{reason}}",
         "isDir": "データの置き場で、context-agents.json と同じ名前のフォルダーがファイルの場所をふさいでいます",
@@ -990,6 +991,7 @@
       "kindInvalid": "プラグインの設定の形式が不正です",
       "disabledMcpOnly": "名前で外す設定は外部 MCP だけです",
       "rootsInvalid": "追加で探すフォルダーの形式が不正です",
+      "rootInherited": "この場所は上の設定で足したスキャン場所です。足した設定（全体またはフォルダー）で外してください",
       "defaultPlace": "既定",
       "migrateDiffers": "プラグインの設定を新しい形式へ移せませんでした（{{place}} で結果が変わるため）。元の設定は変更していません",
       "migrateUnverified": "プラグインの設定の移行を確かめられませんでした。元の設定は変更していません",
@@ -1518,6 +1520,7 @@
     "mcpRow": "外部 MCP「{{name}}」を使うかどうかを、エージェントをまとめて変えます。",
     "docAgent": "{{kind}}「{{name}}」を、{{agent}} で使うかどうかを変えます。",
     "docRow": "{{kind}}「{{name}}」を使うかどうかを変えます。",
+    "docRevert": "{{place}} で変えた{{kind}}「{{name}}」を、上の設定に戻します。",
     "docAgentsRepair": "読めない指示・Skills の表の設定ファイル（context-agents.json）を context-agents.broken-<時刻>.json へ移し（消しません）、表を触る前の動きに戻します。表で外していた指示・Skills は、旧い設定のとおり渡り直します。",
     "kind": {
       "instruction": "指示",

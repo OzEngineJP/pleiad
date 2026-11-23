@@ -206,7 +206,10 @@ export function createTabBar({ tabs, active, idPrefix = 'cx', ariaLabel, onSelec
     const label = el('span', 'l', tab.label);
     const cnt = el('span', 'c');
     cnt.hidden = true;
-    btn.append(label, cnt);
+    // この範囲（フォルダー）で変えた数「変更 n」（ADR 0348）。全体の設定と変えていないタブでは出さない
+    const chg = el('span', 'd');
+    chg.hidden = true;
+    btn.append(label, cnt, chg);
     btn.onclick = () => onSelect?.(tab.id, { focus: false });
     btn.onkeydown = e => {
       let next = -1;
@@ -219,7 +222,7 @@ export function createTabBar({ tabs, active, idPrefix = 'cx', ariaLabel, onSelec
         onSelect?.(tabs[next].id, { focus: true });
       }
     };
-    buttons.set(tab.id, { btn, cnt });
+    buttons.set(tab.id, { btn, cnt, chg });
     root.append(btn);
   }
 
@@ -248,7 +251,16 @@ export function createTabBar({ tabs, active, idPrefix = 'cx', ariaLabel, onSelec
     }
   }
 
-  return { root, get active() { return current; }, setActive, setCounts };
+  /** changes: { <タブ>: 変えた数 }。0・null は出さない */
+  function setChanges(changes) {
+    for (const [tid, { chg }] of buttons) {
+      const n = Number(changes?.[tid] ?? 0);
+      chg.textContent = n > 0 ? t('context.scope.tabChanges', { n }) : '';
+      chg.hidden = !(n > 0);
+    }
+  }
+
+  return { root, get active() { return current; }, setActive, setCounts, setChanges };
 }
 
 /** 絞り込み欄。input 要素を保つため一覧の枠だけを外から描き直す設計 */

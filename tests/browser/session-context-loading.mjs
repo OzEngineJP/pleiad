@@ -138,7 +138,7 @@ try {
       assert(!(await panel.innerText()).includes('まだ始まっていません'));
     } else if (state === 'partial-pending') {
       await expectText('設定を読み込み中…'); await expectText('OpenAI Codex が読む指示を探しています…'); await expectText('確認中…');
-      assert(await page.locator('[data-act=placeStart]').isDisabled());
+      assert.equal(await page.locator('[data-act=placeOpen]').count(), 1);
       assert.equal(await panel.locator('.scx-n').count(), 0);
       assert(!(await panel.locator('.scx-issues').innerText()).includes('気になる所なし'));
       assert.equal(await panel.locator('.scx-state .run').count(), 4);
@@ -149,7 +149,7 @@ try {
       for (const text of ['設定を確認できません', '自分で読む指示は数えていません', '確認できません']) await expectText(text);
       assert.equal((await panel.locator('.scx-issues').innerText()).replaceAll('\n', ''), '気になる所確認できません');
       assert(!(await panel.innerText()).includes('気になる所なし'));
-      assert(await page.locator('[data-act=placeStart]').isDisabled());
+      assert.equal(await page.locator('[data-act=placeOpen]').count(), 1);
     } else if (state === 'native-empty') {
       await expectText('OpenAI Codex が読む指示ファイルは見つかりませんでした'); await expectText('気になる所なし');
     } else if (state === 'empty') {
@@ -171,9 +171,9 @@ try {
       await openPanel();
       await expectText('指示ファイルを再確認中…'); await expectText('設定を更新中…'); await expectText('気になる所を再確認中…');
       await expectText('AGENTS.md'); await expectText('無いパス');
-      assert(await page.locator('[data-act=placeStart]').isDisabled());
+      assert.equal(await page.locator('[data-act=placeOpen]').count(), 1);
       assert.match(await panel.locator('.scx-kind:not(.scx-amount)').first().textContent(), /AGENTS.md/);
-      assert.match(await panel.locator('.scx-place .p').innerText(), /設定どおり/);
+      assert.match(await panel.locator('.scx-place .s').innerText(), /設定どおり/);
     }
     await shot();
     if (state === 'pending' || state === 'partial-pending' || state.includes('refreshing')) {
