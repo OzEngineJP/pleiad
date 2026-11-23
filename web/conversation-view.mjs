@@ -409,7 +409,8 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
       const row = messageRow(item.id);
       // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］。入力欄の脇の一覧にも出さない）
       if (item.status === 'queued' && (item.waiting || row?.dataset.messageStarted) && voiceDelivery.isVoice(row)) { voiceDelivery.queued(row, item); continue; }
-      if ((item.status === 'queued' && (item.waiting || row?.dataset.messageStarted))
+      // 新しいターンで始めた発言（initial）は、受け付けられるまで queued のまま届く。待ちの印が無い間は消さない
+      if ((item.status === 'queued' && (item.waiting || (row?.dataset.messageStarted && !row.dataset.initialStart)))
         || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
         if (row) { row.remove(); withdrawn = true; }
       } else if (item.status === 'failed') {
@@ -421,6 +422,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
           withdrawn = true;
         }
       } else if (item.status === 'sending' && row) {
+        delete row.dataset.initialStart;
         row.dataset.messageStarted = '1';
         if (!row.dataset.deliveryPending) markDelivery(row, 'sending');
       }
@@ -477,6 +479,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
           : append(hooks.userMsg(ev.text, { at: ev.at, sentBy: ev.sentBy }), `live:${++seq}`);
         if (!row.querySelector('.outbox-status')) row.querySelector('.m').append(el('div', 'outbox-status'));
         row.dataset.messageStarted = '1';
+        if (ev.initial) row.dataset.initialStart = '1';
         const userRow = row.querySelector('.m.user');
         // 本文が同じなら描き直さない（送った直後の画像の枠を、読み込みの途中でやり直さない）
         if (userRow?.querySelector(':scope > .body') && hooks.userRaw(userRow) !== String(ev.text ?? '')) hooks.paintUser(userRow, ev.text, userRow.attached ?? []);

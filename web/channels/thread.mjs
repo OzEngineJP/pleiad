@@ -204,7 +204,10 @@ export function createThread(host) {
       },
     },
     target: () => (S.threadId ? { kind: 'thread', channelId: S.channelId, threadId: S.threadId } : null),
-    send: (text) => send({ text, attachments: [] }),
+    // 送り先は発言を確定した時のスレッド（target）。キューを待つ間に別のスレッドへ移っていたら、話していたスレッドへ直に投稿する
+    send: (text, target) => (!target || (target.channelId === S.channelId && target.threadId === S.threadId)
+      ? send({ text, attachments: [] })
+      : host.invoke('channels.post', { channelId: target.channelId, threadId: target.threadId, text })),
     follow: () => { if (nearBottom()) log.scrollTop = log.scrollHeight; },
   });
 
@@ -672,19 +675,24 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 操作
   async function send({ text, attachments, confirmedWake, to, clientId, at }) {
     if (threadReadOnly() && !to) { composer.edit.end({ restore: true }); throw new Error(t('ui:deletedBotReadOnly')); }
+    // 送り先は押した時のスレッド。途中の待ち（会話を作る・投稿の応答）の間に別のスレッドへ移っても、送り先と載せる先は変えない
+    const channelId = S.channelId, threadId = S.threadId;
+    const here = () => S.channelId === channelId && S.threadId === threadId;
     // 「bot なし」でエージェントだけ選んだまま送る: 先にそのエージェントで会話を作る（投稿で作ると bot の既定のエージェントになる）
     const plainTo = to && isPlain(to) && plainBackend && !plainSession(to) ? to : null;
     if (plainTo) {
       const s = botSettings(plainTo);
-      settingsSeen.set(plainTo, await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId: plainTo, backend: plainBackend, ...(s?.values?.cwd ? { cwd: s.values.cwd } : {}) }));
+      const made = await host.invoke('channels.threadSettings', { channelId, threadId, botId: plainTo, backend: plainBackend, ...(s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
+      if (here()) settingsSeen.set(plainTo, made);
     }
     // 日時を指定した返信は予定として置く（時刻が来たら人の投稿として投稿される。channels.schedulePost）
     if (at) {
-      await host.invoke('channels.schedulePost', { channelId: S.channelId, threadId: S.threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });
+      await host.invoke('channels.schedulePost', { channelId, threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });
       return;
     }
-    const made = await host.invoke('channels.post', { channelId: S.channelId, threadId: S.threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), ...(clientId ? { clientId } : {}) });
-    if (made?.id && !S.index.has(made.id) && made.threadId === S.threadId) { addPost(made); afterPosts(); }
+    const made = await host.invoke('channels.post', { channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), ...(clientId ? { clientId } : {}) });
+    if (!here()) return;
+    if (made?.id && !S.index.has(made.id) && made.threadId === threadId) { addPost(made); afterPosts(); }
     toBottom();
   }
 

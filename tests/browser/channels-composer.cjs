@@ -1,6 +1,7 @@
 // playwright-cli run-code --filename=tests/browser/channels-composer.cjs
 // チャンネル・スレッドの入力欄を Chats の入力欄に揃えた分（ADR 0116）: 貼り付け・ファイルの選択・ドロップで添付 → 札・「添付 N 件」・一覧 → 投稿に載る・
-// 画像の拡大 → 書きかけ（別のチャンネルへ移って戻る・再読み込み）→ スレッドの入力欄 → Chats の入力欄へ漏れない。
+// 画像の拡大 → 書きかけ（別のチャンネルへ移って戻る・再読み込み）→ スレッドの入力欄 → Chats の入力欄へ漏れない →
+// 投稿の応答が届く前に別のチャンネルへ移っても、移った先の字・添付・チャンネルはそのまま（送り先と片付ける下書きは押した時のもの。ADR 0347）。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (AGENT_HOST_PORT=7497 AGENT_HOST_TOKEN=a11a-test AGENT_HOST_LOCALE=ja、別のデータ置き場). Never run against live data.
 // 書き込みは本物のサーバー（channels.create / post・attachStart …）を通す。bot は fake では作れないので、@ の宛先・bot の受け取りは tests/unit/bot-dispatch.mjs が確かめる。
 async page => {
@@ -24,6 +25,8 @@ async page => {
             const m = JSON.parse(e.data);
             const call = m.kind === 'response' ? window.__calls.get(m.id) : null;
             if (call) { window.__calls.delete(m.id); if (m.ok) call.res(m.result); else call.rej(new Error(String(m.error))); return; }
+            // window.__holdPost の間に送った投稿（channels.post）の応答は握っておく。__releasePost() で画面へ渡す
+            if (m.kind === 'response' && window.__postIds.has(m.id)) { window.__postIds.delete(m.id); window.__heldPosts.push(() => fn(e)); return; }
           } catch {}
           return fn(e);
         });
@@ -32,10 +35,14 @@ async page => {
       send(d) {
         // window.__stall の間は、添付の断片を握っておく（送っている途中の状態を作る）。__release() で送り出す
         try { if (window.__stall && JSON.parse(d).command === 'attachChunk') { window.__held.push([this, d]); return; } } catch {}
+        try { const m = JSON.parse(d); if (window.__holdPost && m.command === 'invoke' && m.args?.op === 'channels.post') window.__postIds.add(m.id); } catch {}
         return super.send(d);
       }
     };
     window.__held = [];
+    window.__postIds = new Set();
+    window.__heldPosts = [];
+    window.__releasePost = () => { window.__holdPost = false; for (const f of window.__heldPosts.splice(0)) f(); };
     window.__release = () => { window.__stall = false; for (const [s, d] of window.__held.splice(0)) WebSocket.prototype.send.call(s, d); };
     window.__rpc = (op, args = {}) => new Promise((res, rej) => {
       const id = 't' + Math.random().toString(36).slice(2);
@@ -170,5 +177,39 @@ async page => {
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction((n) => document.querySelectorAll('#chThread .th-replies .post').length === n + 1, shown, { timeout: 8000 });
   check(true, 'once it has arrived the post goes out');
+
+  // ---- 投稿の応答が届く前に別のチャンネルへ移る: 投稿は押した時のチャンネルへ 1 回だけ。移った先の字・添付・チャンネルには触れない
+  await show(ch.id);
+  await page.waitForFunction((n) => !document.querySelector('#chFeed .ch-loading') && document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
+  await page.waitForTimeout(300);
+  const postsBefore = (await rpc('channels.read', { channelId: ch.id })).posts.length;
+  await page.evaluate(() => { window.__holdPost = true; });
+  await input.click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(' 移る前に送る');
+  await page.keyboard.press('Control+Enter');
+  await page.waitForFunction(() => window.__heldPosts.length === 1, null, { timeout: 8000 });
+  await show(ch2.id);
+  await page.waitForFunction((n) => document.getElementById('channelsPageTitle').textContent === `#${n}`, 'other' + suffix);
+  await input.click();
+  await page.keyboard.type('B の書きかけ');
+  await paste('#chFeedComposerInput', 'b.png', '#835');
+  await page.waitForFunction(() => document.querySelectorAll('#chFeedComposer .md-b.md-att img').length === 1 && !document.querySelector('#chFeedComposer .md-att-up'), null, { timeout: 8000 });
+  await page.evaluate(() => window.__releasePost());
+  await page.waitForTimeout(500);
+  const afterPosts = (await rpc('channels.read', { channelId: ch.id })).posts;
+  check(afterPosts.length === postsBefore + 1 && afterPosts.filter((p) => p.text.includes('移る前に送る')).length === 1, 'the post lands once in the channel it was sent from');
+  check((await rpc('channels.read', { channelId: ch2.id })).posts.length === 0, 'nothing is posted to the channel we moved to');
+  check(await page.evaluate((n) => document.getElementById('channelsPageTitle').textContent === `#${n}`, 'other' + suffix)
+    && (await page.evaluate(() => document.getElementById('chFeedComposerInput').value)).startsWith('B の書きかけ')
+    && await page.locator('#chFeedComposer .md-b.md-att img').count() === 1, 'the channel we moved to keeps its text, attachment and view');
+  await show(ch.id);
+  await page.waitForFunction((n) => !document.querySelector('#chFeed .ch-loading') && document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => document.getElementById('chFeedComposerInput').value) === '' && await page.locator('#chFeedComposer .md-b.md-att').count() === 0, 'the sent draft is cleared in the channel it was sent from');
+  await show(ch2.id);
+  await page.waitForFunction((n) => document.getElementById('channelsPageTitle').textContent === `#${n}`, 'other' + suffix);
+  await page.waitForTimeout(300);
+  check((await page.evaluate(() => document.getElementById('chFeedComposerInput').value)).startsWith('B の書きかけ'), 'the other draft is still there after going back and forth');
   return results;
 }

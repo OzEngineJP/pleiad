@@ -1,4 +1,4 @@
-// 「送信を押しても送られない」不具合の診断ログ（slow-commands.log）と、送信前の待ち表示・取り消し・会話切り替え通知の実ブラウザー試験。
+// 「送信を押しても送られない」不具合の診断ログ（slow-commands.log）と、送信の受付の待ち・会話を移っても続く送信（ADR 0347）の実ブラウザー試験。
 // 本物のサーバー（fake バックエンド・一時のデータ置き場）を起動し、WebSocket の特定の命令だけをテスト側で遅らせて検証する。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -93,6 +93,9 @@ try {
       countSent(command) {
         return sentLog.filter(x => x.command === command).length;
       },
+      lastSent(command) {
+        return sentLog.filter(x => x.command === command).at(-1) ?? null;
+      },
     };
     window.WebSocket = function WrappedWebSocket(url, protocols) {
       const ws = protocols !== undefined ? new OrigWS(url, protocols) : new OrigWS(url);
@@ -102,7 +105,7 @@ try {
         try { parsed = JSON.parse(String(data)); } catch {}
         const cmd = parsed?.command;
         if (cmd) {
-          sentLog.push({ command: cmd, op: parsed?.args?.op ?? null, at: Date.now() });
+          sentLog.push({ command: cmd, op: parsed?.args?.op ?? null, sessionId: parsed?.args?.sessionId ?? null, settings: parsed?.args?.settings ?? null, at: Date.now() });
           const remaining = holdRules.get(cmd);
           if (remaining > 0) {
             if (remaining === 1) holdRules.delete(cmd);
@@ -161,7 +164,12 @@ try {
     };
   });
 
-  // 1a. 設定変更（setTurnSettings）の遅れ -> 注記が出て、返ると送信されて注記が消える
+  const toastShown = () => page.evaluate(() => {
+    const t = document.querySelector('.file-toast');
+    return Boolean(t && !t.hidden);
+  });
+
+  // 1a. 設定の保存（setTurnSettings）が遅れても送信は待たない。押した時点の設定を送信に載せる
   await openSession(sA);
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
@@ -169,37 +177,35 @@ try {
   await page.locator('#modelPop [data-key="model:fast"]').click();
   await page.locator('#prompt').click();
   await setPromptText('echo:SlowSettingsSend');
-  const userCountBefore1a = await page.locator('#thread .m.user').count();
+  const sentBefore1a = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
   await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.cancelVisible && st.sendWaitClass && st.promptReadOnly;
-  }, '1a waitingSettings note shown');
-  const ui1a = await readComposer();
-  assert.ok(ui1a.noteText.includes('送信中'), `unexpected noteText 1a: ${ui1a.noteText}`);
-  assert.equal(ui1a.sendDisabled, true, '1a send button disabled while waiting');
-  await page.screenshot({ path: path.join(shotDir, 'slow-wait-settings.png') });
-  await sleep(220);
+  await waitUntil(async () => (await page.evaluate(() => window.__wsTest.countSent('sendMessage'))) > sentBefore1a, '1a sendMessage goes out while setTurnSettings is held');
+  const send1a = await page.evaluate(() => window.__wsTest.lastSent('sendMessage'));
+  assert.equal(send1a.sessionId, sA, '1a send targets the open conversation');
+  assert.equal(send1a.settings?.model, 'fast', `1a send carries the model chosen before pressing: ${JSON.stringify(send1a.settings)}`);
+  await page.locator('#thread .m.user', { hasText: 'echo:SlowSettingsSend' }).waitFor();
+  await waitUntil(async () => (await readComposer()).noteHidden, '1a no wait note left');
   await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
-  await waitUntil(async () => (await page.locator('#thread .m.user').count()) > userCountBefore1a, '1a message sent after setTurnSettings');
-  await waitUntil(async () => (await readComposer()).noteHidden, '1a note cleared');
-  console.log('OK 1a: setTurnSettings delay shows note then sends cleanly');
+  await sleep(200);
+  console.log('OK 1a: a held setTurnSettings does not hold the send; the send carries the chosen model');
 
-  // 1b. モード変更（setMode）の遅れ -> 注記が出て、返ると送信される
-  await page.evaluate(() => window.__wsTest.holdCommand('setMode', 1));
+  // 1b. 承認モードの保存が遅れても同じ。押した時点のモードを送信に載せる
+  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
   await page.locator('#modelPop [data-key="nav:mode"]').click();
-  await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().click();
+  const modeKey1b = await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().getAttribute('data-key');
+  await page.locator(`#modelPop [data-key="${modeKey1b}"]`).click();
   await page.locator('#prompt').click();
   await setPromptText('echo:SlowModeSend');
-  const userCountBefore1b = await page.locator('#thread .m.user').count();
+  const sentBefore1b = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
   await page.locator('#send').click();
-  await waitUntil(async () => !(await readComposer()).noteHidden, '1b waitingSettings note shown for modeWrite');
-  await sleep(220);
-  await page.evaluate(() => window.__wsTest.unholdCommand('setMode'));
-  await waitUntil(async () => (await page.locator('#thread .m.user').count()) > userCountBefore1b, '1b message sent after setMode');
-  await waitUntil(async () => (await readComposer()).noteHidden, '1b note cleared');
-  console.log('OK 1b: setMode delay shows note then sends cleanly');
+  await waitUntil(async () => (await page.evaluate(() => window.__wsTest.countSent('sendMessage'))) > sentBefore1b, '1b sendMessage goes out while the mode write is held');
+  const send1b = await page.evaluate(() => window.__wsTest.lastSent('sendMessage'));
+  assert.equal(`mode:${send1b.settings?.mode}`, modeKey1b, `1b send carries the chosen mode: ${JSON.stringify(send1b.settings)}`);
+  await page.locator('#thread .m.user', { hasText: 'echo:SlowModeSend' }).waitFor();
+  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
+  await sleep(200);
+  console.log('OK 1b: a held mode write does not hold the send; the send carries the chosen mode');
 
   // 1c. 送信受理（sendMessage）の遅れ -> 取り消し無しの送信中注記が出て、返ると完了する
   await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
@@ -219,131 +225,50 @@ try {
   await waitUntil(async () => (await readComposer()).noteHidden, '1c note cleared');
   console.log('OK 1c: sendMessage delay shows non-cancelable sending note then completes');
 
-  // 2. 「取り消す」で送られず、ボタン活性・字が残り、遅延解決しても送らない＆切り替え通知が出ない
-  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
-  await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key="nav:model"]').click();
-  await page.locator('#modelPop [data-key="model:tiny"]').click();
-  await page.locator('#prompt').click();
-  await setPromptText('cancel-keep-draft-secret');
-  const sentBefore2 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
+  // 2. 受付の待ちの間に別の会話へ移っても送信は続く。移った先の欄は変わらず、知らせも出ない。戻ると送った版の下書きは片付いている
+  await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
+  await setPromptText('echo:SwitchedSend');
   await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.cancelVisible;
-  }, '2 waiting note with cancel');
-  await page.locator('#composerNote button').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return st.noteHidden && !st.sendDisabled && !st.promptReadOnly;
-  }, '2 composer restored right after cancel');
-  assert.equal((await readComposer()).promptValue, 'cancel-keep-draft-secret', '2 prompt text preserved');
-  await sleep(220);
-  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
-  await sleep(250);
-  assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore2, '2 late response does not send');
-  const toastHidden2 = await page.evaluate(() => {
-    const t = document.querySelector('.file-toast');
-    return !t || t.hidden;
-  });
-  assert.equal(toastHidden2, true, '2 user cancel must not trigger switched notification');
-  await setPromptText('');
-  console.log('OK 2: cancel stops send, restores input, and ignores late completion without notification');
-
-  // 3a. 待ち中に別の会話へ切り替えると送らず、元会話に下書きが残り、通知＋「開く」が出る
-  await page.evaluate(() => window.__wsTest.holdCommand('setMode', 1));
-  await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key="nav:mode"]').click();
-  await page.locator('#modelPop [data-key^="mode:"][aria-selected="false"]').first().click();
-  await page.locator('#prompt').click();
-  await setPromptText('switched-session-draft-body');
-  const sentBefore3a = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
-  await page.locator('#send').click();
-  await waitUntil(async () => !(await readComposer()).noteHidden, '3a waiting note before switch');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '2 sending note before switch');
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return st.noteHidden && !st.sendDisabled;
-  }, '3a note hidden on target conversation');
+  await page.locator('#thread .m.user', { hasText: 'echo:BetaBody' }).waitFor();
+  await waitUntil(async () => (await readComposer()).noteHidden, '2 no note on the other conversation');
+  await setPromptText('beta-draft-keep');
   await sleep(220);
-  await page.evaluate(() => window.__wsTest.unholdCommand('setMode'));
-  await waitUntil(async () => page.evaluate(() => {
-    const t = document.querySelector('.file-toast');
-    return Boolean(t && !t.hidden && t.querySelector('.file-toast-action'));
-  }), '3a switched toast with action');
-  const toastInfo3a = await page.evaluate(() => ({
-    text: document.querySelector('.file-toast-text')?.textContent ?? '',
-    actionLabel: document.querySelector('.file-toast-action')?.textContent ?? '',
-  }));
-  assert.ok(toastInfo3a.text.includes('AlphaTitle'), `3a toast mentions source session title: ${toastInfo3a.text}`);
-  assert.ok(toastInfo3a.text.includes('別の会話へ移ったので送っていません'), `3a toast explains unsent draft: ${toastInfo3a.text}`);
-  assert.equal(toastInfo3a.actionLabel, '開く', `3a action label is 開く: ${toastInfo3a.actionLabel}`);
-  assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore3a, '3a does not send when switched');
-  await page.screenshot({ path: path.join(shotDir, 'slow-switched-toast.png') });
-  await page.locator('.file-toast-action').click();
-  await waitUntil(async () => (await readComposer()).promptValue === 'switched-session-draft-body', '3a open action restores original session draft');
-  console.log('OK 3a: switch mid-wait notifies with title & working 開く link and preserves draft');
+  await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
+  await sleep(400);
+  assert.equal((await readComposer()).promptValue, 'beta-draft-keep', '2 the other conversation keeps its own text');
+  assert.equal(await toastShown(), false, '2 no switched notice');
+  await page.screenshot({ path: path.join(shotDir, 'slow-switched-continues.png') });
+  await setPromptText('');
+  await openSession(sA);
+  await page.locator('#thread .m.user', { hasText: 'echo:SwitchedSend' }).waitFor();
+  await waitUntil(async () => (await readComposer()).promptValue === '', '2 the sent draft is cleared on the source conversation');
+  console.log('OK 2: switching during the acceptance wait keeps sending to the source and leaves the other composer alone');
 
-  // 3b & 4. 新しい会話作成待ち中の切り替え通知、および新規会話作成→連続設定反映で二重注記が出ない
+  // 3. 新しい会話を作っている間に送って別の会話へ移っても、作られた会話へ送る
+  const sessionsBefore3 = await page.evaluate(() => [...document.querySelectorAll('#groups .row[data-session]')].map(r => r.dataset.session));
   await page.evaluate(() => window.__wsTest.holdCommand('newSession', 1));
   await page.locator('#newSession').click();
-  await setPromptText('home-switch-draft-body');
-  const sentBefore3b = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
+  await setPromptText('echo:HomeSwitchSend');
   await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('送信中');
-  }, '3b home newSession queued note');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '3 sending note while creating');
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
+  await page.locator('#thread .m.user', { hasText: 'echo:BetaBody' }).waitFor();
   await sleep(220);
   await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
-  await waitUntil(async () => page.evaluate(() => {
-    const t = document.querySelector('.file-toast');
-    return Boolean(t && !t.hidden && t.querySelector('.file-toast-action'));
-  }), '3b switched toast from home newSession');
-  const toastText3b = await page.evaluate(() => document.querySelector('.file-toast-text')?.textContent ?? '');
-  assert.ok(!toastText3b.includes('(no title)') && toastText3b.includes('前の会話への送信は'), `3b untitled fallback notice: ${toastText3b}`);
-  assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore3b, '3b home newSession switch does not send');
-  await page.locator('.file-toast-action').click();
-  await waitUntil(async () => (await readComposer()).promptValue === 'home-switch-draft-body', '3b open action opens created session with home draft');
-  console.log('OK 3b: home newSession switch notifies and opens created session with draft');
-
-  // 4. 新しい会話の予約から続けて書き込みを待つときに、注記が二重にならない（作成中の連続待機 & 作成直後の押し直し）
-  const setTurnCountBefore4 = await page.evaluate(() => window.__wsTest.countSent('setTurnSettings'));
-  await page.evaluate(() => {
-    window.__wsTest.holdCommand('newSession', 1);
-    window.__wsTest.holdCommand('setTurnSettings', 1);
-  });
-  await page.locator('#newSession').click();
-  await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key="nav:model"]').click();
-  await page.locator('#modelPop [data-key^="model:"][aria-selected="false"]').first().click();
-  await page.locator('#prompt').click();
-  await setPromptText('echo:HomeChainedSend');
-  await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('送信中');
-  }, '4 queued newSession note');
-  await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
-  // 会話作成後に sendDraftSettings が setTurnSettings を投げ、まだ設定反映待ちの間も注記は 1 つだけ
-  await waitUntil(async () => (await page.evaluate(() => window.__wsTest.countSent('setTurnSettings'))) > setTurnCountBefore4, '4 sendDraftSettings issued setTurnSettings');
-  await sleep(220);
-  assert.equal(await page.locator('.composer-note:not([hidden])').count(), 1, '4 still one note after newSession -> sendDraftSettings');
-  // 取り消してから設定反映待ち中に押し直しても二重にならない
-  await page.locator('#composerNote button').click();
-  await waitUntil(async () => (await readComposer()).noteHidden, '4 cancelled queued note');
-  await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('送信中');
-  }, '4 re-submit enters waitingSettings cleanly');
-  assert.equal(await page.locator('.composer-note:not([hidden])').count(), 1, '4 exactly one visible composer note without duplicates');
-  await sleep(220);
-  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
-  await waitUntil(async () => page.evaluate(() => [...document.querySelectorAll('#thread .m.user')].some(n => n.textContent.includes('HomeChainedSend'))), '4 message eventually sent');
-  await waitUntil(async () => (await readComposer()).noteHidden, '4 note cleared after send');
-  console.log('OK 4: single-note transition across newSession queue and post-creation settingsWrite without duplicates');
+  await waitUntil(() => page.evaluate((known) => {
+    const s = window.__wsTest.lastSent('sendMessage');
+    return Boolean(s?.sessionId && !known.includes(s.sessionId));
+  }, sessionsBefore3), '3 send goes to the created conversation');
+  const created3 = (await page.evaluate(() => window.__wsTest.lastSent('sendMessage'))).sessionId;
+  await sleep(300);
+  assert.equal((await readComposer()).promptValue, '', '3 the other conversation composer stays empty');
+  assert.equal(await toastShown(), false, '3 no switched notice');
+  await page.waitForSelector(`#groups .row[data-session="${created3}"]`, { timeout: 15_000 });
+  await openSession(created3);
+  await page.locator('#thread .m.user', { hasText: 'echo:HomeSwitchSend' }).waitFor();
+  console.log('OK 3: a send made while creating reaches the created conversation after switching away');
 
   // 6. 取り消しの無い待ち（受理）では欄を書けるままにする。別の会話へ移って戻っても書ける
   await openSession(sA);
@@ -369,26 +294,22 @@ try {
   await setPromptText('');
   console.log('OK 6: non-cancelable acceptance wait keeps the prompt writable (also after switching back)');
 
-  // 7. 待ちの最中の Enter が、進行中の待ち（注記・「取り消す」・readonly）を壊さない。応答が返ると 1 回だけ送られる
-  await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
-  await page.locator('#modelChip').click();
-  await page.locator('#modelPop [data-key="nav:model"]').click();
-  await page.locator('#modelPop [data-key="model:smart"]').click();
+  // 7. 受付の待ちの最中の Enter は二度目の送信にならない。応答が返ると 1 回だけ送られている
+  await openSession(sA);
+  await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
   await setPromptText('echo:EnterTwice');
   const sentBefore7 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
   await page.locator('#send').click();
-  await waitUntil(async () => { const st = await readComposer(); return !st.noteHidden && st.cancelVisible && st.promptReadOnly; }, '7 waiting note with cancel and readonly');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '7 sending note');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.press('Enter');
   await sleep(120);
-  const ui7 = await readComposer();
-  assert.ok(!ui7.noteHidden && ui7.cancelVisible && ui7.promptReadOnly, `7 note/cancel/readonly survive a second Enter: ${JSON.stringify(ui7)}`);
-  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings'));
-  await waitUntil(async () => (await page.evaluate(() => window.__wsTest.countSent('sendMessage'))) > sentBefore7, '7 sent after release');
+  assert.ok((await readComposer()).noteText.includes('送信中'), '7 the wait survives a second Enter');
+  await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
+  await waitUntil(async () => (await readComposer()).noteHidden, '7 note cleared');
   await sleep(300);
   assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore7 + 1, '7 sent exactly once');
-  await waitUntil(async () => (await readComposer()).noteHidden, '7 note cleared');
-  console.log('OK 7: second Enter during a wait keeps the wait and sends once');
+  console.log('OK 7: second Enter during the acceptance wait does not send twice');
 
   // 8. 字も添付も無い Enter は待ちとして登録しない。別の会話へ移って戻っても注記・readonly が出ない
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
@@ -409,25 +330,26 @@ try {
   await sleep(200);
   console.log('OK 8: empty Enter registers no wait');
 
-  // 9. 設定の保存の失敗が待ちの後に分かる -> 理由の行が出て、光ってフォーカスが移る
+  // 9. 設定の保存に失敗したら理由の行が出て、送信を押すとその行が光ってフォーカスが移り、送らない
   await page.evaluate(() => window.__wsTest.holdCommand('setTurnSettings', 1));
   await page.locator('#modelChip').click();
   await page.locator('#modelPop [data-key="nav:model"]').click();
   await page.locator('#modelPop [data-key="model:fast"]').click();
+  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings', true));
+  await waitUntil(() => page.evaluate(() => document.getElementById('composerNote')?.dataset.kind === 'held'), '9 held reason row shown');
   await setPromptText('echo:FailedSettings');
   const sentBefore9 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
-  await page.locator('#send').click();
-  await waitUntil(async () => { const st = await readComposer(); return !st.noteHidden && st.cancelVisible; }, '9 waiting note shown');
-  await page.evaluate(() => window.__wsTest.unholdCommand('setTurnSettings', true));
+  // 送信は押せない見た目（aria-disabled）でも押せる。押すと理由の行へ移る（web/composer-wait.mjs）
+  await page.locator('#send').click({ force: true });
   await waitUntil(() => page.evaluate(() => {
     const n = document.getElementById('composerNote');
     return n?.dataset.kind === 'held' && n.classList.contains('flash') && document.activeElement === n;
-  }), '9 held reason row is shown, flashed and focused');
+  }), '9 held reason row is flashed and focused');
   assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore9, '9 nothing sent after failed settings');
   await page.locator('#composerNote button').last().click();
   await waitUntil(async () => (await readComposer()).noteHidden, '9 hold dismissed');
   await setPromptText('');
-  console.log('OK 9: failed settings after a visible wait points at the reason row');
+  console.log('OK 9: failed settings show the reason row and pressing send points at it');
 
   // 10. 速い送信（150ms 未満）は欄を readonly にしない
   await openSession(sA);
@@ -471,7 +393,7 @@ try {
   });
   await setPromptText('echo:NewSendWithoutList');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).cancelVisible, '11 first send queued while creating session');
+  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '11 first send waits while creating session');
   await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
   await page.locator('#thread .m.user', { hasText: 'echo:NewSendWithoutList' }).waitFor();
   await waitUntil(async () => {
@@ -500,17 +422,17 @@ try {
   const entries = rawLog.split('\n').filter(Boolean).map(line => JSON.parse(line));
   const kinds = new Set(entries.map(e => e.kind));
   console.log('slow-commands.log entries:', entries.length, 'kinds:', [...kinds].join(','));
-  for (const requiredKind of ['client-pending', 'client-rtt', 'server-cmd', 'event-loop', 'submit-wait', 'submit-switched']) {
+  for (const requiredKind of ['client-pending', 'client-rtt', 'server-cmd', 'event-loop', 'submit-wait']) {
     assert.ok(kinds.has(requiredKind), `slow-commands.log contains kind=${requiredKind} (saw: ${[...kinds].join(',')})`);
   }
   const allowedTopKeys = new Set(['at', 'kind', 'source', 'command', 'ms', 'sessionId', 'outcome', 'errorCode', 'pendingCount', 'inFlight', 'windowMs', 'meanMs', 'p99Ms', 'phase', 'wait']);
   for (const entry of entries) {
     for (const k of Object.keys(entry)) assert.ok(allowedTopKeys.has(k), `unexpected key in slow log: ${k}`);
   }
-  for (const forbidden of ['AlphaTitle', 'AlphaBody', 'BetaBody', 'SlowSettingsSend', 'SlowModeSend', 'SlowAcceptSend', 'cancel-keep-draft-secret', 'switched-session-draft-body', 'home-switch-draft-body', 'HomeChainedSend', 'AcceptHeld', 'EnterTwice', 'FailedSettings', 'FastSend', workDir, dataDir]) {
+  for (const forbidden of ['AlphaTitle', 'AlphaBody', 'BetaBody', 'SlowSettingsSend', 'SlowModeSend', 'SlowAcceptSend', 'SwitchedSend', 'beta-draft-keep', 'HomeSwitchSend', 'AcceptHeld', 'EnterTwice', 'FailedSettings', 'FastSend', workDir, dataDir]) {
     assert.ok(!rawLog.includes(forbidden), `slow-commands.log must not contain secret/text/title/path "${forbidden}"`);
   }
-  console.log('OK 5: slow-commands.log recorded all 6 kinds with zero message/title/path leakage');
+  console.log('OK 5: slow-commands.log recorded all 5 kinds with zero message/title/path leakage');
   console.log('PASS');
 } finally {
   await ctx?.close().catch(() => {});

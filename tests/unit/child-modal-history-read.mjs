@@ -56,6 +56,8 @@ export default async function (t) {
       modalChild: mc, bg: { view: owner }, $: () => ({ open: true }),
       settleModalChild: () => order.push("settle"), modalToc: { refresh: () => order.push("toc") },
       syncRequest, joinReply, WINDOW_MESSAGES, WINDOW_BYTES,
+      // 描き終えた位置の覚え（閲覧状況の報告の shownAt。ADR 0347 第 3 段）。ここでは順序だけを見るので受け流す
+      noteShown: () => {},
       cmd: async (command, args, opts = {}) => {
         order.push("cmd");
         calls.push({ command, args: clone(args), bulk: opts.bulk === true });

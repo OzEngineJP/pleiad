@@ -47,6 +47,9 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
     const all = snapshot ?? await store.getAll();
     for (const [id, s] of Object.entries(all ?? {})) {
       const here = insideDir(s?.cwd, entry.path), reserved = insideDir(s?.nextSettings?.cwd, entry.path);
+      const pendingSend = s?.outbox?.some(item => ['queued', 'sending', 'paused', 'failed'].includes(item.status)
+        && ((entry.sessionId === id && entry.sendId === item.id) || insideDir(item.args?.settings?.cwd, entry.path)));
+      if (pendingSend) busy.push(`send:${id}`);
       if (!here && !reserved) continue;
       attached.push({ sessionId: id, kind: here ? 'cwd' : 'reserved' });
       if (background().get?.(id)?.tasks?.length) busy.push(`background:${id}`);
@@ -110,8 +113,8 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   /** 人が分ける（または確認なしで分ける）。作った worktree の cwd を返す */
-  async function split({ cwd, sessionId = null, purpose = 'conversation', parentSessionId = null, taskId = null }) {
-    const made = await worktrees.create({ cwd, sessionId, parentSessionId, taskId, purpose });
+  async function split({ cwd, sessionId = null, purpose = 'conversation', parentSessionId = null, taskId = null, sendId = null }) {
+    const made = await worktrees.create({ cwd, sessionId, parentSessionId, taskId, purpose, sendId });
     if (!made.ok) return made;
     return { ok: true, entry: publicEntry(made.entry), cwd: worktrees.cwdOf(made.entry) };
   }

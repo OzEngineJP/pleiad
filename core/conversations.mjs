@@ -207,6 +207,13 @@ export async function hostConversationOfNative(nativeId) {
   return (await nativeOwnerIndex()).get(nativeId) ?? null;
 }
 
+export async function conversationForCreation(requestId) {
+  for (const [id, row] of Object.entries(await all())) {
+    if (row.info?.creation?.requestId === requestId) return { id, backend: row.backend, creation: row.info.creation };
+  }
+  return null;
+}
+
 export async function createConversation(backend, info) {
   const id = crypto.randomUUID();
   (await all())[id] = { backend: backend.id, nativeId: null, base: 0, messages: [], segments: [], info, _dirty: true };

@@ -124,7 +124,7 @@ export default function (t) {
   const startNew = client.slice(client.indexOf('async function startNew('), client.indexOf('function branchIsFresh('));
   t.ok('新しい会話: 作成後に欄を写しで上書きしない（refresh の間に書いた字が消えていた）', !/draftText/.test(startNew) && !/\$\('prompt'\)\.value = draft/.test(startNew));
   t.ok('新しい会話: select は fresh（欄に触らない）で開き、欄の字をこの会話の下書きにする', /select\(result\.sessionId, \{ fresh: true(, after: listing)? \}\)/.test(startNew) && /saveDraft\(\)/.test(startNew) && /dropBlankDraft\(\)/.test(startNew));
-  t.ok('新しい会話: 別の会話から移ったときだけ欄を空にする', /if \(source\) \{\s*\$\('prompt'\)\.value = ''/.test(startNew));
+  t.ok('新しい会話: 別の会話から移ったときだけ欄を空にする', /if \(source\) \{\s*draftRevision = randomId\(\);\s*\$\('prompt'\)\.value = ''/.test(startNew));
   const select = client.slice(client.indexOf('async function select('), client.indexOf('async function paintSession('));
   t.ok('会話を開く: disabled ではなく readonly + aria-busy（composerWait.busy）', !/prompt"\)\.disabled = true/.test(select) && /composerWait\.busy\("history"\)/.test(select));
   t.ok('会話を開く: fresh では下書きを読み直さない', /if \(!fresh\) loadDraft\(\)/.test(select));
@@ -135,7 +135,7 @@ export default function (t) {
   t.ok('設定を保存できなかった会話は送らず、理由の一行へフォーカス（composerWait.hold・point）', /composerWait\.hold\(/.test(client) && /if \(composerWait\.held\) \{ composerWait\.point\(\); return; \}/.test(client));
   const hold = client.slice(client.indexOf('function syncSettingsHold('), client.indexOf('function paintSettingsNotice('));
   t.ok('「再試行」: また失敗したら出し直した一行の先頭のボタンへ、通ったら入力欄へ（押したボタンが消えて body に落ちていた）',
-    /const retry = \(\) => \{\s*drop\(\);/.test(hold) && /Promise\.resolve\(work\)\.then\(\(\) => \{ if \(lost\(\)\) \$\("prompt"\)\.focus\(\); \}, \(\) => \{ if \(lost\(\) && !composerWait\.focusAction\(\)\) \$\("prompt"\)\.focus\(\); \}\)/.test(hold)
+    /const retry = \(\) => \{\s*drop\(\);/.test(hold) && /Promise\.resolve\(work\)\.then\(\(\) => \{ if \(state.current === id && lost\(\)\) \$\("prompt"\)\.focus\(\); \}, \(\) => \{ if \(state.current === id && lost\(\) && !composerWait\.focusAction\(\)\) \$\("prompt"\)\.focus\(\); \}\)/.test(hold)
       && /onClick: retry/.test(hold));
   const applyCwd = client.slice(client.indexOf('function applyCwd('), client.indexOf('function applyCwd(') + 800);
   t.ok('applyCwd は保存の結果（reserveSettings の約束）を返す', /return write;/.test(applyCwd));
@@ -181,7 +181,7 @@ export default function (t) {
   }
   {
     const { w, prompt, note, flush } = setup();
-    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending', lock: 'none' });
+    w.queue(null, { text: '[sending]', kind: 'sending', cancelable: false, lock: 'none' });
     flush();
     t.ok("lock:'none' は注記が出ても欄は書けるまま（取り消すも無い）", !note.hidden && !prompt.readOnly && w.accepts() && note.querySelector('button') === null);
     w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
@@ -195,13 +195,6 @@ export default function (t) {
     w.queue(() => {});
     t.ok('既定（新しい会話の予約）は即時に readonly', prompt.readOnly === true);
   }
-  {
-    // client.mjs の配線: 取り消せない段は lock:'none'・worktree は取り消し無し・ガードは自分の待ちだけ解く・空の送信は待ちにしない
-    const src = read('web/client.mjs');
-    t.ok('submit の worktree の段は取り消し無し', /setWaitStage\('worktree',[^\n]*false\)/.test(src));
-    t.ok("取り消せる段だけ lock:'shown'、取り消せない段は lock:'none'", /lock: cancelable \? 'shown' : 'none'/.test(src));
-    t.ok('二重送信のガードは自分が張った待ちだけ解く', /if \(waitInfo\.hasNewSession && !submittingMessages\.has\(sessionId\)\) composerWait\.unqueue\(\);/.test(src));
-    t.ok('待ちの表示の情報が無い送信は張り直さない', /!active\.queueOpts \|\|/.test(src));
-    t.ok('設定の保存の失敗の point は待ちを片付けた後', /pointAfter = true/.test(src) && /composerWait\.unqueue\(\);\s*\/\/[^\n]*\n\s*if \(pointAfter\) composerWait\.point\(\)/.test(src));
-  }
+  t.ok('会話ごとの受付待ちは欄を編集でき、キューに保存するまでは取り消しボタンを出さない',
+    /activeSubmits\.get\(sessionId\)/.test(client) && /kind: 'sending', cancelable: false, lock: 'none'/.test(client));
 }

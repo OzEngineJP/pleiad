@@ -16,10 +16,13 @@ export default async function(t) {
     await c.waitFor(e => e.type === 'text.delta', { ms: 5000 });
     const from = c.mark();
     const upload = await c.cmd('attachFile', { sessionId, name: 'memo.txt', mime: 'text/plain', data: Buffer.from('attachment').toString('base64') });
-    const request = { sessionId, messageId: 'steer-0001', prompt: 'additional instruction', attachments: [{ path: upload.path, name: 'memo.txt', mime: 'text/plain' }] };
+    const request = { sessionId, messageId: 'steer-0001', prompt: 'additional instruction', settings: { backend: 'codex', cwd: ROOT, model: '', effort: '', mode: 'ask', account: '', endpoint: '', worktreePending: false }, attachments: [{ path: upload.path, name: 'memo.txt', mime: 'text/plain' }] };
+    await c.cmd('setTurnSettings', { sessionId, mode: 'yolo' });
     await Promise.all([c.cmd('sendMessage', request), c.cmd('sendMessage', request)]);
     const said = await c.waitFor(e => e.type === 'userMessage' && e.messageId === request.messageId, { from, ms: 5000 });
     const running = await c.cmd('running');
+    const selected = (await c.cmd('listSessions', {})).find(row => row.id === sessionId);
+    t.ok('途中送信は控えた承認モードを使い、次の送信に向けた予約は保つ', selected?.mode === 'ask' && selected?.nextSettings?.mode === 'yolo', JSON.stringify(selected));
     t.ok('中断や新しいターンを作らず稼働を維持', running.count === 1 && !c.since(from).some(e => e.type === 'turnEnd'));
     t.ok('追加発言は一度だけ通知する', c.since(from).filter(e => e.type === 'userMessage').length === 1);
     // 受理（吹き出しを出す）と「走っているターンに入った」は別の瞬間。画面は渡るまで待っていることを出す

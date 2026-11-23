@@ -307,4 +307,55 @@ export default async function(t) {
   const resent = (await retrySeen.list('c'))[1];
   t.ok('再送する（ログインし直した後の自動の送り直し・オフにして送る）は止めた理由を消して送り直す',
     resent.status === 'sent' && !resent.connectorsError && retryStarted && !retryStarted.connectorsError, JSON.stringify({ resent, retryStarted }));
+  const durable = {};
+  const durableStore = { get: async id => durable[id] ?? {}, getAll: async () => durable,
+    setSessionData: async (id, field, value) => { (durable[id] ??= {})[field] = structuredClone(value); } };
+  const payload = { prompt: 'saved before preparation', settings: { model: 'first', worktreePending: true } };
+  let entered, release;
+  const preparing = new Promise(resolve => { entered = resolve; });
+  let preparedStarts = 0;
+  const adapter = { store: durableStore, active: () => null, changed: () => {}, delivered: () => {},
+    start: async () => { preparedStarts++; return 'ok'; } };
+  const preparingQueue = createMessageQueue({ ...adapter, prepare: async (_id, item) => {
+    if (item.id === 'blocked-one') {
+      entered();
+      await new Promise(resolve => { release = resolve; });
+    } else throw new Error('worktree failed');
+  } });
+  await preparingQueue.accept('work', 'blocked-one', payload);
+  await preparing;
+  const duplicate = await preparingQueue.accept('work', 'blocked-one', payload);
+  const second = await preparingQueue.accept('work', 'blocked-two', payload);
+  const visible = await preparingQueue.list('work');
+  t.ok('準備が止まっていても受付・同じ ID の再試行・一覧が返る',
+    duplicate.id === 'blocked-one' && second.id === 'blocked-two' && visible.length === 2
+    && visible[0].waiting?.reason === 'preparing' && visible[1].waiting?.reason === 'order');
+  await preparingQueue.action('work', 'blocked-one', 'cancel');
+  release();
+  await preparingQueue.kick('work');
+  t.ok('準備中の取り消しは配送せず、残った項目の準備失敗だけに理由を付ける',
+    durable.work.outbox[0].status === 'cancelled' && durable.work.outbox[1].status === 'failed'
+    && durable.work.outbox[1].error === 'worktree failed' && preparedStarts === 0);
+  const pending = createMessageQueue({ ...adapter, active: () => ({ blocked: true }) });
+  await pending.accept('restart', 'restart-queued', payload);
+  await pending.accept('restart', 'restart-sending', payload);
+  await pending.kick('restart');
+  durable.restart.outbox[1].status = 'sending';
+  durable.restart.outbox[1].dispatch = 'initial';
+  const resumed = createMessageQueue(adapter);
+  await resumed.recover();
+  const recovering = await resumed.list('restart');
+  t.ok('再起動は配送前の設定を復元し、配送開始済みの項目を結果不明にする',
+    recovering[0].status === 'queued' && recovering[0].args.settings.model === 'first' && recovering[1].status === 'unknown');
+  // 設定つきの発言を新しいターンで始めるとき、始める直前（userMessage の initial が出る前）の一覧に準備中の印を残さない。
+  // 残すと画面は「始めた発言が待ちに戻された」と取り違えて吹き出しを消す
+  let seenAtStart = null;
+  const lastSeen = new Map();
+  const startsClean = createMessageQueue({ ...adapter, prepare: async (_id, item) => item.args,
+    changed: (id, items) => lastSeen.set(id, structuredClone(items)),
+    start: async (_args, accepted) => { seenAtStart = lastSeen.get('clean')?.find(m => m.id === 'clean-1') ?? null; await accepted(); return 'ok'; } });
+  await startsClean.accept('clean', 'clean-1', payload);
+  for (let i = 0; i < 100 && (await startsClean.list('clean'))[0].status === 'queued'; i++) await new Promise(r => setTimeout(r, 10));
+  t.ok('設定つきの発言は、始める前の一覧で queued・待ちの印なし（画面が始めた吹き出しを消さない）',
+    seenAtStart?.status === 'queued' && !seenAtStart.waiting, JSON.stringify(seenAtStart));
 }

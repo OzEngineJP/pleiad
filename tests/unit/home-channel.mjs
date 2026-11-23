@@ -4,6 +4,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { registry } from '../../core/ops/index.mjs';
 import { ChannelError, createChannelService } from '../../core/channels/service.mjs';
 import { pickHome } from '../../core/brain/pulse.mjs';
@@ -69,4 +70,65 @@ export default async function (t) {
   } finally {
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+  await homeSendSwitch(t);
+}
+
+// 画面の側（web/client.mjs の sendToHomeBot）: 送る中身・始めた会話・下書きの版は押した時に決める（ADR 0347 第 2 段）。
+// 投稿の応答が届く前に別の会話（B）へ移っても、B の欄の字・添付・開いている会話には触れず、始めた会話（A）の下書きだけを片付ける
+async function homeSendSwitch(t) {
+  const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+  const cut = (name) => {
+    let start = source.indexOf(`function ${name}(`);
+    if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
+    if (source.slice(start - 6, start) === 'async ') start -= 6;
+    return source.slice(start, source.indexOf('\n}', start) + 2);
+  };
+  const prompt = { value: '' };
+  const errorLine = { textContent: '' };
+  const state = { current: 'A', drafts: new Map(), attached: [], sessions: [{ id: 'A', unsent: true }, { id: 'B' }] };
+  const posts = [], persisted = [], deleted = [], went = [], notes = [];
+  let hold = null, n = 0;
+  const context = vm.createContext({
+    state, $: (id) => (id === 'prompt' ? prompt : errorLine), draftRevision: 'rA', randomId: () => `id${++n}`,
+    homeAttempts: new Map(), homeSending: new Set(), t: (k) => k,
+    orderedAttachments: () => state.attached.slice(),
+    saveDraft: async () => { state.drafts.set(state.current ?? '', { text: prompt.value, attached: state.attached.slice(), revision: context.draftRevision }); },
+    cmd: (command, args) => { posts.push({ command, args }); return new Promise((res, rej) => { hold = { res, rej }; }); },
+    persistDraft: async (id, d) => { persisted.push({ id, ...d }); }, dropBlankDraft: () => {},
+    renderAttached: () => {}, fitPrompt: () => {}, notify: (m) => notes.push(m),
+    homeDest: { reset: () => {} }, viewAddress: { go: (a) => went.push(a) }, deleteSessionRow: async (row) => { deleted.push(row.id); },
+  });
+  vm.runInContext(`${cut('clearHomeDraft')}\n${cut('sendToHomeBot')}`, context);
+  const settle = async () => { for (let k = 0; k < 5; k++) await new Promise(setImmediate); };
+
+  prompt.value = 'A からの相談';
+  state.attached = [{ path: 'C:/up/a.png', name: 'a.png', mime: 'image/png' }];
+  const sending = context.sendToHomeBot({ id: 'b_owl' });
+  context.sendToHomeBot({ id: 'b_owl' });   // 応答を待つ間に、もう一度押した
+  t.ok('[画面] 応答を待つ間に押し直しても投稿は 1 回', posts.length === 1 && posts[0].args.args.to === 'b_owl' && posts[0].args.args.attachments?.length === 1);
+  // 応答が届く前に B へ移って、B の欄に書いた
+  state.current = 'B';
+  prompt.value = 'B の書きかけ';
+  state.attached = [{ path: 'C:/up/b.png', name: 'b.png', mime: 'image/png' }];
+  context.draftRevision = 'rB';
+  hold.res({ channelId: 'home-real', id: 'post-1' });
+  await sending; await settle();
+  t.ok('[画面] 移った先（B）の欄の字・添付・開いている会話はそのまま', prompt.value === 'B の書きかけ' && state.attached.length === 1 && state.attached[0].name === 'b.png'
+    && state.current === 'B' && context.draftRevision === 'rB' && went.length === 0, JSON.stringify({ value: prompt.value, went }));
+  t.ok('[画面] 始めた会話（A）の下書きだけを空にし、空の会話 A を片付ける', persisted.length === 1 && persisted[0].id === 'A' && persisted[0].text === '' && deleted.join() === 'A',
+    JSON.stringify({ persisted, deleted }));
+
+  // 失敗したら移った先の欄には出さず知らせる。送り直しは同じ clientId（二重に作らない）
+  state.current = 'C'; state.sessions.push({ id: 'C' });
+  prompt.value = 'C から'; state.attached = []; context.draftRevision = 'rC';
+  const failing = context.sendToHomeBot({ id: 'b_owl' });
+  state.current = 'B'; prompt.value = 'B の書きかけ'; context.draftRevision = 'rB';
+  hold.rej(new Error('offline'));
+  await failing;
+  t.ok('[画面] 移った後の失敗は通知で知らせ、移った先の欄・下書きに触れない', notes.length === 1 && errorLine.textContent === '' && prompt.value === 'B の書きかけ' && persisted.length === 1);
+  state.current = 'C'; prompt.value = 'C から'; context.draftRevision = 'rC';
+  const retry = context.sendToHomeBot({ id: 'b_owl' });
+  hold.res({ channelId: 'home-real', id: 'post-2' });
+  await retry; await settle();
+  t.ok('[画面] 同じ中身の送り直しは同じ clientId', posts.at(-1).args.args.clientId === posts.at(-2).args.args.clientId && went.length === 1);
 }

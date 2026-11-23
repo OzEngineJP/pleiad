@@ -79,12 +79,15 @@ export default async function (t) {
     await op({ op: 'update', target: first.sessionId, patch: { step: 2 } });
     const ev2 = await c.waitFor((e) => e.type === 'permissionUpdate' && e.id === wait2.id, { from: updFrom2, ms: 15_000 });
     t.ok('続けた update は旧い中身に重なる', ev2.browserHandoff?.state === 'asking' && ev2.browserHandoff?.step === 2, JSON.stringify(ev2));
+    // 版（rev）: 画面は届いた順でなく版で当てる（遅れて届いた古い差し替えで新しい中身を戻さない。ADR 0347 第 3 段）
+    t.ok('permissionUpdate は版（rev）を運び、差し替えるたびに上がる', Number.isInteger(ev1.rev) && Number.isInteger(ev2.rev) && ev2.rev > ev1.rev, JSON.stringify([ev1.rev, ev2.rev]));
 
     // ---- つなぎ直した画面に、新しい中身が届く
     const c2 = await open({ port: server.port, token: server.token });
     try {
       const again = await c2.waitFor((e) => e.type === 'permission' && e.id === wait2.id, { ms: 15_000 });
       t.ok('つなぎ直した画面には、差し替え後の中身で承認が届く', again.browserHandoff?.state === 'asking' && again.browserHandoff?.step === 2, JSON.stringify(again.browserHandoff));
+      t.ok('つなぎ直した画面に届く承認も同じ版（rev）を持つ（その後に届く古い差し替えを捨てられる）', again.rev === ev2.rev, JSON.stringify([again.rev, ev2.rev]));
     } finally { c2.close(); }
 
     // ---- 外からの settle（resolvePermission を通さない）で permissionSettled が出て、畳まれる
@@ -174,9 +177,14 @@ export default async function (t) {
   const roll = read('web/card-roll.mjs');
   t.ok('画面: 名簿は update(id, ev) でその承認のカード全部に差し替えを渡す', /update\(id, ev\)[\s\S]*?entry\.update\?\.\(ev\)/.test(roll));
   const client = read('web/client.mjs');
-  t.ok('画面: permissionUpdate の受け口（pendingPerms の写しの書き替えと名簿への受け渡し）',
-    /case "permissionUpdate":\s*return onPermissionUpdate\(ev\)/.test(client)
+  const onEvent = client.slice(client.indexOf('function onEvent('));
+  // 開いていない会話の承認の差し替えも落とさない（会話の絞り込み isMine の前で受ける。ADR 0347 第 3 段）
+  t.ok('画面: permissionUpdate の受け口（会話の絞り込みの前・pendingPerms の写しの書き替えと名簿への受け渡し）',
+    /if \(ev\.type === 'permissionUpdate'\) \{ onPermissionUpdate\(ev\); return; \}/.test(onEvent)
+    && onEvent.indexOf("ev.type === 'permissionUpdate'") < onEvent.indexOf('if (!isMine(ev))')
     && /function onPermissionUpdate\([\s\S]*?state\.pendingPerms\.set\([\s\S]*?openCards\.update\(ev\.id, ev\)/.test(client));
+  const onUpdate = client.slice(client.indexOf('function onPermissionUpdate('), client.indexOf('function onPermissionUpdate(') + 900);
+  t.ok('画面: 片付いた承認・版が今の写し以下の差し替えは当てない', /settledPerms\.has\(ev\.id\)\) return/.test(onUpdate) && /\(pending\.rev \?\? 0\) >= ev\.rev\) return/.test(onUpdate));
   t.ok('画面: 中継のカードの名簿の項目が update を持つ（種類ごとの描き直しは parts.onUpdate）', /openCards\.add\(ev\.id, \{[^}]*update: \(patch\) => parts\.onUpdate\?\.\(patch\)/.test(client));
   const protocol = read('core/protocol.mjs');
   t.ok('protocol.mjs の EVENTS に permissionUpdate', /"permissionUpdate"/.test(protocol));

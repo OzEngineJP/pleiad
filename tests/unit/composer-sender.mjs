@@ -89,4 +89,18 @@ export default async function (t) {
     t.ok('前の送りかけが届いたか分からず中身も違うなら、送らずに理由を投げる', thrown?.message === '[chat.send.unknownPrevious]'
       && !s.calls.some(([c]) => c === 'sendMessage'));
   }
+  {
+    const s = setup({ sendFails: true });
+    const settings = { model: 'first', worktreePending: true };
+    const original = s.sender.capture({ ...base, sessionId: null, text: 'first',
+      ordered: [{ path: 'x', name: 'one' }, { path: 'y', name: 'two' }], settings, revision: 'first-revision' });
+    await s.sender.sendCaptured('', original, async () => 'created-1').catch(() => {});
+    const retained = s.receipts.get('');
+    await s.sender.sendCaptured('', retained, async () => { throw new Error('already associated'); }).catch(() => {});
+    t.ok('受付を確認できないとき、同じ会話・メッセージ ID・本文・添付の順・設定で再試行する',
+      retained.sessionId === 'created-1' && retained.revision === 'first-revision'
+      && s.calls.length === 2 && JSON.stringify(s.calls[0]) === JSON.stringify(s.calls[1])
+      && s.calls[0][1].attachments.map(a => a.path).join(',') === 'x,y'
+      && s.calls[0][1].settings.model === 'first');
+  }
 }

@@ -8,24 +8,28 @@ export const REFRESH_MS = 60_000;
 const TICK_MS = 1000;
 
 /**
- * @param send     (visible, sessionId) => Promise|void   WS の 'presence'
+ * @param send     (visible, sessionId, shownAt) => Promise|void   WS の 'presence'
  * @param current  () => 開いている会話の id（新規・未確定は null）
  * @param visible  () => 画面が見えているか
+ * @param shown    (sessionId) => その会話を描き終えた履歴の時点（loadSession の返事の shownAt）| null。
+ *                 読み込み中・失敗なら null。ホストは通知の一覧をここまでだけ既読にする（ADR 0347 第 3 段）
  */
-export function createPresenceReporter({ send, current, visible, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
+export function createPresenceReporter({ send, current, visible, shown = () => null, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
   let lastKey = null, lastAt = 0, timer = null, stopped = false;
   const key = () => {
     const id = current();
     const real = typeof id === 'string' && id && !id.startsWith('pending-') ? id : null;
-    return { visible: visible() && real !== null, sessionId: real };
+    const seen = visible() && real !== null;
+    const at = seen ? shown(real) : null;
+    return { visible: seen, sessionId: real, shownAt: Number.isFinite(at) ? at : null };
   };
   const report = (force = false) => {
     const k = key();
-    const same = lastKey && lastKey.visible === k.visible && lastKey.sessionId === k.sessionId;
+    const same = lastKey && lastKey.visible === k.visible && lastKey.sessionId === k.sessionId && lastKey.shownAt === k.shownAt;
     // 見ていない状態は、変わったときに 1 回送れば足りる（見ている間だけ更新し続ける）
     if (!force && same && (!k.visible || now() - lastAt < REFRESH_MS)) return false;
     lastKey = k; lastAt = now();
-    try { Promise.resolve(send(k.visible, k.sessionId)).catch(() => { lastKey = null; }); } catch { lastKey = null; }
+    try { Promise.resolve(send(k.visible, k.sessionId, k.shownAt)).catch(() => { lastKey = null; }); } catch { lastKey = null; }
     return true;
   };
   return {

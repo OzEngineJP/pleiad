@@ -183,11 +183,21 @@ function paintOutbox() {
   const id = state.current;
   const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
   const messages = outboxes.get(id) ?? [];
-  const sendingId = submittingMessages.has(id) && receipts.get(id)?.messageId;
-  if (messages.some(m => m.id === sendingId && (m.status === 'sending' || m.status === 'queued'))) shown.add(sendingId);
   renderOutbox($('outbox'), messages, async (messageId, action) => {
     await cmd('messageAction', { sessionId: id, messageId, action });
   }, shown, { schedules: sendSchedules(id), scheduleActions });
+  const detached = id && receipts.get('')?.creationRequest && !receipts.get('').sessionId ? receipts.get('') : null;
+  const activeReceipt = receipts.get(id ?? '') ?? (receipts.get('')?.sessionId === id ? receipts.get('') : null);
+  const receipt = activeReceipt ?? detached;
+  if (receipt && !submittingMessages.has(id) && !submittingMessages.has(receipt.sessionId ?? null)) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn';
+    retry.textContent = receipt === detached ? t('outbox.retryNewReceipt') : t('outbox.retryReceipt');
+    retry.onclick = () => submit({ retry: true, detached: receipt === detached });
+    $('outbox').append(retry);
+    $('outbox').hidden = false;
+  }
   // 保留の件数で「再開」の字が変わる（renderSessions より先に届くこともある）
   syncResume();
 }
@@ -250,7 +260,9 @@ function paintArmed() {
   note.textContent = t('schedule.armedNoteEdit', { when: whenText(at) });
 }
 async function refreshOutbox(id) {
+  const before = outboxes.get(id);
   const messages = await cmd('listMessages', { sessionId: id });
+  if (outboxes.get(id) !== before) return outboxes.get(id);
   outboxes.set(id, messages);
   if (state.current === id) syncOutboxRows(messages);
   return messages;
@@ -354,7 +366,7 @@ async function loadSentMessages(shell) {
 const chatRecall = createRecall({
   prompt: $('prompt'), box: $('cbox'), t,
   enabled: () => inputPrefs(state.prefs).historyRecall,
-  blocked: () => chatEdit.active || slashSkills.isOpen?.() || Boolean(queuedSend),
+  blocked: () => chatEdit.active || slashSkills.isOpen?.(),
   shell: () => shellComposer.active,
   load: ({ shell }) => loadSentMessages(shell),
   current: () => state.current,
@@ -420,9 +432,7 @@ const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("co
   leave: remoteInfo(window.plyRemote)?.shell === "mobile" && typeof window.plyRemote.backToHosts === "function" ? () => window.plyRemote.backToHosts() : null });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
-// 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
-let queuedSend = null;
-// 送る前の待ち・受理待ちの進行中チケット（sessionId -> ticket）。切り替えと取り消しを見分ける
+// 受付を待つあいだの表示（sessionId -> ticket）。配送の状態は会話のキューから表示する
 const activeSubmits = new Map();
 
 const NL = String.fromCharCode(10);
@@ -1307,10 +1317,12 @@ function resendPayload(text, attached, sessionId) {
  * 同じ会話の中で送り直す（sendMessage の rewind）。消える範囲は先に畳み、サーバーが巻き戻して送り終えたら履歴を読み直して
  * 消えた発言を片付け、新しい発言の吹き出しを置く（会話は切り替えない）。送れなかったら畳んだ範囲を戻して理由を出す。成功したら true。
  * 押した時点の実行中の判定は、帯を開いたときのものではなく今のもの（開いたあとに走り出していたら、入力欄の帯を作り直して、もう一度押してもらう）。
+ * 実行中かは送り直す会話（source）で見る（画面がいま開いている会話ではない）。止めてよいかは、押した時に見せた帯（tail.running）で決める。
+ * 送る中身と設定は押した時に決め、巻き戻しと受け付けはサーバーの 1 つの操作（sendMessage の rewind）。設定を添えたら保存は待たない（ADR 0347）。
  * 巻き戻しは済んで受け付けだけが失敗したときは、rewind を外して同じ messageId で送り直す（起点の発言はもう無いので、巻き戻し直せない）
  */
 async function rewindSend({ m, source, tail, text, attached, editing = false, after = null }) {
-  if (isRunningHere() && !tail.running) {
+  if (state.runningIds.has(source) && !tail.running) {
     const next = { ...tail, running: true, any: true };
     if (editing) chatEdit.setTail(next);
     return false;
@@ -1321,7 +1333,10 @@ async function rewindSend({ m, source, tail, text, attached, editing = false, af
   for (const w of doomed) w.classList.add('leaving');
   if (attached.length) provisionalByMessage.set(messageId, attached.map(provisionalPresent));
   rewindingNow = source;
-  const request = { sessionId: source, messageId, prompt, cwd: state.cwd.trim() || undefined, mode: state.mode, ...(attachments.length ? { attachments } : {}) };
+  // 設定は押した時の入力欄のもの（送り直す会話を開いているときだけ。メインの送信と同じ settings）。開いていなければ会話の保存済みの設定で届ける
+  const captured = state.current === source ? captureSendSettings() : null;
+  const settings = typeof captured?.worktreePending === 'boolean' ? captured : null;
+  const request = { sessionId: source, messageId, prompt, ...(settings ? { settings } : {}), ...(attachments.length ? { attachments } : {}) };
   const done = async () => {
     $('settingsError').textContent = '';
     announce(tail.users > 0 ? t('chat.resend.doneUsers', { count: tail.users }) : tail.saved > 0 ? t('chat.resend.doneReplies') : t('chat.resend.done'));
@@ -1334,9 +1349,11 @@ async function rewindSend({ m, source, tail, text, attached, editing = false, af
     return true;
   };
   try {
-    await settingsWrites.get(source)?.catch(() => {});
-    await modeWrites.get(source);
-    await cmd('sendMessage', { ...request, rewind: { beforeMessageId: m.dataset.uuid, ...(isRunningHere() ? { stopRunning: true } : {}) } });
+    if (!settings) {
+      await settingsWrites.get(source)?.catch(() => {});
+      await modeWrites.get(source);
+    }
+    await cmd('sendMessage', { ...request, rewind: { beforeMessageId: m.dataset.uuid, ...(tail.running ? { stopRunning: true } : {}) } });
     return await done();
   } catch (e) {
     for (const w of doomed) w.classList.remove('leaving');
@@ -1448,9 +1465,10 @@ async function editBranch({ id, text, attached }) {
   if (!m || !found) { chatEdit.targetLost(); return false; }
   const source = state.current;
   const stash = chatEdit.stashed();
-  await forkFrom(m, { draft: { text, attached, editing: composerEditor.snapshotEditing(), index: found.index } });
-  // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま
-  if (state.current === source) return false;
+  const made = await forkFrom(m, { draft: { text, attached, editing: composerEditor.snapshotEditing(), index: found.index } });
+  // 分岐の先へ移ったなら、元の会話の下書きは編集前の書きかけに戻す（直した内容は分岐の先へ渡った）。移れなかったら（理由は forkFrom が出した）開いたまま。
+  // 分岐の先へ送れたのに移れなかったときは、編集を終える（開いたままだと、同じ内容をもう一度送れてしまう）
+  if (state.current === source) return Boolean(made?.sent);
   persistDraft(source, { text: stash?.text ?? '', attached: stash?.attached ?? [], editing: stash?.editing, version: 2, dirty: true }).catch(() => {});
   if (stash?.extra !== undefined) armedSends.set(source, stash.extra);
   announce(t('chat.resend.doneBranch'));
@@ -2852,8 +2870,30 @@ const reconcileTimers = new Map();
 /** 片付いた承認への答え（サーバーの ALREADY_RESOLVED）。失敗ではなく、別の場所で処理された知らせ */
 const alreadyResolved = (err) => err?.code === "ALREADY_RESOLVED";
 
+/**
+ * 片付いた承認の id（新しい順に上限まで）。承認の id は 1 回きりなので、片付いた後に届いた古い履歴の応答（loadSession の permissions）に
+ * 同じ id があっても描き直さない（ADR 0347 第 3 段）
+ */
+const settledPerms = new Set();
+function rememberSettled(id) {
+  if (!id) return;
+  settledPerms.delete(id);
+  settledPerms.add(id);
+  if (settledPerms.size > 500) settledPerms.delete(settledPerms.values().next().value);
+}
+/** 履歴の応答が返した保留中の承認を写しに取り込む。片付いたもの・今の写しより版の古いものは当てない */
+function adoptPendingPerms(list) {
+  for (const ev of list ?? []) {
+    if (!ev?.id || settledPerms.has(ev.id)) continue;
+    const known = state.pendingPerms.get(ev.id);
+    if (known && (known.rev ?? 0) > (ev.rev ?? 0)) continue;
+    state.pendingPerms.set(ev.id, ev);
+  }
+}
+
 /** そのカードを「別の場所で処理されました」に畳む。出ていなければ何もしない */
 function foldElsewhere(id) {
+  rememberSettled(id);
   state.pendingPerms.delete(id);
   browserEntry?.paint();
   openCards.fold(id, { by: "elsewhere" });
@@ -2862,6 +2902,7 @@ function foldElsewhere(id) {
 /** permissionSettled。この窓で答えを送っている最中のカードは、答えの応答で畳むのでここでは触らない（「許可した」と出すため） */
 function onPermissionSettled(ev) {
   const handoff = Boolean(state.pendingPerms.get(ev.id)?.browserHandoff);
+  rememberSettled(ev.id);
   state.pendingPerms.delete(ev.id);
   browserEntry?.paint();
   if (!openCards.has(ev.id) || openCards.sending(ev.id)) return;
@@ -2950,6 +2991,8 @@ function registerRelayCard(ev, parts) {
 
 /** 中継のカードの決着（permissionRelayEnd）と、ホストの接続の状態（permissionRelayState）。開いていないカードは何もしない */
 function onRelayCardEvent(ev) {
+  // 決着は開いていない会話の分でも覚えから外す（開き直したときに片付いたカードを出さない）
+  if (ev.type === "permissionRelayEnd") { rememberSettled(ev.id); state.pendingPerms.delete(ev.id); browserEntry?.paint(); }
   if (!openCards.has(ev.id)) return;
   if (ev.type === "permissionRelayState") for (const entry of openCards.of(ev.id)) entry.setOnline?.(ev.online !== false);
   else openCards.fold(ev.id, { by: ev.by, allow: ev.allow === true, peer: ev.peer ?? ev.hostName });
@@ -2960,9 +3003,12 @@ function onRelayCardEvent(ev) {
  * 出ているカードには update(ev) を渡す（種類ごとの描き方は、そのカードの parts.onUpdate が持つ。無ければ何もしない）
  */
 function onPermissionUpdate(ev) {
+  if (settledPerms.has(ev.id)) return;
   const pending = state.pendingPerms.get(ev.id);
+  // 版（rev）が今の写し以下なら古い中身。写しもカードも替えない（ADR 0347 第 3 段）
+  if (pending && ev.rev != null && (pending.rev ?? 0) >= ev.rev) return;
   if (pending) {
-    state.pendingPerms.set(ev.id, { ...pending, ...(ev.browserHandoff ? { browserHandoff: ev.browserHandoff } : {}), ...(ev.chromeWait ? { chromeWait: ev.chromeWait } : {}) });
+    state.pendingPerms.set(ev.id, { ...pending, ...(ev.browserHandoff ? { browserHandoff: ev.browserHandoff } : {}), ...(ev.chromeWait ? { chromeWait: ev.chromeWait } : {}), ...(ev.rev != null ? { rev: ev.rev } : {}) });
     browserEntry?.paint(); browserSettings.chromeRepaint();
   }
   openCards.update(ev.id, ev);
@@ -3287,6 +3333,8 @@ function onEvent(ev, replay = false) {
   // 承認は一度きりしか届かない。開いていない会話の分も覚えておき、開いたときに描く
   // （覚えずに捨てると、一覧は「承認待ち」なのにカードがどこにも出ない）
   if (ev.type === "permission" && ev.id) {
+    // 届いた承認はいま待っているもの（同じ id で聞き直されたなら、片付いた覚えから外す）
+    settledPerms.delete(ev.id);
     state.pendingPerms.set(ev.id, ev);
     browserEntry?.paint(); browserSettings.chromeRepaint();
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -3315,6 +3363,9 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
   if (ev.type === 'permissionSettled') { dropModalChildPermission(ev); onPermissionSettled(ev); return; }
+  // 承認の中身の差し替えと中継の決着も、開いていない会話の分の覚え（pendingPerms）に当てるので、絞り込みの前に受ける（ADR 0347 第 3 段）
+  if (ev.type === 'permissionUpdate') { onPermissionUpdate(ev); return; }
+  if (ev.type === 'permissionRelayEnd' || ev.type === 'permissionRelayState') { onRelayCardEvent(ev); return; }
   if (ev.type === 'compactionSchedule') {
     if (ev.sessionId === state.current) { state.compactionAt = ev.at; paintContextStrip(); }
     return;
@@ -3348,7 +3399,8 @@ function onEvent(ev, replay = false) {
   // 使用枠の正本に新しい値が届いた・無効化した（backend が無ければ全部）。購読している面へ結果を配る
   if (ev.type === 'usageChanged') { ev.backend ? usageSource.changed(ev.backend).catch(() => {}) : usageSource.reload(); return; }
   // 依頼元が委譲の子の設定を替えた（ADR 0134）。持っている行なら読み直す（終わったタスクは running に載らないため）
-  if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
+  // Channels のスレッドの入れ物（watched.rows）にだけある行も読み直す（ADR 0347 第 3 段）
+  if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId) || watched.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
@@ -3465,13 +3517,6 @@ function onEvent(ev, replay = false) {
       // after replay has created its tool row (paintPendingPerms below).
       if (state.displayLoad?.id === ev.sessionId && sessionLoads.isPending(state.displayLoad)) return;
       return renderPermission(ev);
-
-    case "permissionRelayEnd":
-    case "permissionRelayState":
-      return onRelayCardEvent(ev);
-
-    case "permissionUpdate":
-      return onPermissionUpdate(ev);
 
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
@@ -4268,7 +4313,7 @@ async function resendFailedTurn({ sessionId, messageId, node, auto, pristine, au
   if (!data || state.current !== sessionId || !m.isConnected) return false;
   const index = data.messages.findIndex((x) => x.uuid === m.dataset.uuid);
   if (index < 0) return confirm();
-  const tail = tailInfo(data.messages, index, { running: isRunningHere(), forkOnly: Boolean(state.sessions.find((x) => x.id === sessionId)?.delegation) });
+  const tail = tailInfo(data.messages, index, { running: state.runningIds.has(sessionId), forkOnly: Boolean(state.sessions.find((x) => x.id === sessionId)?.delegation) });
   if (tail.users > 0 || tail.running || tail.forkOnly || tail.files) return confirm();
   return rewindSend({ m, source: sessionId, tail, text: data.messages[index].text ?? '', attached: messageAttachments(data, index),
     after: auto ? () => placeResentNote(auth, agent) : null });
@@ -4343,10 +4388,9 @@ const modeWrites = new Map();
 const settingsFailures = new Map();
 
 function writeMode(sessionId, mode) {
-  const write = (modeWrites.get(sessionId) ?? Promise.resolve()).catch(() => {})
-    .then(() => cmd('setMode', { sessionId, mode, reasonKey: 'manual' }));
+  const write = reserveSettings({ mode, rememberMode: true }, sessionId);
   modeWrites.set(sessionId, write);
-  write.then(() => { if (modeWrites.get(sessionId) === write) modeWrites.delete(sessionId); }, () => {});
+  write.finally(() => { if (modeWrites.get(sessionId) === write) modeWrites.delete(sessionId); }).catch(() => {});
   return write;
 }
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
@@ -4370,6 +4414,7 @@ function reserveSettings(patch, targetId = state.current) {
     try { value = await cmd("setTurnSettings", { sessionId: id, ...patch }); } catch (e) { release(); throw e; }
     release();
     const row = state.sessions.find(s => s.id === id);
+    if (row && patch.worktreePending === false) row.worktreePending = false;
     settledNext.set(id, { value, worktreePending: row?.worktreePending, version: refreshVersion });
     if (row) row.nextSettings = value;
     settingsFailures.delete(id);
@@ -4451,9 +4496,9 @@ function syncSettingsHold() {
   // （その間にほかへ移っていたら動かさない）
   const retry = () => {
     drop();
-    const work = cwd != null ? applyCwd(cwd) : reserveSettings(patch);
+    const work = reserveSettings(patch, id);
     const lost = () => !document.activeElement || document.activeElement === document.body;
-    Promise.resolve(work).then(() => { if (lost()) $("prompt").focus(); }, () => { if (lost() && !composerWait.focusAction()) $("prompt").focus(); });
+    Promise.resolve(work).then(() => { if (state.current === id && lost()) $("prompt").focus(); }, () => { if (state.current === id && lost() && !composerWait.focusAction()) $("prompt").focus(); });
   };
   const actions = [{ label: t("chat.settingsHold.retry"), onClick: retry }];
   if (cwd != null) actions.push({ label: t("chat.settingsHold.rechoose"), onClick: () => { drop(); syncTopbar().catch(() => {}); controls.panels.folder.show(); controls.typeCwd(cwd); } });
@@ -4973,10 +5018,8 @@ const controls = chatComposer.useControls({
         reserveSettings({ mode: v, rememberMode: true });
         return;
       }
-      // 会話のモードを覚えさせる（setMode は次に新しく始めるときの既定にもする）
-      writeMode(sessionId, v).catch(e => {
-        if (state.current === sessionId) composerError(t("chat.sys.modeSaveFailed", { error: e.message }));
-      });
+      // この会話の次の送信と、同じエージェントで作る会話の既定に使う
+      writeMode(sessionId, v).catch(() => {});
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => {
@@ -5428,6 +5471,13 @@ $('closeResumeStrip').onclick = () => {
   syncResumeStrip();
 };
 
+// 会話 → 描き終えた履歴の時点（loadSession の返事の shownAt。サーバーの時計）。閲覧状況の報告（presence）に載せ、
+// ホストは通知の一覧をここまでだけ既読にする。読み込みを始めたら消し、描き終えたら付ける（読み込みに失敗した会話は既読にしない。ADR 0347 第 3 段）
+const shownUpTo = new Map();
+function noteShown(id, at) {
+  if (!id || !Number.isFinite(at)) return;
+  shownUpTo.set(id, Math.max(shownUpTo.get(id) ?? 0, at));
+}
 function acknowledgeDisplayed(id, completedAt) {
   displayedCompletions.set(id, Math.max(displayedCompletions.get(id) ?? 0, completedAt ?? 0));
   if (document.visibilityState === "visible") readCompletions.mark(id, displayedCompletions.get(id));
@@ -5467,8 +5517,17 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
     backend: backend ?? chosen.backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
   state.current = null;
   // changes: 作っている間も集め続ける。created: できた会話の id（できた後の選び直しはその場で流す）
-  const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], base, created: null };
+  const previousRequest = !source ? state.drafts.get('')?.creationRequest : null;
+  const creationRequest = previousRequest ?? { requestId: randomId(), includeSession: true, sourceSessionId: source,
+    backend: backend ?? chosen.backend, cwd: requestedCwd, status,
+    ...Object.fromEntries(['model', 'effort', 'mode', 'endpoint'].filter(k => chosen[k] !== undefined).map(k => [k, chosen[k]])) };
+  const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], base, created: null, creationRequest };
   state.draft = draft;
+  const firstSend = !source && receipts.get('');
+  if (firstSend && !firstSend.sessionId && !firstSend.creationRequest) {
+    firstSend.creationRequest = creationRequest;
+    saveReceipts();
+  }
   state.messages = [];
   state.base = 0;
   state.contextInfo = null;
@@ -5477,11 +5536,13 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
   // もう新しい会話の欄にいる（作成に失敗してやり直す・最初の接続）なら、書いてある字と添付はそのまま新しい会話の下書きになる
   composerWait.idle();
   if (source) {
+    draftRevision = randomId();
     $('prompt').value = '';
     state.attached = [];
     renderAttached();
     fitPrompt();
   }
+  saveDraft().catch(() => {});
   clearThread();
   syncTopbar();
   pendingRows.set(pendingNewSession.id, { kind: 'new', text: t('pending.creating'), visible: false });
@@ -5491,23 +5552,17 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
   const cancel = pendingAfterDelay(pendingRows.get(pendingNewSession.id));
   creatingSession = (async () => {
     try {
-      if (source) {
-        await settingsWrites.get(source)?.catch(() => {});
-        await modeWrites.get(source);
-      }
-      const result = await cmd("newSession", { includeSession: true, sourceSessionId: source, backend: backend ?? chosen.backend,
-        cwd: requestedCwd, status,
-        ...Object.fromEntries(["model", "effort", "mode", "endpoint"].filter(k => chosen[k] !== undefined).map(k => [k, chosen[k]])) });
+      const result = await cmd('newSession', creationRequest, { timeoutMs: 15_000 });
       pendingRows.delete(pendingNewSession.id);
       pendingNewSession = null;
       side.keep(status);
 
       // 新規作成の応答にある会話をすぐ開く。一覧・空の履歴の読み直しは送信と並行して進める。
       if (result.session && !state.sessions.some(s => s.id === result.sessionId)) state.sessions.push(result.session);
-      draft.created = result.sessionId;
-      sendDraftSettings(draft, result.sessionId, requestedCwd);
+      draft.created = draft.sessionId = result.sessionId;
+      sendDraftSettings(draft, result.sessionId, creationRequest.cwd);
       const listing = refresh({ listedOnly: true }).catch(() => {});
-      if (state.current === null) {
+      if (state.current === null && state.draft === draft) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
         // 作っている間に書いた字は、終わった時点で欄にあるものがそのまま、この会話の下書きになる
         if (result.session) state.mode = result.session.mode;
@@ -5520,7 +5575,8 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
       } else if (state.drafts.get("")) {
         // 作っている間に別の会話へ移った。新しい会話の欄に書いてあった分（"" の下書き）は、この会話の下書きへ移す
         const blank = state.drafts.get("");
-        if (blank.text || blank.attached?.length) persistDraft(result.sessionId, { ...blank, dirty: true }).catch(() => {});
+        const { creationRequest: _, ...value } = blank;
+        if (value.text || value.attached?.length) persistDraft(result.sessionId, { ...value, dirty: true }).catch(() => {});
         dropBlankDraft();
       }
       adoptUploads(result.sessionId);   // 作っている間に始めた添付（会話を開けなかった・別の会話へ移った場合も、できた会話のもの）
@@ -5731,12 +5787,18 @@ async function fetchTaskCards(ids, { again = true } = {}) {
     if (!Array.isArray(part) || taskCards.sessionId !== sessionId) return;
     rows.push(...part);
   }
-  for (const r of rows) taskCards.rows.set(r.taskId, r);
-  const forWatched = keepWatched(rows);
+  // 読んでいる間に、より新しい行（updatedAt が後）が届いていたら古い取得結果で戻さない
+  const fresh = rows.filter(r => !isOlderTask(r, taskCards.rows.get(r.taskId)) && !isOlderTask(r, watched.rows.get(r.taskId)));
+  for (const r of fresh) taskCards.rows.set(r.taskId, r);
+  const forWatched = keepWatched(fresh);
   taskCards.ver++;
   if (state.current === sessionId || forWatched) repaintTasks();
   const stale = staleTasks(rows, state.work.tasks);
   if (again && stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
+}
+/** 取った行 r が、持っている行 have より古いか（同じ委譲の updatedAt で比べる。無ければ古いとは言わない） */
+function isOlderTask(r, have) {
+  return Boolean(have && r && have.updatedAt != null && r.updatedAt != null && r.updatedAt < have.updatedAt);
 }
 /** running が届いた。この会話の木の新しい委譲と、終わって running から外れたものを読む */
 function syncTaskCards() {
@@ -5772,7 +5834,7 @@ function watchSessions(ids, { force = false } = {}) {
     watched.loaded.add(id);
     readTaskCards(id).then((rows) => {
       if (!rows) { watched.loaded.delete(id); return; }
-      for (const r of rows) watched.rows.set(r.taskId, r);
+      for (const r of rows) if (!isOlderTask(r, watched.rows.get(r.taskId))) watched.rows.set(r.taskId, r);
       taskCards.ver++;
       const stale = staleTasks(rows, state.work.tasks);
       if (stale.length) fetchTaskCards(stale, { again: false }).catch(() => {});
@@ -6969,6 +7031,7 @@ async function syncModalChildHistory(view, { force = false } = {}) {
     const res = await view.paint(data, { id, load, quiet: true });
     if (!res || !alive()) return;
     view.finish(res, { quiet: true });
+    noteShown(id, data?.shownAt);
     settleModalChild(mc, data);
     if (load.syncHistory) mc.syncAgain = true;   // 流し直しの間にターンが終わった（主の loadAndPaint の後と同じ。下の finally がもう 1 回読む）
     modalToc.refresh();   // 筋が作り直されたので、会話内検索の印を待たずに付け直す（開いていれば。debounce の間だけ印が消えるのを避ける）
@@ -6998,6 +7061,7 @@ async function openLiveChild(owner) {
   const view = createModalChildView(item, th);
   const mc = modalChild = { view, id, owner, ready: false, instrStale: false, instrBusy: false, instrAgain: false };
   owner.liveChild = true;
+  shownUpTo.delete(id);
   view.setChild({ backend: item.backend, live: item.live, steer: capsOf(item.backend)?.steer !== false, prompt: item.request, waiting: item.waiting === true });
   const load = view.loads.begin(id);
   view.displayLoad = load;
@@ -7016,6 +7080,7 @@ async function openLiveChild(owner) {
     const res = await view.paint(data, { id, load });
     if (!res || !alive()) return;
     view.finish(res, {});
+    noteShown(id, data?.shownAt);
     mc.ready = true;
     owner.lastReadMs = 0;
     owner.wasLive = item.live;
@@ -8036,6 +8101,7 @@ function initSidebar() {
 // 書きかけの文章と添付をセッションごとに持つ。共有にすると A で書いたものが B から送れてしまう。
 
 const draftKey = () => state.current ?? "";
+let draftRevision = randomId();
 const DRAFT_STORE = "agent-host-drafts-v1";
 try { state.drafts = new Map(JSON.parse(localStorage.getItem(DRAFT_STORE) ?? "[]")); } catch { /* server copy remains available */ }
 const draftWrites = new Map();
@@ -8044,6 +8110,7 @@ const draftWrites = new Map();
 const DRAFT_THROTTLE_MS = 400;
 let draftTimer = null, draftSavedAt = 0;
 function saveDraftSoon() {
+  draftRevision = randomId();
   const wait = draftSavedAt + DRAFT_THROTTLE_MS - Date.now();
   if (wait <= 0) saveDraft().catch(() => {});
   else if (draftTimer === null) draftTimer = setTimeout(() => saveDraft().catch(() => {}), wait);
@@ -8059,7 +8126,12 @@ function saveDraft() {
   if (id && state.loadingSession === id && id !== freshSessionId) return Promise.resolve();
   // シェルの形の欄は `!` を頭に戻して残す（復元ではシェルの形に入らない。web/shell-composer.mjs）
   // text は文中の添付の印（[添付] パス）を含む Markdown（位置が残る）。version: 2 より前の下書きは印が無く、添付は「文末に付く」になる
-  const value = { text: shellComposer.draftText(), attached: state.attached.slice(), editing: shellComposer.active ? undefined : composerEditor.snapshotEditing(), version: 2, dirty: true };
+  const text = shellComposer.draftText();
+  const old = state.drafts.get(id);
+  const attached = state.attached.slice();
+  if (old?.revision === draftRevision && (text !== old.text || JSON.stringify(attached) !== JSON.stringify(old.attached))) draftRevision = randomId();
+  const creationRequest = !id ? state.draft.creationRequest ?? old?.creationRequest : null;
+  const value = { text, attached, editing: shellComposer.active ? undefined : composerEditor.snapshotEditing(), version: 2, revision: draftRevision, dirty: true, ...(creationRequest ? { creationRequest } : {}) };
   // 「編集中」も下書きと一緒に残す（会話を切り替えても、読み込み直しても続く。web/composer/edit-mode.mjs の snapshot）
   const edit = chatEdit.snapshot();
   if (edit) value.edit = edit;
@@ -8115,6 +8187,7 @@ function loadDraft() {
   state.attached = Array.isArray(d?.attached) ? d.attached.slice() : [];
   chatAttach.dropFailed();
   composerEditor.restoreDraft(typeof d?.text === "string" ? d.text : "", d?.editing);
+  draftRevision = d?.revision ?? randomId();
   fitPrompt();
   renderAttached();
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
@@ -8260,8 +8333,8 @@ $('workBody').addEventListener('click', event => {
 let modalWatched = null;
 const modalWatchId = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind === 'task' ? $('workBody').dataset.sessionId || null : null);
 const modalPresence = createPresenceReporter({
-  send: (visible, sessionId) => cmd('presence', { visible, sessionId, slot: 'modal' }),
-  current: modalWatchId, visible: watchingNow });
+  send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, slot: 'modal', ...(shownAt ? { shownAt } : {}) }),
+  current: modalWatchId, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
 function syncModalWatch({ force = false } = {}) {
   const want = modalWatchId();
   if (force || want !== modalWatched) {
@@ -8424,8 +8497,9 @@ voiceUi.mount({
     createRow: () => { const m = el('div', 'm user'); m.append(whoLine(t('chat.message.you'), new Date().toISOString(), { actions: false })); const body = el('div', 'body'); m.append(body); return { el: wrap(m), body }; },
   },
   target: () => ({ kind: 'chat', sessionId: state.current && state.current !== freshSessionId ? state.current : null }),
-  send: (text) => submitVoiceText(text),
-  sendTo: (target, text) => submitVoiceText(text, target),
+  // 送り先は発言を確定した時の会話（target）。新しい会話の欄（sessionId: null）なら、そのとき会話を作る
+  send: (text, target) => submitVoiceText(text, target ? { sessionId: target.sessionId ?? null, fresh: !target.sessionId } : null),
+  sendTo: (target, text) => submitVoiceText(text, { sessionId: target.sessionId ?? null }),
   follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
 });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）。押したリンクは既定のブラウザーへ（web/link-open.mjs）
@@ -9236,17 +9310,21 @@ function worktreeCheckState() { return auxState(state.worktree, state.current ??
 /** worktree を作り、次のターンの作業場所に予約する（下書きなら作業場所をそれにする） */
 async function startWorktree() {
   const sessionId = state.current;
+  const draft = state.draft;
+  const visible = () => state.current === sessionId && (sessionId || state.draft === draft);
   try {
     const res = await cmd('worktreeSplit', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd });
-    if (state.current === sessionId) await applyCwd(res.cwd);
-    else if (sessionId) await reserveSettings({ cwd: res.cwd }, sessionId);
-    const row = state.sessions.find(s => s.id === sessionId);
-    if (row) row.worktreePending = false;
-    if (state.current === sessionId) $('settingsError').textContent = '';
+    const target = sessionId ?? draft.sessionId;
+    if (target) await reserveSettings({ cwd: res.cwd, worktreePending: false }, target);
+    else {
+      draft.cwd = res.cwd;
+      if (visible()) await applyCwd(res.cwd);
+    }
+    if (visible() || target && state.current === target) $('settingsError').textContent = '';
     refreshWorktree().catch(() => {});
     return true;
   } catch (e) {
-    if (state.current === sessionId) $('settingsError').textContent = t('worktree.splitFailed', { error: e.message });
+    if (visible()) $('settingsError').textContent = t('worktree.splitFailed', { error: e.message });
   }
   refreshWorktree().catch(() => {});
   return false;
@@ -9808,7 +9886,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined && !quiet) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
-    // 作っている間の送信の予約は、別の会話へ移ったら取り消す（字は "" の下書きに残り、作った会話へ移る。startNew）
+    // 別の会話へ移ったら、入力欄に出ていた待ちの表示を片付ける。
     if (!fresh && composerWait.queued) composerWait.cancel('switch');
     // ↑ で呼び出している間は、下書きへ戻してから保存する（呼び出した文を下書きにしない）
     chatRecall.release();
@@ -10018,6 +10096,8 @@ function takeBootPrefetch(id, adoptable) {
 
 async function loadAndPaint(id, { keepUpTo, quiet, fresh }) {
   sessionLoads.cancel(state.displayLoad);
+  // 開き直し・枝の切り替えは描き終えるまで「表示した」と言わない（静かな読み直しの間は、今の表示が映している位置のまま）
+  if (!quiet) shownUpTo.delete(id);
   const pre = takeBootPrefetch(id, keepUpTo === undefined && !quiet && !fresh);
   const load = pre?.load ?? sessionLoads.begin(id);
   state.displayLoad = load;
@@ -10134,7 +10214,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   syncTopbar();
   // まだ答えていない承認は本文の後（＝稼働表示の手前）に出す。届いたときに取りこぼしていても、
   // loadSession が返す保留中の一覧から拾える
-  for (const ev of data?.permissions ?? []) if (ev.id) state.pendingPerms.set(ev.id, ev);
+  // 片付いた承認・版の古い中身は当てない（応答を待つ間に別の窓で答えた・中身が替わった。ADR 0347 第 3 段）
+  adoptPendingPerms(data?.permissions);
   paintPendingPerms(id);
   paintComputerWait();
   // 中断した会話は末尾に「■ 中断しました」（保存された状態から。読み直しても消えない）。loadSession の値が一覧より新しい
@@ -10142,6 +10223,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   if (opened && data && 'interrupted' in data) opened.interrupted = data.interrupted ?? null;
   paintInterruptLine();
   acknowledgeDisplayed(id, Math.max(data?.completedAt ?? 0, isInterrupted(opened) ? interruptReadPoint(opened) : 0) || data?.completedAt);
+  noteShown(id, data?.shownAt);   // 描き終えた。次の閲覧状況の報告（1 秒ごとに見比べる）でホストへ届く
   const groups = placeJunctions({ snapshots });
   const moving = transition ? groups.find(r => r.dataset.key === transition.key) : null;
   if (transition) {
@@ -10239,16 +10321,24 @@ function forkPending(button) {
   return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
 }
 
-/** Create the actual child first, then grow its edge, reveal its node, and promote it. */
+/**
+ * Create the actual child first, then grow its edge, reveal its node, and promote it.
+ * draft（［分岐して送る］）: 送る中身は押した時に決め、分岐を作るのと同じ 1 つの操作（fork の send）でサーバーが分岐先の送信待ちに受け付ける。
+ * 分岐の先へ移った後に入力欄を読み直して送ることはしない（ADR 0347）。受け付けられなかったら、中身は分岐先の下書きに残す。
+ * 返り値: 分岐を作れたら { sessionId, sent }、作れなかったら null
+ */
 async function forkFrom(m, { draft, pending } = {}) {
   const uuid = m.dataset.uuid, mw = m.closest('.mw');
-  if (!uuid || !state.current || state.busy) return;
+  if (!uuid || !state.current || state.busy) return null;
   const key = mw?.dataset.key ?? '';
   const found = state.messages.findIndex(x => x.uuid === uuid);
   const mi = draft ? draft.index - 1 : key.startsWith('m:') ? Number(key.slice(2)) : found < 0 ? -1 : state.base + found;
   const source = state.current;
   const clearPending = forkPending(pending ?? m.querySelector(':scope > .who .who-more'));
-  let sendTo;
+  const payload = draft ? resendPayload(draft.text, draft.attached, source) : null;
+  const send = payload ? { messageId: randomId(), prompt: payload.prompt, ...(payload.attachments.length ? { attachments: payload.attachments } : {}) } : null;
+  if (send && draft.attached.length) provisionalByMessage.set(send.messageId, draft.attached.map(provisionalPresent));
+  let made = null, sendError = null;
   state.busy = true;
   log.classList.add('branch-transition');
   try {
@@ -10256,22 +10346,30 @@ async function forkFrom(m, { draft, pending } = {}) {
     if (settingsFailures.has(source)) throw new Error(settingsFailures.get(source).error);
     await modeWrites.get(source);
     const boundary = draft ? { beforeMessageId: uuid } : { upToMessageId: uuid };
-    const result = await cmd('fork', { sessionId: source, ...boundary });
+    const result = await cmd('fork', { sessionId: source, ...boundary, ...(send ? { send } : {}) });
     if (!result?.sessionId) throw new Error(t('chat.fork.noId'));
-    if (draft) await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, editing: draft.editing, version: 2, dirty: true });
+    made = { sessionId: result.sessionId, sent: Boolean(send) && !result.sendError };
+    if (send && result.sendError) {
+      // 分岐はできたが受け付けられなかった。直した中身は分岐先の下書きに残す（移った先で、もう一度送れる）
+      sendError = result.sendError;
+      provisionalByMessage.delete(send.messageId);
+      await persistDraft(result.sessionId, { text: draft.text, attached: draft.attached, editing: draft.editing, version: 2, revision: randomId(), dirty: true });
+    }
     await refresh();
     await loadBranches(source);
     const groups = placeJunctions();
     const row = groups.find(r => r.dataset.key === `m:${mi}`);
     if (row) await row.grow(result.sessionId);
     await changeBranch(result.sessionId, row);
-    if (draft) sendTo = result.sessionId;
+    if (made.sent) refreshOutbox(result.sessionId).catch(() => {});
     $('prompt').focus({ preventScroll: true });
   } catch (e) {
+    if (send && !made) provisionalByMessage.delete(send.messageId);
     placeJunctions();
     composerError(t("chat.fork.failed", { error: e.message }));
   } finally { clearPending(); await finishBranchChange(); }
-  if (sendTo && state.current === sendTo) await submit();
+  if (sendError) composerError(t('chat.send.failed', { error: sendError }));
+  return made;
 }
 
 /** The session menu uses the same creation animation as the message action. */
@@ -10387,15 +10485,27 @@ function syncRunState() {
   }
 }
 
-function clearSentDraft(id, text, attachments) {
+function clearSentDraft(id, text, attachments, revision) {
   const draft = state.current === id ? { text: $('prompt').value, attached: state.attached } : state.drafts.get(id);
-  const paths = (list) => JSON.stringify(list.map(a => a.path).sort());
-  if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
-  if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
-  noteSent(id, text);
+  if (revision !== undefined) {
+    if (state.current === id) {
+      if (draftRevision !== revision) return;
+      const saved = state.drafts.get(id);
+      if (saved && (saved.text !== draft.text || JSON.stringify(saved.attached) !== JSON.stringify(draft.attached))) return;
+    } else if (draft?.revision !== revision) return;
+  } else {
+    const paths = (list) => JSON.stringify(list.map(a => a.path).sort());
+    if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
+  }
+  const cleared = randomId();
+  if (state.current === id) {
+    $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt();
+    draftRevision = cleared;
+    chatRecall.reset();
+  }
+  noteSent(id, draft?.text ?? text);
   dropSuggestion(id);
-  chatRecall.reset();
-  persistDraft(id, { text: '', attached: [], dirty: true }).catch(() => {});
+  persistDraft(id, { text: '', attached: [], revision: cleared, dirty: true }).catch(() => {});
 }
 /**
  * 通話で確定した発言を会話へ送る（web/voice/index.mjs の slot.send）。入力欄を通さず、sendMessage へ直に渡して会話の行に置く
@@ -10408,6 +10518,12 @@ const submitVoiceText = createChatVoiceSender({
     return state.current === id ? id : null;
   },
   settingsSettled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id); },
+  // その会話を開いて落ち着いているときだけ、入力欄の今の設定（メインの送信と同じ settings）。開き途中・移った後は添えない
+  captureSettings: (id) => {
+    if (state.current !== id || state.busy || state.loadingSession) return undefined;
+    const settings = captureSendSettings();
+    return typeof settings.worktreePending === 'boolean' ? settings : undefined;
+  },
   place: (sessionId, messageId, text) => {
     if (messageRow(messageId)) return;
     markDelivery(ensureMessageRow(messageId, text, new Date().toISOString()), 'sending');
@@ -10425,35 +10541,61 @@ function unsentHere() {
  * 新しい会話の宛先に bot を選んだ最初の送信: 一時チャットの実体のチャンネルへ、その bot 宛ての投稿を置き（channels.post の to）、
  * そのスレッドを開く。空の会話（未送信）は残さず消す。送り直しても同じ投稿を二重に作らない（clientId）
  */
-let homeAttempt = null;
-async function sendToHomeBot(bot) {
-  const text = $('prompt').value;
-  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
-  if (!text.trim() && !attachments.length) return;
-  const key = JSON.stringify([bot.id, text, attachments]);
-  if (homeAttempt?.key !== key) homeAttempt = { key, clientId: `home-${randomId()}` };
-  try {
-    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempt.clientId } });
-    homeAttempt = null;
-    const empty = state.sessions.find(s => s.id === state.current && s.unsent && !s.bot) ?? null;
+// 送り直しの id と送っている印は、投稿を始めた会話（新しい会話の欄は ""）ごと
+const homeAttempts = new Map();
+const homeSending = new Set();
+/** 投稿を始めた会話の下書きを、押した時の版のままなら空にする。空にしたら true（ほかの会話へ移っていても、その会話の下書きだけを見る） */
+function clearHomeDraft(source, revision) {
+  const key = source ?? '';
+  if ((state.current ?? '') === key) {
+    if (draftRevision !== revision) return false;   // 応答を待つ間に書き足した: 残す
     $('prompt').value = '';
     state.attached = [];
     renderAttached();
     fitPrompt();
-    homeDest.reset();
-    $('settingsError').textContent = '';
-    viewAddress.go({ channelId: post.channelId, threadId: post.id });
-    if (empty) deleteSessionRow(empty).catch(() => {});
+    draftRevision = randomId();
+  } else if (state.drafts.get(key)?.revision !== revision) return false;
+  if (key) persistDraft(key, { text: '', attached: [], revision: key === (state.current ?? '') ? draftRevision : randomId(), dirty: true }).catch(() => {});
+  else dropBlankDraft();
+  return true;
+}
+async function sendToHomeBot(bot) {
+  // 送る中身・始めた会話・下書きの版は押した時に決める。応答を待つ間に別の会話へ移っても、後片付けは始めた会話とその版にだけ
+  const source = state.current;
+  const sourceKey = source ?? '';
+  if (homeSending.has(sourceKey)) return;
+  const text = $('prompt').value;
+  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
+  if (!text.trim() && !attachments.length) return;
+  saveDraft().catch(() => {});   // 押した時の版を下書きに写す（移った後に、その会話の下書きの版で見分ける）
+  const revision = draftRevision;
+  const empty = source ? state.sessions.find(s => s.id === source && s.unsent && !s.bot) ?? null : null;
+  const key = JSON.stringify([bot.id, text, attachments]);
+  if (homeAttempts.get(sourceKey)?.key !== key) homeAttempts.set(sourceKey, { key, clientId: `home-${randomId()}` });
+  homeSending.add(sourceKey);
+  try {
+    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempts.get(sourceKey).clientId } });
+    homeAttempts.delete(sourceKey);
+    const here = state.current === source;
+    const cleared = clearHomeDraft(source, revision);
+    if (here && cleared) {
+      homeDest.reset();
+      $('settingsError').textContent = '';
+      viewAddress.go({ channelId: post.channelId, threadId: post.id });
+    }
+    // 空の会話（未送信）は、下書きを空にできたときだけ消す（移った先で書き足した会話は残す）
+    if (cleared && empty && state.sessions.find(s => s.id === empty.id)?.unsent) deleteSessionRow(empty).catch(() => {});
   } catch (e) {
+    if (state.current !== source) { notify(t('chat.send.failed', { error: e.message })); return; }
     $('settingsError').textContent = t('chat.send.failed', { error: e.message });
-  }
+  } finally { homeSending.delete(sourceKey); }
 }
 
 // メインの入力欄の配送（web/composer/sender.mjs。子の会話のモーダルの入力欄も同じ核を使う）
 const chatSender = createSender({
-  t, cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox,
+  t, cmd: (command, args, options) => cmd(command, args, options), limitOp, randomId, receipts, saveReceipts, refreshOutbox,
   scheduled: (sessionId) => { armedSends.delete(sessionId); paintArmed(); },
-  clearSent: (sessionId, text, attachments) => clearSentDraft(sessionId, text, attachments),
+  clearSent: clearSentDraft,
   // 吹き出しは、受理の応答が先でも userMessage が先でも、この仮の添付で描く
   beforeSend: (sessionId, request, full, ordered) => {
     if (ordered.length && !messageRow(request.messageId)) provisionalByMessage.set(request.messageId, ordered.map(provisionalPresent));
@@ -10467,224 +10609,133 @@ const chatSender = createSender({
   say: (text) => { $('settingsError').textContent = text; },
 });
 
-function sessionTitleOf(id) {
-  const row = state.sessions.find((s) => s.id === id);
-  const title = typeof row?.title === 'string' ? row.title.trim() : '';
-  return title && title !== '(no title)' ? title : '';
-}
-
-function notifySwitchedUnsent(sessionId) {
-  if (typeof notify !== 'function') return;
-  const title = sessionTitleOf(sessionId);
-  const msg = title ? t('chat.send.switchedNotice', { title }) : t('chat.send.switchedNoticeUntitled');
-  const open = sessionId
-    ? { label: t('chat.send.openSession'), onClick: () => { if (typeof openConversation === 'function') openConversation(sessionId); else select(sessionId); } }
-    : null;
-  notify(msg, open);
-}
-
 function syncActiveSubmitWait(sessionId) {
-  if (!sessionId || typeof activeSubmits === 'undefined') return;
   const active = activeSubmits.get(sessionId);
-  if (!active || active.cancelled || !active.queueOpts || state.current !== sessionId) return;
-  composerWait.queue(active.onCancel, active.queueOpts);
+  if (!active || state.current !== sessionId) return;
+  composerWait.queue(() => {}, { kind: 'sending', cancelable: false, lock: 'none' });
 }
 
-async function submit({ at = armedSends.get(state.current) } = {}) {
-  // 編集中の送信は［送り直す］（Enter・送信の近道もここへ来る）
-  if (chatEdit.active) return chatEdit.send();
-  // 入力欄の `!`: シェルの形なら走らせる。使えない会話の `!` は送らずに理由の一行を光らせる（文として送るのは「文として送る」だけ）
-  if (shellComposer.active) return runShellFromComposer();
-  if (shellComposer.blocked) return shellComposer.flash();
-  if ($('prompt').value.trim() || state.attached.length) completionNotifications.requestPermission();
-  // 設定を保存できず止めている間は送らない。理由の一行へフォーカスを移す（web/composer-wait.mjs の hold）
-  if (composerWait.held) { composerWait.point(); return; }
-  // 送っている途中・失敗の添付があるうちは送らない（欠けた添付を前提にエージェントが作業を始めないように）。札が理由と外す・再試行を持つ
-  const upBlock = uploadBlockReason();
-  if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
-  if (homeDest.bot) return sendToHomeBot(homeDest.bot);
-  const monoNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
-  const submitStart = monoNow();
-  const waitInfo = {
-    phase: 'preSend', hadSettingsWrite: false, hadModeWrite: false, hadWorktree: false,
-    cancelled: false, switched: false, hasNewSession: false,
+function captureSendSettings() {
+  const { session, draft, backend, account, endpoint } = composerSelection();
+  const prefs = (state.prefs.backends ? state.prefs.backends[backend] : state.prefs) ?? {};
+  const vocab = vocabRequests.cache.get(vocabCache(backend, endpoint ? '' : account, vocabCwd(session, null)));
+  const mode = draft?.mode ?? (draft?.reset ? undefined : session?.nextSettings?.mode)
+    ?? (session?.backend === backend ? session.mode : prefs.mode);
+  return {
+    backend,
+    account: account ?? '',
+    endpoint: endpoint ?? '',
+    cwd: state.cwd.trim(),
+    model: draft?.model ?? (draft?.reset ? '' : session?.nextSettings?.model ?? session?.model ?? state.model ?? prefs.model ?? ''),
+    effort: draft?.effort ?? (draft?.reset ? '' : session?.nextSettings?.effort ?? session?.effort ?? state.effort ?? prefs.effort ?? ''),
+    mode: mode ?? (vocab ? selectedMode(session, backend, vocab.modes, draft) : ''),
+    worktreePending: session ? Boolean(session.worktreePending) : null,
   };
-  if (queuedSend) return;
-  if (!state.current) {
-    // 会話の作成中は送信を予約し、欄を readonly にして本文を保つ。
-    waitInfo.hasNewSession = true;
-    waitInfo.phase = 'newSession';
-    const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
-    const newTicket = { cancelled: false, switched: false };
-    if (hasContent) {
-      queuedSend = newTicket;
-      composerWait.queue((reason) => {
-        if (reason === 'switch') { newTicket.switched = true; waitInfo.switched = true; }
-        else { newTicket.cancelled = true; waitInfo.cancelled = true; }
-        if (queuedSend === newTicket) queuedSend = null;
-      }, { kind: 'queued', cancelable: true });
-    }
-    const tNew = monoNow();
-    let created = null;
-    try { created = await (creatingSession ?? startNew()); }
-    finally {
-      if (queuedSend === newTicket) queuedSend = null;
-      waitInfo.newSessionMs = Math.max(0, Math.round(monoNow() - tNew));
-    }
-    // 取り消した・作れなかった・その間に別の会話へ移ったなら送らない
-    if (newTicket.cancelled || !created) {
-      if (!newTicket.switched) composerWait.unqueue();
-      if (newTicket.cancelled && typeof slowClient !== 'undefined') {
-        slowClient.recordSubmitWait({ sessionId: created ?? undefined, ms: monoNow() - submitStart, outcome: 'cancelled', wait: waitInfo });
-      }
-      return;
-    }
-    if (state.current !== created) {
-      if (hasContent && typeof state.drafts?.get === 'function') {
-        const createdDraft = state.drafts.get(created);
-        const homeDraft = state.drafts.get('');
-        if (!createdDraft?.text && !createdDraft?.attached?.length && (homeDraft?.text || homeDraft?.attached?.length)) {
-          state.drafts.set(created, { ...homeDraft, attached: Array.isArray(homeDraft.attached) ? homeDraft.attached.slice() : [] });
-        }
-      }
-      if (state.current === null) composerWait.unqueue();
-      waitInfo.switched = true;
-      if (hasContent) {
-        if (typeof slowClient !== 'undefined') {
-          slowClient.recordSubmitSwitched({ sessionId: created, ms: monoNow() - submitStart, wait: waitInfo });
-        }
-        if (typeof notifySwitchedUnsent === 'function') notifySwitchedUnsent(created);
-      }
-      return;
-    }
-    // 待っている間に添付を始めたもの（会話ができたら持ち主がその会話になる）も、届くまで送らない
-    const stillBlocked = uploadBlockReason();
-    if (stillBlocked) { composerWait.unqueue(); notify(stillBlocked); flashAttachEntry(); return; }
+}
+
+async function submit({ at = armedSends.get(state.current), retry = false, detached = false } = {}) {
+  if (!retry) {
+    if (chatEdit.active) return chatEdit.send();
+    if (shellComposer.active) return runShellFromComposer();
+    if (shellComposer.blocked) return shellComposer.flash();
+    if (composerWait.held) { composerWait.point(); return; }
+    const upBlock = uploadBlockReason();
+    if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
+    if (homeDest.bot) return sendToHomeBot(homeDest.bot);
   }
-  const sessionId = state.current;
-  if (submittingMessages.has(sessionId) || state.busy || (state.loadingSession && state.loadingSession !== freshSessionId) || composerWait.blocksSend() || retiredHere()) {
-    // 進行中の送信（別の呼び出し）が張った待ちは壊さない。自分が張ったもの（新しい会話の予約）だけ解く
-    if (waitInfo.hasNewSession && !submittingMessages.has(sessionId)) composerWait.unqueue();
+  const target = detached ? null : state.current;
+  if (submittingMessages.has(target) || state.busy ||
+      (state.loadingSession && state.loadingSession !== freshSessionId) || (!retry && (composerWait.blocksSend() || retiredHere()))) return;
+  const key = receipts.has(target ?? '') || receipts.get('')?.sessionId !== target ? target ?? '' : '';
+  const pending = receipts.get(key);
+  if (target && receipts.get('')?.sessionId === target && submittingMessages.has(null)) return;
+  const text = retry ? '' : $('prompt').value;
+  const ordered = retry ? [] : orderedAttachments();
+  if (!pending && !text.trim() && !ordered.length) return;
+  if (retry && !pending) return;
+  if (!retry) saveDraft().catch(() => {});
+  if (!retry && pending && pending.revision !== draftRevision) {
+    paintOutbox();
+    notify(t('chat.send.unknownPrevious'));
     return;
   }
-  const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
-  let pointAfter = false;
-  const ticket = { cancelled: false, onCancel: null, queueOpts: null };
-  const setWaitStage = (phase, cancelable) => {
-    waitInfo.phase = phase;
-    if (!hasContent) return;
-    // 取り消せる待ちだけ欄を readonly にする（注記と同じ時点から）。取り消せない待ちは注記と弧だけで、欄は書けるまま
-    ticket.queueOpts = { kind: cancelable ? 'queued' : 'sending', cancelable, lock: cancelable ? 'shown' : 'none' };
-    ticket.onCancel = (reason) => {
-      if (reason === 'switch') { waitInfo.switched = true; return; }
-      if (!cancelable) return;
-      ticket.cancelled = true;
-      waitInfo.cancelled = true;
-      if (activeSubmits.get(sessionId) === ticket) {
-        activeSubmits.delete(sessionId);
-        submittingMessages.delete(sessionId);
-        syncRunState();
+  completionNotifications.requestPermission();
+  slashSkills.close();
+  const revision = draftRevision;
+  const settings = pending ? pending.settings : captureSendSettings();
+  const input = pending ? null : { text, ordered, at, agentLang: state.sessions.find(s => s.id === target)?.agentLocale ?? uiLang,
+    inDoc: composerEditor.attachmentKeys(), attachedKey, attachmentLine, cwd: settings.cwd, mode: settings.mode, settings, revision };
+  const compact = !pending && text.trim() === '/compact' && !ordered.length;
+  if (compact && !canCompactHere()) {
+    sys(t('compaction.agentManaged', { agent: labelOf(selectedBackend()) }));
+    return;
+  }
+  const captured = pending ?? (!at && !compact ? chatSender.capture({ ...input, sessionId: target }) : null);
+  if (captured && !pending && !target && state.draft.creationRequest) captured.creationRequest = state.draft.creationRequest;
+  if (captured && !pending && ordered.length) provisionalByMessage.set(captured.messageId, ordered.map(provisionalPresent));
+  const acceptStart = performance.now();
+  let sessionId = target;
+  const resolveSession = async () => {
+    let id;
+    if (pending?.creationRequest && !creatingSession) {
+      const result = await cmd('newSession', pending.creationRequest, { timeoutMs: 15_000 });
+      id = result.sessionId;
+      if (result.session && !state.sessions.some(s => s.id === id)) state.sessions.push(result.session);
+      const blank = state.drafts.get('');
+      if (blank?.creationRequest?.requestId === pending.creationRequest.requestId) {
+        const { creationRequest: _, ...value } = blank;
+        if (value.text || value.attached?.length) persistDraft(id, value).catch(() => {});
+        dropBlankDraft();
       }
-    };
-    if (state.current === sessionId && !ticket.cancelled) composerWait.queue(ticket.onCancel, ticket.queueOpts);
+      refresh({ listedOnly: true }).catch(() => {});
+    } else {
+      id = await (creatingSession ?? startNew());
+    }
+    if (captured?.settings?.worktreePending === null) {
+      // 作成中に画面に出ていなかったリポジトリの初期設定だけを補う。
+      const row = state.sessions.find(s => s.id === id);
+      captured.settings.worktreePending = Boolean(row?.worktreePending && row.cwd === captured.settings.cwd);
+    }
+    waitInfo.newSessionMs = Math.round(performance.now() - acceptStart);
+    return id;
   };
-  submittingMessages.add(sessionId);
-  if (typeof activeSubmits !== 'undefined') activeSubmits.set(sessionId, ticket);
+  const waitInfo = { phase: 'send', hasNewSession: !target, hadWorktree: Boolean(settings?.worktreePending) };
+  const ticket = {};
+  activeSubmits.set(target, ticket);
+  submittingMessages.add(target);
+  syncActiveSubmitWait(target);
   syncRunState();
-  let outcome = null;
+  let outcome = 'error';
   try {
-    const settingsWrite = settingsWrites.get(sessionId);
-    setWaitStage('settings', true);
-    waitInfo.hadSettingsWrite = Boolean(settingsWrite);
-    const tSettings = monoNow();
-    await settingsWrite?.catch(() => {});
-    waitInfo.settingsMs = Math.max(0, Math.round(monoNow() - tSettings));
-    if (ticket.cancelled) { outcome = 'cancelled'; return; }
-    const modeWrite = modeWrites.get(sessionId);
-    setWaitStage('mode', true);
-    waitInfo.hadModeWrite = Boolean(modeWrite);
-    const tMode = monoNow();
-    await modeWrite;
-    waitInfo.modeMs = Math.max(0, Math.round(monoNow() - tMode));
-    if (ticket.cancelled) { outcome = 'cancelled'; return; }
-    if (state.current !== sessionId) {
-      waitInfo.switched = true;
-      outcome = 'switched';
-      if (typeof slowClient !== 'undefined') slowClient.recordSubmitSwitched({ sessionId, ms: monoNow() - submitStart, wait: waitInfo });
-      if (typeof notifySwitchedUnsent === 'function') notifySwitchedUnsent(sessionId);
-      return;
-    }
-    if (settingsFailures.has(sessionId)) { pointAfter = true; return; }
-    // 候補が開いたまま blur した場合の後片付けが先に走ると、送信の入力が書き換わる
-    slashSkills.close();
-    const text = $('prompt').value;
-    const ordered = orderedAttachments();
-    const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
-    if (!text.trim() && !attachments.length) return;
-    if (state.sessions.find(s => s.id === sessionId)?.worktreePending) {
-      setWaitStage('worktree', false);
-      waitInfo.hadWorktree = true;
-      const tWt = monoNow();
-      const okWt = await startWorktree();
-      waitInfo.worktreeMs = Math.max(0, Math.round(monoNow() - tWt));
-      if (!okWt || ticket.cancelled) { outcome = 'cancelled'; return; }
-      setWaitStage('postSettings', true);
-      const tPost = monoNow();
-      await settingsWrites.get(sessionId);
-      waitInfo.postSettingsMs = Math.max(0, Math.round(monoNow() - tPost));
-      if (ticket.cancelled) { outcome = 'cancelled'; return; }
-      if (state.current !== sessionId) {
-        waitInfo.switched = true;
-        outcome = 'switched';
-        if (typeof slowClient !== 'undefined') slowClient.recordSubmitSwitched({ sessionId, ms: monoNow() - submitStart, wait: waitInfo });
-        if (typeof notifySwitchedUnsent === 'function') notifySwitchedUnsent(sessionId);
-        return;
+    if (captured) {
+      const receipt = await chatSender.sendCaptured(key, captured, resolveSession);
+      sessionId = receipt.sessionId;
+      if (receipt.revision !== undefined) clearSentDraft(sessionId, undefined, [], receipt.revision);
+      refreshOutbox(sessionId).catch(() => {});
+    } else {
+      sessionId ??= await resolveSession();
+      if (!sessionId) return;
+      if (compact) {
+        await cmd('compactConversation', { sessionId });
+        clearSentDraft(sessionId, text, [], revision);
+      } else {
+        await chatSender.send({ ...input, sessionId });
       }
     }
-    if (text.trim() === '/compact' && !attachments.length) {
-      if (canCompactHere()) {
-        setWaitStage('compact', false);
-        const tCompact = monoNow();
-        await cmd('compactConversation', { sessionId });
-        waitInfo.compactMs = Math.max(0, Math.round(monoNow() - tCompact));
-        outcome = 'sent';
-        clearSentDraft(sessionId, text, attachments);
-      } else sys(t('compaction.agentManaged', { agent: labelOf(selectedBackend()) }));
-      return;
-    }
-    if (!at) { state.compactionAt = null; paintContextStrip(); }
-    // 添付の印はエージェントが読むので会話の言語で（まだ決まっていない会話は、サーバーが決めるのと同じ画面の言語）。
-    // 本文は文中の印（[添付] パス）ごとそのまま送る。文中に無い添付（文末に付く）だけ、今までどおり末尾に印を足す
-    setWaitStage('send', false);
-    const tSend = monoNow();
-    await chatSender.send({ sessionId, text, ordered, at, cwd: state.cwd.trim(), mode: state.mode, attachedKey, attachmentLine,
-      agentLang: state.sessions.find(s => s.id === sessionId)?.agentLocale ?? uiLang, inDoc: composerEditor.attachmentKeys() });
-    waitInfo.sendMs = Math.max(0, Math.round(monoNow() - tSend));
+    if (state.current === sessionId) $('settingsError').textContent = '';
     outcome = 'sent';
   } catch (e) {
-    if (ticket.cancelled) { outcome = 'cancelled'; return; }
-    outcome = 'error';
-    if (state.current === sessionId) {
-      $('settingsError').textContent = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
-    } else if (typeof notify === 'function') {
-      notify(at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message }));
-    }
+    const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
+    if (state.current === target || sessionId && state.current === sessionId) $('settingsError').textContent = message;
+    else notify(message);
   } finally {
-    const totalMs = Math.max(0, Math.round(monoNow() - submitStart));
-    if (outcome !== 'switched' && typeof slowClient !== 'undefined') {
-      slowClient.recordSubmitWait({ sessionId, ms: totalMs, outcome: outcome ?? (ticket.cancelled ? 'cancelled' : 'ok'), wait: waitInfo });
-    }
-    if (typeof activeSubmits === 'undefined' || activeSubmits.get(sessionId) === ticket) {
-      if (typeof activeSubmits !== 'undefined') activeSubmits.delete(sessionId);
-      submittingMessages.delete(sessionId);
-      if (state.current === sessionId) {
-        composerWait.unqueue();
-        // 待ちの注記が消えてから、理由の一行を光らせてフォーカスを移す（注記が出ている間は point が効かない）
-        if (pointAfter) composerWait.point();
-        paintOutbox();
-      }
-      syncRunState();
-    }
+    waitInfo.sendMs = Math.round(performance.now() - acceptStart) - (waitInfo.newSessionMs ?? 0);
+    slowClient.recordSubmitWait({ sessionId: sessionId ?? undefined, ms: performance.now() - acceptStart, outcome, wait: waitInfo });
+    if (activeSubmits.get(target) === ticket) activeSubmits.delete(target);
+    submittingMessages.delete(target);
+    if (state.current === target || state.current === sessionId) composerWait.unqueue();
+    paintOutbox();
+    syncRunState();
   }
 }
 
@@ -10830,7 +10881,7 @@ function connect() {
       const p = pending.get(m.id);
       pending.delete(m.id);
       if (m.ok && typeof m.bulk === "string") return void fetchBulk(m.bulk).then((r) => p?.res(r), (e) => p?.rej(e));
-      return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), m.code ? { code: m.code } : {}));
+      return m.ok ? p?.res(m.result) : p?.rej(Object.assign(new Error(String(m.error)), { commandRejected: true, ...(m.code ? { code: m.code } : {}) }));
     }
 
     if (m.kind === "error") sys(`error: ${escText(m.error)}`);
@@ -10910,10 +10961,18 @@ workComposer = createWorkComposer({
   notify: (text) => notify(text),
   agentLang: (id) => state.sessions.find(s => s.id === id)?.agentLocale ?? uiLang,
   format: { attachedKey, attachmentLine },
-  send: { cmd: (command, args) => cmd(command, args), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
+  send: { cmd: (command, args, options) => cmd(command, args, options), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
   submitting: submittingMessages,
   settled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id)?.catch(() => {}); },
   sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
+  // 押した時の子の設定（メインの captureSendSettings と同じ形。サーバーが届ける前にこの値で会話を整える）
+  captureSettings: (id) => {
+    const s = workControls.selection(id);
+    const row = state.sessions.find(x => x.id === id);
+    if (!s.backend || !row) return undefined;
+    return { backend: s.backend, account: s.endpoint ? '' : s.account ?? '', endpoint: s.endpoint ?? '', cwd: s.cwd ?? '', model: s.model ?? '', effort: s.effort ?? '', mode: s.mode ?? '',
+      worktreePending: Boolean(row.worktreePending) };
+  },
   controls: workControls,
   outbox: {
     list: (id) => outboxes.get(id) ?? [],
@@ -10977,7 +11036,9 @@ const sessionTodo = createSessionTodo({
 // 作業のダイアログの会話内検索（2 つ目。同じ部品・同じ右の欄。見る先は選んでいる子の会話で、シートも最前面のダイアログの中に出す）
 const workThread = () => $('workBody').querySelector(':scope > .thread.bg-thread');
 // 最新へのボタンと Alt+↑↓・End も主と同じ（作業のダイアログが最前面で開いている間、前面の筋に効く。一覧・右の欄・シートの中では奪わない）
-const modalNav = createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true });
+// 表示の世代は映している項目（bg.view.key）。合わせ直しの途中で別の項目・子へ移ったら、前の位置へ送り続けない（ADR 0347 第 3 段）
+const modalNav = createThreadNav({ log: $('workBody'), thread: workThread, frame: $('workBodyFrame'), keys: $('workDialog'), skip: '.work-side, #filePreview, .toc, .toc-sheet', isRunning: () => bg.view?.item?.live === true,
+  generation: () => bg.view?.key ?? null });
 const modalToc = createConversationToc({ thread: workThread, log: $('workBody'), nav: modalNav,
   preview: {
     openPanel: (spec) => { mountModalPane(); return filePreview.openPanel(spec); },
@@ -11171,14 +11232,23 @@ $("workDialog").addEventListener("click", (e) => {
 });
 
 // タイトルは人間もその場で変えられる。AI 用ツールと同じ store を通る（設計メモ 2.2）
-let titleSent = null;   // 送ったばかりの値。Enter → blur で change と blur の両方から呼ばれても 1 回にする
+// 送っている途中の名前（会話 ID → 値）。Enter → blur で change と blur の両方から呼ばれても、同じ会話の同じ値は 1 回にする。
+// 会話ごとに持つので、別の会話に同じ名前を付けるのは止めない。応答が来たら（失敗でも）外すので、同じ値で直しても送れる（ADR 0347 第 3 段）
+const titleSending = new Map();
 async function commitTitle() {
-  const s = state.sessions.find((x) => x.id === state.current);
+  const sessionId = state.current;
+  const s = state.sessions.find((x) => x.id === sessionId);
   const v = $("titleEdit").value.trim();
-  if (!state.current || !v || v === s?.title || v === titleSent) return;
-  titleSent = v;
-  await cmd("setTitle", { sessionId: state.current, title: v, reasonKey: "manual" })
-    .catch((e) => composerError(t("session.titleFailed", { error: e.message })));
+  if (!sessionId || !v || v === s?.title || titleSending.get(sessionId) === v) return;
+  titleSending.set(sessionId, v);
+  try {
+    await cmd("setTitle", { sessionId, title: v, reasonKey: "manual" });
+  } catch (e) {
+    if (state.current === sessionId) composerError(t("session.titleFailed", { error: e.message }));
+    else sideNote(t("session.titleFailed", { error: e.message }));
+  } finally {
+    if (titleSending.get(sessionId) === v) titleSending.delete(sessionId);
+  }
 }
 $("titleEdit").onchange = commitTitle;
 $("titleEdit").onblur = commitTitle;
@@ -11419,8 +11489,9 @@ const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id 
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
 window.plyRemote?.onOpenSession?.(id => { if (id) openConversation(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
-const presenceReporter = createPresenceReporter({ send: (visible, sessionId) => cmd('presence', { visible, sessionId }),
-  current: () => state.current, visible: watchingNow });
+// shownAt（描き終えた履歴の時点）があるときだけ、ホストは通知の一覧を既読にする（ADR 0347 第 3 段）
+const presenceReporter = createPresenceReporter({ send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, ...(shownAt ? { shownAt } : {}) }),
+  current: () => state.current, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
 document.addEventListener('visibilitychange', () => { presenceReporter.report(); modalPresence.report(); });
 addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); modalPresence.report(); });
 addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); modalPresence.report(true); });

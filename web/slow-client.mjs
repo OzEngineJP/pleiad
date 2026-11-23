@@ -167,20 +167,6 @@ export function createSlowClient({
     return true;
   }
 
-  function recordSubmitSwitched({ sessionId, ms = 0, wait } = {}) {
-    enqueue({
-      at: new Date(now()).toISOString(),
-      kind: 'submit-switched',
-      source: 'client',
-      command: 'submit',
-      ms: Math.max(0, Math.round(ms)),
-      ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
-      outcome: 'switched',
-      ...(wait ? { wait } : {}),
-    });
-    scheduleFlush();
-  }
-
   return {
     get thresholds() {
       applyTestOverrides();
@@ -192,7 +178,6 @@ export function createSlowClient({
     configure,
     track,
     recordSubmitWait,
-    recordSubmitSwitched,
     flush,
   };
 }
