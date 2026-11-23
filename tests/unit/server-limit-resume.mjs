@@ -123,22 +123,90 @@ export default async function (t) {
     const released = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === restored && e.outcome === 'ok', { from: restoredFrom, ms: 10000 });
     t.ok('選び直した上限のタイマーが指示を配送する', released.completedAt >= restoredAt);
 
-    // 押した時点の設定（settings。ADR 0347）を持つ送信は、その枠の上限を待つ。後から別のアカウントを選んでも、その項目は流さない
+    // 押した時点の設定（settings。ADR 0347）を持つ送信は、その枠の上限を待つ。上限で待っている間に会話のアカウントを替えたら、替えた先で流す
     const captured = await newSession();
     const capturedMeta = await info(captured);
     const capturedReset = Date.now() + 3 * HOUR;
     await c.runTurn({ sessionId: captured, prompt: `limit ${capturedReset}` });
     const capturedAccount = (await info(captured)).interrupted?.account ?? '';
-    await c.cmd('sendMessage', { sessionId: captured, messageId: 'capturedq00001', prompt: 'echo:captured',
-      settings: { backend: 'fake', cwd: ROOT, model: capturedMeta.model ?? '', effort: '', mode: 'default', account: capturedAccount, endpoint: '', worktreePending: false } });
-    const capturedItem = async () => (await c.cmd('listMessages', { sessionId: captured })).find(m => m.id === 'capturedq00001');
-    t.ok('押した時点のアカウントが止まっていれば、送信待ちで待つ', (await capturedItem())?.waiting?.reason === 'limit');
+    const capturedSettings = { backend: 'fake', cwd: ROOT, model: capturedMeta.model ?? '', effort: '', mode: 'default', account: capturedAccount, endpoint: '', worktreePending: false };
+    const otherAccount = capturedAccount ? '' : account.id;
+    await c.cmd('sendMessage', { sessionId: captured, messageId: 'capturedq00001', prompt: 'echo:captured', settings: capturedSettings });
+    const itemOf = async (sessionId, messageId) => (await c.cmd('listMessages', { sessionId })).find(m => m.id === messageId);
+    t.ok('押した時点のアカウントが止まっていれば、送信待ちで待つ', (await itemOf(captured, 'capturedq00001'))?.waiting?.reason === 'limit');
     const capturedFrom = c.mark();
-    await c.cmd('setTurnSettings', { sessionId: captured, account: capturedAccount ? '' : account.id });
+    await c.cmd('setTurnSettings', { sessionId: captured, account: otherAccount });
+    const capturedEnd = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === captured && e.outcome === 'ok', { from: capturedFrom, ms: 10000 }).catch(() => null);
+    const capturedAfter = await itemOf(captured, 'capturedq00001');
+    t.ok('上限で待つ間に別のアカウントを選ぶと、待っていた発言は替えた先ですぐ送られる', Boolean(capturedEnd) && capturedAfter?.status === 'sent'
+      && (await info(captured)).claudeAccount === otherAccount && (await userTexts(captured)).includes('echo:captured'),
+      JSON.stringify({ capturedAfter, account: (await info(captured)).claudeAccount, events: c.since(capturedFrom).filter(e => e.sessionId === captured).map(e => e.type) }));
+    t.ok('押した時点の設定は受け付けた形のまま残る（同じ id の送り直しの照合）', capturedAfter?.args?.settings?.account === capturedAccount && capturedAfter?.retarget?.account === otherAccount);
+
+    // 替えるのを取り消すと、押した時点の設定の上限の待ちへ戻る
+    const undo = await newSession();
+    const undoMeta = await info(undo);
+    const undoReset = Date.now() + 3 * HOUR;
+    await c.runTurn({ sessionId: undo, prompt: `limit ${undoReset}` });
+    const undoAccount = (await info(undo)).interrupted?.account ?? '';
+    await c.cmd('sendMessage', { sessionId: undo, messageId: 'undoq000000001', prompt: 'echo:undo',
+      settings: { backend: 'fake', cwd: ROOT, model: undoMeta.model ?? '', effort: '', mode: 'default', account: undoAccount, endpoint: '', worktreePending: false } });
+    // 同じアカウントのままモデルだけ替える（上限はアカウントの枠なので、替えた先でも待つ）
+    const undoFrom = c.mark();
+    await c.cmd('setTurnSettings', { sessionId: undo, model: 'fast' });
+    const undoMoved = await itemOf(undo, 'undoq000000001');
+    t.ok('替えた先も上限なら、待っていた発言は替えた先の設定で同じ上限を待つ', undoMoved?.status === 'queued' && undoMoved.retarget?.model === 'fast'
+      && undoMoved.args?.settings?.model === (undoMeta.model ?? '') && undoMoved.waiting?.resetsAt === undoReset, JSON.stringify(undoMoved));
+    await c.cmd('setTurnSettings', { sessionId: undo, cancel: true });
     await sleep(500);
-    const capturedAfter = await capturedItem();
-    t.ok('後から別のアカウントを選んでも、押した時点のアカウントの上限を待つ', capturedAfter?.status === 'queued' && capturedAfter.waiting?.resetsAt === capturedReset
-      && !c.since(capturedFrom).some(e => e.sessionId === captured && ['turnStart', 'turnEnd', 'userMessage'].includes(e.type)), JSON.stringify({ capturedAfter, events: c.since(capturedFrom).filter(e => e.sessionId === captured).map(e => e.type) }));
+    const undoItem = await itemOf(undo, 'undoq000000001');
+    t.ok('替えるのを取り消すと、待っていた発言は押した時点の設定に戻り、元の上限を待つ', undoItem?.status === 'queued' && !undoItem.retarget
+      && undoItem.waiting?.reason === 'limit' && undoItem.waiting.resetsAt === undoReset && !(await info(undo)).nextSettings
+      && !c.since(undoFrom).some(e => e.sessionId === undo && ['turnStart', 'userMessage'].includes(e.type)), JSON.stringify(undoItem));
+    await c.cmd('messageAction', { sessionId: undo, messageId: 'undoq000000001', action: 'cancel' });
+
+    // 上限以外（作業中のターン）で待っている発言は、後から設定を替えても押した時点の設定で届く
+    const busy = await newSession();
+    const busyMeta = await info(busy);
+    const busyFrom = c.mark();
+    const busyTurn = c.runTurn({ sessionId: busy, prompt: 'HOLD_TURN:busy-hold' });
+    await c.waitFor(e => e.type === 'activity' && e.sessionId === busy && e.state === 'thinking', { from: busyFrom, ms: 10000 });
+    const busyAccount = busyMeta.claudeAccount ?? '';
+    const busySettings = { backend: 'fake', cwd: ROOT, model: busyMeta.model ?? '', effort: '', mode: 'default', account: busyAccount, endpoint: '', worktreePending: false };
+    await c.cmd('sendMessage', { sessionId: busy, messageId: 'busyq000000001', prompt: 'echo:busy', settings: busySettings });
+    await c.cmd('setTurnSettings', { sessionId: busy, account: busyAccount ? '' : account.id });
+    const busyItem = await itemOf(busy, 'busyq000000001');
+    t.ok('作業中のターンを待つ発言は、設定を替えても押した時点の設定のまま', busyItem?.status === 'queued' && busyItem.waiting?.reason !== 'limit'
+      && !busyItem.retarget && Object.entries(busySettings).every(([key, value]) => busyItem.args?.settings?.[key] === value), JSON.stringify(busyItem));
+    await fs.writeFile(path.join(scratch, 'busy-hold'), '');
+    await busyTurn;
+    for (let i = 0; i < 100 && (await itemOf(busy, 'busyq000000001'))?.status !== 'sent'; i++) await sleep(100);
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === busy && e.outcome === 'ok', { from: busyFrom, ms: 10000 }).catch(() => null);
+    for (let i = 0; i < 50 && !(await idle(busy)); i++) await sleep(100);
+    t.ok('作業中のターンを待った発言は、押した時点のアカウントで届く', (await itemOf(busy, 'busyq000000001'))?.status === 'sent'
+      && (await info(busy)).claudeAccount === busyAccount, JSON.stringify({ item: await itemOf(busy, 'busyq000000001'), account: (await info(busy)).claudeAccount }));
+
+    // 上限で止まったターンの後ろで保留になった発言も、替えた先へ移り、新しく送った発言より先に届く
+    const held = await newSession();
+    const heldMeta = await info(held);
+    const heldFrom = c.mark();
+    const heldTurn = c.runTurn({ sessionId: held, prompt: `limit ${Date.now() + 3 * HOUR} HOLD_TURN:held-limit` });
+    await c.waitFor(e => e.type === 'activity' && e.sessionId === held && e.state === 'thinking', { from: heldFrom, ms: 10000 });
+    const heldAccount = heldMeta.claudeAccount ?? '';
+    const heldOther = heldAccount ? '' : account.id;
+    await c.cmd('sendMessage', { sessionId: held, messageId: 'heldq000000001', prompt: 'echo:held',
+      settings: { backend: 'fake', cwd: ROOT, model: heldMeta.model ?? '', effort: '', mode: 'default', account: heldAccount, endpoint: '', worktreePending: false } });
+    await fs.writeFile(path.join(scratch, 'held-limit'), '');
+    t.ok('上限で止まったターンの後ろの発言は保留になる', (await heldTurn).outcome === 'limited' && (await itemOf(held, 'heldq000000001'))?.status === 'paused');
+    await c.cmd('setTurnSettings', { sessionId: held, account: heldOther });
+    const heldSwitch = c.mark();
+    await c.cmd('sendMessage', { sessionId: held, messageId: 'heldnew0000001', prompt: 'echo:held-new',
+      settings: { backend: 'fake', cwd: ROOT, model: heldMeta.model ?? '', effort: '', mode: 'default', account: heldOther, endpoint: '', worktreePending: false } });
+    await c.waitFor(e => e.type === 'userMessage' && e.messageId === 'heldnew0000001', { from: heldSwitch, ms: 20000 })
+      .catch(async err => { throw new Error(`${err.message}\n${JSON.stringify(await c.cmd('listMessages', { sessionId: held }))}\n${server.tail()}`); });
+    t.ok('替えた後に送ると、保留していた発言が替えた先で先に届く',
+      c.since(heldSwitch).filter(e => e.type === 'userMessage' && e.sessionId === held).map(e => e.messageId).join() === 'heldq000000001,heldnew0000001'
+      && (await itemOf(held, 'heldq000000001'))?.retarget?.account === heldOther);
 
     const late = await newSession();
     const lateFrom = c.mark();

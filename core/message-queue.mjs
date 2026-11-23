@@ -1,6 +1,13 @@
 // Durable acceptance is separate from execution. A lost backend acknowledgement
 // is never retried automatically: the original may already have been consumed.
 import { t } from './i18n.mjs';
+/**
+ * 送る中身。押した時点の設定（args.settings。ADR 0347）は受け付けた形のまま残し（同じ id の送り直しの照合に使う）、
+ * 上限で待つ間に会話で替えた先へ移した項目（retarget）だけ、その設定で送る
+ */
+export function deliveryArgs(item) {
+  return item?.retarget && item.args?.settings ? { ...item.args, settings: item.retarget } : item?.args;
+}
 export function createMessageQueue({ store, active, start, changed, delivered, applyReserved = null, prepare = null }) {
   const locks = new Map();
   const workers = new Map();
@@ -48,16 +55,18 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         // 先頭が保留・失敗・結果不明なら、後ろの送信待ちは順序を守ってそれを待つ
         return setWait(id, items.some(m => m.status === 'queued') ? { reason: 'order' } : null);
       }
-      // 上限の待ちは、押した時点の設定（item.args.settings）があればその枠で判断する（server の active）
+      // 上限の待ちは、押した時点の設定（item.args.settings。上限の待ちを替えた先へ移したら item.retarget）があればその枠で判断する（server の active）
       let turn = await active(id, item);
       if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
-      let args = item.args;
+      let args = deliveryArgs(item);
       const snapshot = args.settings;
       if (snapshot) {
         await setWait(id, { reason: 'preparing', messageId: item.id });
         try {
           if (prepare) args = await prepare(id, item);
-          if (!(await list(id)).some(m => m.id === item.id && m.status === 'queued')) continue;
+          // 準備の間に取り消された・送る設定を替えた先へ移した（取り消して戻した）なら、読み直して決め直す
+          const fresh = (await list(id)).find(m => m.id === item.id && m.status === 'queued');
+          if (!fresh || JSON.stringify(fresh.retarget ?? null) !== JSON.stringify(item.retarget ?? null)) continue;
           turn = await active(id, item);
           if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
           if (turn) {
@@ -188,6 +197,23 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
     /** 送信の処理中の会話（引き継ぎを待たせている会話） */
     busySessions() { return [...new Set([...locks.keys(), ...workers.keys()])]; },
     retryPaused,
+    /**
+     * 送信待ち・保留で押した時点の設定を持つ項目の、送る設定を選び直す（server の上限の待ちを替えた先へ移す処理）。
+     * pick(item) が undefined ならそのまま、null なら押した時点の設定に戻し、設定を返せばその設定で送る。変えた件数を返す
+     */
+    retarget: (id, pick) => serial(id, async () => {
+      const items = await list(id);
+      let count = 0;
+      for (const item of items) {
+        if (!['queued', 'paused'].includes(item.status) || !item.args?.settings) continue;
+        const next = pick(item);
+        if (next === undefined || JSON.stringify(next ?? null) === JSON.stringify(item.retarget ?? null)) continue;
+        if (next) item.retarget = next; else delete item.retarget;
+        count++;
+      }
+      if (count) await save(id, items);
+      return count;
+    }),
     settleSteering: id => steering.get(id),
     list: id => serial(id, async () => view(id, await list(id))), kick, pause,
     async confirmed(id, messageId) {

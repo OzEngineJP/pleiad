@@ -74,7 +74,7 @@ import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX, SENT_DEFAULT, SENT
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
-import { createMessageQueue } from "./message-queue.mjs";
+import { createMessageQueue, deliveryArgs } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { activeLimit as limitForTarget, limitResetsAt, limitScope, clockText } from './limit-resume.mjs';
 import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
@@ -4987,6 +4987,9 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (explicit.worktreePending === false) manual.worktree = true;
       if (Object.keys(manual).length) await store.setSessionData(sessionId, 'selectedSettings', manual);
     }
+    // 上限で待っている送信待ちは、替えた先で流す（取り消したら押した時点の設定の上限の待ちへ戻す。ADR 0347）。
+    // 委譲の上限で同じ子の次のターンを予約したとき（limitSwitch）は触らない（そのターンは agentTasks が始め、戻すときも予約を直接書き戻す）
+    if (!limitSwitch) await retargetLimitWaits(sessionId, { cancel: Boolean(cancel) });
     // 委譲の上限で同じ子の次のターンを予約したとき（limitSwitch）は、送信待ちを流さない（そのターンは agentTasks が始める）
     syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: !limitSwitch });
     // 取り消した・別の場所に替えた予約が worktree なら、使っていなければ片付ける（ADR 0089）
@@ -10522,15 +10525,16 @@ async function measureSendPhase(command, sessionId, work) {
 }
 
 async function prepareQueuedSend(sessionId, item) {
-  const settings = item.args.settings;
-  if (!settings.worktreePending) return item.args;
+  const args = deliveryArgs(item);
+  const settings = args.settings;
+  if (!settings.worktreePending) return args;
   return measureSendPhase('sendWorktree', sessionId, async () => {
     const backend = getBackend(settings.backend);
     if (!backend) throw new Error(t('turn.reservedInvalid'));
     const { cwd } = await resolveCwd(sessionId, settings.cwd, backend);
     const made = await worktreeHost.split({ cwd, sessionId, sendId: item.id });
     if (!made.ok) throw worktreeFailure(made.reason, made.error);
-    return { ...item.args, worktreeCwd: made.cwd };
+    return { ...args, worktreeCwd: made.cwd };
   });
 }
 
@@ -10553,16 +10557,51 @@ function activeLimit(meta) {
 }
 /**
  * 送信待ちの項目が待つ上限。押した時点の設定（args.settings。ADR 0347）を持つ項目はその枠で判断し、後から選んだ設定には左右されない。
+ * ただし上限で待つ間に会話の設定を替えたら、替えた先（item.retarget。retargetLimitWaits）で判断する。
  * 設定を持たない古い項目は、今の予約（nextSettings）で判断する
  */
 function sendLimit(meta, item) {
-  const settings = item?.args?.settings;
+  const settings = deliveryArgs(item)?.settings;
   return activeLimit(settings ? { ...meta, nextSettings: settings } : meta);
 }
-/** 先頭の送信待ちが押した時点の設定で待っている上限（予約が別の枠でも、解除時刻にその項目を流す） */
+/** 先頭の送信待ちが押した時点の設定（替えた先へ移したらその設定）で待っている上限（予約が別の枠でも、解除時刻にその項目を流す） */
 function queuedLimit(meta) {
   const head = (meta?.outbox ?? []).find(m => !['sent', 'cancelled'].includes(m.status));
   return head?.status === 'queued' && head.args?.settings ? sendLimit(meta, head) : null;
+}
+
+/** 会話の今の設定（予約があれば予約）で、押した時点の設定 base を取り直す。作業場所の worktree の作りかけは base のまま */
+function turnSettingsOf(meta, base) {
+  const next = meta?.nextSettings;
+  const backend = next?.backend ?? meta?.backend ?? base.backend;
+  return {
+    ...base,
+    backend,
+    model: next ? next.model ?? '' : meta?.model ?? '',
+    effort: next ? next.effort ?? '' : meta?.effort ?? '',
+    mode: next?.mode ?? (backend === meta?.backend ? meta?.mode ?? '' : ''),
+    account: next?.account ?? meta?.claudeAccount ?? '',
+    endpoint: next?.endpoint ?? meta?.compatEndpoint ?? '',
+    cwd: next?.cwd ?? base.cwd,
+  };
+}
+function sameSettings(a, b) {
+  return ['backend', 'model', 'effort', 'mode', 'account', 'endpoint', 'worktreePending'].every(key => (a?.[key] ?? '') === (b?.[key] ?? ''))
+    && path.resolve(a?.cwd || '.') === path.resolve(b?.cwd || '.');
+}
+/**
+ * 使用量の上限で待っている送信待ち（まだエージェントへ渡していない、押した時点の設定を持つ項目）を、会話の今の設定へ移す（ADR 0347 の例外）。
+ * 移した項目は、その後に替えた設定にも付いていく。取り消し（cancel）なら押した時点の設定へ戻す。
+ * 上限以外で待っている項目・渡し始めた項目・設定を持たない古い項目は触らない（古い項目はもともと今の設定で送る）
+ */
+async function retargetLimitWaits(sessionId, { cancel = false } = {}) {
+  const meta = await store.get(sessionId);
+  await outbox.retarget(sessionId, item => {
+    if (cancel) return item.retarget ? null : undefined;
+    if (!item.retarget && !sendLimit(meta, item)) return undefined;
+    const settings = turnSettingsOf(meta, item.args.settings);
+    return sameSettings(settings, item.args.settings) ? null : settings;
+  });
 }
 
 /** 止まった会話の待ちが解けていたら、送信待ちを流す。まだなら解除時刻に流す（解除時刻が分からない上限は待たせない） */
