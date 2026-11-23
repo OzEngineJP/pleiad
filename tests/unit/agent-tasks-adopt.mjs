@@ -48,6 +48,7 @@ export default async function(t) {
     a = await open({});
     const id = await start(a, 'work');
     const other = await start(a, 'other');   // 付け直さないタスク
+    t.ok('委譲の子が並行して実行中でも、結果通知の確定を待つ必要はない', a.busy && !a.settling);
     await a.call('p', 'ply_task_send', { taskId: id, message: 'extra' });
     const extra = a.instructions(id).instructions[0];
     t.ok('旧サーバー: 途中送信で渡した追加指示は、渡った合図まで sending', extra.state === 'sending', extra.state);

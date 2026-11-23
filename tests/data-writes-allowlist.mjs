@@ -316,7 +316,11 @@ export const DATA_WRITES = [
     { name: '(置き場の外) Electron の userData の、更新の設定', limit: '固定（チャンネル・自動確認・自動ダウンロード・最後の版）', reason: '更新の設定。一時ファイルに書いて置き換える' },
   ] },
   { file: 'desktop/main.cjs', sites: 1, targets: [
-    { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '固定の 1 文字', reason: 'Electron の入れ替えで接続が切れた画面へ、更新が理由だと次の起動で知らせる' },
+    { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '更新依頼の UUID または固定の 1 文字', reason: '次の起動で画面に更新を知らせ、実行した更新依頼の結果を照合する' },
+  ] },
+  { file: 'desktop/lifecycle.cjs', sites: 2, targets: [
+    { name: 'desktop-lifecycle/<uuid>.json', limit: '適用・再起動の依頼ごとに 1 ファイル。依頼番号・版・起動情報・結果だけで、エラー文は 500 文字まで。決着後 30 日で削除', reason: '本体とサーバーが止まる前に記録し、再接続後の結果照会と同じ依頼の二重実行防止に使う。サーバーの停止中も本体から結果を記録できる' },
+    { name: 'desktop-lifecycle/<uuid>.json.invalid', limit: '壊れた記録ごとに 1 ファイルを移動。30 日で削除', reason: '壊れた記録を照合から外し、同じ依頼番号で停止が再実行されるのを防ぐ' },
   ] },
   { file: 'desktop/browser-partition-cleanup.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData/browser-partition-cleared', limit: '固定の小ささ（{ done, attempts }）', reason: '前の版の内蔵ブラウザーの保存領域を消した印。2 回目の起動から何もしないため（ADR 0294 の 6）' },

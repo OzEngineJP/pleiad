@@ -11421,15 +11421,9 @@ memorySettings = setupMemorySettings({
   },
   onLogin: (b) => { if (b) { authLogin(b); onboarding.open('setup'); } },
 });
-// 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
-// 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
 const cliSetup = setupCliSetup({ cmd });
-updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock,
-  work: () => state.work,
-  sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
-  agentName: (id) => (id ? labelOf(id) : ''),
-  // 更新では保持役の子を止めず、下書きを保存して旧サーバーの通常停止へ進む
-  flush: async () => {
+updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock });
+async function flushUpdateDrafts() {
   if (creatingSession || state.loadingSession) throw new Error(t('app.update.loading'));
   if (!state.current && ($('prompt').value || state.attached.length)) throw new Error(t('app.update.draftNoSession'));
   await saveDraft();
@@ -11440,7 +11434,19 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
     ...Array.from(modeWrites.values(), write => write.catch(() => {})),
     ...[...state.drafts].filter(([id, draft]) => id && draft.dirty).map(([id, draft]) => persistDraft(id, draft))]);
   await Promise.all([...draftWrites.values()]);
-} });
+}
+// 設定画面・会話・コマンドラインからの操作を同じ保存処理に通す。
+// 保存した後に入力される下書きも失わないよう、停止または取り消しまで入力を止める。
+let updateDraftLock = null;
+window.plyDesktop?.onUpdateDrafts?.(async id => {
+  updateDraftLock = id;
+  document.body.inert = true;
+  await flushUpdateDrafts();
+}, id => {
+  if (updateDraftLock !== id) return;
+  document.body.inert = false;
+  updateDraftLock = null;
+});
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
 // 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
 function openSettings() { setDrawer(false); onboarding.open(); }

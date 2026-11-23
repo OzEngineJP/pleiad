@@ -1,8 +1,66 @@
-// app.*: Pleiad 全体の状態を読む操作。
+// app.*: Pleiad 全体の状態とデスクトップの更新・再起動。
 import { z } from 'zod';
 import { defineOp } from './registry.mjs';
 
+const requestId = z.uuid().describe('agent:ops.app.lifecycle.requestId');
+const targetVersion = z.string().min(1).max(64).describe('agent:ops.app.lifecycle.targetVersion');
+const result = z.object({
+  requestId: z.uuid(),
+  action: z.enum(['install', 'restart']),
+  targetVersion: z.string(),
+  state: z.enum(['accepted', 'succeeded', 'failed']),
+  version: z.string().optional(),
+  serverVersion: z.string().optional(),
+  error: z.string().optional(),
+});
+const capability = z.object({ supported: z.boolean(), reason: z.string().nullable() });
+const updateStatus = z.object({
+  version: z.string(),
+  channel: z.enum(['stable', 'beta']).nullable(),
+  target: z.string().nullable(),
+  phase: z.string(),
+  progress: z.number().nullable(),
+  error: z.string().nullable(),
+  prepare: capability,
+  apply: capability,
+  restart: capability,
+  result: z.union([result, z.object({ requestId: z.uuid(), state: z.literal('unknown'), error: z.string() })]).nullable(),
+});
+const surfaces = (name) => ({ ui: false, mcp: 'catalog', cli: { path: ['app', name] } });
+
+const stopOps = ['apply', 'restart'].map((name) => defineOp({
+  id: `app.${name === 'apply' ? 'updateApply' : 'restart'}`,
+  summary: name === 'apply' ? 'agent:ops.app.updateApply.summary' : 'agent:ops.app.restart.summary',
+  risk: 'guarded',
+  input: z.object({ requestId, targetVersion, reason: z.string().max(500).optional().describe('agent:ops.app.lifecycle.reason') }),
+  output: result,
+  surfaces: surfaces(name === 'apply' ? 'update-apply' : 'restart'),
+  // The exact version and request are bound to the approval receipt.
+  confirm: (_ctx, { requestId, targetVersion }) => ({ requestId, targetVersion, note: targetVersion }),
+  handler: (ctx, { reason: _reason, ...args }) => ctx.app.lifecycle(name === 'apply' ? 'install' : 'restart', args, ctx.actor),
+}));
+
 export const appOps = [
+  defineOp({
+    id: 'app.updateStatus',
+    summary: 'agent:ops.app.updateStatus.summary',
+    risk: 'read',
+    input: z.object({ requestId: requestId.optional() }),
+    output: updateStatus,
+    surfaces: surfaces('update-status'),
+    handler: (ctx, args) => ctx.app.lifecycle('status', args, ctx.actor),
+  }),
+  defineOp({
+    id: 'app.updatePrepare',
+    summary: 'agent:ops.app.updatePrepare.summary',
+    risk: 'write',
+    riskReason: 'Downloads a verified update without stopping the app or applying it',
+    input: z.object({}),
+    output: updateStatus,
+    surfaces: surfaces('update-prepare'),
+    handler: (ctx, args) => ctx.app.lifecycle('prepare', args, ctx.actor),
+  }),
+  ...stopOps,
   defineOp({
     id: 'app.status',
     summary: 'agent:ops.app.status.summary',

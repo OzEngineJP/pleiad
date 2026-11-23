@@ -760,6 +760,23 @@
       }
     },
     "app": {
+      "updateStatus": {
+        "summary": "Read the desktop version, update channel, preparation progress and supported operations. Pass the original request ID to check the result after reconnecting. This does not check for or download updates."
+      },
+      "updatePrepare": {
+        "summary": "Check the current release channel and download the available update without applying it."
+      },
+      "updateApply": {
+        "summary": "Apply a downloaded desktop update. After reconnecting, check app.updateStatus with the same request ID."
+      },
+      "restart": {
+        "summary": "Restart the desktop app and its independent server on the current version. After reconnecting, check app.updateStatus with the same request ID."
+      },
+      "lifecycle": {
+        "requestId": "A UUID you generate before making the request. Retain it for result lookup or retry.",
+        "targetVersion": "Exact version from app.updateStatus. For a restart, use the current version.",
+        "reason": "Why you are applying the update or restarting. Shown on the approval card."
+      },
       "status": {
         "summary": "Return Pleiad's version, start time, display language, and the number of running tasks."
       },

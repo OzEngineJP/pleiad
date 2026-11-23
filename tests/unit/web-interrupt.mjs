@@ -111,7 +111,9 @@ export default function (t) {
   // ---- 配線
   const client = read('web/client.mjs'), side = read('web/side.mjs'), updates = read('web/updates.mjs');
   const html = read('web/index.html'), css = read('web/style.css');
-  t.ok('再開は WS resume。更新は下書きを保存してからデスクトップへ渡す', client.includes("cmd('resume', { sessionId })") && updates.includes('await flush()') && updates.includes("bridge.update(name, value)"));
+  t.ok('再開は WS resume。更新はデスクトップが要求する共通処理で下書きを保存する',
+    client.includes("cmd('resume', { sessionId })") && updates.includes("bridge.update(name, value)") &&
+    client.includes('onUpdateDrafts?.(') && client.includes('await flushUpdateDrafts()'));
   t.ok('turnEnd の interrupted を会話に写し、ターンが始まれば消す', client.includes("s.interrupted = ev.interrupted ?? null") && /running\.has\(s\.id\)\) \{ s\.interrupted = null/.test(client));
   t.ok('ライブの中断も保存された中断と同じ一行で描く（二重に出さない）', read('web/conversation-view.mjs').includes('paintInterruptLine({ at: ev.at ?? Date.now(),') && !client.includes('chat.sys.aborted'));
   t.ok('脇の行・畳んだ見出し・器の要約に三角', (side.match(/warnMark\(/g) ?? []).length >= 2 && side.includes('stoppedIn(rows)') && side.includes('stoppedIn(list)'));

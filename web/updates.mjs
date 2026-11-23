@@ -8,7 +8,7 @@ const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'down
  * 設定 › バージョンと更新の表示と操作（docs/design-system.md「アプリの更新」）。更新中の作業はサーバーの保持役が保つ。
  * 上の枠は版・状態の 1 行・主ボタン 1 つ。再起動の確認は同じ場所で文とボタンを入れ替える。
  */
-export function setupUpdates({ page, open, lock, flush }) {
+export function setupUpdates({ page, open, lock }) {
   const $ = id => document.getElementById(id), bridge = window.plyDesktop;
   let info, state, busy = false, installing = false, confirming = false, switchesLocked = false, shownNotice = null, failure = '';
   const deferred = new Set();
@@ -118,7 +118,7 @@ export function setupUpdates({ page, open, lock, flush }) {
     if (busy) return;
     busy = true; failure = ''; if (state) paint(state);
     try {
-      if (name === 'install') { confirming = false; installing = true; paint(state); await flush(); }
+      if (name === 'install') { confirming = false; installing = true; paint(state); value = state.target; }
       paint(await bridge.update(name, value));
     } catch (e) {
       failure = String(e.message).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');

@@ -143,6 +143,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   deliverLimitSwitch = async () => 'ok',
   // 上限で止まった子の会話の、解除時刻までの待ち（{ resetsAt } か null）。待っている間は、積まれた指示（ply_task_send）で次の回を始めない
   held = () => null,
+  canStart = () => true, resumeQueued = false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   backgroundMinutes = Number(process.env.AGENT_HOST_TASK_BACKGROUND_MINUTES ?? 30),
@@ -201,8 +202,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     });
   };
   for (const r of Object.values(records)) {
+    // In rows with instruction IDs, a plain first entry is the original prompt, even after a follow-up was queued.
+    const initial = r.status === 'queued' && ((Array.isArray(r.instructions) && r.instructionRevision !== undefined) ||
+      (!r.revision && !r.result && r.createdAt === r.updatedAt));
     r.instructions ??= [];
-    const initial = !r.revision && !r.result && r.status === 'queued' && r.createdAt === r.updatedAt;
     r.queue = (r.queue ?? []).map((entry, index) => {
       if (typeof entry !== 'string' || (initial && index === 0)) return entry;
       const instruction = { id: crypto.randomUUID(), text: entry, at: r.updatedAt ?? r.createdAt ?? Date.now(), state: 'queued' };
@@ -317,7 +320,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (adoptable.has(r.taskId)) continue;
     // 再起動前の活動の写しは古い。ホストの sync が届くまで停滞の判定には使わない
     if (r.host) { delete r.hostTelemetry; delete r.hostBackground; delete r.activeCommands; delete r.lastActivityAt; delete r.lastOutputAt; }
-    if ((ACTIVE.has(r.status) || ['stopUnconfirmed', 'interrupted'].includes(r.status)) && !r.host) {
+    if (!r.host && !(resumeQueued && r.status === 'queued') &&
+        (ACTIVE.has(r.status) || ['stopUnconfirmed', 'interrupted'].includes(r.status))) {
       const uncertain = r.status !== 'queued' && await stopUnconfirmed(r);
       const item = { taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status };
       if (uncertain) {
@@ -529,6 +533,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const halted = () => quitStops.has(r.taskId) || (closed && r.status !== 'cancelling');
     try {
       while (!controller.signal.aborted) {
+        // A held turn can finish during update preflight. Leave its next prompt in the queue.
+        if (!adopted && !canStart()) break;
         let prompt, instructionIds, continuing = false, triedLimits = [];
         settlingInstructions.delete(r.taskId);
         if (adopted) {
@@ -870,7 +876,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       .finally(() => { probing = false; }));
   }
   function kick() {
-    if (closed || mutating) return;
+    if (closed || mutating || !canStart()) return;
     if (fault) { probe(); return; }
     const groups = new Map();
     const notificationDue = r => r.notification === 'pending' && !limitSwitchNotices.has(r.taskId) && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)
@@ -967,6 +973,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
     // 完了通知を渡している最中か（引き継ぎの前に終わるのを待つ。無停止の更新 2d。動いている子そのもの（busy）は、保持役に載った子は新しいサーバーが引き継ぐので数えない）
     get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || backgroundNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
+    blocksRestart(preservedTasks) {
+      return this.settling || Object.values(records).some(r => !r.host && !preservedTasks.has(r.taskId) &&
+        (live.has(r.taskId) || r.status === 'running' || r.status === 'cancelling'));
+    },
     /** 引き継ぎを待たせている通知の依頼元の会話（画面に「どの会話を待っているか」を出す） */
     settlingSessions() {
       const taskIds = [...notices, ...silenceNotices, ...backgroundNotices, ...commandNotices.values(), ...Object.values(records).filter(r => r.notification === 'delivering').map(r => r.taskId)];

@@ -294,6 +294,26 @@
       "input": "43c1c1e61294"
     },
     {
+      "id": "app.restart",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "app",
+            "restart"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3bad2efb7698"
+    },
+    {
       "id": "app.running",
       "risk": "read",
       "riskOf": false,
@@ -330,6 +350,66 @@
       },
       "legacyCommand": null,
       "input": "25c7d85c859a"
+    },
+    {
+      "id": "app.updateApply",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "app",
+            "update-apply"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "3bad2efb7698"
+    },
+    {
+      "id": "app.updatePrepare",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "app",
+            "update-prepare"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "app.updateStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "app",
+            "update-status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "06829c5abea5"
     },
     {
       "id": "attachments.cancelImport",
@@ -6035,6 +6115,26 @@
     {
       "id": "apiKeys.list",
       "path": "apikeys list",
+      "positional": []
+    },
+    {
+      "id": "app.restart",
+      "path": "app restart",
+      "positional": []
+    },
+    {
+      "id": "app.updateApply",
+      "path": "app update-apply",
+      "positional": []
+    },
+    {
+      "id": "app.updatePrepare",
+      "path": "app update-prepare",
+      "positional": []
+    },
+    {
+      "id": "app.updateStatus",
+      "path": "app update-status",
       "positional": []
     },
     {

@@ -43,6 +43,7 @@ async function waitGone(pid) {
 // 起動用の変数を一通り付けた env（値は偽物。実行場所は一時ディレクトリ）
 const bootValues = (scratch) => ({
   AGENT_HOST_HANDOVER: 'on', AGENT_HOST_PORT: '0', AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_TOKEN: 'boot-token',
+  AGENT_HOST_QUEUED_RESUME_VERSION: '1.0.0',
   AGENT_HOST_SYSTEM_LOCALE: 'en', AGENT_HOST_SERVER_LOG: path.join(scratch, 'server.log'),
   AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime'), AGENT_HOST_RUNTIME_KEY: 'test-key',
   AGENT_HOST_RUNTIME_RESOURCES: path.join(scratch, 'resources'), AGENT_HOST_RUNTIME_DIR: path.join(scratch, 'runtime-dir'),
@@ -58,6 +59,10 @@ export default async function (t) {
     stableCliEnv: stableCliEnv({ execPath: 'C:\\Ply\\Ply.exe', resourcesPath: 'C:\\Ply\\resources' }) });
   const bootMissing = Object.keys(fromBoot).filter(k => !FOR_CHILDREN.has(k) && !isBootEnvName(k));
   t.ok('serverEnv が渡すもの（PATH・PLEIAD_CLI_* 以外）は全部一覧にある', bootMissing.length === 0, JSON.stringify(bootMissing));
+  const queuedResumeEnv = { AGENT_HOST_QUEUED_RESUME_VERSION: 'stale' };
+  t.ok('起動時に確認した対象版だけをサーバーに渡し、通常の起動には引き継がない',
+    boot.serverEnv({ baseEnv: queuedResumeEnv, queuedResumeVersion: '1.0.0' }).AGENT_HOST_QUEUED_RESUME_VERSION === '1.0.0' &&
+    !boot.serverEnv({ baseEnv: queuedResumeEnv }).AGENT_HOST_QUEUED_RESUME_VERSION);
   const mainSource = await fs.readFile(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
   const forkEnv = /forkUtility\([\s\S]*?env: \{([^\n]*)\}/.exec(mainSource)?.[1] ?? '';
   const forkNames = [...forkEnv.matchAll(/\b([A-Z][A-Z0-9_]+):/g)].map(m => m[1]);

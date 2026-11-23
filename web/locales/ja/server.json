@@ -264,7 +264,13 @@
     "cannotStop": "{{backend}} は裏の作業を止められません",
     "agentIdsRequired": "sessionId と agentId が要る"
   },
+  "lifecycle": {
+    "server": "サーバー単体で起動しています。デスクトップの更新と再起動は利用できません。",
+    "disconnected": "デスクトップから応答がありません。再接続した後、元の依頼番号で結果を確認してください。"
+  },
   "updateLock": {
+    "nonResumable_other": "再起動後に続けられない会話が {{count}} 件実行中です。",
+    "background": "再起動後に続けられないバックグラウンド作業があります。",
     "turns_other": "実行中の会話が {{count}} 件あります",
     "approvals_other": "承認待ちが {{count}} 件あります",
     "delegation": "委譲した作業か、その完了の知らせを親の会話へ届ける処理が終わっていません",

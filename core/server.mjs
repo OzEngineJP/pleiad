@@ -175,6 +175,7 @@ import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeW
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
 import { resumeFromPill } from './chrome/pill-resume.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
+import { createDesktopLifecycleClient } from './desktop-lifecycle.mjs';
 import { createLoginItemClient } from './login-item.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
 import { createOrphanGuard } from './orphan-guard.mjs';
@@ -232,6 +233,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('  [unhandledRejection]', String(reason?.stack ?? reason));
 });
 const updateGate = createUpdateGate();
+let lifecycleLeaseId = null;
 // 使用枠の正本（core/usage.mjs）。取れた値は購読へ流し、usageChanged で画面へ届ける
 // 読めなくなった・読めるようになった行は server.log に 1 行（core/usage.mjs の createQuotaStore）
 const quotaStore = createQuotaStore({ dir: store.dataDir, log: line => console.log(`  [usage] ${line}`) });
@@ -4703,6 +4705,8 @@ const opsApp = {
     return { items };
   },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
+  // Allow for 25 s to flush renderer drafts and 10 s to acquire the update lock, plus IPC and disk writes.
+  lifecycle: createDesktopLifecycleClient({ port: mainPort, version: APP_VERSION, timeoutMs: 60_000 }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
@@ -7253,7 +7257,7 @@ function chromeHandoffProfile(sessionId) {
   const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
   return dir ? { browser: 'chrome', dir } : null;
 }
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff, replayable = false }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -7386,7 +7390,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       permissionsChanged();
     };
 
-    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, origin: sessionId ?? null });
+    for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, replayable, origin: sessionId ?? null });
     // 続きに要る状態（カードの中身）を DB に置く（ADR 0270 段 3 の ②）。中継の複製は元のカードから作り直せるので置かない。
     // 起動で拾えなかった行は、取り下げを会話へ届ける（core/waiting-cards.mjs・withdrawRestoredCards）
     waitingCards.put({
@@ -8069,7 +8073,10 @@ function syncTodoTasks() {
   try { sessionTodos.syncTasks(); } catch (error) { console.error('Could not update linked to-dos:', error.message); }
 }
 
+let delegatedQueueReady = false;
 agentTasks = await createAgentTasks({
+  resumeQueued: Boolean(hostedPort && BOOT_ENV.AGENT_HOST_QUEUED_RESUME_VERSION && BOOT_ENV.AGENT_HOST_QUEUED_RESUME_VERSION === APP_VERSION),
+  canStart: () => delegatedQueueReady && !updateGate.locked,
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）
   adopting: adopting.flatMap(a => a.ctx.taskId ? [a.ctx.taskId] : []),
@@ -8611,7 +8618,7 @@ for (const b of listBackends()) {
 }
 
 async function runTurn(args, onStarted = () => {}, hooks = {}) {
-  const releaseUpdateGate = updateGate.enter();
+  const releaseUpdateGate = updateGate.enter({ turn: true });
   try {
     return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
   } finally { releaseUpdateGate(); }
@@ -9156,7 +9163,7 @@ async function beginTurn(ctx) {
     // 記録からの組み立て直しの区切り（conversations.mjs が start/complete/failed で呼ぶ。失敗は渡し損なわないよう内側で握りつぶす）
     onContextRebuild: (info) => recordContextRebuild(turn, info).catch(error => { console.error('  区切りの記録に失敗:', String(error?.message ?? error)); }),
     // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
-    askPermission: request => askPermission({ ...request, locale: agentLocale }),
+    askPermission: request => askPermission({ ...request, locale: agentLocale, replayable: true }),
     hostInvoke: hostInvokeFor(agentLocale),
     signal: turn.ac,
     control: turn.control,
@@ -9515,9 +9522,16 @@ function touchCard(turn) {
 }
 
 /** 保持役の入力へ先行させる必要がある札は、遅延まとめを待たず同じ接続へ書く。TCP の順序で札を先に届ける */
-function writeTurnCard(turn, ctx = turnContexts.get(turn)) {
+function writeTurnCard(turn, ctx = turnContexts.get(turn), { requireRestorable = false } = {}) {
   if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return false;
-  try { turn.control.holder.label(heldTurnCard(ctx).card); return true; }
+  try {
+    const { card } = heldTurnCard(ctx);
+    if (requireRestorable) {
+      const fields = restoreFields(card);
+      if (!fields?.presentKey || !fields.connectionTokens?.context) return false;
+    }
+    return turn.control.holder.label(card) !== false;
+  }
   catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return false; }
 }
 
@@ -9736,7 +9750,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   const { turn, sessionId, backend, agentLocale } = ctx;
   const emit = ctx.emit;
   let retryCompact = null;
-  const releaseUpdateGate = updateGate.enter();
+  const releaseUpdateGate = updateGate.enter({ turn: true });
   // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
   const contextToken = ctx.card.connectionTokens?.context;
   const releaseContext = contextToken ? contextBridge.reserve(contextToken) : () => {};
@@ -9797,7 +9811,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
             return emit(event, opts);
           }, backend.id),
           onPromptDelivered: ctx.onPromptDelivered,
-          askPermission: request => askPermission({ ...request, locale: agentLocale }),
+          askPermission: request => askPermission({ ...request, locale: agentLocale, replayable: true }),
           hostInvoke: hostInvokeFor(agentLocale),
           signal: turn.ac,
           control: turn.control,
@@ -10861,7 +10875,8 @@ wss.on("connection", (ws, req) => {
       // Only definitions guaranteed to remain reads can be abandoned during
       // shutdown. Dynamic risks and unknown commands keep protecting writes.
       const readOnly = operation?.risk === 'read' && !operation.riskOf;
-      releaseUpdateGate = updateGate.enter({ blocking: !readOnly });
+      // runTurn holds its own lease, classified by whether it can be resumed.
+      releaseUpdateGate = updateGate.enter({ blocking: !readOnly && msg.command !== 'runTurn' });
       // ブラウザーの一本化の WS のコマンド（core/browser-unify-ws.mjs）
       if (isBrowserUnifyCommand(msg.command)) {
         try {
@@ -11981,17 +11996,38 @@ mainPort.on("message", async ({ data }) => {
   }
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
   if (data?.type === 'update-lock') {
+    const turns = [...runtime.turns.values()];
+    const nonResumable = turns.filter(turn => !data.preserveTurns || !heldTurn(turn) ||
+      !turn.backend?.adoptTurn || !writeTurnCard(turn, undefined, { requireRestorable: true }));
+    const preserved = new Set(data.preserveTurns && !nonResumable.length ? turns.map(turn => turn.info.sessionId) : []);
+    const preservedTasks = new Set(turns.filter(turn => preserved.has(turn.info.sessionId)).map(turn => {
+      const ctx = turnContexts.get(turn);
+      return ctx?.taskId ?? ctx?.hooks?.taskId;
+    }).filter(Boolean));
+    // Native approvals are replayed from the holder. A server-side tool callback is not.
+    const waits = blockingWaits().filter(wait => !wait.replayable || !preserved.has(wait.origin));
     // 断るときは何が止めているかを返す。画面に出さないと、見た目に何も動いていないのに更新できない理由が分からない
-    const reason = runtime.turns.size ? t('updateLock.turns', { count: runtime.turns.size })
-      : blockingWaits().length ? t('updateLock.approvals', { count: blockingWaits().length })
-      : agentTasks.busy ? t('updateLock.delegation')
-      : outbox.busy ? t('updateLock.steer')
-      : switching.size || forking.size ? t('updateLock.switching')
+    const reason = nonResumable.length ? (data.preserveTurns
+      ? t('updateLock.nonResumable', { count: nonResumable.length })
+      : t('updateLock.turns', { count: nonResumable.length }))
+      : waits.length ? t('updateLock.approvals', { count: waits.length })
+      : (data.preserveTurns ? agentTasks.blocksRestart(preservedTasks) : agentTasks.busy) ? t('updateLock.delegation')
+      : outbox.busySessions().some(id => !preserved.has(id)) ? t('updateLock.steer')
+      : [...switching].some(id => !runtime.turns.has(id)) || forking.size ? t('updateLock.switching')
+      : data.preserveTurns && ([...runtime.background.values()].some(work => !getBackend(work.backend)?.holdsBackground?.()) ||
+        shellBridge.sessionsWithJobs().some(id => shellBridge.jobs(id).some(job => job.running && !job.held)))
+        ? t('updateLock.background')
       : null;
-    const ok = updateGate.acquire(Boolean(reason));
+    const ok = updateGate.acquire(Boolean(reason), {
+      preservedTurns: data.preserveTurns ? turns.length : 0, owner: data.leaseId,
+    });
+    if (ok) lifecycleLeaseId = data.leaseId ?? null;
     mainPort.postMessage({ type: 'update-lock', id: data.id, ok, reason: ok ? null : reason || t('updateLock.other') });
   }
-  if (data?.type === 'update-unlock') updateGate.release();
+  if (data?.type === 'update-unlock') {
+    updateGate.release(data.leaseId);
+    if (data.leaseId === lifecycleLeaseId) lifecycleLeaseId = null;
+  }
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
   // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
   if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
@@ -12114,7 +12150,11 @@ const orphanGuard = mainLink ? createOrphanGuard({
   },
   log: line => console.log(`  [main-link] ${line}`),
 }) : null;
-mainPort.on('disconnect', () => orphanGuard?.disconnected());
+mainPort.on('disconnect', () => {
+  if (lifecycleLeaseId && !shuttingDown) updateGate.release(lifecycleLeaseId);
+  lifecycleLeaseId = null;
+  orphanGuard?.disconnected();
+});
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
 mainAway.onBack(({ first }) => {
@@ -12144,7 +12184,7 @@ async function announce() {
     .catch((err) => console.error('  control.json を書けませんでした:', String(err?.message ?? err)));
   // パイプの口は、main がつながるのが ready より後になりうる。つながるたびに最新の ready を送る
   // appVersion・build・runtimeKey は、付け直した新しい main が版を比べて切り替える・前の版へ戻すのに使う（desktop/switch.cjs）
-  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
+  readyMessage = { type: "ready", port, token: TOKEN, locale: locale.lang, pid: process.pid, startedAt: SERVER_STARTED_AT, appVersion: APP_VERSION, build: BUILD, runtimeKey: BOOT_ENV.AGENT_HOST_RUNTIME_KEY || null,
     // 起動で拾ったターンの数（main の切り替えの記録に載る。desktop/switch.cjs）
     adopted: adopting.length };
   if (adopting.length) console.log(`  起動で拾ったターン ${adopting.length} 件（付け直しは待ち受けの後）`);
@@ -12235,6 +12275,7 @@ for (const { card, source, ctx } of adopting) {
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 上限で止まった会話の送信待ちを、解除時刻に流すよう置き直す（Pleiad を閉じている間に過ぎた分はすぐ）
 await recoverLimitWaits().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
+delegatedQueueReady = true;
 await redoInterruptedCompactions(new Set(adopting.filter(item => item.ctx.turn.compactTrigger).map(item => item.ctx.sessionId)))
   .catch(err => console.error('  圧縮をやり直せませんでした:', String(err?.message ?? err)));
 // 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる

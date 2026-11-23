@@ -58,6 +58,24 @@
     "decryptFailed": "Could not decrypt the secret (it may have been encrypted by another user or on another PC).",
     "encryptFailed": "Could not encrypt."
   },
+  "lifecycle": {
+    "store": "This edition is managed by the Microsoft Store.",
+    "distribution": "These operations require a packaged Pleiad release.",
+    "independent": "This desktop is running its server as a child process. These operations require an independent server.",
+    "drafts": "Could not confirm that the desktop saved its drafts. Open the desktop window and try again.",
+    "invalidRequest": "The request ID must be a UUID.",
+    "requestConflict": "This request ID is already in use.",
+    "versionChanged": "The target version has changed. Check the version and try again.",
+    "stopFailed": "Could not confirm that the server stopped.",
+    "serverVersionPending": "The desktop is on {{desktop}} and the server is on {{server}}. Finish switching the server to the desktop version before restarting or applying an update.",
+    "unknownVersion": "an unknown version",
+    "quitPending": "Pleiad cannot quit while a restart or update is in progress.",
+    "inProgress": "A restart or update is in progress. Try again when it finishes.",
+    "blocked": "Cannot restart or apply the update: {{reason}}",
+    "bootMismatch": "The desktop and server did not both start on the requested version.",
+    "damagedReceipt": "The request record is damaged, so its result could not be determined.",
+    "failed": "Could not record or read the desktop operation."
+  },
   "update": {
     "blocked": "Cannot update: {{reason}} Wait for it to finish, then update. The downloaded update stays ready.",
     "applyFailed": "Could not apply the update. Try again.",

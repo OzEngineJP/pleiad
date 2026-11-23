@@ -103,7 +103,7 @@ class Updates extends EventEmitter {
         this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', releases: [], error: null });
       } else {
         if (!this.enabled) throw new Error(t('update.unavailable'));
-        if (action === 'check') {
+        if (action === 'check' || action === 'prepare') {
           // ダウンロード済みでも確認は続ける。その後に出た新しい版を見逃さないため。
           // 確認に失敗しても、準備済みの更新はそのまま適用できる
           const ready = this.state.phase === 'downloaded' ? this.state.target : null;
@@ -118,14 +118,14 @@ class Updates extends EventEmitter {
             throw e;
           } finally { this.recheck = null; }
           this.patch({ lastChecked: new Date().toISOString() });
-          if (this.state.phase === 'available' && this.state.autoDownload) await this.download();
+          if (this.state.phase === 'available' && (action === 'prepare' || this.state.autoDownload)) await this.download();
         } else if (action === 'download') {
           if (this.state.phase !== 'available') throw new Error(t('update.checkFirst'));
           await this.download();
         } else if (action === 'install') {
           if (this.state.phase !== 'downloaded') throw new Error(t('update.notDownloaded'));
           this.patch({ phase: 'installing', error: null });
-          try { await this.install(); }
+          try { await this.install(value); }
           catch (e) { this.patch({ phase: 'downloaded', error: e.message }); throw e; }
         } else throw new Error(t('update.unknownAction'));
       }

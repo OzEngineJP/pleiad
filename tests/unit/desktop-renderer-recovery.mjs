@@ -4,6 +4,7 @@
 //   - desktop.log の 1MB 境界での .old ローテーションと再起動なしでのダンプ上限管理（件数・容量・attachments 掃除）
 //   - main.cjs / remote-windows.cjs が同じ renderer-recovery.cjs を使い、ポート/トークン更新後の最新 URL で読み直すこと
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -179,6 +180,7 @@ function runMainForRecovery({
     pruneCrashDumps: (...args) => { calls.prunes++; return recovery.pruneCrashDumps(...args); },
   };
   const modules = {
+    './lifecycle.cjs': { createLifecycle: () => ({ reconcile: async () => {} }) },
     './process.cjs': {
       forkUtility: () => {
         queueMicrotask(() => worker.emit('message', { type: 'ready', port: 7499, token: 'boot-token' }));
@@ -283,6 +285,7 @@ function runMainForRecovery({
     if (id === 'electron') return electron;
     if (id === 'electron-updater') return { autoUpdater };
     if (id === 'node:fs') return fsMock;
+    if (id === 'node:crypto') return crypto;
     if (id === 'node:path') return path;
     if (id in modules) return modules[id];
     throw new Error(`unexpected require ${id}`);

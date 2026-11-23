@@ -13,6 +13,7 @@
 //   4. 後片付け: 保持役・偽の CLI が残らない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -291,7 +292,7 @@ export default async function (t) {
       await fs.writeFile(fixture, `import fs from 'node:fs';import readline from 'node:readline';fs.appendFileSync(${JSON.stringify(launches)},'launch\\n');if(fs.readFileSync(${JSON.stringify(launches)},'utf8').split('launch').length>2)await new Promise(r=>setTimeout(r,2000));let n=0;for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'count',description:'count',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'count='+(++n)}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
       await fs.writeFile(path.join(workCtx, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }));
       const launchCount = async () => (await fs.readFile(launches, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
-      const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
+      const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_BACKENDS: 'claude,fake' };
       a = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
@@ -308,6 +309,9 @@ export default async function (t) {
       void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'restart-R-0001', prompt: script([count, { tool: 'Read', input: { file_path: 'r' }, result: 'read r', gate: 'r-tool' }, count, { text: 'final R' }]) }).catch(() => {});
       const askHQ = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS, from: markH });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.R && e.name === 'Read', { ms: WAIT_MS, from: markH });
+      const steerId = 'restart-R-steer-0001';
+      await ca.cmd('sendMessage', { sessionId: ids.R, messageId: steerId, prompt: 'steer across update lock' });
+      await ca.waitFor(e => e.type === 'userMessage' && e.messageId === steerId && e.pending, { ms: WAIT_MS, from: markH });
       const launchesBefore = await launchCount();
       {
         const running = await until(async () => { const r = await ca.cmd('running'); return r.turns.filter(x => x.held).length === 2 ? r : null; }, WAIT_MS, 'Claude の 2 つのターンが held');
@@ -315,6 +319,8 @@ export default async function (t) {
       }
       const portA = a.port, tokenA = a.token;
       await sleep(800);   // 札の置き直しが保持役へ届くまで
+      const gate = await m1.request('update-lock', { preserveTurns: true, leaseId: randomUUID() });
+      assert.ok(gate.ok, gate.reason);
       ca.close(); ca = null;
       // A を普通に止める（main が更新で止めるときと同じ道）。保持役の子は止めない
       await a.stop(); a = null;
@@ -328,6 +334,7 @@ export default async function (t) {
       assert.equal(cb.events.filter(e => e.type === 'permission' && e.sessionId === ids.Q).length, 1, 'Q: S2 に承認が 1 つだけ');
       await cb.cmd('resolvePermission', { id: askB.id, allow: true });
       await gates.open('r-tool');
+      await cb.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === steerId, { ms: WAIT_MS });
       for (const k of ['Q', 'R']) await cb.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids[k], { ms: WAIT_MS }).catch(e => { throw new Error(`${k}: ${e.message}\n${b.tail(20)}`); });
       await sleep(500);
       for (const k of ['Q', 'R']) {
@@ -349,10 +356,58 @@ ${b.tail(40)}`);
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('main が起こした起動: A を普通に止めて B を同じトークン・ポートで起こすと、保持役の Claude のターン（承認待ち・ツールの実行中）を起動で付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
       t.ok('R15: Pleiad がコンテキストを担当する会話は、S2 が ply_context の口を札のトークンで開き直す。外部の stdio MCP は保持役の子のまま（同じツールの名前。中の状態が残り、起こし直さない。ADR 0270 段 2c）', true);
+
+      const beforeRestart = cb.mark();
+      const children = {};
+      const requestId = randomUUID();
+      const targetVersion = m2.seen.messages.find(message => message.type === 'ready').appVersion;
+      for (const k of ['Q', 'R']) {
+        const read = gate => ({ tool: 'Read', input: { file_path: k }, result: k, gate });
+        const restart = { http: { server: 'ply_control', tool: 'Pleiad の操作を呼ぶ',
+          arguments: { op: 'app.restart', args: { requestId, targetVersion } } } };
+        const task = script([...(k === 'Q' ? [read('ask-for-restart'), restart] : []), read(`lifecycle-${k}`), { text: `finished ${k}` }]);
+        const prompt = 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'claude', task, title: `Lifecycle ${k}` } });
+        const parent = await cb.runTurn({ backend: 'fake', cwd: work, mode: 'bypass', prompt }, { ms: WAIT_MS });
+        assert.equal(parent.outcome, 'ok', b.tail(20));
+        const child = await until(async () => (await cb.cmd('agentTasks')).find(row => row.parentSessionId === parent.sessionId && row.status === 'running'),
+          WAIT_MS, `running delegated turn ${k}`);
+        children[k] = child;
+        await cb.waitFor(e => e.type === 'tool.start' && e.name === 'Read' && e.sessionId === child.sessionId, { ms: WAIT_MS, from: beforeRestart });
+      }
+      const draft = 'Unsent draft across desktop restart';
+      await cb.cmd('saveDraft', { sessionId: ids.R, text: draft, attached: [], version: 2 });
+      await gates.open('ask-for-restart');
+      const request = await until(() => m2.seen.messages.find(message => message.type === 'desktop-lifecycle' && message.action === 'restart'),
+        WAIT_MS, 'restart from the held delegated child');
+      assert.equal(request.owner, children.Q.sessionId);
+      assert.equal(request.args.requestId, requestId);
+      const lock = await m2.request('update-lock', { preserveTurns: true, leaseId: requestId });
+      assert.ok(lock.ok, lock.reason);
+      assert.ok(m2.link.postMessage({ type: request.type, id: request.id, ok: true, result: { requestId, state: 'accepted' } }));
+      await cb.waitFor(e => e.type === 'tool.result' && e.sessionId === children.Q.sessionId && String(e.text).includes(requestId),
+        { ms: WAIT_MS, from: beforeRestart });
+      assert.ok(m2.link.postMessage({ type: 'shutdown' }));
+      await until(() => b.child.exitCode !== null || b.child.signalCode !== null, WAIT_MS, 'desktop lifecycle server exits');
       cb.close(); cb = null;
-      m2.link.leave(); m2 = null;
-      m1 = null;   // A と一緒に切れている
       await b.stop(); b = null;
+      m2 = null;
+      a = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA) }, dataDir, timeoutMs: 60_000 });
+      m1 = await attachMain(dataDir, a);
+      ca = await open({ port: a.port, token: a.token });
+      assert.equal((await ca.cmd('loadSession', { sessionId: ids.R })).draft?.text, draft);
+      for (const k of ['Q', 'R']) await gates.open(`lifecycle-${k}`);
+      for (const k of ['Q', 'R']) {
+        const child = children[k];
+        const end = await ca.waitFor(e => e.type === 'turnEnd' && e.sessionId === child.sessionId, { ms: WAIT_MS });
+        assert.equal(end.outcome, 'ok', a.tail(20));
+        assert.equal(sessionMeta(child.sessionId).interrupted ?? null, null);
+        await until(async () => (await ca.cmd('agentTasks')).some(row => row.taskId === child.taskId && row.status === 'completed'),
+          WAIT_MS, `completed delegated turn ${k}`);
+      }
+      t.ok('デスクトップの再起動経路は、並行する委譲の子 2 件を通常停止後に復元し、未送信の下書きを残す', true);
+      ca.close(); ca = null;
+      m1.link.leave(); m1 = null;
+      await a.stop(); a = null;
     }
 
     // 4. 後片付け

@@ -1,4 +1,4 @@
-// 更新の前の保存（web/client.mjs が setupUpdates へ渡す flush を、最小の DOM と偽の保存で流す）。
+// 更新の前の保存（web/client.mjs の flushUpdateDrafts を、最小の DOM と偽の保存で流す）。
 //   - 前に失敗した設定・モードの保存（拒否のまま残った約束）があっても、更新の保存は止まらない:
 //     失敗の知らせは入力欄の上や会話に出て送信を止める役目。ここで止めると「再起動して更新」がその理由で進まなかった（0.42.5-beta.7 で修正）
 //   - 走っている設定・モードの保存は終わるまで待つ
@@ -18,11 +18,11 @@ const throws = async (promise) => { try { await promise; return null; } catch (e
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-  const anchor = source.indexOf('flush: async () => {');
+  const anchor = source.indexOf('async function flushUpdateDrafts() {');
   if (anchor < 0) throw new Error('client.mjs に更新の flush が無い');
-  const end = source.indexOf('} });', anchor);
+  const end = source.indexOf('\n}', anchor);
   if (end < 0) throw new Error('client.mjs の更新の flush の終わりが見つからない');
-  const code = `const updateFlush = ${source.slice(anchor + 'flush: '.length, end + 1)};`;
+  const code = source.slice(anchor, end + 2);
 
   const els = new Map();
   const $ = (id) => { if (!els.has(id)) els.set(id, { value: '', textContent: '' }); return els.get(id); };
@@ -35,7 +35,7 @@ export default async function (t) {
     persistDraft: (id, value) => { const g = gate(); draftsSaved.push({ id, value, ...g }); return g.promise; },
   });
   vm.runInContext(code, context);
-  const flush = () => vm.runInContext('updateFlush()', context);
+  const flush = () => vm.runInContext('flushUpdateDrafts()', context);
 
   // ---- 断る条件はそのまま（会話を作っている・開いている途中・保存先の無い下書き）
   context.creatingSession = Promise.resolve();

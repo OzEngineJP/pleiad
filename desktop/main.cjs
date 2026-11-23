@@ -1,6 +1,8 @@
 const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor, crashReporter } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { randomUUID } = require('node:crypto');
+const { createLifecycle, claimQueuedResume } = require('./lifecycle.cjs');
 const { forkUtility } = require('./process.cjs');
 // 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
 require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
@@ -49,6 +51,7 @@ let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
 let serverRestarter = null, serverExitHandler = null, activePortFile = null, updateInProgress = false;
+let lifecycle, draftReply;
 let keepAgentWindows = false, crashRestarting = false, utilityExited = false, mainHealth = null;
 let chromePill = null;
 let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
@@ -57,6 +60,7 @@ let serverSwitch = null;
 // 最後に届いたサーバーの ready。サーバーが落ちたとき、同じトークン・ポート・版で起こし直す材料（desktop/server-restart.cjs）
 let serverReady = null;
 let updateRestartNotice = false;
+let updateRequest;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
 let desktopLog = null, crashReporting = null;
@@ -146,34 +150,70 @@ async function abortAll(reason, onProgress) {
   }
 }
 
-async function installUpdate() {
+async function flushLifecycleDrafts() {
+  if (!window || window.isDestroyed() || window.webContents.isLoadingMainFrame()) throw new Error(t('lifecycle.drafts'));
+  const contents = window.webContents;
+  const id = randomUUID();
+  const release = () => {
+    try { if (!contents.isDestroyed()) contents.send('ply:release-update-drafts', id); }
+    catch (error) { log(`release update drafts: ${error.message}`); }
+  };
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(t('lifecycle.drafts'))), 25_000);
+      draftReply = { id, finish: (ok, error) => {
+        clearTimeout(timer);
+        if (ok) resolve();
+        else reject(new Error(error || t('lifecycle.drafts')));
+      } };
+      try { contents.send('ply:flush-update-drafts', id); }
+      catch (error) { clearTimeout(timer); reject(error); }
+    });
+  } catch (error) { release(); throw error; }
+  finally { draftReply = null; }
+  return release;
+}
+
+async function installUpdate(action = 'install', requestId) {
   // 更新でも通常の shutdown で旧サーバーを終え、新しい main が通常起動する。
   // サーバーの shutdown は保持役の子を残し、DB のロックを解放してから終了する。
   const linkedServer = Boolean(linked);
+  const oldPid = linkedServer ? (worker.pid ?? serverReady?.pid) : null;
   let stopped = false;
   try {
     if (linkedServer) {
       updateInProgress = true;
-      quitting = true;
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { worker.off('exit', exited); reject(new Error('server did not stop for update')); }, 30_000);
-        const exited = () => { clearTimeout(timer); resolve(); };
+        const fail = () => { clearTimeout(timer); worker.off('exit', exited); reject(new Error(t('lifecycle.stopFailed'))); };
+        const timer = setTimeout(fail, 30_000);
+        const exited = () => {
+          clearTimeout(timer);
+          if (worker.exitReason === 'closing') resolve();
+          else fail();
+        };
         worker.once('exit', exited);
-        worker.postMessage({ type: 'shutdown' });
+        if (worker.postMessage({ type: 'shutdown' }) === false) fail();
       });
       stopped = true;
+      const deadline = Date.now() + 30_000;
+      while (oldPid && serverBoot().isAlive(oldPid)) {
+        if (Date.now() >= deadline) throw new Error(t('lifecycle.stopFailed'));
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
-    else {
-      const lock = await workerRequest('update-lock');
-      if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
+    if (action === 'restart') {
+      app.relaunch({ args: [...relaunchArgs(process.argv), `--lifecycle-restart=${requestId}`] });
+      quitting = true;
+      app.quit();
+      return;
     }
-    // The renderer flushes drafts before invoking this operation. The lease now
+    // The renderer has saved the drafts. The lease now
     // rejects new server commands until shutdown, eliminating the idle-check race.
     const updater = require('electron-updater').autoUpdater;
     const native = require('electron').autoUpdater;
     await new Promise((resolve, reject) => {
       const before = new Set(native.listeners('update-downloaded'));
-      const cleanup = () => { updater.off('error', failed); native.off('before-quit-for-update', ready); };
+      const cleanup = () => { clearTimeout(timer); updater.off('error', failed); native.off('before-quit-for-update', ready); };
       const failed = () => {
         cleanup();
         // MacUpdater registers an install callback while Squirrel stages the ZIP.
@@ -183,9 +223,11 @@ async function installUpdate() {
       };
       const ready = () => {
         cleanup();
-        try { fs.writeFileSync(path.join(app.getPath('userData'), 'update-restart-notice'), '1'); } catch (error) { log(`update restart notice could not be saved: ${error.message}`); }
+        try { fs.writeFileSync(path.join(app.getPath('userData'), 'update-restart-notice'), requestId || '1'); } catch (error) { log(`update restart notice could not be saved: ${error.message}`); }
         quitting = true; if (!linkedServer) worker.postMessage({ type: 'shutdown' }); resolve();
       };
+      const timer = setTimeout(failed, 90_000);
+      timer.unref?.();
       updater.once('error', failed); native.once('before-quit-for-update', ready);
       // Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。
       // 入れ先とインストールの種類は前回を引き継ぎ、選択と完了の画面は出さない（build/installer.nsh）
@@ -193,14 +235,19 @@ async function installUpdate() {
     });
   } catch (e) {
     quitting = false; updateInProgress = false;
-    if (linkedServer && stopped && serverRestarter) {
+    if (linkedServer && !worker.connected && oldPid && serverBoot().isAlive(oldPid)) {
+      if (await serverBoot().reattachServer({ link: worker, dataDir: serverBoot().resolveDataDir(), log }) && serverExitHandler) {
+        worker.off('exit', serverExitHandler);
+        worker.once('exit', serverExitHandler);
+      }
+    } else if (linkedServer && (stopped || !worker.connected) && serverRestarter) {
       const restarted = await serverRestarter.restart();
       if (restarted.ok) {
         serverReady = restarted.ready;
         if (serverExitHandler) worker.once('exit', serverExitHandler);
         await reloadWindow(restarted.ready, activePortFile);
       }
-    } else if (!linkedServer) worker.postMessage({ type: 'update-unlock' });
+    }
     throw e;
   }
 }
@@ -275,13 +322,13 @@ function systemLanguage() {
  * 開発（electron .）は既定が off で、on にするなら AGENT_HOST_RUNTIME_RESOURCES つき（desktop:pack の resources を指す確認用）。
  * 使えなければ null（今の utilityProcess。理由を log に残す）
  */
-async function chooseLinkedServer(portFile) {
+async function chooseLinkedServer(portFile, queuedResumeVersion) {
   const flag = String(process.env.AGENT_HOST_HANDOVER ?? '').trim().toLowerCase();
   if (flag !== 'on' && !(app.isPackaged && flag === '')) return null;
   if (!app.isPackaged && !process.env.AGENT_HOST_RUNTIME_RESOURCES) { log('AGENT_HOST_HANDOVER=on needs a packaged app (or AGENT_HOST_RUNTIME_RESOURCES): using the utility process'); return null; }
   try {
     return await serverBoot().chooseServer({ resourcesPath: runtimeResources(), execPath: process.execPath, appVersion: app.getVersion(), systemLocale: systemLanguage(), port: savedPort(portFile), cwd: app.getPath('home'),
-      dataDir: serverBoot().resolveDataDir(), log });
+      dataDir: serverBoot().resolveDataDir(), queuedResumeVersion, log });
   } catch (error) {
     log(`zero-downtime update is not used (${error.message}): using the utility process`);
     return null;
@@ -320,6 +367,7 @@ function relaunchArgs(argv) {
     arg !== '--hidden'
     && arg !== '--remote-hosts'
     && !String(arg).startsWith('--remote-hosts=')
+    && !String(arg).startsWith('--lifecycle-restart=')
     && !/^pleiad:\/\//i.test(String(arg))
   ));
 }
@@ -381,7 +429,7 @@ function startServerSwitch(ready, portFile, onServerExit) {
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
     reload: next => reloadWindow(next, portFile),
     // 自動起動の --hidden は引き継がない（利用者が押した「再起動」で、窓が出ないままにならないように）
-    restart: () => { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') }); app.exit(0); },
+    restart: () => { quitting = true; app.relaunch({ args: relaunchArgs(process.argv) }); app.exit(0); },
     fallback: () => { void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
   });
@@ -390,7 +438,13 @@ function startServerSwitch(ready, portFile, onServerExit) {
 
 async function boot() {
   const updateNoticeFile = path.join(app.getPath('userData'), 'update-restart-notice');
-  try { updateRestartNotice = fs.readFileSync(updateNoticeFile, 'utf8') === '1'; fs.unlinkSync(updateNoticeFile); } catch { updateRestartNotice = false; }
+  try {
+    const notice = fs.readFileSync(updateNoticeFile, 'utf8');
+    fs.unlinkSync(updateNoticeFile);
+    updateRestartNotice = Boolean(notice);
+    // The legacy notification flag still reloads the renderer, but carries no receipt ID.
+    updateRequest = notice === '1' ? undefined : notice;
+  } catch { updateRestartNotice = false; }
   // 待たない（大きい保存領域を消すのに時間が掛かっても、起動を遅らせない）。失敗しても投げない
   void clearOldBrowserPartition({ userData: app.getPath('userData'), session, log: line => log(`browser partition: ${line}`) });
   // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
@@ -406,9 +460,17 @@ async function boot() {
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   activePortFile = portFile;
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
+  const restartRequest = process.argv.find(arg => arg.startsWith('--lifecycle-restart='))?.split('=')[1];
+  const requestId = restartRequest || updateRequest;
+  const lifecycleDir = path.join(serverBoot().resolveDataDir(), 'desktop-lifecycle');
+  const version = app.getVersion();
+  const queuedResumeVersion = requestId && await claimQueuedResume({
+    dir: lifecycleDir, requestId,
+    action: restartRequest ? 'restart' : 'install', version, isAlive: serverBoot().isAlive,
+  }) ? version : '';
   // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
   // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
-  linked = await chooseLinkedServer(portFile);
+  linked = await chooseLinkedServer(portFile, queuedResumeVersion);
   // utilityProcess の経路でも、サーバーの標準出力・標準エラー（Chrome の接続の移り変わり `chrome: …` など）を userData\logs\server.log に残す。
   // パイプの経路（<実行場所>\logs\server.log）と同じに、サーバー自身が書く（core/server-log.mjs。token=… は伏せ、1MB で .old へ回す）。開発版は別の名前
   const utilityLogFile = process.env.AGENT_HOST_SERVER_LOG || path.join(app.getPath('userData'), 'logs', app.isPackaged ? 'server.log' : 'server-dev.log');
@@ -417,11 +479,24 @@ async function boot() {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
-    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot },
+    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot, AGENT_HOST_QUEUED_RESUME_VERSION: queuedResumeVersion },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   worker.once('exit', () => { if (!linked) utilityExited = true; });
   messages = createWorkerMessages(worker);
+  // A restored conversation can query its receipt before the first window has loaded.
+  const lifecycleReady = Promise.withResolvers();
+  messages.on('message', message => {
+    if (message?.type !== 'desktop-lifecycle') return;
+    void lifecycleReady.promise.then(async () => {
+      await reconciliation;
+      let reply;
+      try { reply = { ok: true, result: await lifecycle.request(message.action, message.args, message.owner) }; }
+      catch (error) { reply = { ok: false, error: message.action === 'prepare' && updates.state.phase === 'error'
+        ? updates.state.error || t('update.fetchFailed') : error.code ? t('lifecycle.failed') : error.message }; }
+      worker.postMessage({ type: message.type, id: message.id, ...reply });
+    });
+  });
   powerMonitor.on('resume', () => worker?.postMessage({ type: 'wake' }));
   powerMonitor.on('shutdown', () => { exitInProgress = true; });
   // Consume logs without exposing the private authentication URL.（サーバーは出力を logs\server.log へ向けるので、ここにはほぼ来ない。パイプの経路には stdout・stderr が無い）
@@ -542,6 +617,7 @@ async function boot() {
   window.on('close', event => {
     if (quitting) return;
     event.preventDefault();
+    if (lifecycle?.stopping) { notifyLifecycleQuitPending(); return; }
     if (crashRestarting) { window.hide?.(); return; }
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
@@ -552,7 +628,7 @@ async function boot() {
     dataDir: serverBoot().resolveDataDir(), resourcesPath: runtimeResources(), execPath: process.execPath, systemLocale: systemLanguage(), cwd: app.getPath('home'), log: line => log(`restart: ${line}`) }) : null;
   const onServerExit = () => {
     // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
-    if (quitting || exitInProgress || serverSwitch?.replacing) return;
+    if (quitting || exitInProgress || updateInProgress || serverSwitch?.replacing) return;
     void (async () => {
       let restartFailed = false;
       // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す。
@@ -620,18 +696,49 @@ async function boot() {
   if (updaterOn) try { installUpdateSignatureVerifier(autoUpdater); } catch (e) { bootLogger.warn?.(`update signature verifier: ${e.message}`); }
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
-    enabled: updaterOn, install: installUpdate,
+    enabled: updaterOn, install: requestId => installUpdate('install', requestId),
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }
   catch (e) { updates.enabled = false; updates.patch({ enabled: false, phase: 'unavailable', error: e.message }); }
+  lifecycle = createLifecycle({
+    dir: lifecycleDir, updates,
+    unsupported: () => updates.state.store ? t('lifecycle.store')
+      : !app.isPackaged || !pkg.plyRelease ? t('lifecycle.distribution')
+      : !linked ? t('lifecycle.independent')
+      : null,
+    flush: flushLifecycleDrafts,
+    lock: async leaseId => {
+      if (linked && serverReady?.appVersion !== app.getVersion()) throw new Error(t('lifecycle.serverVersionPending', {
+        desktop: app.getVersion(), server: serverReady?.appVersion || t('lifecycle.unknownVersion'),
+      }));
+      if (quitting || exitInProgress || crashRestarting || serverSwitch?.replacing) throw new Error(t('update.busy'));
+      const result = await workerRequest('update-lock', { leaseId, preserveTurns: Boolean(linked) });
+      if (!result.ok) throw new Error(linked
+        ? t('lifecycle.blocked', { reason: result.reason }) : t('update.blocked', { reason: result.reason }));
+    },
+    unlock: leaseId => worker.postMessage({ type: 'update-unlock', leaseId }),
+    stop: (action, id) => action === 'install' ? updates.command('install', id) : installUpdate('restart', id),
+    boot: () => ({ main: `${process.pid}:${processStartedAt}`, server: { pid: serverReady?.pid, startedAt: serverReady?.startedAt },
+      version: app.getVersion(), serverVersion: serverReady?.appVersion, switching: serverSwitch?.replacing,
+      updateRequest, restartRequest }),
+    log: error => log(`lifecycle receipt: ${error.code ?? error.message}`),
+  });
+  let reconciliation = lifecycle.reconcile().catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));
+  const reconcile = () => {
+    reconciliation = reconciliation.then(() => lifecycle.reconcile()).catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));
+  };
+  messages.on('message', message => { if (message?.type === 'ready') reconcile(); });
+  setInterval(reconcile, 24 * 60 * 60 * 1000).unref?.();
+  lifecycleReady.resolve();
   window.webContents.send('ply:update-state', updates.snapshot());
   // 先行版は 1 日に何度も出る。6 時間おきでは、開きっぱなしの Pleiad が半日近く新しい版に気付かなかった。
   // 30 分おきに確認し、ウィンドウへ戻ってきたときも（前回から 10 分あいていれば）確認する
   if (updates.enabled) {
-    setTimeout(() => updates.auto(), 15000).unref();
-    setInterval(() => updates.auto(), 30 * 60 * 1000).unref();
-    window.on('focus', () => updates.auto(10 * 60 * 1000));
+    const auto = minGap => { if (!lifecycle.busy) void updates.auto(minGap); };
+    setTimeout(auto, 15000).unref();
+    setInterval(auto, 30 * 60 * 1000).unref();
+    window.on('focus', () => auto(10 * 60 * 1000));
   }
 }
 
@@ -645,8 +752,12 @@ function scheduledText(scheduled) {
   return t('quit.scheduledSend', { count: send, next }) + t('quit.scheduledTail') + t('quit.scheduledLate');
 }
 
+function notifyLifecycleQuitPending() {
+  notifyCompletion({ sessionId: 'settings:updates', completedAt: Date.now(), title: app.getName(), body: t('lifecycle.quitPending') });
+}
+
 async function closeSafely() {
-  if (updates?.state.phase === 'installing' || crashRestarting) return;
+  if (updates?.state.phase === 'installing' || lifecycle?.stopping || crashRestarting) return;
   if (closing) return;
   closing = true;
   exitInProgress = true;
@@ -698,8 +809,22 @@ ipcMain.handle('ply:login-item', (event, action, value) => {
 ipcMain.handle('ply:update', async (event, action, value) => {
   trusted(event);
   if (!updates) return { version: app.getVersion(), enabled: false, phase: 'unavailable', channel: app.getVersion().includes('-') ? 'beta' : 'stable' };
-  try { return await updates.command(action, value); }
+  if (action !== 'status' && lifecycle?.busy)
+    throw new Error(lifecycle.stopping ? t('lifecycle.inProgress') : t('update.busy'));
+  try {
+    if (action === 'install') {
+      // Keep the existing settings screen waiting on preflight so it can show the reason for refusal.
+      if (!lifecycle) throw new Error(t('update.busy'));
+      await lifecycle.request('install', { requestId: randomUUID(), targetVersion: value }, null, { screen: true });
+      return updates.snapshot();
+    }
+    return await updates.command(action, value);
+  }
   catch (e) { throw new Error(['check', 'download'].includes(action) ? updates.snapshot().error || t('update.fetchFailed') : e.message); }
+});
+ipcMain.on('ply:update-drafts-flushed', (event, id, ok, error) => {
+  try { trusted(event); } catch { return; }
+  if (draftReply?.id === id) draftReply.finish(ok === true, typeof error === 'string' ? error.slice(0, 500) : null);
 });
 // 画面の配色（自動・明・暗）や帯の下の面（脇の開閉・プレビュー）が変わるたびに、重ねたボタンの地と記号の色を合わせ直す
 ipcMain.on('ply:title-bar', (event, colors) => {
@@ -729,8 +854,12 @@ else {
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
   app.on('second-instance', (_event, argv) => { const action = plusLinkArgv(argv); if (action) { worker?.postMessage({ type: 'plus-entrance', action }); frontMainWindow(); return; } if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => {
+    if (!quitting && (crashRestarting || lifecycle?.stopping)) {
+      event.preventDefault();
+      if (lifecycle?.stopping) notifyLifecycleQuitPending();
+      return;
+    }
     exitInProgress = true;
-    if (!quitting && crashRestarting) { event.preventDefault(); return; }
     if (!quitting && window) { event.preventDefault(); void closeSafely(); }
   });
   app.on('will-quit', () => { exitInProgress = true; });
