@@ -64,6 +64,15 @@ export function waitStop(id, payload) {
 }
 
 /**
+ * ログインの失効でエージェントを起こし直したとき（#229。core/backends/claude.mjs）、同じ会話の続きを頼む Pleiad の文。
+ * 返り: { text, body }。text はエージェントへ渡す文（reason="auth" の印で囲む）、body は画面に出す中身
+ */
+export function authRestartNote(lng) {
+  const body = agentT(lng, 'stops.authRestart');
+  return { text: `<${INTERRUPTION_TAG} reason="auth">\n${body}\n${CLOSE}\n\n`, body };
+}
+
+/**
  * エージェントへ添える文。止めたものが無ければ null。
  * 返り: { text, body, keys, dropped, hidden }。text はエージェントへ渡す文（印で囲む）、body は画面に出す中身。
  * keys は伝えた項目（渡ったら takeStops で消す）。

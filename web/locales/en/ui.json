@@ -2456,6 +2456,7 @@
       "taskResultState": "Delegation result ({{state}})",
       "taskFull": "Full text given to the agent",
       "interruptionNote": "Told the agent what the interruption stopped",
+      "authRestartNote": "The login expired, so the agent was restarted with a fresh login and continued",
       "modelSwitch": {
         "first": "{{from}}'s response was stopped by a safeguard and switched to {{to}}",
         "later": "Switched to {{to}} by a safeguard · switch no. {{n}} in this conversation",

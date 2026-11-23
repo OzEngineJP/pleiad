@@ -696,20 +696,25 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
         connectors: {
           identity: IDENTITY,
           expiredError() { return attachConnectorsError(new ConnectorsAuthError('expired', { name }), account); },
-          /** 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env, expiresAt } を返す。失敗は投げる（旧いトークンへ戻さない） */
-          async fresh({ cwd } = {}) {
+          /**
+           * 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env, expiresAt } を返す。失敗は投げる（旧いトークンへ戻さない）。
+           * stale は会話の CLI が断られた（401）トークン（#229。core/backends/claude.mjs の recoverAuth）。設定フォルダのトークンがまだそれなら、
+           * 期限が先でも CLI に更新させ、それでも同じなら取り直せなかった（expired）として投げる
+           */
+          async fresh({ cwd, stale = null } = {}) {
             try {
               await settingsCheck(name, cwd);
               let cred = await credentials(account, dir);
+              const rejected = Boolean(stale) && cred.token === stale;
               let loginFailure = refreshExpired(cred) ? 'refresh-token-expired' : null;
-              if (!loginFailure && cred.expiresAt - now() <= REFRESH_WINDOW_MS) {
+              if (!loginFailure && (rejected || cred.expiresAt - now() <= REFRESH_WINDOW_MS)) {
                 const authFailed = await Promise.resolve().then(() => refresh(dir)).then(() => false, claudeUsageAuthFailure);
                 if (authFailed) await Promise.resolve().then(() => onLoginExpired(account.id, 'no-login')).catch(() => {});
                 cred = await credentials(account, dir);
                 if (refreshExpired(cred)) loginFailure = 'refresh-token-expired';
               }
               if (loginFailure) await Promise.resolve().then(() => onLoginExpired(account.id, loginFailure)).catch(() => {});
-              if (loginFailure || cred.expiresAt <= now()) throw new ConnectorsAuthError('expired', { name });
+              if (loginFailure || cred.expiresAt <= now() || (rejected && cred.token === stale)) throw new ConnectorsAuthError('expired', { name });
               try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
               catch { throw new ConnectorsAuthError('profile', { name }); }
               const auth = { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };

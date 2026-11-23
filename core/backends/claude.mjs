@@ -51,8 +51,11 @@ import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { identitySuffix } from "../claude-connectors.mjs";
 import { claudeOwnDirEnv, REFRESH_WINDOW_MS } from "../claude-connectors-auth.mjs";
 import { OWN_DIR } from "../claude-own-dir.mjs";
+import { authRestartNote } from "../interrupt-stops.mjs";
 
 const NL = String.fromCharCode(10);
+// ログインの失効で CLI を起こし直すのは 1 ターンに何回までか（#229。取り直しても続けて断られるなら、ログインし直しが要る）
+const MAX_AUTH_RESTARTS = 2;
 
 // runTurn が使う SDK の入口と中断の待ち時間。テスト（tests/unit/claude-steer-stop.mjs）だけが差し替える。
 // 中断は CLI に interrupt を頼み、stopAckMs のうちに受領（interrupt の応答か result）が無ければ
@@ -978,7 +981,16 @@ export const backend = {
     let input = createInputQueue();
     // プロンプトを CLI へ渡したか。渡す前の失敗（ネイティブの指示・MCP を止められないなど）は undelivered を付けて投げる
     let promptSent = Boolean(adopt);
+    // ログインの失効で起こし直した CLI に最初に渡す文（authRestartNote の text）。発言は送り直さず、この文で同じ会話の続きを頼む（#229）
+    let continueNote = null;
     async function* promptStream() {
+      if (continueNote) {
+        const text = continueNote;
+        continueNote = null;
+        yield { ...userMessage(text), uuid: randomUUID() };
+        yield* input;
+        return;
+      }
       // 付け直し（2c）は発言を送らない（旧サーバーが渡し済み）。空の入力の流れで、途中送信だけを流す
       if (adopt) { yield* input; return; }
       if (contextRuntime) await readyContext;
@@ -1328,7 +1340,7 @@ export const backend = {
         // 上限の印は 1 回の上限で 2 度来る。先の rate_limit_event は解除時刻と枠を持ち、後のライブの assistant の error 行は持たない
         // （SDKAssistantMessage に quotaLimits は載らない）。後の印で上書きすると解除時刻の分からない上限になり、振り分けが外さない（2026-10-21）
         if (ev.type === 'limit') { limit = mergeLimit(limit, ev); continue; }
-        if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null }; continue; }
+        if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null, ...(authFailed?.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) }; if (!replay) recoverAuth(); continue; }
         if (ev.type === 'modelRejected') { modelRejected = { message: ev.message ?? modelRejected?.message ?? null }; continue; }
         if (ev.type === 'text.delta' || ev.type === 'tool.start') produced = true;
         if (ev.type === "turnResult" && stop) continue;
@@ -1371,6 +1383,34 @@ export const backend = {
     let preExpiryAuthError = null;
     let heldRestarts = 0;
     const clearExpiryTimer = () => { if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; } };
+    // ログインの失効（401。b1 は CLI が自分で更新できず、使用量の読み取りなどがトークンを更新すると古い方が取り消される）からの立て直し（#229）。
+    // 新しいトークンを取り直せたら CLI を起こし直し、同じ会話（resume）の続きから進める。出力の途中でも、付け直したターンでも同じ。
+    // 取り直せない・同じトークンしか無い・回数を超えたら、今までどおり kind: 'auth' の失敗で止める
+    let authRecovery = null;
+    let authRestarts = 0;
+    let restartReason = null;
+    const canRecoverAuth = () => !authRecovery && !restartingPreExpiry && !preExpiryAuthError && !stop && !signal?.signal?.aborted
+      && typeof connectors?.fresh === 'function' && !endpoint && !ownDir && !finished && authRestarts < MAX_AUTH_RESTARTS;
+    const recoverAuth = () => {
+      if (!canRecoverAuth()) return;
+      const stale = activeOauthToken;
+      authRecovery = (async () => {
+        let next;
+        try { next = await connectors.fresh({ cwd, stale }); }
+        catch (err) {
+          authFailed = { message: authFailed?.message ?? err?.message ?? 'authentication_failed', connectorsError: err?.connectorsError ?? null };
+          return;
+        }
+        if (stop || signal?.signal?.aborted) return;
+        if (!next?.token || next.token === stale || !(next.expiresAt > Date.now())) return;
+        clearExpiryTimer();
+        restartingPreExpiry = next;
+        restartReason = 'auth';
+        void held?.finish();
+        closeInput();
+        sdkAbort.abort();
+      })();
+    };
     const createSdkQuery = async () => {
       if (finished) return null;
       try {
@@ -1456,7 +1496,8 @@ export const backend = {
       if (q && sdkMode(mode) === "bypassPermissions") bypassQueries.add(q);
       holdQuery(ctx.sessionId);
     };
-    if (adopt && !finished && connectors && !endpoint && Number.isFinite(activeExpiresAt) && activeExpiresAt <= Date.now()) {
+    // 付け直したターンの期限がもう過ぎていた。新しいトークンを取れる（connectors.fresh がある）なら止めずに付け直し、401 に当たったら立て直す（#229）
+    if (adopt && !finished && connectors && typeof connectors.fresh !== 'function' && !endpoint && Number.isFinite(activeExpiresAt) && activeExpiresAt <= Date.now()) {
       await held?.finish();
       const expErr = connectors.expiredError?.() ?? Object.assign(new Error('authentication_failed'), { connectorsError: null });
       emit({ type: 'turnResult', outcome: 'error', error: hide(expErr.message), kind: 'auth', pristine: true, ...(expErr.connectorsError ? { connectorsError: expErr.connectorsError } : {}) });
@@ -1506,6 +1547,9 @@ export const backend = {
         if (!heldResult && !limit && !stop) throw new Error(`Claude Code process exited with code ${sawExit?.code ?? 'unknown'}`);
       } else {
         const onExpiryReached = async () => {
+          // もう出力が出た・付け直したターンは、期限のタイマーでは止めない（ツールの途中で殺さない）。
+          // ここで更新もしない（更新すると CLI が持つ今のトークンが取り消される）。期限が来て 401 に当たったら recoverAuth が立て直す（#229）
+          if ((produced || adopt) && typeof connectors?.fresh === 'function') return;
           if (!refreshedPreExpiry && Date.now() < activeExpiresAt) {
             refreshedPreExpiry = true;
             scheduleExpiryTimer();
@@ -1562,9 +1606,13 @@ export const backend = {
               await handle(message, false);
               held?.ack(message.uuid);
             }
+            if (authRecovery) await authRecovery;
             if (restartingPreExpiry && !stop && !signal?.signal?.aborted) throw new Error('PRE_EXPIRY_RESTART');
             break;
           } catch (loopErr) {
+            // 401 の印（authFailed）が来ないまま SDK が認証の失敗で投げたときも、同じ立て直しを試す
+            if (!authRecovery && !restartingPreExpiry && isClaudeAuthError(loopErr?.message ?? loopErr)) recoverAuth();
+            if (authRecovery) await authRecovery;
             if (!restartingPreExpiry || stop || signal?.signal?.aborted) throw loopErr;
             clearExpiryTimer();
             for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
@@ -1577,10 +1625,20 @@ export const backend = {
             activeConnectorsEnv = nextAuth.env;
             activeExpiresAt = nextAuth.expiresAt;
             refreshedPreExpiry = false;
-            heldRestarts++;
+            const reason = restartReason;
+            restartReason = null;
+            authRecovery = null;
+            if (reason === 'auth') { authRestarts++; authFailed = null; heldResult = null; }
+            else heldRestarts++;
             if (!resumeTarget && ctx.sessionId) resumeTarget = ctx.sessionId;
             resetInputChannel();
-            promptSent = false;
+            // もう何か出した（ツールを使った・返答を書き始めた）か、付け直したターンなら、依頼は送り直さない（同じ作業を 2 度させない）。
+            // 同じ会話を resume し、Pleiad の内部の文で続きを頼む。画面には起動し直したことを 1 行で出す
+            if (reason === 'auth' && (produced || adopt) && resumeTarget) {
+              const note = authRestartNote(locale);
+              continueNote = note.text;
+              emit({ type: 'interruptionNote', text: note.body, reason: 'auth' });
+            } else promptSent = false;
             await held?.finish();
             held = await heldPlan({ dataDir: store.dataDir, executable, compact: Boolean(compact) })
               .then(plan => plan && createHeldCli({ mode: 'spawn', client: plan.client, onSpawn: () => bindHolder() }));

@@ -2412,6 +2412,7 @@
       "taskResultState": "委譲の結果（{{state}}）",
       "taskFull": "エージェントに渡した全文",
       "interruptionNote": "中断で止めたものをエージェントに伝えました",
+      "authRestartNote": "ログインが切れたので、新しいログインで起動し直して作業を続けました",
       "modelSwitch": {
         "first": "{{from}} の応答が安全装置で止まり、{{to}} に切り替わりました",
         "later": "安全装置で {{to}} に切り替わりました · この会話で {{n}} 回目",

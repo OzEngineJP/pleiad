@@ -157,6 +157,8 @@ export const BACKEND_EVENTS = {
   hookRun: { phase: oneOf('started', 'response') },
   // 安全装置でモデルが替わった（switched。to は替え先）/ 替え先が無く止まった（stopped）。from は止められたモデル
   modelSwitch: { phase: oneOf('switched', 'stopped'), from: str, to: optional(str) },
+  // Pleiad がエージェントへ伝えた文（reason: 'auth' はログインの失効で起動し直して続けた。#229）
+  interruptionNote: { text: str, reason: optional(str) },
   // 裏のコマンドの様子（server が委譲のタスクの見張りに使い、画面へは流さない）。id はツールの呼び出しの id で、無いこともある。
   // state はバックエンドの語彙（stopped / completed / unknown / background / running など）のまま
   'task.activity': {},
@@ -211,6 +213,8 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke', 'restoredSteers',
   'signal', 'control', 'locale', 'delegatedChild', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
+  // connectors: 方式 b1 のトークンの取り直し（core/claude-connectors-auth.mjs）。付け直したターンが 401 に当たったときに使う（#229）
+  'connectors',
   // onContextRebuild: 記録からの組み立て直し（ADR 0287）の区切りを会話へ記録する受け口。conversations.mjs の引き継ぎの包みが呼ぶ
   'onContextRebuild',
   'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',

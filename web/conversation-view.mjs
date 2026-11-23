@@ -620,7 +620,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
       case 'interruptionNote': {
         // 中断で止めたものをエージェントへ伝えた。開くと伝えた中身が読める（履歴の systemHistoryNode と同じ形）。
         // 添えた発言の吹き出しの前に置く（履歴と同じ並び）
-        const node = append(sysFold(t('chat.sys.interruptionNote'), ev.text ?? ''));
+        const node = append(sysFold((ev.reason === 'auth' ? t('chat.sys.authRestartNote') : t('chat.sys.interruptionNote')), ev.text ?? ''));
         const row = ev.messageId ? messageRow(ev.messageId) : null;
         if (row && row !== node) row.before(node);
         return;

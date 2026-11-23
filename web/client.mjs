@@ -1665,7 +1665,7 @@ function systemHistoryNode(m) {
   if (m.kind === 'command' || m.kind === 'shell') return commandMsg(m);
   // 中断で止めたものを Pleiad がエージェントへ伝えた文。開くと中身が読める
   // 作業中の設定の変更で止めたとき（hidden）は、エージェントへは伝えるが画面には出さない（ADR 0341）
-  if (m.kind === 'interruptionNote') return m.hidden ? null : sysFold(t('chat.sys.interruptionNote'), m.body ?? '');
+  if (m.kind === 'interruptionNote') return m.hidden ? null : sysFold((m.reason === 'auth' ? t('chat.sys.authRestartNote') : t('chat.sys.interruptionNote')), m.body ?? '');
   if (m.kind === 'modelSwitch') return switchRow(m);
   // bot の会話の先頭の包み（core/system-messages.mjs の splitLeadingNotes）。チャンネルの出来事は「#チャンネル · 発言者」、記憶は渡した印。開くと中身が読める
   if (m.kind === 'channelEvent') return sysFold(m.history ? t('channels:event.thread', { channel: m.channel }) : t('channels:event.post', { channel: m.channel, from: m.from }), m.body ?? '', hhmm(m.at));

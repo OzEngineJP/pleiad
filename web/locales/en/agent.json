@@ -551,6 +551,7 @@
   },
   "stops": {
     "heading": "[Pleiad interruption record]\nWhen the previous turn stopped ({{reason}}), Pleiad stopped the following. This is a notice from Pleiad, not a message from the user.",
+    "authRestart": "[Pleiad notice]\nThe login token was revoked or expired, so Pleiad restarted the agent with a new token. This is not a message from the user. Continue from where the previous work left off (the last tool results and the unfinished answer). Do not redo work that is already done.",
     "reason": {
       "user": "the user stopped it",
       "update": "stopped to update Pleiad",

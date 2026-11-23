@@ -9550,6 +9550,21 @@ function heldTurn(turn) {
  * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
  * bot の会話・圧縮のターン・タスクの id が分からない委譲の子。委譲の子は 2b-7 から付け直す）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
  */
+/**
+ * 方式 b1 のアカウントのトークンを、呼ばれたときに取り直す口（core/claude-connectors-auth.mjs の connectors と同じ形）。
+ * 付け直したターン（restoreTurn）が 401 に当たったときに core/backends/claude.mjs の recoverAuth が呼ぶ（#229）
+ */
+function lazyClaudeConnectors(backend, accountId) {
+  return {
+    identity: 'b1',
+    async fresh(options) {
+      const account = await accountResolve(backend, accountId);
+      if (typeof account?.connectors?.fresh !== 'function') throw new Error('authentication_failed');
+      return account.connectors.fresh(options);
+    },
+  };
+}
+
 async function restoreTurn(card, source) {
   if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');
   const fields = restoreFields(card);
@@ -9563,6 +9578,7 @@ async function restoreTurn(card, source) {
   // main がつながる前に復号を待たない（秘密の復号は main に頼むが、main とのパイプはこの付け直しの後に立つ。待つと起動が上限まで止まる）。
   // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。トークンのアカウントは、名前とコネクターの入口の設定だけを読む
   let restoredAccount = null;
+  let restoredConnectors = null;
   if (!fields.endpointId && fields.accountId) {
     if (accountKind(backend) === 'agent') {
       restoredAccount = await agentAccounts.get(fields.accountId);
@@ -9570,7 +9586,11 @@ async function restoreTurn(card, source) {
       backend = await backendForAccount(backend, restoredAccount);
     } else if (accountKind(backend) === 'token') {
       const entry = await claudeAccounts.get(fields.accountId);
-      if (entry) restoredAccount = { ...entry, connectors: (await claudeAccountConnectors.settings.read(entry.id)).enabled === true };
+      const config = entry ? await claudeAccountConnectors.settings.read(entry.id) : null;
+      if (entry) restoredAccount = { ...entry, connectors: config.enabled === true };
+      // 方式 b1 のアカウントは、付け直したターンが 401 に当たったときに新しいトークンを取り直す口を渡す（#229）。
+      // 付け直しの時点では取りに行かない（取ると CLI が持つ今のトークンが取り消される）。呼ばれたときにアカウントを引き直す
+      if (entry && config.enabled === true && config.mode !== OWN_DIR) restoredConnectors = lazyClaudeConnectors(backend, entry.id);
     }
   }
   const meta = await store.get(sessionId);
@@ -9688,6 +9708,7 @@ async function restoreTurn(card, source) {
     backend,
     cwd,
     account: restoredAccount,
+    connectors: restoredConnectors,
     accountId: fields.accountId,
     endpoint: null,
     endpointId: fields.endpointId,
@@ -9802,7 +9823,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           browserEnv, controlRuntime,
-          card: ctx.card.backendCard, source, ...(ctx.account ? { account: ctx.account } : {}),
+          card: ctx.card.backendCard, source, ...(ctx.account ? { account: ctx.account } : {}), ...(ctx.connectors ? { connectors: ctx.connectors } : {}),
           restoredSteers: ctx.restoredSteers,
           ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
           emit: contractEmit((event, opts) => {

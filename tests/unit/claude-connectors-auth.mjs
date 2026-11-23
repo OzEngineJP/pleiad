@@ -324,8 +324,18 @@ export default async function (t) {
       const inspected = await withOldMarker.inspect(account);
       const far = await (await withOldMarker(account)).account.connectors.fresh({ cwd: tmp });
       t.ok('残り 57 分: ログイン切れの印があっても検査と起動は通り、CLI に更新を頼まない', inspected.ok && far.token === ACCESS && calls.refresh === 0);
+      // 会話の CLI が断られたトークン（stale）を添えた取り直し（#229）
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 57 * 60_000 })); refreshWrites = credsJson({ token: ACCESS2, expiresAt: T0 + 8 * 3600_000 });
+      const revoked = await (await make()(account)).account.connectors.fresh({ cwd: tmp, stale: ACCESS });
+      t.ok('取り直し: 断られたトークン（stale）がまだ設定フォルダにあれば、期限が先でも refresh を 1 回流して新しいトークンを渡す', revoked.token === ACCESS2 && calls.refresh === 1, JSON.stringify(calls));
+      reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 57 * 60_000 }));
+      const sameError = await (await make()(account)).account.connectors.fresh({ cwd: tmp, stale: ACCESS }).then(() => null, e => e);
+      t.ok('取り直し: refresh しても断られたトークンのままなら expired で止める（同じトークンで起こし直さない）', sameError?.code === 'connectors-expired' && calls.refresh === 1 && calls.project === 0, `${sameError?.code} ${JSON.stringify(calls)}`);
+      reset(); await fs.writeFile(credFile, credsJson({ token: ACCESS2, expiresAt: T0 + 57 * 60_000 }));
+      const already = await (await make()(account)).account.connectors.fresh({ cwd: tmp, stale: ACCESS });
+      t.ok('取り直し: 設定フォルダがもう別のトークン（使用量の読み取りなどが更新済み）なら、refresh せずにそれを渡す', already.token === ACCESS2 && calls.refresh === 0, JSON.stringify(calls));
       reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 + 4 * 60_000 }));
-      const unchanged = await (await make()(account)).account.connectors.fresh({ cwd: tmp });
+      const unchanged =await (await make()(account)).account.connectors.fresh({ cwd: tmp });
       t.ok('残り 4 分: 更新を頼み、書き換わらなくても有効なアクセス用トークンで起動する', unchanged.token === ACCESS && calls.refresh === 1 && loginFailures.length === 0);
       reset(); await fs.writeFile(credFile, credsJson({ expiresAt: T0 - 1000 }));
       const stale = (await make()(account)).account;
