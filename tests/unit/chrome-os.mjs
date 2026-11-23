@@ -1701,4 +1701,53 @@ export default async function (t) {
       t.ok('使えない OS・macOS の層の raiseVisibleBrowser は何もしない', unsupported.raiseVisibleBrowser({}).reason === 'unsupported' && mac.raiseVisibleBrowser({}).reason === 'unsupported');
     }
   }
+  // #221: permission failures must not create windows; failed cleanup must not multiply them.
+  for (const permission of ['screen', 'accessibility']) {
+    let spawned = 0;
+    const os = createMacChromeOs({
+      helper: { call: async () => ({ screen: true, accessibility: true, [permission]: false }) },
+      readFile: () => { throw new Error('missing'); },
+      spawn: () => { spawned++; },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok(`mac: ${permission} permission before launch`, result.reason === `${permission}-permission` && spawned === 0);
+  }
+  {
+    let spawned = 0, closed = 0;
+    const os = createMacChromeOs({
+      helper: { call: async op => {
+        if (op === 'permissions') return { screen: true, accessibility: true };
+        if (op === 'chromeClose') { closed++; return { ok: false }; }
+        return { windows: [] };
+      } },
+      readFile: () => { throw new Error('missing'); }, exists: () => true,
+      spawn: () => { spawned++; return { on() {}, unref() {} }; },
+      timing: { findSetupMs: 1, pollMs: 1 },
+    });
+    t.ok('mac: discovery failure attempts marker cleanup', (await os.enableRemoteDebugging()).reason === 'window-not-found' && closed === 1);
+    t.ok('mac: unresolved cleanup prevents another window', (await os.enableRemoteDebugging()).reason === 'setup-cleanup-failed' && spawned === 1);
+  }
+  {
+    const http = await import('node:http');
+    const { WebSocketServer } = require('ws');
+    const server = http.createServer((_req, res) => { res.writeHead(404); res.end(); });
+    const wss = new WebSocketServer({ server, path: '/devtools/browser/live' });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    let endpoint = 'live';
+    const os = createMacChromeOs({
+      helper: { call: async () => ({ screen: false }) },
+      readFile: () => `${port}\n/devtools/browser/${endpoint}\n`,
+    });
+    try {
+      t.ok('mac: actual WebSocket works despite HTTP version 404', (await os.enableRemoteDebugging()).ok === true);
+      endpoint = 'stale';
+      t.ok('mac: listening port with stale WebSocket path is not active', (await os.enableRemoteDebugging()).reason === 'screen-permission');
+    } finally {
+      for (const client of wss.clients) client.terminate();
+      await new Promise(resolve => wss.close(resolve));
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
+
 }

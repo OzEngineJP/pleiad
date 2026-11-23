@@ -143,6 +143,7 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
       lead.textContent = h.assist === 'enable-failed' ? t(`${C}enableFailed`) : t(`${S}setup.status`);
       body.replaceChildren(lead, note(t(h.assist === 'enable-failed' ? `${C}enableFailedNote` : `${C}auto`)), steps());
       // オンにできなかった（Chrome が自分の画面を先に出していた など）: 済ませてから押し直せる
+      if (['screen-permission', 'accessibility-permission'].includes(h.setupReason)) body.append(note(t(`${C}macPermission`)));
       buttons = [decline(), ...(h.enable && h.assist === 'enable-failed' ? [button(t(`${S}denied.retry`), () => cmd('chromeEnable'), 'btn btn-primary')] : [])];
     } else if (h.state === 'consent') {
       body.replaceChildren(ask(t(`${C}question`, { agent: agent() }), t(`${C}explain`)));

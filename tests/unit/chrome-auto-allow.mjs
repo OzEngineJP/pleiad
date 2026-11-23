@@ -198,15 +198,17 @@ export default async function (t) {
     await r.stop();
   }
   {
-    const r = await rig();
+    const logs = [];
+    const r = await rig({ log: line => logs.push(line) });
     await r.chrome.turnOff();
-    r.os.opts.enableFails = true;
+    r.os.enableRemoteDebugging = async () => ({ ok: false, reason: 'screen-permission', diag: { steps: [{ step: { state: 'error', reason: 'not-trusted-or-no-id', title: 'secret-token', checked: false } }] } });
     const p = r.conn.demand(); void p.catch(() => {});
     await until(() => r.conn.state().state === 'setup');
     const out = await r.conn.enable();
     t.ok('入れられなければ setup の enable-failed（人が入れる案内）', out.ok === false && r.conn.state().state === 'setup' && r.conn.state().assist === 'enable-failed', JSON.stringify(r.conn.state()));
+    t.ok('host log has a safe enableStep summary', logs.some(line => line.includes('enableStep') && line.includes('not-trusted-or-no-id')) && !logs.some(line => line.includes('secret-token')));
     await r.clock.advance(3000);
-    t.ok('読み直しの間も enable-failed は残る', r.conn.state().assist === 'enable-failed');
+    t.ok('読み直しの間も enable-failed は残る', r.conn.state().assist === 'enable-failed' && r.conn.state().reason === 'screen-permission');
     await r.chrome.turnOn();
     await r.clock.advance(1000);
     await until(() => r.chrome.upgrades === 1, 5000, 'upgrade');

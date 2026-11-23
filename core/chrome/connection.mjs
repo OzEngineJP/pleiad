@@ -162,7 +162,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       if (att.cur) { await sweep(att.cur); att.cur = null; if (stale(att)) return; }
       // ファイルはあるのにつながらない（unreachable）: Chrome が起動していないか、トグルがオフ（どちらでもファイルは残る）。ファイルが無い（null）: トグルを一度もオンにしていない
       // トグルを入れている間・入れられなかった後の印（assist）は、A のままなら残す
-      setStatus({ state: 'setup', reason: info ? 'unreachable' : null, dialog: false, ...(status.state === 'setup' ? {} : { assist: null }) });
+      setStatus({ state: 'setup', reason: status.state === 'setup' && status.assist === 'enable-failed' ? status.reason : (info ? 'unreachable' : null), dialog: false, ...(status.state === 'setup' ? {} : { assist: null }) });
       clearTimer(att, 'pollTimer');
       att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
       return;
@@ -442,9 +442,17 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const result = browser
         ? await os.enableRemoteDebugging({ browser, profileDir, ...(home.custom ? { userDataDir: home.userDataDir } : {}) })
         : { ok: false, reason: 'no-browser' };
+      for (const { step } of (result?.diag?.steps ?? []).slice(-1)) {
+        const summary = {};
+        for (const key of ['state', 'reason', 'checked', 'scanVisited', 'scanWebAreas', 'scanDepth']) {
+          if (typeof step?.[key] === 'boolean' || typeof step?.[key] === 'number' ||
+              (typeof step?.[key] === 'string' && /^[a-z-]{1,64}$/.test(step[key]))) summary[key] = step[key];
+        }
+        log(`chrome: enableStep ${JSON.stringify(summary)}`);
+      }
       if (stale(att)) return { ok: false, reason: 'stale' };
       log(`chrome: enable ok=${result?.ok === true}${result?.reason ? ` reason=${result.reason}` : ''}`);
-      if (result?.ok !== true) { if (status.state === 'setup') setStatus({ assist: 'enable-failed' }); return { ok: false, reason: String(result?.reason ?? 'failed') }; }
+      if (result?.ok !== true) { if (status.state === 'setup') setStatus({ assist: 'enable-failed', reason: result?.reason ?? 'failed' }); return { ok: false, reason: String(result?.reason ?? 'failed') }; }
       if (status.state === 'setup') {
         setStatus({ assist: null });
         clearTimer(att, 'pollTimer');
