@@ -123,6 +123,23 @@ export default async function (t) {
     const released = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === restored && e.outcome === 'ok', { from: restoredFrom, ms: 10000 });
     t.ok('選び直した上限のタイマーが指示を配送する', released.completedAt >= restoredAt);
 
+    // 押した時点の設定（settings。ADR 0347）を持つ送信は、その枠の上限を待つ。後から別のアカウントを選んでも、その項目は流さない
+    const captured = await newSession();
+    const capturedMeta = await info(captured);
+    const capturedReset = Date.now() + 3 * HOUR;
+    await c.runTurn({ sessionId: captured, prompt: `limit ${capturedReset}` });
+    const capturedAccount = (await info(captured)).interrupted?.account ?? '';
+    await c.cmd('sendMessage', { sessionId: captured, messageId: 'capturedq00001', prompt: 'echo:captured',
+      settings: { backend: 'fake', cwd: ROOT, model: capturedMeta.model ?? '', effort: '', mode: 'default', account: capturedAccount, endpoint: '', worktreePending: false } });
+    const capturedItem = async () => (await c.cmd('listMessages', { sessionId: captured })).find(m => m.id === 'capturedq00001');
+    t.ok('押した時点のアカウントが止まっていれば、送信待ちで待つ', (await capturedItem())?.waiting?.reason === 'limit');
+    const capturedFrom = c.mark();
+    await c.cmd('setTurnSettings', { sessionId: captured, account: capturedAccount ? '' : account.id });
+    await sleep(500);
+    const capturedAfter = await capturedItem();
+    t.ok('後から別のアカウントを選んでも、押した時点のアカウントの上限を待つ', capturedAfter?.status === 'queued' && capturedAfter.waiting?.resetsAt === capturedReset
+      && !c.since(capturedFrom).some(e => e.sessionId === captured && ['turnStart', 'turnEnd', 'userMessage'].includes(e.type)), JSON.stringify({ capturedAfter, events: c.since(capturedFrom).filter(e => e.sessionId === captured).map(e => e.type) }));
+
     const late = await newSession();
     const lateFrom = c.mark();
     const limitedTurn = c.runTurn({ sessionId: late, prompt: `limit ${Date.now() + HOUR} HOLD_TURN:late-limit` });
