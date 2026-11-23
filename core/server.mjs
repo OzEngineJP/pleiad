@@ -8010,6 +8010,7 @@ function syncTodoTasks() {
 
 let delegatedQueueReady = false;
 agentTasks = await createAgentTasks({
+  resumeQueued: Boolean(hostedPort && BOOT_ENV.AGENT_HOST_QUEUED_RESUME_VERSION && BOOT_ENV.AGENT_HOST_QUEUED_RESUME_VERSION === APP_VERSION),
   canStart: () => delegatedQueueReady && !updateGate.locked,
   dataDir: store.dataDir,
   // 付け直す委譲の子のタスクは、起動の復元で interrupted にしない（結果の確定は adoptChild が引き継ぐ。stage2-server-state.md S8）

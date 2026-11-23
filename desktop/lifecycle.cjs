@@ -3,6 +3,40 @@ const path = require('node:path');
 const { t } = require('./i18n.cjs');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FUTURE_RECEIPT = Symbol('future receipt format');
+const validId = id => typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id);
+const receiptFile = (dir, id) => path.join(dir, id.toLowerCase() + '.json');
+
+async function readReceipt(file, id) {
+  try {
+    const receipt = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (Number.isInteger(receipt?.schemaVersion) && receipt.schemaVersion > 1) return FUTURE_RECEIPT;
+    if (receipt?.requestId !== id.toLowerCase() || !['install', 'restart'].includes(receipt?.action) ||
+        !['accepted', 'succeeded', 'failed'].includes(receipt?.state) || typeof receipt.targetVersion !== 'string' ||
+        typeof receipt.previous?.main !== 'string') throw new SyntaxError(t('lifecycle.failed'));
+    return receipt;
+  }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+async function writeReceipt(file, receipt) {
+  const { writeAtomic } = await import('../core/atomic-file.mjs');
+  await writeAtomic(file, JSON.stringify({ ...receipt, schemaVersion: 1 }), { mode: 0o600 });
+}
+
+// Only the matching desktop relaunch can consume an accepted receipt for queue recovery.
+async function claimQueuedResume({ dir, requestId, action, version, isAlive }) {
+  if (!validId(requestId)) return false;
+  const file = receiptFile(dir, requestId);
+  try {
+    const receipt = await readReceipt(file, requestId);
+    const pid = receipt?.previous?.server?.pid;
+    if (receipt?.state !== 'accepted' || receipt.action !== action || receipt.targetVersion !== version ||
+        (receipt.schemaVersion !== undefined && receipt.schemaVersion !== 1) || !receipt.previous.main ||
+        receipt.queuedResumeClaimed !== undefined || !Number.isSafeInteger(pid) || pid <= 0 || isAlive(pid)) return false;
+    await writeReceipt(file, { ...receipt, queuedResumeClaimed: true });
+    return true;
+  } catch { return false; }
+}
 
 // Each accepted request keeps its own receipt across both process lifetimes.
 // Request IDs are supplied before the call so a lost reply can be recovered.
@@ -10,27 +44,15 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
   let operation = null;
   let nextSweep = 0;
   const pending = new Set();
-  const file = id => path.join(dir, id.toLowerCase() + '.json');
+  const file = id => receiptFile(dir, id);
   const invalidFile = id => `${file(id)}.invalid`;
-  const validId = id => typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id);
-  async function read(id) {
-    try {
-      const receipt = JSON.parse(await fs.readFile(file(id), 'utf8'));
-      if (Number.isInteger(receipt?.schemaVersion) && receipt.schemaVersion > 1) return FUTURE_RECEIPT;
-      if (receipt?.requestId !== id.toLowerCase() || !['install', 'restart'].includes(receipt?.action) ||
-          !['accepted', 'succeeded', 'failed'].includes(receipt?.state) || typeof receipt.targetVersion !== 'string' ||
-          typeof receipt.previous?.main !== 'string') throw new SyntaxError(t('lifecycle.failed'));
-      return receipt;
-    }
-    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-  }
+  const read = id => readReceipt(file(id), id);
   async function save(receipt) {
-    const { writeAtomic } = await import('../core/atomic-file.mjs');
-    await writeAtomic(file(receipt.requestId), JSON.stringify({ ...receipt, schemaVersion: 1 }), { mode: 0o600 });
+    await writeReceipt(file(receipt.requestId), receipt);
     if (receipt.state === 'accepted') pending.add(receipt.requestId);
     else pending.delete(receipt.requestId);
   }
-  const publicResult = ({ owner, previous, schemaVersion, ...result }) => result;
+  const publicResult = ({ owner, previous, schemaVersion, queuedResumeClaimed, ...result }) => result;
   async function quarantined(id) {
     return Boolean(await fs.stat(invalidFile(id)).catch(error => { if (error.code !== 'ENOENT') throw error; }));
   }
@@ -172,4 +194,4 @@ function createLifecycle({ dir, updates, unsupported, flush, lock, unlock, stop,
   };
 }
 
-module.exports = { createLifecycle };
+module.exports = { createLifecycle, claimQueuedResume };

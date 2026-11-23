@@ -11,7 +11,7 @@ import { createRegistry } from '../../core/ops/registry.mjs';
 import { createUpdateGate } from '../../core/update-gate.mjs';
 
 const require = createRequire(import.meta.url);
-const { createLifecycle } = require('../../desktop/lifecycle.cjs');
+const { createLifecycle, claimQueuedResume } = require('../../desktop/lifecycle.cjs');
 const { Updates } = require('../../desktop/updates.cjs');
 
 export const name = 'desktop-lifecycle';
@@ -159,6 +159,13 @@ export default async function (t) {
       duplicate.ok && duplicate.result.state === 'accepted' && events.join(',') === 'flush,lock,restart');
     t.ok('A different conversation cannot read or reuse the receipt', (await status(restart.requestId, 'other')).result.result === null &&
       !(await invoke('app.restart', restart, 'other')).ok);
+    const claim = (requestId, action, version, isAlive = () => false) => claimQueuedResume({ dir, requestId, action, version, isAlive });
+    t.ok('Queue recovery requires a matching relaunch and a stopped server',
+      !await claim(undefined, 'restart', '1.0.0') && !await claim(randomUUID(), 'restart', '1.0.0') &&
+      !await claim(restart.requestId, 'install', '1.0.0') && !await claim(restart.requestId, 'restart', '1.1.0') &&
+      !await claim(restart.requestId, 'restart', '1.0.0', pid => pid === 11));
+    t.ok('The accepted restart grants queue recovery once', await claim(restart.requestId, 'restart', '1.0.0') &&
+      !await claim(restart.requestId, 'restart', '1.0.0') && !('queuedResumeClaimed' in (await status(restart.requestId, 'ask')).result.result));
     desktop = createLifecycle(options);
     lifecycle = connect();
     boot = { ...boot, main: 'second', server: { pid: 11, startedAt: 2 }, restartRequest: restart.requestId };
@@ -171,6 +178,7 @@ export default async function (t) {
     events.length = 0;
     await desktop.request('install', apply, null, { screen: true });
     t.ok('Settings uses the same draft, gate and stop sequence', events.join(',') === 'flush,lock,install');
+    t.ok('The accepted update grants queue recovery for its target version', await claim(apply.requestId, 'install', '1.1.0'));
     boot = { ...boot, main: 'third', server: { pid: 12 }, version: '1.1.0', updateRequest: apply.requestId };
     await desktop.reconcile();
     t.ok('The wrong server version records a durable failure', (await desktop.request('status', { requestId: apply.requestId })).result.state === 'failed');
@@ -204,6 +212,10 @@ export default async function (t) {
     const future = randomUUID(), futureBody = JSON.stringify({ schemaVersion: 2, opaque: true });
     await fs.writeFile(file(future), futureBody);
     await fs.utimes(file(future), old, old);
+    t.ok('Corrupt, malformed and future receipts all refuse queue recovery even with a launch ID',
+      (await Promise.all([damaged, invalidShape, future].map(requestId => claimQueuedResume({
+        dir: receipts, requestId, action: 'restart', version: '1.0.0', isAlive: () => false,
+      })))).every(allowed => !allowed));
     await put(valid);
     await put(wrongLaunch);
     await put(fresh, { state: 'failed' });

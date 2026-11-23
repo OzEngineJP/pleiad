@@ -103,7 +103,7 @@ async function launchServer({ mode, nodeExe, args, cwd, env, spawnProcess = spaw
 }
 
 /** サーバーに渡す env。ELECTRON_RUN_AS_NODE は外す（pleiad-node.exe は素の Node。残すと会話のシェルへ漏れる） */
-function serverEnv({ baseEnv = process.env, agentBrowserDir = null, root, key, logFile, port = 0, token = null, systemLocale = '', execPath = process.execPath, resourcesPath = process.resourcesPath, stableCliEnv = {} } = {}) {
+function serverEnv({ baseEnv = process.env, agentBrowserDir = null, root, key, logFile, port = 0, token = null, systemLocale = '', execPath = process.execPath, resourcesPath = process.resourcesPath, stableCliEnv = {}, queuedResumeVersion = '' } = {}) {
   const env = { ...baseEnv };
   delete env.ELECTRON_RUN_AS_NODE;
   const pathKey = Object.keys(env).find(name => name.toLowerCase() === 'path') ?? 'PATH';
@@ -111,6 +111,7 @@ function serverEnv({ baseEnv = process.env, agentBrowserDir = null, root, key, l
   Object.assign(env, stableCliEnv, {
     AGENT_HOST_HANDOVER: 'on', AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(port || 0), AGENT_HOST_SYSTEM_LOCALE: systemLocale,
     AGENT_HOST_SERVER_LOG: logFile, AGENT_HOST_RUNTIME_ROOT: root, AGENT_HOST_RUNTIME_KEY: key,
+    AGENT_HOST_QUEUED_RESUME_VERSION: queuedResumeVersion,
   });
   if (token) env.AGENT_HOST_TOKEN = token;
   return env;
@@ -196,7 +197,7 @@ function describeBootError(error, t) {
  *   port・token              起こすときの画面のポートとトークン（token は切り替えで前のサーバーのものを引き継ぐとき。無ければサーバーが決める）
  */
 async function chooseServer({ resourcesPath, execPath, dataDir = resolveDataDir(), appVersion = '', systemLocale = '', port = 0, token = null, cwd = undefined, env = process.env,
-  log = () => {}, prepareRuntime = options => require('./runtime-boot.cjs').prepareRuntime(options), inspectJob = () => require('./job.cjs').inspectJob(),
+  queuedResumeVersion, log = () => {}, prepareRuntime = options => require('./runtime-boot.cjs').prepareRuntime(options), inspectJob = () => require('./job.cjs').inspectJob(),
   decideLaunch = info => require('./job.cjs').decideLaunch(info), stableCliEnv = options => require('./runtime.cjs').stableCliEnv(options), probe = probeRunning,
   launch = launchServer, createLink = createServerLink, resolveRoot = options => require('./runtime.cjs').resolveRuntimeRoot(options), readLink = readLinkInfo, link = null, startTimeoutMs = START_TIMEOUT_MS } = {}) {
   const prepareOptions = { resourcesPath, execPath, env, log: line => log(`runtime: ${line}`) };
@@ -231,7 +232,7 @@ async function chooseServer({ resourcesPath, execPath, dataDir = resolveDataDir(
       log(`no running server (${attached.reason}); starting one`);
       const { runtime, mode } = plan;
       const startEnv = serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: serverLogFile(runtime.root), port, token, systemLocale, execPath, resourcesPath,
-        stableCliEnv: stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }) });
+        stableCliEnv: stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }), queuedResumeVersion });
       const started = await startAndConnect({ link: serverLink, dataDir, logFile: serverLogFile(runtime.root), readLink, log, timeoutMs: startTimeoutMs,
         launch: () => launch({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: startEnv }) });
       if (!started.attached) await require('./runtime.cjs').activateCli({ root: runtime.root, key: runtime.key });

@@ -11,6 +11,7 @@
  * - AGENT_HOST_HANDOVER: 名前付きパイプで main とつなぐか（core/main-link.mjs）。main 自身の切り替えでもある
  * - AGENT_HOST_PORT・AGENT_HOST_BIND・AGENT_HOST_TOKEN: 待ち受けの場所とトークン（切り替えの後の起こし直しは前のトークンを渡す。desktop/switch.cjs）
  * - AGENT_HOST_SYSTEM_LOCALE: main が渡す OS の言語（core/i18n.mjs）
+ * - AGENT_HOST_QUEUED_RESUME_VERSION: main が確認した更新・再起動の対象版（委譲の待ち行列を引き継ぐ）
  * - AGENT_HOST_SERVER_LOG: 出力を書くファイル（core/server-log-boot.mjs）
  * - AGENT_HOST_RUNTIME_ROOT・AGENT_HOST_RUNTIME_KEY: 走っている版の実行場所と版の名前（core/runtime-use.mjs）
  * - AGENT_HOST_RUNTIME_RESOURCES・AGENT_HOST_RUNTIME_DIR: main が実行場所を組む元と置き場（desktop/runtime.cjs）。サーバーは読まず、継いでいるだけ
@@ -27,7 +28,7 @@
 export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_HANDOVER',
   'AGENT_HOST_PORT', 'AGENT_HOST_BIND', 'AGENT_HOST_TOKEN',
-  'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG',
+  'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG', 'AGENT_HOST_QUEUED_RESUME_VERSION',
   'AGENT_HOST_RUNTIME_ROOT', 'AGENT_HOST_RUNTIME_KEY',
   'AGENT_HOST_RUNTIME_RESOURCES', 'AGENT_HOST_RUNTIME_DIR',
   'AGENT_HOST_CLAUDE_HOLDER', 'AGENT_HOST_CODEX_HOLDER', 'AGENT_HOST_OPENCODE_HOLDER', 'AGENT_HOST_AGY_HOLDER', 'AGENT_HOST_SHELL_HOLDER',

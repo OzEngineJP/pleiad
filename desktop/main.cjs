@@ -2,7 +2,7 @@ const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, s
 const path = require('node:path');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
-const { createLifecycle } = require('./lifecycle.cjs');
+const { createLifecycle, claimQueuedResume } = require('./lifecycle.cjs');
 const { forkUtility } = require('./process.cjs');
 // 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
 require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
@@ -322,13 +322,13 @@ function systemLanguage() {
  * 開発（electron .）は既定が off で、on にするなら AGENT_HOST_RUNTIME_RESOURCES つき（desktop:pack の resources を指す確認用）。
  * 使えなければ null（今の utilityProcess。理由を log に残す）
  */
-async function chooseLinkedServer(portFile) {
+async function chooseLinkedServer(portFile, queuedResumeVersion) {
   const flag = String(process.env.AGENT_HOST_HANDOVER ?? '').trim().toLowerCase();
   if (flag !== 'on' && !(app.isPackaged && flag === '')) return null;
   if (!app.isPackaged && !process.env.AGENT_HOST_RUNTIME_RESOURCES) { log('AGENT_HOST_HANDOVER=on needs a packaged app (or AGENT_HOST_RUNTIME_RESOURCES): using the utility process'); return null; }
   try {
     return await serverBoot().chooseServer({ resourcesPath: runtimeResources(), execPath: process.execPath, appVersion: app.getVersion(), systemLocale: systemLanguage(), port: savedPort(portFile), cwd: app.getPath('home'),
-      dataDir: serverBoot().resolveDataDir(), log });
+      dataDir: serverBoot().resolveDataDir(), queuedResumeVersion, log });
   } catch (error) {
     log(`zero-downtime update is not used (${error.message}): using the utility process`);
     return null;
@@ -442,7 +442,8 @@ async function boot() {
     const notice = fs.readFileSync(updateNoticeFile, 'utf8');
     fs.unlinkSync(updateNoticeFile);
     updateRestartNotice = Boolean(notice);
-    updateRequest = notice;
+    // The legacy notification flag still reloads the renderer, but carries no receipt ID.
+    updateRequest = notice === '1' ? undefined : notice;
   } catch { updateRestartNotice = false; }
   // 待たない（大きい保存領域を消すのに時間が掛かっても、起動を遅らせない）。失敗しても投げない
   void clearOldBrowserPartition({ userData: app.getPath('userData'), session, log: line => log(`browser partition: ${line}`) });
@@ -459,9 +460,17 @@ async function boot() {
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   activePortFile = portFile;
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
+  const restartRequest = process.argv.find(arg => arg.startsWith('--lifecycle-restart='))?.split('=')[1];
+  const requestId = restartRequest || updateRequest;
+  const lifecycleDir = path.join(serverBoot().resolveDataDir(), 'desktop-lifecycle');
+  const version = app.getVersion();
+  const queuedResumeVersion = requestId && await claimQueuedResume({
+    dir: lifecycleDir, requestId,
+    action: restartRequest ? 'restart' : 'install', version, isAlive: serverBoot().isAlive,
+  }) ? version : '';
   // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
   // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
-  linked = await chooseLinkedServer(portFile);
+  linked = await chooseLinkedServer(portFile, queuedResumeVersion);
   // utilityProcess の経路でも、サーバーの標準出力・標準エラー（Chrome の接続の移り変わり `chrome: …` など）を userData\logs\server.log に残す。
   // パイプの経路（<実行場所>\logs\server.log）と同じに、サーバー自身が書く（core/server-log.mjs。token=… は伏せ、1MB で .old へ回す）。開発版は別の名前
   const utilityLogFile = process.env.AGENT_HOST_SERVER_LOG || path.join(app.getPath('userData'), 'logs', app.isPackaged ? 'server.log' : 'server-dev.log');
@@ -470,7 +479,7 @@ async function boot() {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
-    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot },
+    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot, AGENT_HOST_QUEUED_RESUME_VERSION: queuedResumeVersion },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   worker.once('exit', () => { if (!linked) utilityExited = true; });
@@ -693,7 +702,7 @@ async function boot() {
   try { await updates.init(); }
   catch (e) { updates.enabled = false; updates.patch({ enabled: false, phase: 'unavailable', error: e.message }); }
   lifecycle = createLifecycle({
-    dir: path.join(serverBoot().resolveDataDir(), 'desktop-lifecycle'), updates,
+    dir: lifecycleDir, updates,
     unsupported: () => updates.state.store ? t('lifecycle.store')
       : !app.isPackaged || !pkg.plyRelease ? t('lifecycle.distribution')
       : !linked ? t('lifecycle.independent')
@@ -712,7 +721,7 @@ async function boot() {
     stop: (action, id) => action === 'install' ? updates.command('install', id) : installUpdate('restart', id),
     boot: () => ({ main: `${process.pid}:${processStartedAt}`, server: { pid: serverReady?.pid, startedAt: serverReady?.startedAt },
       version: app.getVersion(), serverVersion: serverReady?.appVersion, switching: serverSwitch?.replacing,
-      updateRequest, restartRequest: process.argv.find(arg => arg.startsWith('--lifecycle-restart='))?.split('=')[1] }),
+      updateRequest, restartRequest }),
     log: error => log(`lifecycle receipt: ${error.code ?? error.message}`),
   });
   let reconciliation = lifecycle.reconcile().catch(error => log(`lifecycle receipt: ${error.code ?? error.message}`));

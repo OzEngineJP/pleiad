@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { agentT } from '../../core/i18n.mjs';
 import { clockText } from '../../core/limit-resume.mjs';
 import { createUpdateGate } from '../../core/update-gate.mjs';
 
+const { claimQueuedResume } = createRequire(import.meta.url)('../../desktop/lifecycle.cjs');
 export const name = 'agent-tasks-retry';
 export const title = '子の再試行の待ち（ADR 0229）: 長い・上限の待ちは waiting と回ごとに 1 回の知らせ・ply_task_wait はすぐ戻る・上限で止まった子は limit を残し、指示は解除まで走らせない';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -18,7 +21,10 @@ export default async function(t) {
   let outcome = { outcome: 'ok', text: 'done' };
   const notices = [];
   const gate = createUpdateGate(), prompts = [];
-  const open = () => createAgentTasks({
+  const receiptDir = path.join(dir, 'desktop-lifecycle'), requestId = randomUUID(), version = '1.0.0';
+  const receipt = path.join(receiptDir, requestId + '.json');
+  const claim = id => claimQueuedResume({ dir: receiptDir, action: 'restart', version, requestId: id, isAlive: () => false });
+  const open = (resumeQueued = false) => createAgentTasks({
     dataDir: dir, now: () => clock, silenceMinutes: 0, log: () => {},
     prepare: async (_owner, _args, taskId) => ({ sessionId: taskId, backend: 'opencode' }),
     execute: async (_task, prompt, signal) => {
@@ -32,7 +38,7 @@ export default async function(t) {
     deliver: async () => 'ok',
     retrying: () => retry, deliverRetry: async (task, rt) => { notices.push({ taskId: task.taskId, since: rt.since, limit: rt.limit }); return 'ok'; },
     held: task => task.title === 'Retry work' ? hold : null,
-    canStart: () => !gate.locked,
+    canStart: () => !gate.locked, resumeQueued,
   });
   let manager = await open();
   const status = async taskId => manager.call('parent', 'ply_task_status', { taskId });
@@ -112,7 +118,10 @@ export default async function(t) {
       runs === 1 && [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1));
     await manager.close();
     hold = { resetsAt };
-    manager = await open();
+    await fs.mkdir(receiptDir);
+    await fs.writeFile(receipt, JSON.stringify({ requestId, action: 'restart', targetVersion: version, state: 'accepted',
+      previous: { main: 'old main', server: { pid: 11 } } }));
+    manager = await open(await claim(requestId));
     t.ok('再起動後も待機中の子と追加指示が残り、使用枠の解除時刻も変わらない',
       [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1)
       && manager.get(task.taskId).limitHeld?.resetsAt === new Date(resetsAt).toISOString() && manager.restored.length === 0);
@@ -130,5 +139,20 @@ export default async function(t) {
     release();
     await until(() => manager.get(task.taskId).status === 'completed');
     t.ok('通った回の結果では limit を消す', !('limit' in manager.get(task.taskId)));
+
+    await fs.writeFile(receipt, '{');
+    for (const [id, label] of [[undefined, '受付記録のない停止'], [requestId, '受付記録が壊れている停止']]) {
+      await until(() => !manager.blocksRestart(new Set()));
+      if (!gate.acquire(manager.blocksRestart(new Set()))) throw new Error('could not suspend queue for test shutdown');
+      const interrupted = await manager.call('parent', 'ply_delegate', { backend: 'opencode', task: 'stop here', title: 'Interrupted work' });
+      await manager.call('parent', 'ply_task_send', { taskId: interrupted.taskId, message: 'undelivered instruction' });
+      await manager.close();
+      manager = await open(await claim(id));
+      gate.release();
+      await tick();
+      t.ok(`${label}の後は待機中の子を中断し、依頼元に知らせる対象にする`,
+        manager.get(interrupted.taskId).status === 'interrupted' && manager.get(interrupted.taskId).pendingMessages === 0 &&
+        manager.restored.some(row => row.taskId === interrupted.taskId && row.parentSessionId === 'parent') && runs === 4);
+    }
   } finally { await manager.close(); await fs.rm(dir, { recursive: true, force: true }); }
 }

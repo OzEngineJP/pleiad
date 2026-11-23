@@ -142,7 +142,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   retrying = () => null, deliverRetry = async () => 'ok',
   // 上限で止まった子の会話の、解除時刻までの待ち（{ resetsAt } か null）。待っている間は、積まれた指示（ply_task_send）で次の回を始めない
   held = () => null,
-  canStart = () => true,
+  canStart = () => true, resumeQueued = false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
   backgroundMinutes = Number(process.env.AGENT_HOST_TASK_BACKGROUND_MINUTES ?? 30),
@@ -319,8 +319,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (adoptable.has(r.taskId)) continue;
     // 再起動前の活動の写しは古い。ホストの sync が届くまで停滞の判定には使わない
     if (r.host) { delete r.hostTelemetry; delete r.hostBackground; delete r.activeCommands; delete r.lastActivityAt; delete r.lastOutputAt; }
-    if (r.status !== 'queued' && (ACTIVE.has(r.status) || ['stopUnconfirmed', 'interrupted'].includes(r.status)) && !r.host) {
-      const uncertain = await stopUnconfirmed(r);
+    if (!r.host && !(resumeQueued && r.status === 'queued') &&
+        (ACTIVE.has(r.status) || ['stopUnconfirmed', 'interrupted'].includes(r.status))) {
+      const uncertain = r.status !== 'queued' && await stopUnconfirmed(r);
       const item = { taskId: r.taskId, parentSessionId: r.parentSessionId, title: r.title ?? null, status: r.status };
       if (uncertain) {
         setStopUnconfirmed(r);
