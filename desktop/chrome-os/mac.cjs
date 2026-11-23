@@ -6,7 +6,8 @@
 const { spawnDetached } = require('../process.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const WebSocket = require('ws');
+const net = require('node:net');
+const { enableStepSummary } = require('../../core/chrome/enable-summary.cjs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -49,15 +50,14 @@ const DEFAULT_FEATURES = Object.freeze({
 const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
 const defaultSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Validate the exact endpoint, not just a listening TCP socket. Recent Chrome may
-// return 404 for /json/version even when its browser WebSocket is available.
-function defaultProbePort(port, wsPath, timeoutMs = 1500) {
+// TCP only: a WebSocket upgrade would open Chrome's permission dialog.
+function defaultProbePort(port, timeoutMs = 400) {
   return new Promise(resolve => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}${wsPath}`, { handshakeTimeout: timeoutMs });
-    const done = ok => { ws.terminate(); resolve(ok); };
-    ws.once('open', () => done(true));
-    ws.on('error', () => done(false));
-    ws.once('unexpected-response', (_req, res) => { res.destroy(); done(false); });
+    const socket = net.createConnection({ host: '127.0.0.1', port });
+    const done = ok => { socket.destroy(); resolve(ok); };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
   });
 }
 
@@ -199,7 +199,7 @@ function createMacChromeOs({
     try { text = readFile(path.join(dir, 'DevToolsActivePort')); } catch { return false; }
     const parsed = parseActivePortText(text);
     if (!parsed) return false;
-    return (await probePort(parsed.port, parsed.path)) === true;
+    return (await probePort(parsed.port)) === true;
   }
 
   async function enableRemoteDebugging({ browser, profileDir = 'Default', userDataDir = null } = {}) {
@@ -211,19 +211,24 @@ function createMacChromeOs({
       steps: [],
       portWait: null,
     };
-    if (pendingSetup) {
-      const closed = await callHelper('chromeClose', pendingSetup);
-      if (closed?.ok !== true) return { ok: false, reason: 'setup-cleanup-failed', diag };
-      pendingSetup = null;
-    }
     const targetDir = resolveUserDataDir(userDataDir);
     if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir', diag };
     if (await isActivePortListening(targetDir)) return { ok: true, diag };
 
-    const permissions = await callHelper('permissions');
-    if (permissions?.screen === false) return { ok: false, reason: 'screen-permission', diag };
-    if (permissions?.accessibility === false) return { ok: false, reason: 'accessibility-permission', diag };
-    if (!permissions) return { ok: false, reason: 'helper-unavailable', diag };
+    // The wrapped helper requests TCC permission and restarts before the next call.
+    try {
+      if (!client) return { ok: false, reason: 'helper-unavailable', diag };
+      await client.call('permissions', { require: true });
+    } catch (error) {
+      const reason = error?.code === 'permission' && ['screen', 'accessibility'].includes(error.permission)
+        ? `${error.permission}-permission` : 'helper-unavailable';
+      return { ok: false, reason, diag };
+    }
+    if (pendingSetup) {
+      const closed = await callHelper('chromeClose', pendingSetup);
+      if (closed?.ok !== true) return { ok: false, reason: closed?.reason ?? 'setup-cleanup-failed', diag };
+      pendingSetup = null;
+    }
 
     let resolvedBrowser = null;
     let browserRef = browser;
@@ -281,7 +286,7 @@ function createMacChromeOs({
       let prevStepAt = 0;
       while (Date.now() < deadline) {
         const elapsed = Date.now() - start;
-        const shouldActivate = !activated && stillOnMarker && elapsed >= time.activateAfterMs;
+        const shouldActivate = navigated && !activated && stillOnMarker && elapsed >= time.activateAfterMs;
         if (shouldActivate) activated = true;
         const step = await callHelper('chromeEnableStep', {
           id: setupId,
@@ -293,11 +298,7 @@ function createMacChromeOs({
         const now = Date.now();
         diag.steps.push({ at: new Date(now).toISOString(), elapsedMs: now - start, gapMs: prevStepAt ? now - prevStepAt : 0, step });
         prevStepAt = now;
-        const summary = {};
-        for (const key of ['state', 'reason', 'checked', 'scanVisited', 'scanWebAreas', 'scanDepth']) {
-          if (typeof step?.[key] === 'boolean' || typeof step?.[key] === 'number' ||
-              (typeof step?.[key] === 'string' && /^[a-z-]{1,64}$/.test(step[key]))) summary[key] = step[key];
-        }
+        const summary = enableStepSummary(step);
         const logKey = JSON.stringify(summary);
         if (logKey !== lastLogKey) {
           log(`enableStep (${elapsed}ms): ${logKey}`);
@@ -336,6 +337,7 @@ function createMacChromeOs({
       if (closed?.ok === true) pendingSetup = null;
       log(`enable cleanup ok=${closed?.ok === true}`);
       if (prevFrontPid > 0) await callHelper('activate', { pid: prevFrontPid });
+      if (closed?.ok !== true) return { ok: false, reason: closed?.reason ?? 'setup-cleanup-failed', diag };
     }
   }
 

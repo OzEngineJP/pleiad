@@ -632,7 +632,8 @@
           "allow": "Allow"
         },
         "enable": {
-          "macPermission": "In macOS System Settings → Privacy & Security, allow Screen Recording and Accessibility for Pleiad, then try again.",
+          "macScreenPermission": "Allow Screen Recording for Pleiad in macOS System Settings → Privacy & Security, then try again.",
+          "macAccessibilityPermission": "Allow Accessibility for Pleiad in macOS System Settings → Privacy & Security, then try again.",
           "connect": "Turn on and connect",
           "working": "Turning on the Chrome setting…",
           "failed": "Couldn't turn on the Chrome setting",
@@ -2383,7 +2384,8 @@
         "enableAlways": "Asked even in no-confirmation modes",
         "enabling": "Turning on the Chrome setting…",
         "enableFailed": "Couldn't turn on the Chrome setting",
-        "macPermission": "In macOS System Settings → Privacy & Security, allow Screen Recording and Accessibility for Pleiad, then try again.",
+        "macScreenPermission": "Allow Screen Recording for Pleiad in macOS System Settings → Privacy & Security, then try again.",
+        "macAccessibilityPermission": "Allow Accessibility for Pleiad in macOS System Settings → Privacy & Security, then try again.",
         "enableFailedNote": "If Chrome is showing another screen (such as sign-in), finish it and press Try again. You can also turn it on yourself with these steps; it continues automatically.",
         "manual": "Turn it on yourself",
         "step1": "Open this address in Chrome's address bar",

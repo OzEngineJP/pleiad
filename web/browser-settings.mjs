@@ -145,7 +145,7 @@ export function setupBrowserSettings({ available = desktopHost(), cmd, getPrefs,
       // Pleiad がトグルを入れられる（Windows）なら「オンにしてつなぐ」。押したときだけ入れる（ADR 0218）。手で入れる手順とコピーは残す
       const canEnable = chrome.enable === true && chrome.assist !== 'enable-failed';
       status.textContent = chrome.assist === 'enable-failed' ? t(`${k}enable.failed`) : t(unreachable ? `${k}setup.unreachable` : `${k}setup.status`);
-      if (['screen-permission', 'accessibility-permission'].includes(chrome.reason)) details.push(note(t(`${k}enable.macPermission`)));
+      if (['screen-permission', 'accessibility-permission'].includes(chrome.enableReason)) details.push(note(t(`${k}enable.${chrome.enableReason === 'screen-permission' ? 'macScreenPermission' : 'macAccessibilityPermission'}`)));
       if (canEnable) details.push(note(t(`${k}enable.note`)));
       else if (unreachable) details.push(note(t(`${k}setup.unreachableNote`)));
       const steps = el('ol', 'browser-conn-steps');

@@ -200,7 +200,10 @@ export default async function (t) {
   {
     const logs = [];
     const r = await rig({ log: line => logs.push(line) });
+    const { writeFile } = await import('node:fs/promises');
+    const stalePort = `${r.chrome.port}\n${r.chrome.wsPath}\n`;
     await r.chrome.turnOff();
+    await writeFile(`${r.chrome.dir}/DevToolsActivePort`, stalePort);
     r.os.enableRemoteDebugging = async () => ({ ok: false, reason: 'screen-permission', diag: { steps: [{ step: { state: 'error', reason: 'not-trusted-or-no-id', title: 'secret-token', checked: false } }] } });
     const p = r.conn.demand(); void p.catch(() => {});
     await until(() => r.conn.state().state === 'setup');
@@ -208,7 +211,7 @@ export default async function (t) {
     t.ok('入れられなければ setup の enable-failed（人が入れる案内）', out.ok === false && r.conn.state().state === 'setup' && r.conn.state().assist === 'enable-failed', JSON.stringify(r.conn.state()));
     t.ok('host log has a safe enableStep summary', logs.some(line => line.includes('enableStep') && line.includes('not-trusted-or-no-id')) && !logs.some(line => line.includes('secret-token')));
     await r.clock.advance(3000);
-    t.ok('読み直しの間も enable-failed は残る', r.conn.state().assist === 'enable-failed' && r.conn.state().reason === 'screen-permission');
+    t.ok('読み直しの間も enable-failed は残る', r.conn.state().assist === 'enable-failed' && r.conn.state().enableReason === 'screen-permission' && r.conn.state().reason === 'unreachable');
     await r.chrome.turnOn();
     await r.clock.advance(1000);
     await until(() => r.chrome.upgrades === 1, 5000, 'upgrade');
@@ -270,6 +273,8 @@ export default async function (t) {
     status = { state: 'setup', dialog: false, assist: null, enable: true };
     handoffs.connect('yolo');
     const second = cards[1];
+    conn.set({ state: 'setup', assist: 'enable-failed', reason: 'unreachable', enableReason: 'accessibility-permission' });
+    t.ok('handoff carries the enable reason separately from unreachable', second.updates.at(-1)?.setupReason === 'accessibility-permission');
     conn.set({ state: 'setup', assist: 'enabling' });
     conn.set({ state: 'connected' });
     await new Promise(resolve => setImmediate(resolve));

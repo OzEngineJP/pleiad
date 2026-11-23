@@ -40,7 +40,12 @@ export default async function (t_) {
   const permissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
     reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'screen-permission',
   } }, { el, t, cmd: async () => {} });
-  t_.ok('macOS permission guidance is on the existing card', texts(permissionView).join('|').includes('chat.browserHandoff.connect.macPermission'));
+  t_.ok('macOS permission guidance is on the existing card', texts(permissionView).join('|').includes('chat.browserHandoff.connect.macScreenPermission'));
+  const axPermissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
+    reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'accessibility-permission',
+  } }, { el, t, cmd: async () => {} });
+  t_.ok('only the missing accessibility permission is named', texts(axPermissionView).join('|').includes('chat.browserHandoff.connect.macAccessibilityPermission') && !texts(axPermissionView).join('|').includes('macScreenPermission'));
+
 
   // 画面を開く口が無い呼び出し元でも、操作中の戻すボタンは出す（カードが入口の 1 つ）
   const quiet = browserHandoffView({ id: 'card4', sessionId: 's', browserHandoff: { reason: 'login', state: 'operating', by: 'pc' } }, { el, t, cmd: async (name, args) => { commands.push([name, args]); } });
