@@ -798,24 +798,29 @@ enum Chrome {
         var id = args["id"] as? String
         // Marker cleanup belongs only to setup windows. Preserve ordinary close semantics.
         if let marker = args["marker"] as? String,
-           marker.range(of: "^PLY-ENABLE-[a-f0-9]{16}$", options: .regularExpression) != nil {
+           marker.range(of: "^PLY-ENABLE-[a-f0-9]{16}\\z", options: .regularExpression) != nil {
             guard CGPreflightScreenCaptureAccess() else { return ["ok": false, "reason": "screen-permission"] }
             guard AXIsProcessTrusted() else { return ["ok": false, "reason": "accessibility-permission"] }
             if id == nil || lookupWindow(id: id!) == nil {
                 let all = browserPids().flatMap { collectAxWindows(for: $0) }
-                id = all.first { ($0["title"] as? String)?.hasPrefix(marker) == true }?["id"] as? String
+                id = all.first { ($0["title"] as? String) == marker }?["id"] as? String
                 if id == nil {
                     // Include minimized/off-screen windows before concluding it is gone.
                     guard let cg = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
                         return ["ok": false, "reason": "setup-cleanup-failed"]
                     }
-                    let remains = cg.contains { ($0[kCGWindowName as String] as? String)?.hasPrefix(marker) == true }
+                    let remains = cg.contains { ($0[kCGWindowName as String] as? String) == marker }
                     return remains ? ["ok": false, "reason": "setup-cleanup-failed"] : ["ok": true, "gone": true]
                 }
             }
         }
         guard let id else { return ["ok": false] }
         guard let entry = lookupWindow(id: id) else {
+            return ["ok": true, "gone": true]
+        }
+        // Sweeps must not close a window whose title changed since enumeration.
+        if args["exactMarker"] as? Bool == true,
+           axString(entry.element, kAXTitleAttribute as String) != args["marker"] as? String {
             return ["ok": true, "gone": true]
         }
         var btnRef: CFTypeRef?

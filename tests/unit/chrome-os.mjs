@@ -1709,6 +1709,7 @@ export default async function (t) {
       call: async (op, args) => {
         if (op === 'request') { requests++; return {}; }
         if (op === 'permissions' && args.require && !cached) throw Object.assign(new Error('permission'), { code: 'permission', permission });
+        if (op === 'chromeWindows') return { windows: [] };
         return {};
       },
       stop: () => { stopped++; cached = granted; },
@@ -1738,9 +1739,91 @@ export default async function (t) {
     t.ok('mac: discovery failure attempts cleanup and preserves its reason', (await os.enableRemoteDebugging()).reason === 'accessibility-permission' && closed === 1);
     t.ok('mac: unresolved cleanup prevents another window with original reason', (await os.enableRemoteDebugging()).reason === 'accessibility-permission' && spawned === 1);
     listening = true;
-    t.ok('mac: pending cleanup cannot block an active port', (await os.enableRemoteDebugging()).ok === true && closed === 2);
+    t.ok('mac: pending cleanup retries without blocking an active port', (await os.enableRemoteDebugging()).ok === true && closed === 3);
     listening = false; gone = true;
     t.ok('mac: manually closed setup allows another attempt', (await os.enableRemoteDebugging()).reason === 'window-not-found' && spawned === 2);
+  }
+  {
+    // A launch can surface after findSetupMs AND its cleanup have both completed.
+    const old = ['288d21f0099a0158', '52048e41fa2ff091', 'd1f9167c3c181bf6', '0557c74ff1f53bc5']
+      .map((nonce, i) => ({ id: `old-${i}`, title: `PLY-ENABLE-${nonce}` }));
+    const ordinary = ['Usual tab', 'PLY-ENABLE', 'PLY-ENABLE-1234', 'PLY-ENABLE-ABCDEF0123456789',
+      'prefix PLY-ENABLE-0123456789abcdef', 'PLY-ENABLE-0123456789abcdef suffix', 'PLY-ENABLE-0123456789abcdef\n']
+      .map((title, i) => ({ id: `user-${i}`, title }));
+    const windows = [...old, ...ordinary];
+    const closed = [], beforeLaunch = [];
+    let spawned = 0, delayed, listening = false;
+    const os = createMacChromeOs({
+      helper: { call: async (op, args = {}) => {
+        if (op === 'chromeWindows') return { windows: windows.map(w => ({ ...w })) };
+        if (op === 'chromeClose') {
+          closed.push(args);
+          const idx = windows.findIndex(w => args.id ? w.id === args.id : w.title === args.marker);
+          if (idx >= 0) windows.splice(idx, 1);
+          return { ok: true, gone: idx < 0 };
+        }
+        if (op === 'chromeEnableStep') {
+          windows.find(w => w.id === args.id).title = 'Inspect with Chrome Developer Tools';
+          windows.push({ id: 'late-during-toggle', title: 'PLY-ENABLE-aaaaaaaaaaaaaaaa' });
+          listening = true;
+          return { state: 'toggled', checked: true };
+        }
+        return {};
+      } },
+      readFile: () => '9222\n/devtools/browser/test', probePort: async () => listening, exists: () => true,
+      spawn: (_exe, args) => {
+        beforeLaunch.push(windows.map(w => w.id));
+        const title = args.find(a => a.startsWith('data:text/html,')).match(/<title>([^<]+)<\/title>/)[1];
+        const w = { id: `setup-${++spawned}`, title };
+        if (spawned === 1) delayed = w; else windows.push(w);
+        return { on() {}, unref() {} };
+      },
+      timing: { findSetupMs: 5, pollMs: 1 },
+    });
+    t.ok('mac: initial late launch times out without a window', (await os.enableRemoteDebugging()).reason === 'window-not-found');
+    t.ok('mac: sweeps all four old nonces before launching', old.every(w => closed.some(c => c.id === w.id && c.exactMarker === true)));
+    windows.push(delayed);
+    t.ok('mac: next enable succeeds after a launch appeared beyond the previous cleanup', (await os.enableRemoteDebugging()).ok === true);
+    t.ok('mac: late previous window is closed before launching another', beforeLaunch[1].every(id => id.startsWith('user-')));
+    t.ok('mac: final cleanup closes owned inspect and another late nonce',
+      closed.some(c => c.id === 'setup-2' && !c.exactMarker) && closed.some(c => c.id === 'late-during-toggle' && c.exactMarker === true));
+    t.ok('mac: exact marker sweeps preserve every ordinary or near-matching window',
+      JSON.stringify(windows) === JSON.stringify(ordinary) && !closed.some(c => c.id?.startsWith('user-')));
+  }
+  {
+    const logs = [], windows = [];
+    let listening = false, failClose = true, closed = 0, spawned = 0;
+    const os = createMacChromeOs({
+      helper: { call: async (op, args = {}) => {
+        if (op === 'chromeWindows') return { windows: windows.map(w => ({ ...w })) };
+        if (op === 'chromeClose') {
+          closed++;
+          if (failClose) return { ok: false, reason: 'accessibility-permission' };
+          windows.length = 0;
+          return { ok: true };
+        }
+        if (op === 'chromeEnableStep') {
+          windows[0].title = 'Inspect';
+          listening = true;
+          return { state: 'toggled', checked: true };
+        }
+        return {};
+      } },
+      log: line => logs.push(line),
+      readFile: () => '9222\n/devtools/browser/test', probePort: async () => listening, exists: () => true,
+      spawn: (_exe, args) => {
+        spawned++;
+        windows.push({ id: 'owned', title: args.find(a => a.startsWith('data:text/html,')).match(/<title>([^<]+)<\/title>/)[1] });
+        return { on() {}, unref() {} };
+      },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok('mac: listening succeeds even if setup cleanup fails', result.ok === true && result.diag.portWait.listening && windows.length === 1);
+    t.ok('mac: cleanup failure reason is logged', logs.some(s => s.includes('cleanup ok=false') && s.includes('accessibility-permission')));
+    t.ok('mac: still-listening retry succeeds despite another cleanup failure', (await os.enableRemoteDebugging()).ok === true && closed === 2);
+    failClose = false;
+    t.ok('mac: pending owned inspect window is retried and closed with no new launch',
+      (await os.enableRemoteDebugging()).ok === true && windows.length === 0 && spawned === 1 && closed === 3);
   }
   {
     const { startFakeChrome } = await import('../lib/fake-chrome.mjs');

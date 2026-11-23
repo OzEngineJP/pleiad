@@ -1,4 +1,3 @@
-import { enableStepSummary } from './enable-summary.cjs';
 // PC の Chrome への CDP 接続 1 本の持ち主（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
 //
 // 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 6 つ:
@@ -19,6 +18,7 @@ import { enableStepSummary } from './enable-summary.cjs';
 // allowing（確認を押している）・allow-failed（押せなかった。人が押す案内）。状態が替わると消える
 // ログには状態・round・raise の method だけを出す（窓の題や Chrome の値は出さない）。
 import { WebSocket as NodeWebSocket } from 'ws';
+import { enableStepSummary } from './enable-summary.cjs';
 import net from 'node:net';
 import { readActivePort, readLastUsedProfile } from './locate.mjs';
 import { createCdp } from './cdp.mjs';
