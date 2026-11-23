@@ -12,7 +12,7 @@ Get the build for your OS from [Download](https://pleiad.dev/download/).
 - **Linux**: there is no desktop app. There is a [browser version you run from source](https://github.com/OzEngineJP/pleiad#run-from-source).
 - **Android** (13 or later): an app (APK) that connects to Pleiad running on your PC. It needs a relay server.
 
-The desktop app notifies you about updates automatically. You can also check manually under Settings › "About & updates".
+The desktop app notifies you about updates automatically. You can also check manually under Settings › "About & updates". You can also ask in a conversation, for example "update Pleiad" or "restart Pleiad": the agent checks for, downloads and applies the update, or restarts on the same version, and confirms the result after reconnecting (applying and restarting follow the conversation's approval settings).
 
 ## Connect an agent
 
