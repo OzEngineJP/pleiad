@@ -18,6 +18,7 @@
 // allowing（確認を押している）・allow-failed（押せなかった。人が押す案内）。状態が替わると消える
 // ログには状態・round・raise の method だけを出す（窓の題や Chrome の値は出さない）。
 import { WebSocket as NodeWebSocket } from 'ws';
+import { enableStepSummary } from './enable-summary.cjs';
 import net from 'node:net';
 import { readActivePort, readLastUsedProfile } from './locate.mjs';
 import { createCdp } from './cdp.mjs';
@@ -109,6 +110,7 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   }
   function setStatus(patch) {
     const next = { ...status, ...patch };
+    if (next.state !== 'setup' || next.assist !== 'enable-failed') next.enableReason = null;
     if (next.state !== 'connected') next.product = null;
     if (next.state !== status.state && !('assist' in patch)) next.assist = null;
     const changed = next.state !== status.state || next.reason !== status.reason || next.dialog !== status.dialog || next.assist !== status.assist;
@@ -442,9 +444,13 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const result = browser
         ? await os.enableRemoteDebugging({ browser, profileDir, ...(home.custom ? { userDataDir: home.userDataDir } : {}) })
         : { ok: false, reason: 'no-browser' };
+      for (const { step } of (result?.diag?.steps ?? []).slice(-1)) {
+        const summary = enableStepSummary(step);
+        log(`chrome: enableStep ${JSON.stringify(summary)}`);
+      }
       if (stale(att)) return { ok: false, reason: 'stale' };
       log(`chrome: enable ok=${result?.ok === true}${result?.reason ? ` reason=${result.reason}` : ''}`);
-      if (result?.ok !== true) { if (status.state === 'setup') setStatus({ assist: 'enable-failed' }); return { ok: false, reason: String(result?.reason ?? 'failed') }; }
+      if (result?.ok !== true) { if (status.state === 'setup') setStatus({ assist: 'enable-failed', enableReason: result?.reason ?? 'failed' }); return { ok: false, reason: String(result?.reason ?? 'failed') }; }
       if (status.state === 'setup') {
         setStatus({ assist: null });
         clearTimer(att, 'pollTimer');

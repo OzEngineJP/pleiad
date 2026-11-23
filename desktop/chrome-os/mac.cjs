@@ -7,6 +7,7 @@ const { spawnDetached } = require('../process.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
+const { enableStepSummary } = require('../../core/chrome/enable-summary.cjs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -34,6 +35,9 @@ const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 const NONCE = /^[a-f0-9]{8,64}$/;
 const NONCE_URL = /^data:text\/html[,;]/;
 const WS_PATH = /^\/devtools\/browser\/[A-Za-z0-9-]+$/;
+// AX titles append " - Google Chrome - <profile>"; CG titles can be bare.
+const SETUP_MARKER = /^PLY-ENABLE-[a-f0-9]{16}(?= - |$)/;
+const setupMarker = title => typeof title === 'string' && !/[\r\n]/.test(title) ? SETUP_MARKER.exec(title)?.[0] : undefined;
 
 const DEFAULT_FEATURES = Object.freeze({
   dialog: true,
@@ -49,10 +53,11 @@ const DEFAULT_FEATURES = Object.freeze({
 const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
 const defaultSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// TCP only: a WebSocket upgrade would open Chrome's permission dialog.
 function defaultProbePort(port, timeoutMs = 400) {
   return new Promise(resolve => {
     const socket = net.createConnection({ host: '127.0.0.1', port });
-    const done = ok => { try { socket.destroy(); } catch {} resolve(ok); };
+    const done = ok => { socket.destroy(); resolve(ok); };
     socket.setTimeout(timeoutMs, () => done(false));
     socket.once('connect', () => done(true));
     socket.once('error', () => done(false));
@@ -110,6 +115,7 @@ function createMacChromeOs({
   const refs = new Map();     // id -> { id, kind: 'dialog' | 'foreign' | 'agent', pid?, info?, concealed? }
   const browsers = new Map(); // id -> { path, product }
   let browserSeq = 0;
+  let pendingSetup = null;
 
   const remember = (id, kind, info = null) => {
     const key = String(id);
@@ -190,13 +196,42 @@ function createMacChromeOs({
     return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
   }
 
-  async function isActivePortListening(dir) {
-    if (!dir) return false;
+  async function activePortStatus(dir) {
+    if (!dir) return { listening: false };
     let text;
-    try { text = readFile(path.join(dir, 'DevToolsActivePort')); } catch { return false; }
+    try { text = readFile(path.join(dir, 'DevToolsActivePort')); }
+    catch (error) {
+      // App-data protection is not an OFF toggle. Do not launch a setup window or request unrelated TCC permissions.
+      return { listening: false, ...(['EPERM', 'EACCES'].includes(error?.code) ? { reason: 'chrome-data-permission' } : {}) };
+    }
     const parsed = parseActivePortText(text);
-    if (!parsed) return false;
-    return (await probePort(parsed.port)) === true;
+    return { listening: parsed ? (await probePort(parsed.port)) === true : false };
+  }
+
+  async function cleanupSetupWindows(current = pendingSetup) {
+    let result = { ok: true };
+    pendingSetup = null;
+    const close = async target => {
+      const closed = await callHelper('chromeClose', target);
+      if (closed?.ok !== true) {
+        pendingSetup ??= target;
+        if (result.ok) result = { ok: false, reason: closed?.reason ?? 'setup-cleanup-failed' };
+      }
+    };
+    if (current) await close(current); // Also closes our own window after navigation to inspect.
+    const snapshot = await callHelper('chromeWindows');
+    if (!Array.isArray(snapshot?.windows)) {
+      result = result.ok ? { ok: false, reason: 'setup-cleanup-failed' } : result;
+      pendingSetup ??= current;
+    } else {
+      for (const w of snapshot.windows) {
+        const marker = setupMarker(w.title);
+        if (!marker || w.id === current?.id) continue;
+        await close({ id: w.id, marker, exactMarker: true });
+      }
+    }
+    log(`enable cleanup ok=${result.ok} ${JSON.stringify(enableStepSummary(result))}`);
+    return result;
   }
 
   async function enableRemoteDebugging({ browser, profileDir = 'Default', userDataDir = null } = {}) {
@@ -210,7 +245,22 @@ function createMacChromeOs({
     };
     const targetDir = resolveUserDataDir(userDataDir);
     if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir', diag };
-    if (await isActivePortListening(targetDir)) return { ok: true, diag };
+    let portStatus = await activePortStatus(targetDir);
+    if (portStatus.reason) return { ok: false, reason: portStatus.reason, diag };
+    if (portStatus.listening) {
+      if (pendingSetup) await cleanupSetupWindows();
+      return { ok: true, diag };
+    }
+
+    // The wrapped helper requests TCC permission and restarts before the next call.
+    try {
+      if (!client) return { ok: false, reason: 'helper-unavailable', diag };
+      await client.call('permissions', { require: true });
+    } catch (error) {
+      const reason = error?.code === 'permission' && ['screen', 'accessibility'].includes(error.permission)
+        ? `${error.permission}-permission` : 'helper-unavailable';
+      return { ok: false, reason, diag };
+    }
 
     let resolvedBrowser = null;
     let browserRef = browser;
@@ -229,6 +279,10 @@ function createMacChromeOs({
     const url = `data:text/html,<title>${marker}</title>`;
     const customDir = userDataDir ?? (env.AGENT_HOST_CHROME_USER_DATA || null);
 
+    // A previous launch can appear after its discovery timeout, even after a restart.
+    const cleaned = await cleanupSetupWindows();
+    if (!cleaned.ok) return { ok: false, reason: cleaned.reason, diag };
+
     const fgBefore = await callHelper('foreground', {});
     let prevFrontPid = Number.isInteger(fgBefore?.app?.pid) ? fgBefore.app.pid : 0;
 
@@ -242,21 +296,23 @@ function createMacChromeOs({
     if (!launched?.ok) return { ok: false, reason: launched?.reason ?? 'launch-failed', diag };
 
     // 1. 開いた設定用の窓を題のマーカーで見つける
+    pendingSetup = { marker };
     let setupId = null;
-    const findStart = Date.now();
-    const findDeadline = findStart + time.findSetupMs;
-    while (Date.now() < findDeadline) {
-      diag.findSetup.attempts += 1;
-      const res = await callHelper('chromeWindows', {});
-      const hit = res?.windows?.find(w => typeof w.title === 'string' && w.title.includes(marker));
-      if (hit?.id) { setupId = String(hit.id); break; }
-      await sleep(time.pollMs);
-    }
-    diag.findSetup.ms = Date.now() - findStart;
-    diag.findSetup.windowId = setupId;
-    if (!setupId) return { ok: false, reason: 'window-not-found', diag };
-
+    let listening = false;
     try {
+      const findStart = Date.now();
+      const findDeadline = findStart + time.findSetupMs;
+      while (Date.now() < findDeadline) {
+        diag.findSetup.attempts += 1;
+        const res = await callHelper('chromeWindows', {});
+        const hit = res?.windows?.find(w => setupMarker(w.title) === marker);
+        if (hit?.id) { setupId = String(hit.id); break; }
+        await sleep(time.pollMs);
+      }
+      diag.findSetup.ms = Date.now() - findStart;
+      diag.findSetup.windowId = setupId;
+      if (!setupId) return { ok: false, reason: 'window-not-found', diag };
+
       // 2. chrome://inspect/#remote-debugging へ遷移し、チェックボックスをオンにする
       let navigated = false;
       let activated = false;
@@ -279,11 +335,13 @@ function createMacChromeOs({
         const now = Date.now();
         diag.steps.push({ at: new Date(now).toISOString(), elapsedMs: now - start, gapMs: prevStepAt ? now - prevStepAt : 0, step });
         prevStepAt = now;
-        const logKey = `${step?.state}:${step?.title}:${step?.checked}:${step?.checkboxes?.length ?? 0}`;
+        const summary = enableStepSummary(step);
+        const logKey = JSON.stringify(summary);
         if (logKey !== lastLogKey) {
-          log(`enableStep (${elapsed}ms): ${JSON.stringify(step)}`);
+          log(`enableStep (${elapsed}ms): ${logKey}`);
           lastLogKey = logKey;
         }
+        if (step?.state === 'error') return { ok: false, reason: step.reason === 'not-trusted-or-no-id' ? 'accessibility-permission' : 'window-not-found', diag };
         if (step?.prevFrontPid > 0 && !prevFrontPid) prevFrontPid = step.prevFrontPid;
         if (typeof step?.stillOnMarker === 'boolean') stillOnMarker = step.stillOnMarker;
         else if (typeof step?.title === 'string' && !step.title.includes(marker)) stillOnMarker = false;
@@ -294,9 +352,10 @@ function createMacChromeOs({
           // オンにできても待ち受けが始まらなければ失敗（DevToolsActivePort が無いのに接続が進むと、下流で別の失敗になる）
           const portStart = Date.now();
           const portDeadline = portStart + time.portWaitMs;
-          let listening = false;
           while (Date.now() < portDeadline) {
-            if (await isActivePortListening(targetDir)) { listening = true; break; }
+            portStatus = await activePortStatus(targetDir);
+            if (portStatus.reason) return { ok: false, reason: portStatus.reason, diag };
+            if (portStatus.listening) { listening = true; break; }
             await sleep(time.pollMs);
           }
           diag.portWait = { ms: Date.now() - portStart, listening, state: step?.state };
@@ -306,8 +365,14 @@ function createMacChromeOs({
       }
       return { ok: false, reason: 'toggle-timeout', diag };
     } finally {
-      await callHelper('chromeClose', { id: setupId });
+      // Keep the owned ID after navigation, and sweep late windows from older invocations too.
+      if (!setupId) {
+        const res = await callHelper('chromeWindows');
+        setupId = res?.windows?.find(w => setupMarker(w.title) === marker)?.id ?? null;
+      }
+      const closed = await cleanupSetupWindows({ ...(setupId ? { id: setupId } : {}), marker });
       if (prevFrontPid > 0) await callHelper('activate', { pid: prevFrontPid });
+      if (!listening && !closed.ok && !portStatus.reason) return { ok: false, reason: closed.reason, diag };
     }
   }
 

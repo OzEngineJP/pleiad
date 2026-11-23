@@ -68,7 +68,12 @@ final class HelperServer {
         let args = request.args
         switch request.op {
         case "ping": return [:]
-        case "permissions": return Permissions.status()
+        case "permissions":
+            if args["require"] as? Bool == true {
+                try Permissions.requireScreen()
+                try Permissions.requireAccessibility()
+            }
+            return Permissions.status()
         case "request": return ["granted": Permissions.request(args["permission"] as? String ?? "")]
         case "session": return Session.state()
         case "capture": try Capture.capture(args, reply: reply); return nil

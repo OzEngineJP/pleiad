@@ -37,6 +37,22 @@ export default async function (t_) {
   await view.buttons[1].onclick();
   t_.ok('「AI に戻す」はその会話へ chromeResume を送る（人のタブを全部 AI に戻すのはサーバー側）', commands.length === sent + 1 && commands.at(-1)[0] === 'chromeResume' && commands.at(-1)[1]?.sessionId === 's', JSON.stringify(commands));
 
+  const permissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
+    reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'screen-permission',
+  } }, { el, t, cmd: async () => {} });
+  t_.ok('macOS permission guidance is on the existing card', texts(permissionView).join('|').includes('chat.browserHandoff.connect.macScreenPermission'));
+  const axPermissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
+    reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'accessibility-permission',
+  } }, { el, t, cmd: async () => {} });
+  t_.ok('only the missing accessibility permission is named', texts(axPermissionView).join('|').includes('chat.browserHandoff.connect.macAccessibilityPermission') && !texts(axPermissionView).join('|').includes('macScreenPermission'));
+  const dataPermissionView = browserHandoffView({ sessionId: 's', browserHandoff: {
+    reason: 'connect', state: 'setup', assist: 'enable-failed', enable: true, setupReason: 'chrome-data-permission',
+  } }, { el, t, cmd: async () => {} });
+  const dataPermissionText = texts(dataPermissionView).join('|');
+  t_.ok('Chrome data denial names only its Files and Folders permission on the existing card',
+    dataPermissionText.includes('chat.browserHandoff.connect.macChromeDataPermission') && !/macScreenPermission|macAccessibilityPermission/.test(dataPermissionText));
+
+
   // 画面を開く口が無い呼び出し元でも、操作中の戻すボタンは出す（カードが入口の 1 つ）
   const quiet = browserHandoffView({ id: 'card4', sessionId: 's', browserHandoff: { reason: 'login', state: 'operating', by: 'pc' } }, { el, t, cmd: async (name, args) => { commands.push([name, args]); } });
   t_.ok('openScreen が無くても「AI に戻す」は出る', quiet.buttons.length === 1 && quiet.buttons[0].textContent === 'AI に戻す', JSON.stringify(quiet.buttons.map(b => b.textContent)));

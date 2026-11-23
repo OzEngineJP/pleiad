@@ -45,6 +45,11 @@ export default async function (t) {
     const unreachable = section.textContent;
     t.ok('setup（ファイルはあるがつながらない）は、Chrome が起動していない場合にも合う字と、起動すれば進むことの説明。手順は残す', unreachable.includes('Chrome が起動していないか、リモート デバッグがオフです')
       && unreachable.includes('起動すると自動で進みます') && unreachable.includes('次のアドレスをコピーします') && !unreachable.includes('Chrome の準備が要ります'), unreachable);
+    settings.chromeEvent({ state: 'setup', reason: null, assist: 'enable-failed', enableReason: 'chrome-data-permission', enable: true });
+    t.ok('Chrome データの読み取り拒否はファイルとフォルダの案内を出し、別の権限を求めない',
+      section.textContent.includes('Pleiad に Google Chrome のデータへのアクセスを許可してください')
+      && section.textContent.includes('ファイルとフォルダ → Pleiad')
+      && !/画面収録|アクセシビリティ/.test(section.textContent));
     settings.chromeEvent({ state: 'setup', reason: null, dialog: false, product: null });
     section.querySelectorAll('button')[1].onclick();
     t.ok('「やめる」は chromeDisconnect を送る', sent.at(-1) === 'chromeDisconnect');

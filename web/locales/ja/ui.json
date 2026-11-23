@@ -590,6 +590,9 @@
           "allow": "許可"
         },
         "enable": {
+          "macScreenPermission": "macOS のシステム設定 → プライバシーとセキュリティで、Pleiad の「画面収録」を許可してから、もう一度お試しください。",
+          "macAccessibilityPermission": "macOS のシステム設定 → プライバシーとセキュリティで、Pleiad の「アクセシビリティ」を許可してから、もう一度お試しください。",
+          "macChromeDataPermission": "Pleiad に Google Chrome のデータへのアクセスを許可してください。システム設定 → プライバシーとセキュリティ → ファイルとフォルダ → Pleiad で「Google Chrome」をオンにしてから、もう一度お試しください。",
           "connect": "オンにしてつなぐ",
           "working": "Chrome の設定をオンにしています…",
           "failed": "Chrome の設定をオンにできませんでした",
@@ -2302,6 +2305,9 @@
         "enableAlways": "確認なしのモードでも、ここは聞きます",
         "enabling": "Chrome の設定をオンにしています…",
         "enableFailed": "Chrome の設定をオンにできませんでした",
+        "macScreenPermission": "macOS のシステム設定 → プライバシーとセキュリティで、Pleiad の「画面収録」を許可してから、もう一度お試しください。",
+        "macAccessibilityPermission": "macOS のシステム設定 → プライバシーとセキュリティで、Pleiad の「アクセシビリティ」を許可してから、もう一度お試しください。",
+        "macChromeDataPermission": "Pleiad に Google Chrome のデータへのアクセスを許可してください。システム設定 → プライバシーとセキュリティ → ファイルとフォルダ → Pleiad で「Google Chrome」をオンにしてから、もう一度お試しください。",
         "enableFailedNote": "Chrome に別の画面（ログインなど）が出ていたら、それを済ませてから「もう一度」を押してください。次の手順でご自分でオンにしても、自動で進みます。",
         "manual": "自分でオンにする",
         "step1": "Chrome のアドレス欄で次のアドレスを開く",

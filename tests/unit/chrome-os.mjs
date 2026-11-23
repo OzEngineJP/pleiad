@@ -1701,4 +1701,178 @@ export default async function (t) {
       t.ok('使えない OS・macOS の層の raiseVisibleBrowser は何もしない', unsupported.raiseVisibleBrowser({}).reason === 'unsupported' && mac.raiseVisibleBrowser({}).reason === 'unsupported');
     }
   }
+  // #221: Chrome app-data denial is not an OFF toggle; retry reads the grant afresh.
+  for (const code of ['EPERM', 'EACCES']) {
+    let denied = true, helperCalls = 0, spawned = 0, probes = 0;
+    const os = createMacChromeOs({
+      helper: { call: async () => { helperCalls++; return {}; } },
+      readFile: () => { if (denied) throw Object.assign(new Error('private path'), { code }); return '9222\n/devtools/browser/test'; },
+      probePort: async () => { probes++; return true; },
+      spawn: () => { spawned++; }, exists: () => true,
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok(`mac: ${code} reports Chrome data permission without toggling or other permission prompts`,
+      result.ok === false && result.reason === 'chrome-data-permission' && !helperCalls && !spawned && !probes && result.diag.steps.length === 0);
+    denied = false;
+    t.ok(`mac: ${code} grant is read again on retry`, (await os.enableRemoteDebugging()).ok === true && probes === 1 && !spawned);
+  }
+  {
+    let denied = false, title, closed = 0;
+    const os = createMacChromeOs({
+      helper: { call: async op => {
+        if (op === 'chromeWindows') return { windows: title ? [{ id: 'setup', title }] : [] };
+        if (op === 'chromeEnableStep') { denied = true; title = 'Inspect'; return { state: 'toggled', checked: true }; }
+        if (op === 'chromeClose') { closed++; return { ok: false, reason: 'setup-cleanup-failed' }; }
+        return {};
+      } },
+      readFile: () => { if (denied) throw Object.assign(new Error('private path'), { code: 'EPERM' }); return ''; },
+      exists: () => true,
+      spawn: (_exe, args) => { title = args.at(-1).match(/<title>([^<]+)<\/title>/)[1]; return { on() {}, unref() {} }; },
+      timing: { findSetupMs: 100, toggleMs: 100, pollMs: 1 },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok('mac: permission revoked while enabling keeps the data-permission reason and still attempts cleanup',
+      result.reason === 'chrome-data-permission' && closed === 1);
+  }
+  // #221: permission failures use the shared TCC prompt/restart path.
+  for (const permission of ['screen', 'accessibility']) {
+    const { withPermissionPrompt } = require('../../desktop/computer/mac.cjs');
+    let spawned = 0, stopped = 0, requests = 0, opened = 0, granted = false, cached = false;
+    const helper = withPermissionPrompt({
+      call: async (op, args) => {
+        if (op === 'request') { requests++; return {}; }
+        if (op === 'permissions' && args.require && !cached) throw Object.assign(new Error('permission'), { code: 'permission', permission });
+        if (op === 'chromeWindows') return { windows: [] };
+        return {};
+      },
+      stop: () => { stopped++; cached = granted; },
+    }, { openExternal: () => { opened++; } });
+    const os = createMacChromeOs({ helper,
+      readFile: () => { throw new Error('missing'); }, exists: () => true,
+      spawn: () => { spawned++; throw new Error('test launch'); },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok(`mac: ${permission} permission before launch`, result.reason === `${permission}-permission` && spawned === 0);
+    t.ok(`mac: ${permission} requests OS permission and opens settings`, requests === 1 && opened === 1);
+    granted = true;
+    await os.enableRemoteDebugging();
+    t.ok(`mac: ${permission} grant is refreshed without app restart`, stopped === 1 && spawned === 1);
+  }
+  {
+    let spawned = 0, closed = 0, listening = false, gone = false;
+    const os = createMacChromeOs({
+      helper: { call: async op => {
+        if (op === 'chromeClose') { closed++; return gone ? { ok: true, gone: true } : { ok: false, reason: 'accessibility-permission' }; }
+        return { windows: [] };
+      } },
+      readFile: () => '9222\n/devtools/browser/test', probePort: async () => listening, exists: () => true,
+      spawn: () => { spawned++; return { on() {}, unref() {} }; },
+      timing: { findSetupMs: 1, pollMs: 1 },
+    });
+    t.ok('mac: discovery failure attempts cleanup and preserves its reason', (await os.enableRemoteDebugging()).reason === 'accessibility-permission' && closed === 1);
+    t.ok('mac: unresolved cleanup prevents another window with original reason', (await os.enableRemoteDebugging()).reason === 'accessibility-permission' && spawned === 1);
+    listening = true;
+    t.ok('mac: pending cleanup retries without blocking an active port', (await os.enableRemoteDebugging()).ok === true && closed === 3);
+    listening = false; gone = true;
+    t.ok('mac: manually closed setup allows another attempt', (await os.enableRemoteDebugging()).reason === 'window-not-found' && spawned === 2);
+  }
+  {
+    // A launch can surface after findSetupMs AND its cleanup have both completed.
+    const old = ['288d21f0099a0158', '52048e41fa2ff091', 'd1f9167c3c181bf6', '0557c74ff1f53bc5']
+      .map((nonce, i) => ({ id: `old-${i}`, title: `PLY-ENABLE-${nonce}${i % 2 ? " - Google Chrome - Test Profile" : ""}` }));
+    const ordinary = ['Usual tab', 'PLY-ENABLE', 'PLY-ENABLE-1234', 'PLY-ENABLE-ABCDEF0123456789',
+      'prefix PLY-ENABLE-0123456789abcdef', 'PLY-ENABLE-0123456789abcdef suffix', 'PLY-ENABLE-0123456789abcdef\n']
+      .map((title, i) => ({ id: `user-${i}`, title }));
+    const windows = [...old, ...ordinary];
+    const closed = [], beforeLaunch = [];
+    let spawned = 0, delayed, listening = false;
+    const os = createMacChromeOs({
+      helper: { call: async (op, args = {}) => {
+        if (op === 'chromeWindows') return { windows: windows.map(w => ({ ...w })) };
+        if (op === 'chromeClose') {
+          closed.push(args);
+          const idx = windows.findIndex(w => args.id ? w.id === args.id : w.title === args.marker);
+          if (idx >= 0) windows.splice(idx, 1);
+          return { ok: true, gone: idx < 0 };
+        }
+        if (op === 'chromeEnableStep') {
+          windows.find(w => w.id === args.id).title = 'Inspect with Chrome Developer Tools';
+          windows.push({ id: 'late-during-toggle', title: 'PLY-ENABLE-aaaaaaaaaaaaaaaa - Google Chrome - Test Profile' });
+          listening = true;
+          return { state: 'toggled', checked: true };
+        }
+        return {};
+      } },
+      readFile: () => '9222\n/devtools/browser/test', probePort: async () => listening, exists: () => true,
+      spawn: (_exe, args) => {
+        beforeLaunch.push(windows.map(w => w.id));
+        const title = args.find(a => a.startsWith('data:text/html,')).match(/<title>([^<]+)<\/title>/)[1];
+        const w = { id: `setup-${++spawned}`, title: `${title} - Google Chrome - Test Profile` };
+        if (spawned === 1) delayed = w; else windows.push(w);
+        return { on() {}, unref() {} };
+      },
+      timing: { findSetupMs: 5, pollMs: 1 },
+    });
+    t.ok('mac: initial late launch times out without a window', (await os.enableRemoteDebugging()).reason === 'window-not-found');
+    t.ok('mac: sweeps all four old nonces before launching', old.every(w => closed.some(c => c.id === w.id && c.exactMarker === true)));
+    windows.push(delayed);
+    t.ok('mac: next enable succeeds after a launch appeared beyond the previous cleanup', (await os.enableRemoteDebugging()).ok === true);
+    t.ok('mac: decorated titles pass only the nonce marker to cleanup', closed.filter(c => c.exactMarker).every(c => /^PLY-ENABLE-[a-f0-9]{16}$/.test(c.marker)));
+    t.ok('mac: late previous window is closed before launching another', beforeLaunch[1].every(id => id.startsWith('user-')));
+    t.ok('mac: final cleanup closes owned inspect and another late nonce',
+      closed.some(c => c.id === 'setup-2' && !c.exactMarker) && closed.some(c => c.id === 'late-during-toggle' && c.exactMarker === true));
+    t.ok('mac: marker prefix sweeps preserve every ordinary or near-matching window',
+      JSON.stringify(windows) === JSON.stringify(ordinary) && !closed.some(c => c.id?.startsWith('user-')));
+  }
+  {
+    const logs = [], windows = [];
+    let listening = false, failClose = true, closed = 0, spawned = 0;
+    const os = createMacChromeOs({
+      helper: { call: async (op, args = {}) => {
+        if (op === 'chromeWindows') return { windows: windows.map(w => ({ ...w })) };
+        if (op === 'chromeClose') {
+          closed++;
+          if (failClose) return { ok: false, reason: 'accessibility-permission' };
+          windows.length = 0;
+          return { ok: true };
+        }
+        if (op === 'chromeEnableStep') {
+          windows[0].title = 'Inspect';
+          listening = true;
+          return { state: 'toggled', checked: true };
+        }
+        return {};
+      } },
+      log: line => logs.push(line),
+      readFile: () => '9222\n/devtools/browser/test', probePort: async () => listening, exists: () => true,
+      spawn: (_exe, args) => {
+        spawned++;
+        windows.push({ id: 'owned', title: args.find(a => a.startsWith('data:text/html,')).match(/<title>([^<]+)<\/title>/)[1] });
+        return { on() {}, unref() {} };
+      },
+    });
+    const result = await os.enableRemoteDebugging();
+    t.ok('mac: listening succeeds even if setup cleanup fails', result.ok === true && result.diag.portWait.listening && windows.length === 1);
+    t.ok('mac: cleanup failure reason is logged', logs.some(s => s.includes('cleanup ok=false') && s.includes('accessibility-permission')));
+    t.ok('mac: still-listening retry succeeds despite another cleanup failure', (await os.enableRemoteDebugging()).ok === true && closed === 2);
+    failClose = false;
+    t.ok('mac: pending owned inspect window is retried and closed with no new launch',
+      (await os.enableRemoteDebugging()).ok === true && windows.length === 0 && spawned === 1 && closed === 3);
+  }
+  {
+    const { startFakeChrome } = await import('../lib/fake-chrome.mjs');
+    const chrome = await startFakeChrome({ permission: 'hold' });
+    let helperCalls = 0, spawned = 0;
+    const os = createMacChromeOs({
+      helper: { call: async () => { helperCalls++; throw new Error('unexpected helper call'); } },
+      spawn: () => { spawned++; throw new Error('unexpected launch'); },
+    });
+    try {
+      const result = await os.enableRemoteDebugging({ userDataDir: chrome.dir });
+      t.ok('mac: live TCP port passes while Chrome permission is held', result.ok === true);
+      t.ok('mac: probing never upgrades or opens a Chrome confirmation', chrome.upgrades === 0 && chrome.dialogs().length === 0);
+      t.ok('mac: live port never opens a setup window or asks for TCC', spawned === 0 && helperCalls === 0);
+    } finally { await chrome.stop(); }
+  }
+
 }

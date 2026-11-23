@@ -59,7 +59,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
 
   const connectPayload = () => {
     const status = connection.state();
-    return { state: CONNECT_STATES.has(status.state) ? status.state : 'setup', dialog: status.dialog === true, assist: status.assist ?? null, enable: status.enable === true };
+    return { state: CONNECT_STATES.has(status.state) ? status.state : 'setup', dialog: status.dialog === true, assist: status.assist ?? null, setupReason: status.enableReason ?? null, enable: status.enable === true };
   };
 
   /** カードの中身を差し替える。onOpen の前（askPermission が祖先を読んでいる間）の分はためておく */
@@ -151,7 +151,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       if (status.state === 'connected') resolveWith(h, 'connected');
       // 人が手を動かした（トグルを入れた・Chrome の確認を押す案内に戻った・断った）接続は、「確認なしのため自動」と書かない
       if (status.state === 'setup' || status.state === 'denied' || status.assist === 'allow-failed') h.human = true;
-      if (CONNECT_STATES.has(status.state)) patch(h, { state: status.state, dialog: status.dialog === true, assist: status.assist ?? null, enable: status.enable === true });
+      if (CONNECT_STATES.has(status.state)) patch(h, { state: status.state, dialog: status.dialog === true, assist: status.assist ?? null, setupReason: status.enableReason ?? null, enable: status.enable === true });
     }
   });
 
