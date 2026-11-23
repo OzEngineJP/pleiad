@@ -7,7 +7,6 @@ import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
-import { clockText } from '../../core/limit-resume.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -223,16 +222,11 @@ export default async function (t) {
     t.ok('キーをサーバーのログに出さない', !server.tail(200).includes(KEY));
 
     // ---- 上限で止まった子の枠（Issue #121）。依頼元が登録した Claude のアカウントの会話でも、アカウントを持たない agy の子が
-    // 止まった枠を、完了の通知が言う時刻まで自動の振り分けが飛ばす。対照はログイン中のアカウントの会話
+    // 止まった枠を、使用量に出る時刻まで自動の振り分けが飛ばす。対照はログイン中のアカウントの会話
     const settle = async taskId => {
       let got;
       for (let i = 0; i < 1200 && !(got?.status === 'failed' && got.notification === 'sent'); i++) { got = (await c.cmd('agentTasks')).find(x => x.taskId === taskId); await sleep(50); }
       return got;
-    };
-    // 完了の通知の「〜まで選びません」の時刻（clockText の形）
-    const skipTime = async sessionId => {
-      const notices = (await c.cmd('loadSession', { sessionId })).messages.filter(m => m.internalTaskNotice).map(m => m.text).join('\n');
-      return /backend を省いた ply_delegate は、(.+?) までこの委譲先|will not pick this delegate .*? until (.+?)\.$/m.exec(notices)?.slice(1).find(Boolean) ?? notices.slice(0, 600);
     };
     const parentOn = async account => {
       const id = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
@@ -247,12 +241,11 @@ export default async function (t) {
     t.ok('（準備）登録した Claude のアカウントの会話から、自動で agy に任せる', limited.data?.routing?.target?.model === 'gemini-3.8-flash-high'
       && (await c.cmd('listSessions')).find(s => s.id === owner)?.claudeAccount === registered, limited.text.slice(0, 300));
     const stoppedRow = await settle(limited.data?.taskId);
-    // ADR 0302: flash で仕事前に断られたら pro へ任せ直す。pro も同じく上限で断るので、止まる枠は 2 つになる
+    // flash から同じ子のまま pro に切り替える。pro も上限で断るので、止まる枠は 2 つになる
     t.ok('agy の子は依頼元の会話の Claude のアカウントを継いで走り、上限で止まる',
       stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === registered,
       JSON.stringify(stoppedRow?.limit ?? stoppedRow?.status));
     t.ok('止まった枠の記録は、アカウントを持たないエージェントなので account: null（継いだ id を載せない）', stoppedRow?.limit && stoppedRow.limit.account === null && stoppedRow.routing?.target?.account === null, JSON.stringify(stoppedRow?.limit));
-    const told = await skipTime(owner);
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high', 'antigravity:gemini-3.8-mini-high'] } } });
     const after = await call(owner, { kind: 'trivial', task: 'agy-after-limit' });
     const afterSkipped = after.data?.routing?.skipped ?? [];
@@ -260,9 +253,10 @@ export default async function (t) {
     const skippedHeld = afterSkipped.find(s => s.candidate === `antigravity:${stoppedRow.limit.model}`);
     t.ok('次の自動の振り分けは、止まった枠を recently_limited で飛ばして次の候補を選ぶ',
       !after.isError && after.data.routing.target.model === 'gemini-3.8-mini-high' && skippedFlash?.reason === 'recently_limited', after.text.slice(0, 600));
-    t.ok('完了の通知の「〜まで選びません」の時刻と、飛ばした until が一致する', Boolean(skippedHeld?.until) && clockText(Date.parse(skippedHeld.until)) === told,
-      JSON.stringify({ told, until: skippedHeld?.until }));
     const heldAgy = (await c.cmd('providerUsage', { backend: 'antigravity' })).held ?? [];
+    const heldUntil = heldAgy.find(x => x.model === stoppedRow.limit.model)?.until;
+    t.ok('使用量で止まっている枠の時刻と、振り分けで飛ばした until が一致する', Boolean(heldUntil) && skippedHeld?.until === heldUntil,
+      JSON.stringify({ heldUntil, skippedUntil: skippedHeld?.until }));
     t.ok('使用量（providerUsage の held）の agy の行に、継いだ Claude のアカウントを載せない',
       heldAgy.some(x => x.model === 'gemini-3.8-flash-high' && x.reason === 'recently_limited' && x.account === null) && !JSON.stringify(heldAgy).includes(registered), JSON.stringify(heldAgy));
     const usageFrom = c.mark();
@@ -278,15 +272,15 @@ export default async function (t) {
     const loginRow = await settle(loginStopped.data?.taskId);
     t.ok('（対照）ログイン中のアカウントの会話から任せた agy の子も上限で止まる', loginStopped.data?.routing?.target?.model === 'gemini-3.8-mini-high'
       && (await c.cmd('listSessions')).find(s => s.id === loginOwner)?.claudeAccount === '' && loginRow?.status === 'failed' && loginRow.limit?.model === 'gemini-3.8-mini-high', JSON.stringify(loginRow?.limit ?? loginStopped.text.slice(0, 300)));
-    const loginTold = await skipTime(loginOwner);
+    const loginHeldUntil = (await c.cmd('providerUsage', { backend: 'antigravity' })).held?.find(x => x.model === loginRow?.limit?.model)?.until;
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high', 'antigravity:gemini-3.8-nano-high'] } } });
     const loginAfter = await call(loginOwner, { kind: 'trivial', task: 'agy-after-limit' });
     // 次の候補（nano-high）が使えれば選ばれ、使えなければ全部だめのエラーになる。どちらでも止まった枠（mini-high）は飛ばす
     const loginUntil = loginAfter.data?.routing?.skipped?.find(s => s.candidate === 'antigravity:gemini-3.8-mini-high' && s.reason === 'recently_limited')?.until
       ?? /^- antigravity:gemini-3\.8-mini-high \(t\d\): recently_limited until (\S+)$/m.exec(loginAfter.text ?? '')?.[1];
-    t.ok('（対照）ログイン中のアカウントの会話でも、止まった枠を飛ばし、通知の時刻と一致する',
-      loginAfter.data?.routing?.target?.model === 'gemini-3.8-nano-high' && Boolean(loginUntil) && clockText(Date.parse(loginUntil)) === loginTold, JSON.stringify({ loginTold, text: loginAfter.text?.slice(0, 600) }));
-    // 自動の振り分けが無効なら、完了の通知に「backend を省いた ply_delegate は 〜 まで選びません」を添えない（無効のときは backend を省けない。Issue #29）
+    t.ok('（対照）ログイン中のアカウントの会話でも、使用量で止まっている枠の時刻まで候補から外す',
+      loginAfter.data?.routing?.target?.model === 'gemini-3.8-nano-high' && Boolean(loginHeldUntil) && loginUntil === loginHeldUntil, JSON.stringify({ loginUntil, loginHeldUntil, text: loginAfter.text?.slice(0, 600) }));
+    // 自動の振り分けが無効でも、固定した委譲先で上限に達したことを知らせる
     await c.cmd('setDelegationRouting', { settings: { enabled: false } });
     const offOwner = await parentOn('');
     const offStopped = await call(offOwner, { kind: 'trivial', backend: 'antigravity', model: 'gemini-3.8-nano-high', task: 'limit-no-reply' });

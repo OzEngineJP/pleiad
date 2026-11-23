@@ -140,6 +140,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 子が上限・一時的な失敗のあと再試行を待っているか（ADR 0229）。待っていれば { attempt, next（次の再試行の時刻 ms）, message, reason, limit, since（待ちの回の始まり）, seenAt }、
   // 無ければ null。長い・上限による待ちは status: waiting にし（ply_task_wait を待たずに返す）、待ちの回ごとに 1 回 deliverRetry で依頼元へ知らせる
   retrying = () => null, deliverRetry = async () => 'ok',
+  deliverLimitSwitch = async () => 'ok',
   // 上限で止まった子の会話の、解除時刻までの待ち（{ resetsAt } か null）。待っている間は、積まれた指示（ply_task_send）で次の回を始めない
   held = () => null,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
@@ -508,6 +509,17 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     instructionSends.set(r.taskId, tracked);
     return tracked;
   }
+  const limitSwitchNotices = new Map();
+  const deliveringLimitSwitch = new Set();
+  function queueLimitSwitch(taskId, target, first = false) {
+    const notices = limitSwitchNotices.get(taskId) ?? [];
+    if (!notices.includes(target)) {
+      if (first) notices.unshift(target);
+      else notices.push(target);
+    }
+    limitSwitchNotices.set(taskId, notices);
+  }
+  const autoTarget = row => row.routing?.mode === 'auto' && !row.routing.targetPinned && row.routing.changed?.by !== 'parent';
   // adopted: 付け直した子のターン（adopt）の、結果を確定する側（task, signal）=> execute と同じ形の結果。1 回目の実行だけ、実行の開始を書かずにこれを待つ
   async function run(r, controller, adopted = null, adoptedPrompt) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
@@ -517,16 +529,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const halted = () => quitStops.has(r.taskId) || (closed && r.status !== 'cancelling');
     try {
       while (!controller.signal.aborted) {
-        let prompt, instructionIds;
+        let prompt, instructionIds, continuing = false, triedLimits = [];
         settlingInstructions.delete(r.taskId);
         if (adopted) {
           // この回の指示は、旧サーバーが実行の開始で sending にしたもの。途中送信で渡している最中の分（steers の claim）は含めない
           const claims = steers.get(r.taskId) ?? new Set();
           instructionIds = (r.instructions ?? []).filter(x => x.state === 'sending' && !claims.has(x.id)).map(x => x.id);
           // 取り直し（requeue）で元の入力へ戻す本文。instructions に無い（最初の依頼の本文）ときだけ使う
-          prompt = adoptedPrompt;
+          prompt = adoptedPrompt ?? instructionIds.map(id => r.instructions.find(x => x.id === id)?.text ?? '').join('\n\n');
         } else try { await commit(r.taskId, row => {
           const entry = row.queue.shift();
+          triedLimits = entry?.triedLimits ?? [];
+          continuing = triedLimits.length > 0;
           instructionIds = [];
           if (entry?.instructionId) {
             instructionIds.push(entry.instructionId);
@@ -534,7 +548,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             prompt = instructionIds.map(id => row.instructions.find(x => x.id === id)?.text ?? '').join('\n\n');
             const deliveryId = `task-send-${instructionIds[0]}`;
             for (const id of instructionIds) { const i = row.instructions.find(x => x.id === id); if (i) i.deliveryId = deliveryId; }
-          } else prompt = entry;
+          } else prompt = continuing ? entry.prompt : entry;
           for (const id of instructionIds) { setInstruction(row, id, 'sending'); deferredInstructions.delete(id); }
           row.status = 'running'; row.lastActivityAt = now(); row.silenceNotifiedAt = null;
         }, 'run.start'); }
@@ -542,20 +556,40 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         activeInstructionIds = instructionIds;
         const finish = adopted;
         adopted = null;
+        const input = { messageId: instructionIds.length ? `task-send-${instructionIds[0]}` : undefined };
         let result = finish ? await finish(structuredClone(r), controller.signal)
-          : await execute(structuredClone(r), prompt, controller.signal,
-            { messageId: instructionIds.length ? `task-send-${instructionIds[0]}` : undefined });
+          : await execute(structuredClone(r), prompt, controller.signal, { ...input, continuing });
         if (halted()) return;
-        // 自動の振り分けの子が、仕事を始める前に断られた（error / limited で touched が無い）→ 次の候補へ任せ直す（ADR 0302）。
-        // 対象は最初の回（最初の依頼の本文）だけ。追加指示・付け直した回・固定/手動の振り分け・ホストのタスク・requeue・中断は対象外。
-        // 痕跡（返答・思考・ツール・作業の出来事）が 1 つでもあれば仕事が重複するので任せ直さない。経過時間は見ない
-        for (let reroutes = 0; !finish && !instructionIds.length && !r.host && r.routing?.mode === 'auto'
-            && (result?.outcome === 'error' || result?.outcome === 'limited') && result?.touched === false
-            && !controller.signal.aborted && !halted() && reroutes < (result.modelRejected ? MODEL_REROUTE_MAX : REROUTE_MAX); reroutes += 1) {
-          const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null, ...(result.modelRejected ? { modelRejected: true } : {}) }).catch(() => null);
+        // 上限は同じ会話で続ける。仕事前のエラーだけ従来どおり新しい会話で試す（ADR 0302）。
+        for (let reroutes = 0; !r.host && autoTarget(r) && !controller.signal.aborted && !halted();) {
+          const limited = result?.outcome === 'limited';
+          if (!limited && (continuing || finish || instructionIds.length || result?.outcome !== 'error' || result.touched !== false
+            || reroutes >= (result.modelRejected ? MODEL_REROUTE_MAX : REROUTE_MAX))) break;
+          if (limited) {
+            triedLimits.push(r.routing.target);
+            if (result.limit?.backend && result.limit.model) triedLimits.push(result.limit);
+          }
+          const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null,
+            ...(limited ? { triedLimits, signal: controller.signal } : {}), ...(result.modelRejected ? { modelRejected: true } : {}) }).catch(() => null);
           // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ文面で失敗にする（ADR 0311）
           if (next?.exhausted) { result = { ...result, error: next.exhausted }; break; }
           if (!next?.sessionId) break;
+          if (limited) {
+            try { await commit(r.taskId, row => {
+              if (controller.signal.aborted || halted() || row.status !== 'running' || !autoTarget(row)) throw new Error('Task changed');
+              row.backend = next.backend; row.model = next.model; row.effort = next.effort; row.mode = next.mode; row.routing = next.routing;
+              if (result.worktree) row.worktree = result.worktree;
+              endTurnCommands(row); settleCommands(row);
+            }, 'run.limitSwitch'); }
+            catch { await next.rollback?.().catch(() => {}); break; }
+            queueLimitSwitch(r.taskId, next.routing.target);
+            continuing = true;
+            const rejections = result.rejections ?? [];
+            result = await execute(structuredClone(r), prompt || r.task, controller.signal, { ...input, continuing });
+            result = { ...result, rejections: [...rejections, ...(result?.rejections ?? [])] };
+            continue;
+          }
+          reroutes += 1;
           const previous = r.sessionId;
           // タスクの記録を新しい会話・委譲先・振り分けへ書き換える。保存できなければ任せ直しをやめ、作った子を巻き戻す
           try { await commit(r.taskId, row => {
@@ -577,7 +611,14 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           return;
         }
         if (result?.requeue) {
-          await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : prompt ? [prompt] : [])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
+          await record(r.taskId, row => {
+            const entries = instructionIds.length ? instructionIds.map(instructionId => ({ instructionId }))
+              : continuing ? [{ prompt: prompt || row.task }] : prompt ? [prompt] : [];
+            if (continuing) entries[0].triedLimits = triedLimits;
+            row.queue.unshift(...entries);
+            for (const id of instructionIds) setInstruction(row, id, 'queued');
+            row.status = 'queued';
+          }, 'run.requeue');
           activeInstructionIds = undefined; requeued = true;
           return;
         }
@@ -832,9 +873,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     if (closed || mutating) return;
     if (fault) { probe(); return; }
     const groups = new Map();
-    const notificationDue = r => r.notification === 'pending' && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)
+    const notificationDue = r => r.notification === 'pending' && !limitSwitchNotices.has(r.taskId) && !notices.has(r.taskId) && !waited.has(r.taskId) && !ACTIVE.has(r.status)
       && (noticeRetryAt.get(r) ?? -Infinity) <= now();
     for (const r of Object.values(records)) {
+      const switches = limitSwitchNotices.get(r.taskId);
+      if (switches?.length && !deliveringLimitSwitch.has(r.taskId)) {
+        deliveringLimitSwitch.add(r.taskId);
+        const target = switches[0];
+        let dropped = false;
+        const redeliver = () => { dropped = true; queueLimitSwitch(r.taskId, target, true); };
+        spawn(deliverLimitSwitch(structuredClone(r), target, { redeliver }).catch(() => 'error').then(outcome => {
+          if (outcome !== 'requeue' && !dropped) switches.splice(switches.indexOf(target), 1);
+          if (!switches.length) limitSwitchNotices.delete(r.taskId);
+        }).finally(() => deliveringLimitSwitch.delete(r.taskId)));
+      }
       // ホストに任せたタスクの写しは走らせない。新しいホストの活動の写しがあれば、通知だけ依頼元で判定する
       if (r.host) {
         if (r.hostTelemetry && !r.hostLost && r.status === 'running') {
@@ -1075,7 +1127,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
      * 今の値と同じなら何も書かない（changed: false）。最初の委譲先へ戻したら印を外す。
      * 返すのは { task, changed, previous }。previous は書く前の値で、後の失敗で戻すとき（untarget）に使う
      */
-    async retarget(owner, taskId, { backend, model, effort, mode, account, accountLabels = {} }, locale) {
+    async retarget(owner, taskId, { backend, model, effort, mode, account, accountLabels = {}, pinTarget = false }, locale) {
       const r = owned(owner, taskId, locale);
       if (r.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
       if (r.status === 'stopUnconfirmed' && (live.has(taskId) || await stopUnconfirmed(r))) throw new Error(agentT(locale, 'tasks.stopUnconfirmed'));
@@ -1084,10 +1136,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const sameAccount = (a, b) => a.account == null || b.account == null || acct(a.account) === acct(b.account);
       const same = (a, b) => (a.backend ?? null) === (b.backend ?? null) && (a.model ?? '') === (b.model ?? '') && (a.effort ?? '') === (b.effort ?? '') && sameAccount(a, b);
       const now = { backend: r.backend, model: r.model, effort: r.effort, account: r.routing?.target?.backend === r.backend ? r.routing?.target?.account : undefined };
-      if (same(now, { backend, model, effort, account }) && (r.mode ?? '') === (mode ?? '')) return { task: view(r), changed: false, previous: null };
+      const unchanged = same(now, { backend, model, effort, account }) && (r.mode ?? '') === (mode ?? '');
+      if (unchanged && (!pinTarget || !autoTarget(r))) return { task: view(r), changed: false, previous: null };
       const previous = structuredClone({ backend: r.backend, model: r.model, effort: r.effort, mode: r.mode, routing: r.routing ?? null });
       await commit(r.taskId, row => {
         if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
+        if (unchanged) { row.routing.targetPinned = true; return; }
         const target = row.routing?.target ?? {};
         const was = target.account != null ? { account: acct(target.account), ...(target.accountLabel ? { accountLabel: target.accountLabel } : {}) } : {};
         const from = row.routing?.changed?.from ?? { backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null, ...was };
@@ -1095,6 +1149,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           : accountLabels[acct(account)] ?? (target.backend === backend && target.account != null && acct(target.account) === acct(account) ? target.accountLabel : null);
         row.routing = { ...(row.routing ?? { mode: 'pinned', kind: null }),
           target: { backend, model, account: account == null ? null : acct(account), ...(label ? { accountLabel: label } : {}), effort: effort || null } };
+        if (pinTarget && row.routing.mode === 'auto') row.routing.targetPinned = true;
         // 振り分けが決めた強さ（由来・段・合わせた元）は、依頼元が替えたら当てはまらない
         if ((previous.effort ?? '') !== (effort ?? '')) { row.routing.effortSource = 'parent'; delete row.routing.effortTier; delete row.routing.effortAsked; }
         if (same(from, { backend, model, effort, account })) delete row.routing.changed;
@@ -1174,6 +1229,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (!ACTIVE.has(full.status) && full.status !== 'stopUnconfirmed') full.notification = 'read';
         records[full.taskId] = full;
         try { await write([full.taskId]); } catch (e) { delete records[full.taskId]; failed(e, 'adopt', full.taskId); throw refused(locale); }
+        for (const target of full.routing?.limitSwitches ?? []) queueLimitSwitch(full.taskId, target);
         touched();
         return view(full);
       });
@@ -1188,6 +1244,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!r?.host) return null;
       return serial(async () => {
         const before = JSON.stringify(r);
+        const previousSwitches = r.routing?.limitSwitches?.length ?? 0;
         // 追えなくなっていた（hostLost）行にホストの便りが戻ったら、ホストの状態に戻し、完了通知もやり直す
         const hostReturned = r.hostLost && patch.hostLost == null;
         if (hostReturned) r.notification = 'none';
@@ -1208,7 +1265,12 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
         if (r.status === 'stopUnconfirmed' || (isActive && !wasActive)) r.notification = 'none';
         else if (!isActive && (wasActive || r.notification === 'none')) r.notification = r.status === 'cancelled' ? 'suppressed' : r.notification === 'read' ? 'read' : 'pending';
-        if (JSON.stringify(r) !== before) { r.updatedAt = Date.now(); await persist('mirror', taskId); touched(); }
+        if (JSON.stringify(r) !== before) {
+          r.updatedAt = Date.now();
+          await persist('mirror', taskId);
+          for (const target of r.routing?.limitSwitches?.slice(previousSwitches) ?? []) queueLimitSwitch(taskId, target);
+          touched();
+        }
         return view(r);
       });
     },

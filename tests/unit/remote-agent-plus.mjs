@@ -170,8 +170,8 @@ export default async function (t) {
     t.ok('AI の線が ready になり、ホストが許可（allowed）を返す', agent.status.state === 'ready' && agent.status.allowed === true, JSON.stringify(agent.status));
     const row = (await dev.list()).find(h => h.hostId === hostId);
     t.ok('一覧の plus の記録に AI の線の状態が付く', row?.agent?.state === 'ready' && row.via === 'plus');
-    const again = await dev.store.host(hostId, 'plus');
-    t.ok('つながると plus の記録の最後の接続が書かれる（own の記録は作らない）', Boolean(again?.lastConnectedAt) && (await dev.store.host(hostId, 'own')) === null);
+    await until(async () => (await dev.store.host(hostId, 'plus'))?.lastConnectedAt, 15_000, 'Plus の最後の接続日時の保存');
+    t.ok('つながると plus の記録の最後の接続が書かれる（own の記録は作らない）', (await dev.store.host(hostId, 'own')) === null);
     await dev.closeAll();
 
     // ---- 端末のローカルのサーバー（main の身代わり付き）から ply_delegate { host } で任せる

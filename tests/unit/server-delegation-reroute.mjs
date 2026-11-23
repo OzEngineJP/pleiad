@@ -9,7 +9,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-delegation-reroute';
-export const title = '委譲の任せ直し: 仕事前の拒否は次の候補へ・痕跡があれば替えない・固定と追加指示は替えない・回数の上限と記録';
+export const title = '委譲の再振り分け: 上限なら同じ子で継続し、仕事前のエラーなら次の候補で再試行する';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 
 export default async function (t) {
@@ -52,10 +52,6 @@ export default async function (t) {
   };
   // 子の会話のメタデータ（delegation.superseded など）。一覧は操作の一覧（sessions.list）で見る
   const sessionMeta = async id => (await c.cmd('invoke', { op: 'sessions.list', args: {} })).find(s => s.id === id);
-  const superseded = async (oldId, ms = 30000) => {
-    for (let i = 0; i < 600; i++) { const s = await sessionMeta(oldId); if (s?.delegation?.superseded) return s.delegation.superseded; await sleep(50); }
-    return null;
-  };
   const setTiers = async t1 => c.cmd('setDelegationRouting', { settings: { table: { trivial: ['t1', 't1', 't1'] }, tiers: { t1 } } });
   try {
     // 使用量が取れて agy の候補が使えるようになるまで待つ（判定は 3 レベル同じ段なので送らない。fallback: same_level）
@@ -67,28 +63,27 @@ export default async function (t) {
     }
     const sid = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
 
-    // ---- 返事の前に上限で断られた子は、次の候補へ任せ直して同じタスクを走らせる
+    // ---- 返事の前に上限で断られた子は、同じ会話を次の候補で続ける
     await setTiers(['antigravity:gemini-3.8-flash-high', 'fake:fast']);
     const limited = await delegate(sid, { kind: 'trivial', task: 'limit-no-reply' });
     t.ok('（準備）自動の振り分けは先頭の候補（agy の flash-high）を選ぶ', !limited.isError && limited.data?.routing?.mode === 'auto'
       && limited.data.routing.target.model === 'gemini-3.8-flash-high', limited.text.slice(0, 300));
     const oldChild = limited.data.sessionId;
     const done = await settle(limited.data.taskId);
-    t.ok('上限で断られた子は任せ直し、次の候補（fake:fast）が同じタスクを完了する', done?.status === 'completed'
-      && done.backend === 'fake' && done.model === 'fast' && done.sessionId !== oldChild, JSON.stringify({ s: done?.status, b: done?.backend }));
+    t.ok('次の候補（fake:fast）が同じ子の会話で元の依頼を引き継ぎ、完了する', done?.status === 'completed'
+      && done.backend === 'fake' && done.model === 'fast' && done.sessionId === oldChild && done.result.includes('limit-no-reply'),
+      JSON.stringify({ s: done?.status, b: done?.backend }));
     const attempts = done?.routing?.attempts ?? [];
     t.ok('routing.attempts に、断られた回（委譲先・会話・limited）が残る', attempts.length === 1
       && attempts[0].target?.backend === 'antigravity' && attempts[0].target?.model === 'gemini-3.8-flash-high'
-      && attempts[0].sessionId === oldChild && attempts[0].outcome === 'limited', JSON.stringify(attempts));
-    t.ok('任せ直しの振り分けは、断られた候補を rejected_before_work で飛ばした記録を持つ',
-      (done?.routing?.skipped ?? []).some(x => x.candidate === 'antigravity:gemini-3.8-flash-high' && x.reason === 'rejected_before_work'),
+      && attempts[0].sessionId === oldChild && attempts[0].outcome === 'limited' && attempts[0].continued, JSON.stringify(attempts));
+    t.ok('振り分けは、止まった候補を recently_limited で飛ばした記録を持つ',
+      (done?.routing?.skipped ?? []).some(x => x.candidate === 'antigravity:gemini-3.8-flash-high' && x.reason === 'recently_limited'),
       JSON.stringify(done?.routing?.skipped));
-    t.ok('断られた子の会話は残り、次の会話の id（superseded）が付く', (await superseded(oldChild)) === done.sessionId);
-    t.ok('断られた子の会話は開ける（失敗の経緯として残す）', ((await c.cmd('loadSession', { sessionId: oldChild })).messages ?? []).length >= 0
-      && Boolean(await sessionMeta(oldChild)));
+    t.ok('子の会話は同じ id のまま新しい実行先に切り替わる', (await sessionMeta(oldChild))?.backend === 'fake');
     const notice = await noticeOf(sid, limited.data.taskId);
-    t.ok('完了の通知に、元の委譲先・理由・実際に走った委譲先の 1 行を添える',
-      notice.includes('antigravity:gemini-3.8-flash-high は仕事を始める前に使用量の上限で断られたので、fake:fast へ任せ直しました'), notice.slice(0, 500));
+    t.ok('上限での切り替えを一行だけ知らせる',
+      notice.split('\n').filter(line => /^使用量の上限のため .+ · fast に切り替えて続けています。$/.test(line)).length === 1, notice.slice(0, 500));
 
     // ---- 返事を書いてから失敗した子は任せ直さない（痕跡があるので、同じ仕事を 2 箇所で走らせない）
     await setTiers(['antigravity:gemini-3.8-pro-high', 'fake:fast']);
@@ -135,26 +130,40 @@ export default async function (t) {
     t.ok('追加の指示の回は、仕事前の失敗でも同じ子の会話で失敗になる（任せ直さない）', moreRow?.status === 'failed'
       && moreRow.sessionId === sentDone.sessionId && !(moreRow.routing?.attempts ?? []).length, JSON.stringify({ s: moreRow?.status, sid: moreRow?.sessionId }));
 
-    // ---- 任せ直しは 2 回まで（最初を含め 3 回の試行）。3 つ目も断られたら、まだ候補があっても失敗で止まる
-    await setTiers(['antigravity:gemini-3.8-nano-high', 'antigravity:gemini-3.8-turbo-high', 'antigravity:gemini-3.8-pro-high', 'fake:fast']);
-    const capped = await delegate(sid, { kind: 'trivial', task: 'limit-no-reply' });
-    t.ok('（準備）自動の振り分けは先頭の候補（agy の nano-high）を選ぶ', capped.data?.routing?.target?.model === 'gemini-3.8-nano-high', capped.text.slice(0, 300));
-    const cappedRow = await settle(capped.data.taskId);
-    const cappedAttempts = cappedRow?.routing?.attempts ?? [];
-    t.ok('任せ直しは 2 回まで: 3 つ目の候補（pro-high）で止まり、4 つ目（fake:fast）には進まない', cappedRow?.status === 'failed' && Boolean(cappedRow.limit)
-      && cappedRow.model === 'gemini-3.8-pro-high' && cappedAttempts.length === 2
-      && cappedAttempts.every(a => a.outcome === 'limited' && a.target?.backend === 'antigravity')
-      && cappedAttempts.map(a => a.target?.model).join() === 'gemini-3.8-nano-high,gemini-3.8-turbo-high',
-      JSON.stringify({ s: cappedRow?.status, b: cappedRow?.model, at: cappedAttempts.map(a => a.target?.model) }));
-    t.ok('2 回任せ直すと 3 つの子の会話ができる。前の 2 つには順に次の会話の id（superseded）が付く',
-      cappedAttempts[0]?.sessionId && cappedAttempts[1]?.sessionId && cappedRow.sessionId
-      && (await superseded(cappedAttempts[0].sessionId)) === cappedAttempts[1].sessionId
-      && (await superseded(cappedAttempts[1].sessionId)) === cappedRow.sessionId,
-      JSON.stringify([cappedAttempts[0]?.sessionId, cappedAttempts[1]?.sessionId, cappedRow?.sessionId]));
-    const cappedNotice = await noticeOf(sid, capped.data.taskId);
-    t.ok('任せ直しが 2 回なら、通知には任せ直しの行が 2 本（nano→turbo・turbo→pro）出る',
-      cappedNotice.includes('antigravity:gemini-3.8-nano-high は仕事を始める前に使用量の上限で断られたので、antigravity:gemini-3.8-turbo-high へ任せ直しました')
-      && cappedNotice.includes('antigravity:gemini-3.8-turbo-high は仕事を始める前に使用量の上限で断られたので、antigravity:gemini-3.8-pro-high へ任せ直しました'), cappedNotice.slice(0, 600));
+    await setTiers(['antigravity:gemini-3.8-pro-high', 'fake:fast']);
+    const follow = await delegate(sid, { kind: 'trivial', task: 'original request marker' });
+    await settle(follow.data.taskId);
+    await call(sid, 'ply_task_send', { taskId: follow.data.taskId, message: 'limit-no-reply' });
+    const followed = await settle(follow.data.taskId);
+    const status = await call(sid, 'ply_task_status', { taskId: follow.data.taskId });
+    t.ok('追加指示の上限でも同じ子が元の依頼と追加指示を引き継ぎ、状態ツールで変更を読める',
+      followed?.status === 'completed' && followed.sessionId === follow.data.sessionId && followed.result.includes('original request marker')
+      && followed.result.includes('limit-no-reply') && status.data?.routing?.target?.backend === 'fake'
+      && status.data.routing.attempts.at(-1).continued, JSON.stringify(status.data?.routing));
+
+    await setTiers(['antigravity:gemini-3.8-nano-high', 'antigravity:gemini-3.8-turbo-high']);
+    const exhaustedLimit = await delegate(sid, { kind: 'trivial', task: 'limit-no-reply' });
+    const limitStop = await settle(exhaustedLimit.data.taskId);
+    t.ok('候補がすべて上限なら、同じ子で各候補を一度ずつ試して止まる',
+      limitStop?.status === 'failed' && limitStop.sessionId === exhaustedLimit.data.sessionId && limitStop.limit?.resetsAt
+      && limitStop.model === 'gemini-3.8-turbo-high' && limitStop.routing?.attempts?.length === 1
+      && limitStop.routing.attempts[0].target.model === 'gemini-3.8-nano-high', JSON.stringify(limitStop?.routing));
+    const stopped = await noticeOf(sid, exhaustedLimit.data.taskId);
+    t.ok('候補が尽きたときは上限と時刻だけ知らせる', stopped.split('\n').some(line => /^使用量の上限で止まりました。.+ に枠が戻ります。$/.test(line)));
+
+    await setTiers(['antigravity:gemini-3.8-mini-high', 'fake:fast']);
+    const fixedBySend = await delegate(sid, { kind: 'trivial', task: 'pin with send' });
+    await settle(fixedBySend.data.taskId);
+    await call(sid, 'ply_task_send', { taskId: fixedBySend.data.taskId, backend: 'antigravity', message: 'limit-no-reply' });
+    const fixedSendRow = await settle(fixedBySend.data.taskId);
+    t.ok('ply_task_send で同じ実行先を指定しても固定し、上限なら止まる',
+      fixedSendRow?.status === 'failed' && fixedSendRow.limit && fixedSendRow.routing?.targetPinned && !fixedSendRow.routing.attempts?.length);
+
+    const fixedLimit = await delegate(sid, { kind: 'trivial', backend: 'antigravity', model: 'gemini-3.8-mini-high', task: 'limit-no-reply' });
+    const fixedLimitRow = await settle(fixedLimit.data.taskId);
+    t.ok('最初から固定の委譲が上限なら、使える候補があっても同じ実行先で止まる',
+      fixedLimitRow?.status === 'failed' && fixedLimitRow.limit && fixedLimitRow.sessionId === fixedLimit.data.sessionId
+      && fixedLimitRow.backend === 'antigravity' && !fixedLimitRow.routing?.attempts?.length);
 
     // ---- モデルを CLI に断られた子（ADR 0311）。一覧に無い名前（fake:rejected-a は fake の一覧に無い）も、飛ばさず選ぶ
     await setTiers(['fake:rejected-a', 'fake:fast']);

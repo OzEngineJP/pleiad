@@ -119,7 +119,8 @@ export default async function (t) {
     const second = (await a1.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
     t.ok('エージェントが新しいタブを開くと、映像はそのタブへ付け替わる（前のタブの screencast と映像のセッションは外れる）',
       await until(() => fake.screencasting(second) && !fake.screencasting(first)) && !sessionsOf(first).some(s => s.id === view.id), JSON.stringify(fake.sessions()));
-    t.ok('付け替わった state に新しいタブ・タブ数が載る', messages.some(m => m.type === 'state' && m.state.tabId === second && m.state.tabs === 2));
+    t.ok('付け替わった state に新しいタブ・タブ数が載る',
+      await until(() => messages.some(m => m.type === 'state' && m.state.tabId === second && m.state.tabs === 2)));
     const sid2 = (await a1.cmd('Target.attachToTarget', { targetId: second, flatten: true })).result.sessionId;
     await a1.cmd('Runtime.evaluate', { expression: '1' }, sid1);
     t.ok('エージェントが前のタブにコマンドを送ると、映像はそこへ戻る（今のタブ = 最後にコマンドを送ったタブ）', await until(() => fake.screencasting(first) && !fake.screencasting(second)));
