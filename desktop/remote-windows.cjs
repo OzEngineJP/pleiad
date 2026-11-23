@@ -224,6 +224,7 @@ function createRemoteWindows(deps) {
         cipher: safeStorageCipher({ safeStorage, platform }), app: app.getVersion(), name: os.hostname(), platform: 'desktop',
         // Plus 経由の PC への AI の線（docs/remote.md §4.5）。Plus を使わない設定の間は張らない（窓の一覧も Plus の PC を出さない）
         plusAuth: hostId => (readRemoteSettings(remoteDir).plus?.use !== false ? plusAuthFor(hostId) : null),
+        logAgentState: line => desktopLog?.info(line),
       });
       d.on('status', onStatus);
       d.on('agent-state', pushHosts);
@@ -692,7 +693,13 @@ function createRemoteWindows(deps) {
   /** ローカルのサーバー（utilityProcess）との橋。この PC の AI がホストへ任せる口（remote.md §4.5） */
   function attachWorker(worker) {
     const { attachRemoteAgentBridge } = require('./remote-agent-bridge.cjs');
-    agentBridge = attachRemoteAgentBridge(worker, { getDevice: device, log: line => console.warn('[remote-agent]', line) });
+    agentBridge = attachRemoteAgentBridge(worker, {
+      getDevice: device, log: line => console.warn('[remote-agent]', line),
+      logDeliveryFailure: () => {
+        if (worker.connected === false) desktopLog?.info('remote agent: host state delivery skipped while server link is disconnected');
+        else desktopLog?.warn('remote agent: could not send host state to server');
+      },
+    });
     // ペアリングしたホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
     agentBridge.refresh();
     return agentBridge;

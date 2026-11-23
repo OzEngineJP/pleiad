@@ -26,6 +26,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   const pending = new Map();
   let seq = 0;
   let hosts = [];
+  const refreshing = new Map();
   const listeners = { event: new Set(), state: new Set(), hosts: new Set(), ready: new Set() };
   const fire = (kind, ...args) => { for (const fn of [...listeners[kind]]) { try { fn(...args); } catch { /* 聞き手の失敗で口は止めない */ } } };
   const offline = () => Object.assign(new Error('the host is not available (Pleiad is restarting)'), { code: 'OFFLINE' });
@@ -43,7 +44,13 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
         if (!p) return;
         pending.delete(m.id);
         clearTimeout(p.timer);
-        if (m.ok) p.resolve(m); else p.reject(Object.assign(new Error(m.error || 'remote agent failed'), { code: m.code || 'ERROR' }));
+        if (m.ok) {
+          if (p.action === 'hosts' && Array.isArray(m.hosts)) {
+            hosts = m.hosts;
+            fire('hosts', hosts);
+          }
+          p.resolve(m);
+        } else p.reject(Object.assign(new Error(m.error || 'remote agent failed'), { code: m.code || 'ERROR' }));
         return;
       }
       case 'remote-agent-event': fire('event', m.hostId, m.event); return;
@@ -72,9 +79,13 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
       port.postMessage({ type: 'remote-agent', action: 'abort', target: id });
       reject(Object.assign(new Error('aborted'), { code: 'ABORTED' }));
     };
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { action, resolve, reject, timer });
     if (signal) { if (signal.aborted) return onAbort(); signal.addEventListener('abort', onAbort, { once: true }); }
-    port.postMessage({ type: 'remote-agent', id, action, ...payload });
+    if (port.postMessage({ type: 'remote-agent', id, action, ...payload }) === false) {
+      pending.delete(id);
+      clearTimeout(timer);
+      reject(offline());
+    }
   });
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
   return {
@@ -82,7 +93,14 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
     get hosts() { return hosts; },
     /** main との口が使えるか（更新の引き継ぎの間は false）。false の間のオフラインは、ホストの不通ではない */
     get connected() { return !port.resumable || port.connected !== false; },
-    refresh: async () => { const r = await call('hosts'); hosts = r.hosts ?? hosts; return hosts; },
+    refresh: ({ timeoutMs: ms = timeoutMs } = {}) => {
+      // 同じ上限の確認をまとめる。起動時の確認と委譲直前の確認はそれぞれの上限で待つ。
+      if (!refreshing.has(ms)) {
+        refreshing.set(ms, call('hosts', {}, { timeoutMs: ms })
+          .then(() => hosts).finally(() => { refreshing.delete(ms); }));
+      }
+      return refreshing.get(ms);
+    },
     /** 委譲の 6 つの操作のどれか（ホストの答えの result で解決。失敗は code 付きの Error）。ms は main がホストの答えを待つ上限 */
     request: async (hostId, op, args, requester, { signal, timeoutMs: ms = 60_000 } = {}) =>
       (await call('request', { hostId, op, args, requester, timeoutMs: ms }, { signal, timeoutMs: ms + 10_000 })).result,
@@ -151,12 +169,17 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     return hostsNow().filter(h => h.allowed === true).map(h => ({ name: String(h.name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40), online: h.state === 'ready' }));
   }
 
-  function findHost(name, lng) {
+  async function findHost(name, lng) {
     const wanted = String(name ?? '').trim().toLowerCase();
-    const listed = describe();
-    const unknown = () => new DelegationError(agentT(lng, 'delegation.remote.hostUnknown', { host: String(name), hosts: listed.map(h => h.name).join(', ') || '-' }), 'HOST_UNKNOWN');
+    const unknown = () => new DelegationError(agentT(lng, 'delegation.remote.hostUnknown', { host: String(name), hosts: describe().map(h => h.name).join(', ') || '-' }), 'HOST_UNKNOWN');
     if (!wanted) throw unknown();
-    const hits = hostsNow().filter(h => h.name.toLowerCase() === wanted || h.hostId.toLowerCase() === wanted || (h.hostName ?? '').toLowerCase() === wanted);
+    const matches = () => hostsNow().filter(h => h.name.toLowerCase() === wanted || h.hostId.toLowerCase() === wanted || (h.hostName ?? '').toLowerCase() === wanted);
+    let hits = matches();
+    // main がすでに知っている状態だけを聞き直す。ホストへの再接続は待たない。
+    if (hits.length <= 1 && !usable(hits[0]) && bridge && bridge.connected !== false) {
+      await bridge.refresh({ timeoutMs: 250 }).catch(() => {});
+      hits = matches();
+    }
     if (hits.length > 1) throw new DelegationError(agentT(lng, 'delegation.remote.hostAmbiguous', { host: String(name) }), 'HOST_AMBIGUOUS');
     const host = hits[0];
     if (!host) throw unknown();
@@ -500,7 +523,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
    * 依頼元の会話で 1 回だけ確かめる（askPermission。常に許可は出さない）。許可されたら同じ鍵で確定する。戻りは AI へ返す JSON
    */
   async function delegate({ owner, turn, args, lng, signal, askPermission, permissionTitle }) {
-    const host = findHost(args.host, lng);
+    const host = await findHost(args.host, lng);
     const clean = {};
     for (const k of DELEGATE_KEYS) if (args[k] !== undefined) clean[k] = args[k];
     const requester = await requesterOf(owner, turn, lng);

@@ -24,21 +24,25 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
       hooked = d;
       d.on('agent-state', async s => {
         post({ type: 'remote-agent-state', hostId: s.hostId, state: s.state, allowed: s.allowed === true, view: s.view === true, features: s.features ?? null, hostName: s.hostName ?? '' });
-        post({ type: 'remote-agent-hosts', hosts: await hostsView().catch(() => []) });
+        await withHosts(hosts => post({ type: 'remote-agent-hosts', hosts })).catch(() => {});
       });
     }
     return d;
   }
 
   /** サーバーが知る「ホストの一覧」。線を張っているホスト（取り消されていないもの）が状態を持つ */
-  async function hostsView() {
+  async function withHosts(send) {
     const d = await device();
     // 同じホストに own と plus の記録があっても 1 行にする（線は 1 本。張った方の記録が状態を持つ。device.mjs の pickHostRecord）
     const byId = new Map();
     for (const h of await d.list()) if (!byId.has(h.hostId) || (h.agent && !byId.get(h.hostId).agent)) byId.set(h.hostId, h);
-    return [...byId.values()].map(h => ({
-      hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '',
-      state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true, features: h.agent?.features ?? null,
+    // 一覧の読み込み中にも状態は変わる。送る直前の状態を読み、別の便りが割り込む前に送る。
+    return send([...byId.values()].map(h => {
+      const status = d.agent(h.hostId)?.status;
+      return {
+        hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '',
+        state: status?.state ?? 'offline', allowed: status?.allowed === true, view: status?.view === true, features: status?.features ?? null,
+      };
     }));
   }
 
@@ -51,11 +55,14 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     agent.on('ready', status => post({ type: 'remote-agent-ready', hostId, ...status }));
   }
 
-  async function refresh() {
-    const d = await device();
+  async function syncAgents(d) {
     await d.agentSync();
     for (const h of await d.store.hosts()) listen(h.hostId, d.agent(h.hostId));
-    post({ type: 'remote-agent-hosts', hosts: await hostsView() });
+  }
+
+  async function refresh() {
+    await syncAgents(await device());
+    await withHosts(hosts => post({ type: 'remote-agent-hosts', hosts }));
   }
 
   /**
@@ -64,10 +71,13 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
    * 線は main のもので、切り替えの間も張ったまま。ready の便りは線がつながったときしか出ないので、ここで補う
    */
   async function resync() {
-    await refresh();
-    for (const h of await hostsView()) {
-      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, view: h.view === true, features: h.features ?? null, hostName: h.hostName });
-    }
+    await syncAgents(await device());
+    await withHosts(hosts => {
+      post({ type: 'remote-agent-hosts', hosts });
+      for (const h of hosts) {
+        if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, view: h.view, features: h.features, hostName: h.hostName });
+      }
+    });
   }
 
   const fail = (id, e) => post({ type: 'remote-agent', id, ok: false, code: e instanceof AgentError || typeof e?.code === 'string' ? e.code : 'ERROR', error: String(e?.message ?? e) });
@@ -78,8 +88,8 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
       const d = await device();
       switch (action) {
         case 'hosts': {
-          await refresh();
-          return post({ type: 'remote-agent', id, ok: true, hosts: await hostsView() });
+          await syncAgents(d);
+          return await withHosts(hosts => post({ type: 'remote-agent', id, ok: true, hosts }));
         }
         case 'request': {
           const agent = d.agent(message.hostId);
@@ -122,7 +132,6 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     /** ホストが増減した・名前が変わった。線を張り直し、一覧をサーバーへ */
     refresh: () => refresh().catch(e => log(`remote agent: ${e?.message ?? e}`)),
     resync: () => resync().catch(e => log(`remote agent: ${e?.message ?? e}`)),
-    hostsView,
     close() { for (const ac of aborts.values()) ac.abort(); aborts.clear(); },
   };
 }

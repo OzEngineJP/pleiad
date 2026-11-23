@@ -360,7 +360,7 @@ export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, 
  * （窓のプロキシに渡すものと同じ。desktop/remote-windows.cjs）。Plus を使えない間（使わない設定・worker が無い）は null を返し、
  * その間は plus の記録に AI の線を張らない
  */
-export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name = '', platform = 'desktop', proxyOptions = {}, plusAuth = null, log = () => {} }) {
+export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name = '', platform = 'desktop', proxyOptions = {}, plusAuth = null, log = () => {}, logAgentState = log }) {
   const store = createDeviceStore({ dir, cipher });
   const events = new EventEmitter();
   const proxies = new Map();   // hostId -> Promise<DeviceProxy>
@@ -442,15 +442,39 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
         getIdToken: auth.getIdToken ?? null, getTicket: auth.getTicket ?? null, onReadmit: auth.onReadmit ?? null,
         backoff: { offlineMaxMs: AGENT_LINK_OFFLINE_MAX_MS, ...proxyOptions.backoff },
         ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
-      const agent = new AgentLink({ link, log, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
+      const agent = new AgentLink({ link, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
+      const logged = new Set();
+      let lastState;
+      let suppressed = 0;
+      // 再試行で状態が行き来しても、復帰するまでは同じ状態・許可・理由を繰り返し記録しない。
+      // エラー本文・中継の理由文・ホストの表示名は記録しない。
+      const report = ({ state, allowed }, reason) => {
+        let summary = '';
+        if (state === 'ready' && lastState !== 'ready') {
+          if (suppressed) summary = ` suppressed=${suppressed}`;
+          logged.clear();
+          suppressed = 0;
+        }
+        lastState = state;
+        const key = `state=${state} allowed=${allowed} reason=${reason}`;
+        if (logged.has(key)) { suppressed++; return; }
+        logged.add(key);
+        logAgentState(`remote agent host=${HOST_ID.test(hostId) ? hostId : '[invalid]'} via=${via === 'plus' ? 'plus' : 'own'} ${key}${summary}`);
+      };
       link.on('status', s => {
         if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, reapproveAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }, via).catch(() => {});
         if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }, via).catch(() => {});
         if (s.state === 'reapprove') store.updateHost(hostId, { reapproveAt: new Date().toISOString() }, via).catch(() => {});
       });
-      agent.on('state', st => events.emit('agent-state', { hostId, ...st }));
-      agents.set(hostId, { via, link, agent });
+      agent.on('state', (st, reason) => {
+        if (reason) report(st, reason);
+        events.emit('agent-state', { hostId, ...st });
+      });
+      agents.set(hostId, { via, link, agent, report });
       agent.start();
+      link.on('status', s => {
+        if (s.diagnostic) report(agent.status, s.diagnostic);
+      });
       link.start();
       return agent;
     })().finally(() => agentOpening.delete(hostId));
@@ -462,9 +486,12 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     const entry = agents.get(hostId);
     if (!entry) return;
     agents.delete(hostId);
+    const previous = entry.agent.status;
     entry.agent.stop();
     entry.link.stop();
-    events.emit('agent-state', { hostId, state: 'offline', allowed: false, hostName: '' });
+    const st = { state: 'offline', allowed: false, hostName: '' };
+    if (previous.state !== st.state || previous.allowed !== st.allowed) entry.report(st, 'agent-stopped');
+    events.emit('agent-state', { hostId, ...st });
   }
 
   /** hosts.json のホストに合わせて線を張る・閉じる・張り直す（起動のとき・ホストが増減したとき）。任せられるかはホストの許可が決める（ADR 0239） */
