@@ -30,7 +30,7 @@
 - **保存の失敗が例外として返るので、受けていない呼び出しを洗い出して直した（2026-10-03）。** `core/` の store・usage・agentTasks・outbox・conversations の保存を呼ぶ箇所を、名前で呼び出しの関係を辿る走査と、サーバーの DB への書き込みを 25%・60% の確率で失敗させたサーバーのテスト 91 本の実行（`unhandledRejection` を記録）で調べた。直接の呼び出し 173 件はすべて await・return・`.catch`・try/catch・`Promise.all` の後の `.catch` のどれかで受けていた（受けていないものは見つからなかった）。念のため、`core/server.mjs` に `process.on('unhandledRejection')` を置き、ログ（`[unhandledRejection]`）に出してサーバーは落とさない（Node の既定は、1 件の保存の失敗でサーバーごと落とし、走っている他の会話のターンまで止める）。`tests/unit/server-store-failures.mjs` が、書き込みを全部失敗させたサーバーで、落ちない・`[unhandledRejection]` が出ない・エラーとして返る・書けるようになれば通る、を確かめる。
 - **形式番号（`data-schema.json`）を 1 → 2 にする。** 起動時、書き込みを始める前に、対象の JSON を `<data>/backup-schema1-<日時>/` へ写し、DB へ移し、読み戻して元と突き合わせてから番号を 2 にする。突き合わせは元の JSON の全体と読み戻した値を比べる（`usage.json` の version・since・migrations・records 以外の最上位の項目も DB に持ち、落ちるなら移行を止める）。失敗したら作りかけの DB と写しを消し、元の JSON に触れず、番号も上げず、起動を止める（[desktop-releases.md](../desktop-releases.md)「適用とデータ保護」）。形式 2 を見た古い版は起動を止める（既存の検査）。番号を 2 にしたあとの元の JSON の削除が失敗しても（Windows の削除拒否など）起動は止めない: 形式 2 の次の起動で、DB が使えることを確かめたうえで、写しに同じ中身がある元の JSON だけを外し直す。形式 2 では元の JSON を読む経路が無い。
 - **形式 2 では、DB の存在・形式番号（`user_version`）・必要な表を確かめ、合わなければ空の DB を作らずに起動を止める。** 新しい置き場（JSON も DB も無い）だけが DB を新しく作ってよく、DB を作ってから形式番号を 2 にする。
-- **Node の下限を 22.13.0 にする**（`engines`・CI）。`node:sqlite` が実行時の旗なしで使える最初の版。同梱の Electron 44 の Node は 24 系。`node:sqlite` が読み込み時に出す ExperimentalWarning は、その 1 回の読み込みの間だけ、SQLite についての警告に限って捨てる（ほかの警告は通す）。
+- **Node の下限を 22.13.0 にする**（`engines`・CI）。`node:sqlite` が実行時の旗なしで使える最初の版（検索の索引が FTS5 を要るので、下限は ADR 0349 で 22.16.0 に上げた）。同梱の Electron 44 の Node は 24 系。`node:sqlite` が読み込み時に出す ExperimentalWarning は、その 1 回の読み込みの間だけ、SQLite についての警告に限って捨てる（ほかの警告は通す）。
 
 ## ADR 0005 との関係
 

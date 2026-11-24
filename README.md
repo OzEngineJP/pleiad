@@ -49,7 +49,7 @@ See [docs/backends.md](docs/backends.md) for per-agent setup.
 
 ## Run from source
 
-Requires Node.js 22.13 or later.
+Requires Node.js 22.16 or later.
 
 ```bash
 npm ci

@@ -14,7 +14,7 @@ import { SUGGESTION_MAX, cleanSuggestion, createSuggestionJobs, parseSuggestion,
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { STALE_MS, forgetConversation, runAgySuggestion, suggestArgs, suggestHome, suggestModel, sweepStale, trimSummaries } from '../../core/backends/antigravity-suggest.mjs';
-import { extractShellCommands, sentMessagesOf, extractMessages } from '../../core/session-search.mjs';
+import { createSessionSearch } from '../../core/session-search.mjs';
 
 export const name = 'prompt-suggestions';
 export const title = '次の発言の候補（要約・読み取り・作りかけ・Claude の予測・Antigravity の使い捨てのホーム）と、↑ の呼び出しの並び';
@@ -147,16 +147,24 @@ export default async function (t) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  // ---- 送信済みの並び（↑ の呼び出し）
-  const copies = new Map([
-    ['a', { msgs: extractMessages([{ role: 'user', uuid: 'a1', at: '2026-10-15T01:00:00Z', text: 'A の古い' }, { role: 'assistant', text: '返事' },
-      { role: 'user', uuid: 'a2', at: '2026-10-15T03:00:00Z', text: '同じ文' }]), shells: extractShellCommands([{ role: 'user', kind: 'shell', uuid: 'a3', at: '2026-10-15T04:00:00Z', text: '! npm test', command: 'npm test' }]) }],
-    ['b', { msgs: extractMessages([{ role: 'user', uuid: 'b1', at: '2026-10-15T05:00:00Z', text: 'B の新しい' }, { role: 'user', uuid: 'b2', at: '2026-10-15T02:00:00Z', text: '同じ文' }]), shells: [] }],
+  // ---- 送信済みの並び（↑ の呼び出し。索引の発言から引く）
+  const rows = [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }];
+  const search = createSessionSearch({ listSessions: async () => rows, readFull: async () => [] });
+  search.ingest('a', [
+    { role: 'user', uuid: 'a1', at: '2026-10-15T01:00:00Z', text: 'A の古い' }, { role: 'assistant', text: '返事' },
+    { role: 'user', uuid: 'a2', at: '2026-10-15T03:00:00Z', text: '同じ文' },
+    { role: 'user', kind: 'shell', uuid: 'a3', at: '2026-10-15T04:00:00Z', text: '! npm test', command: 'npm test' },
   ]);
-  const titles = new Map([['a', 'A'], ['b', 'B']]);
-  const order = sentMessagesOf({ ids: ['a', 'b'], first: 'a', copies, titles }).map((r) => `${r.sessionId}:${r.text}`);
-  t.ok('指定の会話の分が先、ほかの会話は後、それぞれ新しい順。同じ文は新しい方の 1 つだけ', JSON.stringify(order) === JSON.stringify(['a:同じ文', 'a:A の古い', 'b:B の新しい']), JSON.stringify(order));
-  t.ok('会話名と時刻を添える', sentMessagesOf({ ids: ['a', 'b'], first: 'a', copies, titles })[2].title === 'B');
-  t.ok('`!` のコマンドは別の並び', JSON.stringify(sentMessagesOf({ ids: ['a', 'b'], first: 'a', copies, titles, shell: true }).map((r) => r.text)) === JSON.stringify(['npm test']));
-  t.ok('件数の上限', sentMessagesOf({ ids: ['a', 'b'], first: null, copies, titles, limit: 2 }).length === 2);
+  search.ingest('b', [
+    { role: 'user', uuid: 'b1', at: '2026-10-15T05:00:00Z', text: 'B の新しい' }, { role: 'user', uuid: 'b2', at: '2026-10-15T02:00:00Z', text: '同じ文' },
+  ]);
+  try {
+    const order = (await search.sentMessages({ rows, first: 'a' })).map((r) => `${r.sessionId}:${r.text}`);
+    t.ok('指定の会話の分が先、ほかの会話は後、それぞれ新しい順。同じ文は新しい方の 1 つだけ', JSON.stringify(order) === JSON.stringify(['a:同じ文', 'a:A の古い', 'b:B の新しい']), JSON.stringify(order));
+    t.ok('会話名と時刻を添える', (await search.sentMessages({ rows, first: 'a' }))[2].title === 'B');
+    t.ok('`!` のコマンドは別の並び', JSON.stringify((await search.sentMessages({ rows, first: 'a', shell: true })).map((r) => r.text)) === JSON.stringify(['npm test']));
+    t.ok('件数の上限', (await search.sentMessages({ rows, first: null, limit: 2 })).length === 2);
+  } finally {
+    search.stop();
+  }
 }

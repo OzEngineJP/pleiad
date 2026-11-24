@@ -6,7 +6,7 @@
 // 旧式の保存先を読む fake バックエンドだけで core/server.mjs を起こす（エージェントの CLI は起こさない）。
 // node のヒープの上限を --cap-mb に絞って（NODE_OPTIONS=--max-old-space-size）--watch 秒の間見張り、
 // 落ちる（OOM は終了コード 134）か、最後に応答しなければ失敗にする。
-//   - 3 秒後: 検索の写しの事前読み込み（core/session-search.mjs の予算）
+//   - 3 秒後: 検索の索引づくり（core/session-search.mjs が会話を 1 件ずつ読み、ディスクの索引 search-index.db へ書く。ADR 0349。以前は写しをメモリに持つ予算だった）
 //   - 60 秒後: viz-blobs の片付け（core/viz-bundle.mjs の sweepVizBlobs）
 // 直す前（0.43.0-beta.15 より前）は、どちらも置き場の大きさに比例してヒープを使い、上限で落ちた。
 // 上限 512 MB は、直した後の実測（この置き場で 256 MB の上限でも通る）の 2 倍。直す前は 1 GB の上限でも、検索の写しは 5 秒・viz-blobs の片付けは約 63 秒で落ちた。

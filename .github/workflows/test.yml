@@ -36,23 +36,23 @@ jobs:
         # (os, node) は 3 本（直積の 4 本から Windows の node 24 を外した）。Windows の実行枠は 2 倍で計上されるので、1 本あたりの費用は ubuntu の約 4 倍になる。
         # shard の数は、重みの合計（Windows 約 61 分・ubuntu 約 33 分。worker 2 本）から、1 ジョブが 5〜8 分になるように決めた。
         include:
-          # 下限（engines の node>=22.13。node:sqlite が警告の旗なしで使える最初の版。ADR 0115）と最新。プラットフォーム非依存の壊れ方は実績上ここで捕まる
-          - { os: ubuntu-latest, node: "22.13", shard: 1, shards: 2 }
-          - { os: ubuntu-latest, node: "22.13", shard: 2, shards: 2 }
+          # 下限（engines の node>=22.16。node:sqlite の FTS5 が使える最初の版。ADR 0115・0349）と最新。プラットフォーム非依存の壊れ方は実績上ここで捕まる
+          - { os: ubuntu-latest, node: "22.16", shard: 1, shards: 2 }
+          - { os: ubuntu-latest, node: "22.16", shard: 2, shards: 2 }
           - { os: ubuntu-latest, node: "24", shard: 1, shards: 2 }
           - { os: ubuntu-latest, node: "24", shard: 2, shards: 2 }
           # Windows は (os, node) を 1 本だけ残す。Windows 固有の経路（パス・ファイルの掴み合い・疑似端末など）を
           # main の push と PR で自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
           # 発火はリリースのタグ v* のみ）。
-          # node 24 ではなく下限（22.13）を残す理由: リリースは node 22、開発機は node 24 なので、
+          # node 24 ではなく下限（22.16）を残す理由: リリースは node 22、開発機は node 24 なので、
           # 下限 × Windows はここを外すとどこでも検証されなくなる。
           # 直近30日の Windows 固有の失敗 4 件は node の版と相関していない（20 が 3、24 が 2）。
-          - { os: windows-latest, node: "22.13", shard: 1, shards: 6 }
-          - { os: windows-latest, node: "22.13", shard: 2, shards: 6 }
-          - { os: windows-latest, node: "22.13", shard: 3, shards: 6 }
-          - { os: windows-latest, node: "22.13", shard: 4, shards: 6 }
-          - { os: windows-latest, node: "22.13", shard: 5, shards: 6 }
-          - { os: windows-latest, node: "22.13", shard: 6, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 1, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 2, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 3, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 4, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 5, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 6, shards: 6 }
     name: test (${{ matrix.os }}, ${{ matrix.node }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
     # 1 shard は worker 2 本で Windows が 5〜8 分・ubuntu が 8 分ほど。止まったときに枠を占有し続けないための上限

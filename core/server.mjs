@@ -442,6 +442,7 @@ import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
+import { INDEX_FILE as SEARCH_INDEX_FILE } from './session-search-index.mjs';
 import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, settingsResumePrompt } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
@@ -3132,11 +3133,12 @@ async function sessionList({ limit = 100, track = true, includeInternal = false 
 }
 
 /**
- * セッション検索（会話の本文まで。docs/design.md「セッション検索」）。本文の写しを持ち、search(input) に答える。
- * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で写しを作り、ターンの終わり・loadSession で更新する。
+ * セッション検索（会話の本文まで。docs/design.md「セッション検索」・ADR 0349）。本文はデータ置き場の search-index.db に持ち、search(input) に答える。
+ * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で索引を作り、ターンの終わり・loadSession で更新する。
  * 一覧は workspaceRoots に足さない（検索が読むだけで、ファイルの許可を広げない）。
  */
 const sessionSearch = createHostSessionSearch({
+  file: path.join(store.dataDir, SEARCH_INDEX_FILE),
   listSessions: () => sessionList({ limit: 500, track: false }),
   resolveBackend: resolveBackendForSession,
   onError: (id, err) => console.error(`  セッション検索の読み込みに失敗${id ? ` (${id})` : ''}:`, String(err?.message ?? err)),
@@ -5112,6 +5114,7 @@ async function deleteSessionOf(sessionId) {
     pageWatch.removeSession(sessionId);   // ファイルの変化の見張りの登録（page:changed）も消す
     pageTranscripts.delete(sessionId);
     vizSourceIndex.delete(sessionId);
+    sessionSearch.remove(sessionId);   // 検索の索引の行
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),

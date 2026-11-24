@@ -24,7 +24,7 @@ function run(over = {}) {
     repository: { full_name: REPO }, head_repository: { full_name: REPO }, ...over };
 }
 // test.yml が main の push で回すジョブの形（shard に分けた test と safe-storage。実物は test.yml）。ci-gate が必須とするのは test-summary だけで、ほかは「必須でないジョブ」として見る
-const PUSH_JOBS = ['test (ubuntu-latest, 22.13, 1/2)', 'test (windows-latest, 22.13, 1/6)', 'safe-storage (linux-no-keyring)'];
+const PUSH_JOBS = ['test (ubuntu-latest, 22.16, 1/2)', 'test (windows-latest, 22.16, 1/6)', 'safe-storage (linux-no-keyring)'];
 function jobs(r = run(), over = {}) {
   const names = [...REQUIRED_JOBS, ...PUSH_JOBS, 'safe-storage-macos'];
   return names.map((name, i) => ({ id: 111391832999 + i, run_id: r.id, run_attempt: r.run_attempt, head_sha: r.head_sha, name, status: 'completed',
@@ -80,13 +80,13 @@ export default async function (t) {
     const otherShaJobs = jobs({ ...rerun, head_sha: OTHER });
     t.ok('別の commit の jobs は使わない', evaluate(state([rerun], { [rerun.id]: otherShaJobs })).reason.startsWith('job-mismatch'));
     const latestFailed = run({ run_attempt: 2, conclusion: 'failure' });
-    const lf = evaluate(state([latestFailed], { [latestFailed.id]: jobs(latestFailed, { 'test (windows-latest, 22.13, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } }) }));
+    const lf = evaluate(state([latestFailed], { [latestFailed.id]: jobs(latestFailed, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } }) }));
     t.ok('最新の attempt が failure なら fail（attempt 1 が成功していても公開しない）', lf.verdict === 'fail' && lf.reason === 'run-failure', JSON.stringify(lf));
 
     // 赤
-    const jobFailed = evaluate(state([run({ conclusion: null, status: 'in_progress' })], { [r.id]: jobs(run({ conclusion: null, status: 'in_progress' }), { 'test (ubuntu-latest, 22.13, 1/2)': { conclusion: 'failure' }, 'test (windows-latest, 22.13, 1/6)': { status: 'in_progress', conclusion: null } }) }));
-    t.ok('走っている途中でも、終わった shard が failure なら待たずに fail', jobFailed.verdict === 'fail' && jobFailed.reason === 'job-failure:test (ubuntu-latest, 22.13, 1/2)', JSON.stringify(jobFailed));
-    t.ok('timed_out は fail', evaluate(state([r], { [r.id]: jobs(r, { 'test (windows-latest, 22.13, 1/6)': { conclusion: 'timed_out' } }) })).verdict === 'fail');
+    const jobFailed = evaluate(state([run({ conclusion: null, status: 'in_progress' })], { [r.id]: jobs(run({ conclusion: null, status: 'in_progress' }), { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'failure' }, 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) }));
+    t.ok('走っている途中でも、終わった shard が failure なら待たずに fail', jobFailed.verdict === 'fail' && jobFailed.reason === 'job-failure:test (ubuntu-latest, 22.16, 1/2)', JSON.stringify(jobFailed));
+    t.ok('timed_out は fail', evaluate(state([r], { [r.id]: jobs(r, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'timed_out' } }) })).verdict === 'fail');
     t.ok('action_required は fail', evaluate(state([run({ conclusion: 'action_required' })])).verdict === 'fail');
     t.ok('startup_failure は fail', evaluate(state([run({ conclusion: 'startup_failure', status: 'completed' })])).verdict === 'fail');
     t.ok('必須でないジョブの failure も fail（main が赤い）', evaluate(state([r], { [r.id]: jobs(r, { 'safe-storage-macos': { conclusion: 'failure' } }) })).verdict === 'fail');
@@ -94,15 +94,15 @@ export default async function (t) {
     t.ok('同じ commit の run が 2 つあり、片方が赤なら成功があっても fail', two.verdict === 'fail', JSON.stringify(two));
 
     // 取り消し・未完了
-    const cancelled = evaluate(state([run({ conclusion: 'cancelled' })], { [r.id]: jobs(r, { 'test (ubuntu-latest, 22.13, 1/2)': { conclusion: 'cancelled' } }) }));
+    const cancelled = evaluate(state([run({ conclusion: 'cancelled' })], { [r.id]: jobs(r, { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'cancelled' } }) }));
     t.ok('cancelled（次の push に取り消された）は fallback', cancelled.verdict === 'fallback', JSON.stringify(cancelled));
     const queued = run({ status: 'queued', conclusion: null });
     t.ok('queued は pending', evaluate(state([queued], {})).verdict === 'pending');
     const progress = run({ status: 'in_progress', conclusion: null });
-    t.ok('in_progress は pending（成功したジョブがあっても使わない）', evaluate(state([progress], { [progress.id]: jobs(progress, { 'test (windows-latest, 22.13, 1/6)': { status: 'in_progress', conclusion: null } }) })).verdict === 'pending');
+    t.ok('in_progress は pending（成功したジョブがあっても使わない）', evaluate(state([progress], { [progress.id]: jobs(progress, { 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) })).verdict === 'pending');
     const done = run();
     const other = run({ id: 37186441599, status: 'in_progress', conclusion: null });
-    const both = evaluate(state([done, other], { [done.id]: jobs(done), [other.id]: jobs(other, { 'test (windows-latest, 22.13, 1/6)': { status: 'in_progress', conclusion: null } }) }));
+    const both = evaluate(state([done, other], { [done.id]: jobs(done), [other.id]: jobs(other, { 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) }));
     t.ok('揃った成功と、別の id の走っている run が並べば、待つ', both.verdict === 'pending' && both.run.id === other.id, JSON.stringify(both.notes));
 
     // 必須でないジョブ: push で飛ばすと決めたものの skipped と success だけを許す
@@ -226,7 +226,7 @@ export default async function (t) {
     t.ok('workflow が 404 なら workflow-missing', evaluate(nothing).reason === 'workflow-missing');
     // 失敗したジョブだけの再実行（run 37186441550 の形）: attempt 1 は Windows の shard が failure、attempt 2 は全部 run_attempt 2 で success
     const rerun = run({ run_attempt: 2 });
-    const attempt1 = jobs({ ...rerun, run_attempt: 1 }, { 'test (windows-latest, 22.13, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } });
+    const attempt1 = jobs({ ...rerun, run_attempt: 1 }, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } });
     const rerunCalls = [];
     const rerunResponses = {
       [`/repos/${REPO}/actions/workflows/test.yml`]: WORKFLOW,
@@ -343,10 +343,10 @@ export default async function (t) {
 
     const red = await cli(api(s => [run({ head_sha: s, conclusion: 'failure' })]));
     t.ok('CLI: main の CI が赤なら終了コード 1、decision を出さない（release のジョブが走らない）', red.code === 1 && !red.output.includes('decision=') && /main CI is red/.test(red.log), JSON.stringify(red.log + red.output));
-    const latestRed = await cli(api(s => [run({ head_sha: s, run_attempt: 3, conclusion: 'failure' })], r => jobs(r, { 'test (windows-latest, 22.13, 1/6)': { conclusion: 'failure' } })));
+    const latestRed = await cli(api(s => [run({ head_sha: s, run_attempt: 3, conclusion: 'failure' })], r => jobs(r, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' } })));
     t.ok('CLI: 最新の attempt が赤なら終了コード 1', latestRed.code === 1 && latestRed.hits.some(h => h.url.includes('/attempts/3/jobs')));
 
-    const cancelled = await cli(api(s => [run({ head_sha: s, conclusion: 'cancelled' })], r => jobs(r, { 'test (ubuntu-latest, 22.13, 1/2)': { conclusion: 'cancelled' } })));
+    const cancelled = await cli(api(s => [run({ head_sha: s, conclusion: 'cancelled' })], r => jobs(r, { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'cancelled' } })));
     t.ok('CLI: cancelled なら decision=fallback（release の中で全部回す）', cancelled.code === 0 && cancelled.output.includes('decision=fallback\n'), JSON.stringify(cancelled.output));
     const none = await cli(api(() => []));
     t.ok('CLI: run が無ければ decision=fallback', none.code === 0 && none.output.includes('decision=fallback\n') && none.output.includes('reason=no-run'));

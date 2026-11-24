@@ -62,7 +62,7 @@ test.yml に push で回るジョブを足したら、`test-summary` の `needs`
 
 | 差 | 扱い |
 |---|---|
-| Node の版 | release の `setup-node` を test.yml の Windows の脚と同じ `"22.13"` にした（前は `22` で、22 系の最新が入っていた）。テストが突き合わせる。配布物の中で core を動かすのは Electron の同梱 Node（24 系）で、ビルドの Node ではない |
+| Node の版 | release の `setup-node` を test.yml の Windows の脚と同じ `"22.16"` にした（前は `22` で、22 系の最新が入っていた）。テストが突き合わせる。配布物の中で core を動かすのは Electron の同梱 Node（24 系）で、ビルドの Node ではない |
 | 依存 | 同じ lockfile から `npm ci`。release だけ、その後に koffi の arm64 の本体を `--force` で足す。`windows` ジョブは（判定を待たずに）毎回、足した後の `node_modules` で、`koffi`・`node-pty` を読めるかと、`computer-native`（本物の koffi の構造体の配置）・`desktop-updates`（配布の手順のスクリプト）の 2 本を回す |
 | `TEMP`・`TMP` | release はテストの一時ファイルを `RUNNER_TEMP` の下に分けている。テストの置き場の違いで、配布物には入らない。`release-tests`（全部のテスト）と `windows` の短い検査の両方に効く |
 | runner の image | どちらも `windows-latest`。image の版までは揃えない |
@@ -87,7 +87,7 @@ test.yml に push で回るジョブを足したら、`test-summary` の `needs`
 
 ## 止まったとき
 
-- **赤で止まった**: 1 本の suite の揺れは、CI の中の流し直しで通るので、ここまで来る赤は 2 回とも落ちたもの（本物の失敗の疑い）が多い。ジョブのまとめで、どの suite がどう落ちたかを見る（落ちた shard のジョブを見る。shard の名前は `test (windows-latest, 22.13, 3/6)` のように末尾が番号）。`windows`・`mac` は先に走っていて、赤でも公証まで終わっていることがある。公開されないので、そのまま捨てる。main を直すか、test.yml の失敗したジョブを再実行して最新の attempt を揃った成功にしてから、Evaluation release を再実行する（失敗した run の再実行、または `workflow_dispatch` に同じタグ）。
+- **赤で止まった**: 1 本の suite の揺れは、CI の中の流し直しで通るので、ここまで来る赤は 2 回とも落ちたもの（本物の失敗の疑い）が多い。ジョブのまとめで、どの suite がどう落ちたかを見る（落ちた shard のジョブを見る。shard の名前は `test (windows-latest, 22.16, 3/6)` のように末尾が番号）。`windows`・`mac` は先に走っていて、赤でも公証まで終わっていることがある。公開されないので、そのまま捨てる。main を直すか、test.yml の失敗したジョブを再実行して最新の attempt を揃った成功にしてから、Evaluation release を再実行する（失敗した run の再実行、または `workflow_dispatch` に同じタグ）。
 - **`fallback` で全部のテストを回した**: 理由は `ci-gate` の step summary とログの `reason=` に出る。`fallback` は今までと同じ流れなので、そのまま公開まで進む。
 
 ## 範囲
