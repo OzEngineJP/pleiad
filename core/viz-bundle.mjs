@@ -166,8 +166,13 @@ export function cleanBundle(bundle) {
   };
 }
 
-/** 記録の置き場（presents/*.jsonl・conversations/*.json）の中に書かれた sha256 を集める。読めなければ null（片付けをやめる） */
-async function referencedHashes(dataDir) {
+/**
+ * 記録の置き場（presents/*.jsonl・conversations/*.json）の中に書かれた sha256 のうち、置き場にある名前（present）だけを集める。
+ * 読めなければ null（片付けをやめる）。
+ * 集めるのは present の側の文字（match の切り出しではない）。切り出しは元のファイルの文字全体を指したまま残るので、
+ * 全部の会話を読むと本文が丸ごとメモリに居座り、ヒープの上限で内部サーバーが落ちた（Issue #225）
+ */
+async function referencedHashes(dataDir, present) {
   const seen = new Set();
   for (const dir of ['presents', 'conversations']) {
     let names;
@@ -178,7 +183,8 @@ async function referencedHashes(dataDir) {
       let text;
       try { text = await fs.readFile(path.join(dataDir, dir, name), 'utf8'); }
       catch (error) { if (error.code === 'ENOENT') continue; return null; }
-      for (const match of text.matchAll(/[0-9a-f]{64}/g)) seen.add(match[0]);
+      for (const match of text.matchAll(/[0-9a-f]{64}/g)) { const name = present.get(match[0]); if (name) seen.add(name); }
+      text = null;
       await new Promise(resolve => setImmediate(resolve));
     }
   }
@@ -196,10 +202,10 @@ export async function sweepVizBlobs({ dataDir, graceMs = 60 * 60 * 1000, now = D
   try { names = await fs.readdir(dir); }
   catch { return { removed: 0, kept: 0 }; }
   if (!names.length) return { removed: 0, kept: 0 };
-  const referenced = await referencedHashes(dataDir);
+  const present = new Map(names.filter(isHash).map(name => [name, name]));
+  const referenced = await referencedHashes(dataDir, present);
   if (!referenced) { log('viz-blobs: sweep skipped (records unreadable)'); return { removed: 0, kept: names.length }; }
   for (const hash of [...referenced]) {
-    if (!names.includes(hash)) continue;
     const files = await readManifest(dataDir, hash);
     for (const sha of Object.values(files ?? {})) if (isHash(sha)) referenced.add(sha);
   }

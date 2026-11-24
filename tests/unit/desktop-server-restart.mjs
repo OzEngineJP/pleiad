@@ -12,7 +12,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { createServerRestarter, MAX_CRASHES, CRASH_WINDOW_MS } = require('../../desktop/server-restart.cjs');
+const { createServerRestarter, MAX_CRASHES, CRASH_WINDOW_MS, MAX_SLOW_CRASHES, SLOW_CRASH_WINDOW_MS } = require('../../desktop/server-restart.cjs');
 const boot = require('../../desktop/server-boot.cjs');
 const { createServerLink } = require('../../desktop/server-link.cjs');
 const { connectHolder } = await import('../../core/holder/client.mjs');
@@ -113,10 +113,27 @@ export default async function (t) {
   }
   {
     let time = 0;
-    const { restarter } = fake({ now: () => time });
+    const { restarter } = fake({ now: () => time, maxSlowCrashes: Infinity });
     const outcomes = [];
     for (let i = 0; i < 6; i++) { outcomes.push((await restarter.restart()).ok); time += CRASH_WINDOW_MS / 2 + 1; }
-    t.ok('続けて落ちる: 窓をまたいで 1 分に 2 回までなら起こし続ける（半分の間隔の落ちは、窓に 2 回しか入らない）', outcomes.every(Boolean));
+    t.ok('続けて落ちる: 短い窓は、窓をまたいで 1 分に 2 回までなら起こし続ける（半分の間隔の落ちは、窓に 2 回しか入らない）', outcomes.every(Boolean));
+  }
+  {
+    // Issue #225: 起動の 80 秒後に毎回落ちるサーバーを 8 時間起こし続けた
+    let time = 0;
+    const { restarter, calls } = fake({ now: () => time });
+    const outcomes = [];
+    for (let i = 0; i < MAX_SLOW_CRASHES; i++) { outcomes.push(await restarter.restart()); time += 80_000; }
+    t.ok(`間の空いた繰り返し: 80 秒ごとの落ちは ${SLOW_CRASH_WINDOW_MS / 60_000} 分に ${MAX_SLOW_CRASHES} 回目で起こさず、loop で断る`,
+      outcomes.slice(0, -1).every(r => r.ok) && outcomes.at(-1).reason === 'loop' && calls.started === MAX_SLOW_CRASHES - 1);
+    t.ok('間の空いた繰り返し: 断った理由に長い窓を書く', calls.logs.some(line => new RegExp(`stopped ${MAX_SLOW_CRASHES} times within ${SLOW_CRASH_WINDOW_MS / 1000}s`).test(line)));
+  }
+  {
+    let time = 0;
+    const { restarter } = fake({ now: () => time });
+    const outcomes = [];
+    for (let i = 0; i < MAX_SLOW_CRASHES + 2; i++) { outcomes.push((await restarter.restart()).ok); time += SLOW_CRASH_WINDOW_MS / (MAX_SLOW_CRASHES - 1) + 1_000; }
+    t.ok('間の空いた繰り返し: 長い窓に入る回数が上限より少なければ、起こし続ける（たまに落ちるだけのサーバーは止めない）', outcomes.every(Boolean));
   }
   {
     const { restarter } = fake({ maxCrashes: 1 });

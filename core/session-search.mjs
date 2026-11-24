@@ -4,6 +4,7 @@
 //   - 前半は DOM にも I/O にも触らない純粋な部分（語の解釈・照合・関連度・抜粋）。tests が直接呼ぶ。
 //   - 後半 createSessionSearch が写し（Map<id, { sig, msgs }>）を持ち、裏で読み込み、search() に答える。
 //     一覧（listSessions）と本文の読み方（readStored / readFull）は呼び出し側が渡す。
+//     写しの合計には予算があり（budgetBytes）、超えたら最終更新の古い会話から捨てる（Issue #225）。
 //
 // 照合: 空白区切りは AND（語ごとに題・状態・場所・どの発言に当たってもよい）。"…" で囲んだ語は畳まずそのまま、
 // ほかは NFKC と小文字に畳んだ部分一致。場所は作業ディレクトリのフォルダー名だけに当てる。
@@ -25,6 +26,13 @@ const TOOL_INPUT_KEYS = ["command", "cmd", "file_path", "path", "notebook_path",
 const TOOL_INPUT_CHARS = 400;
 const MAX_RANGES = 50;
 const ABSENT_LISTINGS = 3;
+// 写しの合計の予算（Issue #225）。会話の数に比例して際限なく持つと、ヒープの上限で内部サーバーが落ち続けた。
+// 予算を超えたら最終更新の古い会話から写しを捨て、裏の読み込みもそこで止める（古い会話は題・状態・場所だけで当たる）
+const DEFAULT_BUDGET_BYTES = 256 * 1024 * 1024;
+// 予算を超えたときは、ここまで減らす（境で捨てる・読むを繰り返さない）
+const BUDGET_LOW_WATER = 0.9;
+// 発言 1 つのオブジェクトの付帯の分の見積もり（文字は 1 字 2 バイトで数える）
+const MESSAGE_OVERHEAD_BYTES = 160;
 
 // ------------------------------------------------------------------ 純粋な部分
 
@@ -237,6 +245,17 @@ export function extractShellCommands(raw) {
     .map((m) => ({ uuid: String(m.uuid ?? ''), at: m.at ?? null, text: m.command }));
 }
 
+/** 写し 1 つのメモリの見積もり（バイト）。文字は 1 字 2 バイト、畳んだ文字が元と同じなら数えない（同じ文字を指している） */
+export function copySize({ msgs, shells }) {
+  const len = (s) => (typeof s === "string" ? s.length : 0);
+  let chars = 0;
+  for (const m of msgs) {
+    chars += len(m.uuid) + len(m.text) + (m.folded === m.text ? 0 : len(m.folded)) + len(m.tool) + (m.toolFolded === m.tool ? 0 : len(m.toolFolded));
+  }
+  for (const s of shells) chars += len(s.uuid) + len(s.text);
+  return chars * 2 + (msgs.length + shells.length) * MESSAGE_OVERHEAD_BYTES;
+}
+
 /**
  * 送信済みのメッセージの並び（入力欄の ↑。sessions.sentMessages）。first の会話の分を先に、ほかを後に、それぞれ新しい順。
  * 同じ文は新しい 1 つだけ。copies は会話 id → { msgs, shells }、titles は会話 id → 題
@@ -414,16 +433,21 @@ export function passesFilters(row, f) {
  * @param {number} [deps.staleWaitMs] search が、写しより新しい会話の読み直しを待つ長さ
  * @param {number} [deps.rereadCooldownMs] 同じ会話を読み直す間隔の下限（走っているターンで更新が続く会話を読み続けない）
  * @param {number} [deps.retryFailedMs] 読めなかった会話をもう一度読むまでの間
+ * @param {number} [deps.budgetBytes] 写しの合計の予算（見積もりのバイト。超えたら最終更新の古い会話から捨てる）
  * @param {() => number} [deps.now]
  */
 export function createSessionSearch({ listSessions, readStored = async () => null, readFull, concurrency = 2,
-  staleWaitMs = 1500, rereadCooldownMs = 2000, retryFailedMs = 60_000, now = Date.now, onError = () => {} }) {
-  const copies = new Map();     // id -> { sig, msgs }
+  staleWaitMs = 1500, rereadCooldownMs = 2000, retryFailedMs = 60_000, budgetBytes = DEFAULT_BUDGET_BYTES, now = Date.now, onError = () => {} }) {
+  const copies = new Map();     // id -> { sig, msgs, shells, size }
   const failed = new Map();     // id -> 失敗した時刻
   const absent = new Map();     // id -> 一覧に無かった回数
-  const waiting = [];           // 読み込みの待ち { id, full }（先頭から読む）
+  const skipped = new Set();    // 予算のために写しを持たない会話（裏では読まない。名指しで頼まれたときだけ読む）
+  const waiting = [];           // 読み込みの待ち { id, full, background }（先頭から読む）
   const inflight = new Map();   // id -> Promise（読んでいる最中）
   let rows = [];                // 最後に見た一覧
+  let modifiedAt = new Map();   // id -> 一覧の lastModified（捨てる順を決める）
+  let bytes = 0;                // 写しの合計の見積もり
+  let saturated = false;        // 一度予算に届いた（以後、裏では新しく読まない。捨てて読んでを繰り返さない）
   let updatedAt = null;
   let starting = null;
   let stopped = false;
@@ -431,31 +455,63 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
   const idleWaiters = [];
 
   const settleIdle = () => { if (!running && !waiting.length) for (const f of idleWaiters.splice(0)) f(); };
+  const lowWater = () => budgetBytes * BUDGET_LOW_WATER;
 
-  function put(id, raw, sig) {
+  function drop(id) {
+    const c = copies.get(id);
+    if (!c) return;
+    bytes -= c.size;
+    copies.delete(id);
+  }
+
+  /**
+   * 予算を超えていたら、keep 以外の写しを最終更新の古い順に捨てて、予算の 9 割まで減らす。
+   * keep は名指しで読んだ会話（裏の読み込みでは守らない。古い会話を読んで新しい写しを捨てない）
+   */
+  function trim(keep) {
+    if (bytes <= budgetBytes) return;
+    saturated = true;
+    const order = [...copies.keys()].filter((id) => id !== keep)
+      .sort((a, b) => (modifiedAt.get(a) ?? 0) - (modifiedAt.get(b) ?? 0));
+    for (const id of order) {
+      if (bytes <= lowWater()) break;
+      drop(id);
+      skipped.add(id);
+    }
+  }
+
+  function put(id, raw, sig, { background = false } = {}) {
     const prev = copies.get(id);
     if (prev && prev.sig > sig) return false;   // もっと新しい写しがある（遅れて届いた読み込みで巻き戻さない）
-    copies.set(id, { sig, msgs: extractMessages(raw), shells: extractShellCommands(raw) });
+    const entry = { sig, msgs: extractMessages(raw), shells: extractShellCommands(raw) };
+    entry.size = copySize(entry);
+    drop(id);
+    copies.set(id, entry);
+    bytes += entry.size;
     failed.delete(id);
+    skipped.delete(id);
+    trim(background ? null : id);
     updatedAt = now();
     return true;
   }
 
-  async function load(id, full) {
+  async function load(id, full, background) {
     const sig = now();
     let raw = null;
     if (!full && !copies.has(id)) raw = await readStored(id);
     raw ??= await readFull(id);
-    put(id, raw, sig);
+    put(id, raw, sig, { background });
   }
 
   function pump() {
     while (!stopped && running < concurrency && waiting.length) {
-      const { id, full } = waiting.shift();
+      const { id, full, background } = waiting.shift();
       if (inflight.has(id)) continue;
+      // 裏の読み込みは新しい順なので、予算に近づいたら残りは今の写しより古い。読んでもすぐ捨てるだけなので読まない
+      if (background && !copies.has(id) && (saturated || bytes >= lowWater())) { skipped.add(id); continue; }
       running++;
       const p = (async () => {
-        try { await load(id, full); }
+        try { await load(id, full, background); }
         catch (e) { failed.set(id, now()); onError(id, e); }
       })().finally(() => {
         inflight.delete(id); running--;
@@ -467,15 +523,19 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     settleIdle();
   }
 
-  /** 読み込みを頼む。読んでいる最中・待ちの中のものは重ねない。front は待ちの先頭へ（探されている会話） */
-  function request(id, { full = false, front = false } = {}) {
+  /**
+   * 読み込みを頼む。読んでいる最中・待ちの中のものは重ねない。front は待ちの先頭へ（探されている会話）。
+   * background は起動の後の一括の読み込み（予算に近づいたら読まずに skipped にする）。名指しの頼みは予算に関わらず読む
+   */
+  function request(id, { full = false, front = false, background = false } = {}) {
     if (stopped || inflight.has(id)) return;
     const at = waiting.findIndex((w) => w.id === id);
     if (at >= 0) {
       if (full) waiting[at].full = true;
+      if (!background) waiting[at].background = false;
       if (front && at > 0) waiting.unshift(...waiting.splice(at, 1));
-    } else if (front) waiting.unshift({ id, full });
-    else waiting.push({ id, full });
+    } else if (front) waiting.unshift({ id, full, background });
+    else waiting.push({ id, full, background });
     pump();
   }
 
@@ -490,15 +550,17 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     } catch (e) { onError(null, e); }
     // 一覧から消えた会話の写しは捨てる。ネイティブの一覧を一時的に読めなかった回で捨てないよう、続けて消えていたときだけ
     const live = new Set(rows.map((r) => r.id));
-    for (const id of [...copies.keys(), ...failed.keys()]) {
+    modifiedAt = new Map(rows.map((r) => [r.id, Number.isFinite(r.lastModified) ? r.lastModified : 0]));
+    for (const id of [...copies.keys(), ...failed.keys(), ...skipped]) {
       if (live.has(id)) { absent.delete(id); continue; }
       const n = (absent.get(id) ?? 0) + 1;
-      if (n >= ABSENT_LISTINGS) { absent.delete(id); copies.delete(id); failed.delete(id); } else absent.set(id, n);
+      if (n >= ABSENT_LISTINGS) { absent.delete(id); drop(id); failed.delete(id); skipped.delete(id); } else absent.set(id, n);
     }
     return rows;
   }
 
-  const isMissing = (row) => !copies.has(row.id) && !(failed.has(row.id) && now() - failed.get(row.id) < retryFailedMs);
+  // 予算のために持たない会話は「まだ読んでいない」に数えない（partial にし続けない・裏で読み直さない）
+  const isMissing = (row) => !copies.has(row.id) && !skipped.has(row.id) && !(failed.has(row.id) && now() - failed.get(row.id) < retryFailedMs);
   const isStale = (row) => {
     const c = copies.get(row.id);
     return Boolean(c) && Number.isFinite(row.lastModified) && row.lastModified > c.sig && now() - c.sig >= rereadCooldownMs;
@@ -508,7 +570,7 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
   function start() {
     starting ??= (async () => {
       const list = await refreshRows();
-      for (const row of [...list].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))) if (isMissing(row)) request(row.id);
+      for (const row of [...list].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))) if (isMissing(row)) request(row.id, { background: true });
     })();
     return starting;
   }
@@ -539,9 +601,13 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
 
     // 探されている会話を先に読む。写しより新しい会話は少しだけ待って読み直す
     const pendingReads = [];
-    for (const row of scope) {
-      if (isMissing(row)) request(row.id, { front: true });
+    // 先頭へ積むので古い順に頼む（新しい会話が先に読まれる）。名指しでなければ裏の読み込みと同じく予算に従う
+    const oldestFirst = [...scope].sort((a, b) => (a.lastModified ?? 0) - (b.lastModified ?? 0));
+    for (const row of oldestFirst) {
+      if (isMissing(row)) request(row.id, { front: true, background: !f.sessionIds });
       else if (isStale(row)) { request(row.id, { full: true, front: true }); pendingReads.push(settled(row.id)); }
+      // 会話を名指しした検索では、予算のために持っていない会話も読む（そのぶん古い写しを捨てる）
+      else if (f.sessionIds && skipped.has(row.id)) { request(row.id, { front: true }); pendingReads.push(settled(row.id)); }
     }
     if (pendingReads.length) {
       let timer;
@@ -586,7 +652,7 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
 
   function status() {
     const pending = rows.filter(isMissing).length + rows.filter(isStale).length;
-    return { indexed: copies.size, pending, updatedAt };
+    return { indexed: copies.size, pending, skipped: skipped.size, bytes, updatedAt };
   }
 
   /** 裏の読み込みが全部終わるまで待つ（tests と計測用） */
@@ -600,7 +666,7 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
    */
   function outline(id) {
     const c = copies.get(id);
-    if (!c) { if (!failed.has(id)) request(id); return null; }
+    if (!c) { if (!failed.has(id) && !skipped.has(id)) request(id); return null; }
     const first = c.msgs.find((m) => m.role === 'user' && m.text) ?? null;
     let lastAt = null;
     for (const m of c.msgs) if (m.at && (!lastAt || m.at > lastAt)) lastAt = m.at;
@@ -614,7 +680,8 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
   async function sentMessages({ rows: given, first = null, shell = false, limit, textMax }) {
     await start();
     const ids = given.map((r) => r.id);
-    for (const id of ids) if (!copies.has(id) && !failed.has(id)) request(id, { front: id === first });
+    // 予算のために持っていない会話は、いま開いている会話（first）だけ読む
+    for (const id of ids) if (!copies.has(id) && !failed.has(id) && (!skipped.has(id) || id === first)) request(id, { front: id === first });
     if (first && !copies.has(first)) {
       let timer;
       await Promise.race([settled(first), new Promise((r) => { timer = setTimeout(r, staleWaitMs); })]);

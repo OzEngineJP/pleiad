@@ -3,12 +3,16 @@
 // 窓の読み直し・見張りの付け直し・ダイアログは呼び出し側（main.cjs）。ここは「起こせたか」だけを返す。
 //
 // 起こす版: 落ちたサーバーの ready の runtimeKey の版（実行場所に残っていれば）。無ければ（掃除された・印が無い）この main の版（chooseServer の prepared）。
-// 短い間に何度も落ちる（windowMs の間に maxCrashes 回）ときは起こし直さない（起動の直後に落ち続けるサーバーを回し続けない）。
+// 短い間に何度も落ちる（windowMs の間に maxCrashes 回）ときと、間を空けて落ち続ける（slowWindowMs の間に maxSlowCrashes 回）ときは
+// 起こし直さない（起動の直後・起動の 1〜2 分後に落ち続けるサーバーを回し続けない。Issue #225）。
 // 起こした後に呼ぶ afterRestart(ready) が、保持役に載ったターンの付け直しの口（2b 以降。サーバー自身が起動で付け直す形なら要らない）。今は何もしない。
 const path = require('node:path');
 
 const MAX_CRASHES = 3;
 const CRASH_WINDOW_MS = 60_000;
+// 間の空いた繰り返し（起動の 1〜2 分後に毎回落ちる。Issue #225 では 80 秒ごとに 8 時間）も止める
+const MAX_SLOW_CRASHES = 5;
+const SLOW_CRASH_WINDOW_MS = 15 * 60_000;
 
 const errorText = error => String(error?.message ?? error);
 
@@ -21,7 +25,7 @@ const errorText = error => String(error?.message ?? error);
  * 戻り値 { restart() }。restart() は { ok: true, ready } / { ok: false, reason: 'loop' | 'failed', error? }。同時に 2 つは走らせない
  */
 function createServerRestarter({ link, getReady, prepared, root, dataDir, resourcesPath, execPath, systemLocale = '', cwd, env = process.env, log = () => {}, afterRestart = null,
-  maxCrashes = MAX_CRASHES, windowMs = CRASH_WINDOW_MS, readyTimeoutMs, now = () => Date.now(),
+  maxCrashes = MAX_CRASHES, windowMs = CRASH_WINDOW_MS, maxSlowCrashes = MAX_SLOW_CRASHES, slowWindowMs = SLOW_CRASH_WINDOW_MS, readyTimeoutMs, now = () => Date.now(),
   boot = require('./server-boot.cjs'), job = () => require('./job.cjs'), runtimeLib = () => require('./runtime.cjs'),
   waitForReady = (target, timeoutMs) => require('./switch.cjs').waitForReady(target, timeoutMs), alive = pid => boot.isAlive(pid) }) {
   let crashes = [];
@@ -58,10 +62,13 @@ function createServerRestarter({ link, getReady, prepared, root, dataDir, resour
 
   async function restart() {
     const at = now();
-    crashes = crashes.filter(time => at - time < windowMs);
+    crashes = crashes.filter(time => at - time < Math.max(windowMs, slowWindowMs));
     crashes.push(at);
-    if (crashes.length >= maxCrashes) {
-      log(`the server stopped ${crashes.length} times within ${Math.round(windowMs / 1000)}s: not restarting it`);
+    const fast = crashes.filter(time => at - time < windowMs).length;
+    const slow = crashes.filter(time => at - time < slowWindowMs).length;
+    if (fast >= maxCrashes || slow >= maxSlowCrashes) {
+      const [count, span] = fast >= maxCrashes ? [fast, windowMs] : [slow, slowWindowMs];
+      log(`the server stopped ${count} times within ${Math.round(span / 1000)}s: not restarting it`);
       return { ok: false, reason: 'loop' };
     }
     try {
@@ -78,4 +85,4 @@ function createServerRestarter({ link, getReady, prepared, root, dataDir, resour
   return { restart: () => (running ??= restart().finally(() => { running = null; })) };
 }
 
-module.exports = { createServerRestarter, MAX_CRASHES, CRASH_WINDOW_MS };
+module.exports = { createServerRestarter, MAX_CRASHES, CRASH_WINDOW_MS, MAX_SLOW_CRASHES, SLOW_CRASH_WINDOW_MS };
