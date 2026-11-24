@@ -11,7 +11,7 @@
 //   sigs                                    … Map<会話 id, sig>（開いたときに読む。write・remove・作り直しで同じ Map を更新する）
 //   write(id, sig, msgs, shells)            … 1 会話を 1 つのトランザクションで書く。先頭の同じ発言は残し、最初に違う発言から後ろだけ入れ直す
 //   remove(id)
-//   candidates(expr) → Map<会話 id, 発言 id[]>
+//   candidates(expr) → Map<会話 id, { id, idx, role, at }[]>   … 本文は読まない
 //   messagesOf(conv, ids|null) → 行[]       … 発言（idx 順）。ids が null なら会話の全部
 //   outline(id) → { first, count, lastAt }
 //   sentRows({ role, first, ids })          … 送信済みの並び（新しい順。first の会話が先）。take を止めればそこまでしか引かない
@@ -70,6 +70,14 @@ export function termQuery(needle, column = null) {
     return column ? `${column} : ${phrase}` : phrase;
   }).join(" AND ");
 }
+
+const RUN_ONLY = /^[\p{L}\p{N}\p{M}]+$/u;
+
+/**
+ * 畳んだ語が全部 1 つの字の連なりなら、本文の列で引いた候補は本物の一致（畳んだ文字の部分一致）そのもの。
+ * 連なりを挟む語（記号・空白を含む）や、畳まない語・ツールの入力まで引くときは上位集合なので、呼ぶ側が確かめる。
+ */
+export const exactInIndex = (needle) => RUN_ONLY.test(String(needle ?? ""));
 
 // ------------------------------------------------------------------ 開く・作り直す
 
@@ -178,13 +186,13 @@ export function openSearchIndex({ file = ":memory:" } = {}) {
       });
     },
 
-    /** FTS5 の式に当たる発言を、会話ごとにまとめる（候補。本物の一致の上位集合） */
+    /** FTS5 の式に当たる発言を、会話ごとにまとめる（候補。本物の一致の上位集合）。本文は読まない（id・idx・role・at だけ） */
     candidates(expr) {
       return guard(() => {
         const out = new Map();
-        for (const r of stmt("SELECT m.conv AS conv, m.id AS id FROM fts JOIN msg m ON m.id = fts.rowid WHERE fts MATCH ?").iterate(expr)) {
+        for (const r of stmt("SELECT m.conv AS conv, m.id AS id, m.idx AS idx, m.role AS role, m.at AS at FROM fts JOIN msg m ON m.id = fts.rowid WHERE fts MATCH ?").iterate(expr)) {
           const list = out.get(r.conv);
-          if (list) list.push(r.id); else out.set(r.conv, [r.id]);
+          if (list) list.push(r); else out.set(r.conv, [r]);
         }
         return out;
       });
