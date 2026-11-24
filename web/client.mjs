@@ -179,27 +179,58 @@ try {
 function saveReceipts() {
   localStorage.setItem('ply-message-receipts', JSON.stringify([...receipts]));
 }
+/** 入力欄の上は送信予定だけ。送った発言は会話の中の吹き出しに出す（送信待ち・保留は conversation-view.mjs の syncOutboxRows、送りかけは paintReceiptRow） */
 function paintOutbox() {
-  const id = state.current;
-  const shown = new Set([...thread.querySelectorAll('.mw[data-message-id]')].map(w => w.dataset.messageId));
-  const messages = outboxes.get(id) ?? [];
-  renderOutbox($('outbox'), messages, async (messageId, action) => {
-    await cmd('messageAction', { sessionId: id, messageId, action });
-  }, shown, { schedules: sendSchedules(id), scheduleActions });
-  const detached = id && receipts.get('')?.creationRequest && !receipts.get('').sessionId ? receipts.get('') : null;
-  const activeReceipt = receipts.get(id ?? '') ?? (receipts.get('')?.sessionId === id ? receipts.get('') : null);
-  const receipt = activeReceipt ?? detached;
-  if (receipt && !submittingMessages.has(id) && !submittingMessages.has(receipt.sessionId ?? null)) {
-    const retry = document.createElement('button');
-    retry.type = 'button';
-    retry.className = 'btn';
-    retry.textContent = receipt === detached ? t('outbox.retryNewReceipt') : t('outbox.retryReceipt');
-    retry.onclick = () => submit({ retry: true, detached: receipt === detached });
-    $('outbox').append(retry);
-    $('outbox').hidden = false;
-  }
+  renderOutbox($('outbox'), sendSchedules(state.current), scheduleActions);
+  paintReceiptRow(mainView, state.current, () => submit({ retry: true }));
   // 保留の件数で「再開」の字が変わる（renderSessions より先に届くこともある）
   syncResume();
+}
+// 送りかけの発言（受け取り）のうち、サーバーの送信待ちにまだ載っていないものの姿（messageId -> { kind: 'failed' | 'unknown', error }）。
+// 押した瞬間から会話の中に吹き出しが出ていて、応答が無い・送れなかったときにここへ入る。渡った（userMessage）か
+// サーバーの送信待ちに載った（outbox）ら、受け取りは役目を終えて消える（settleReceipt）。
+const unsentLocal = new Map();
+const sendingIds = new Set();   // 応答を待っている最中の送信の messageId
+function settleReceipt(messageId) {
+  if (!messageId) return;
+  unsentLocal.delete(messageId);
+  for (const [key, receipt] of receipts) {
+    if (receipt.messageId !== messageId) continue;
+    receipts.delete(key);
+    saveReceipts();
+  }
+}
+/** ［取り消す］: サーバーが受け付けていたなら取り消し（受け付けていない・もう渡ったなら断られるだけ）、受け取りを捨てる */
+async function cancelReceipt(receipt) {
+  if (receipt.sessionId) await cmd('messageAction', { sessionId: receipt.sessionId, messageId: receipt.messageId, action: 'cancel' }).catch(() => {});
+  settleReceipt(receipt.messageId);
+}
+/** 欄の送りかけの受け取り（新しい会話の欄は ''。作った会話は、最初の送信の受け取りが '' のまま会話の id を持つ） */
+function receiptFor(id) {
+  return receipts.get(id ?? '') ?? (id && receipts.get('')?.sessionId === id ? receipts.get('') : null);
+}
+/**
+ * 送りかけの発言の吹き出しを、会話（view。主か子のモーダル）の中に出す・描き直す。応答を待つ間は「送信中」、応答が無かったものは
+ * 「送信結果を確認できません」、送れなかったものは「送れませんでした · 理由」。ページを開き直したあとの受け取りは、結果不明として出す。
+ * サーバーの送信待ちが持っている発言の姿はそちらが決める（conversation-view.mjs の syncOutboxRows）ので、受け取りは捨てる。
+ * retry: 吹き出しの［再送する］（欄ごとの送り直し）
+ */
+function paintReceiptRow(view, id, retry) {
+  const receipt = receiptFor(id);
+  if (!receipt || (view === mainView && state.loadingSession && state.loadingSession !== freshSessionId)) return;
+  const sending = sendingIds.has(receipt.messageId);
+  let row = view.messageRow(receipt.messageId);
+  // サーバーの送信待ちに載った・もう会話の行になって渡った（送信中の印も、送れなかった印も付いていない）: 役目を終えた
+  if ((outboxes.get(id) ?? []).some(m => m.id === receipt.messageId)
+    || (!sending && row && !row.dataset.unsent && !row.dataset.deliverySending)) { settleReceipt(receipt.messageId); return; }
+  row ??= view.ensureMessageRow(receipt.messageId, receipt.prompt, new Date().toISOString());
+  if (sending) {
+    if (row.dataset.unsent || !row.dataset.deliverySending) view.markDelivery(row, 'sending');
+    return;
+  }
+  const local = unsentLocal.get(receipt.messageId) ?? { kind: 'unknown' };
+  if (row.dataset.unsent === local.kind) return;
+  view.paintUnsentRow(row, local.kind, { error: local.error, leave: ['cancel'], act: { retry, cancel: () => cancelReceipt(receipt) } });
 }
 /** この会話の送信予定（時刻順）。schedule.json の kind: 'send'（サーバーが持つので、どの端末からも同じ） */
 const sendSchedules = (id) => (state.schedules ?? []).filter(r => r.kind === 'send' && r.sessionId === id).sort((a, b) => a.at - b.at);
@@ -264,7 +295,9 @@ async function refreshOutbox(id) {
   const messages = await cmd('listMessages', { sessionId: id });
   if (outboxes.get(id) !== before) return outboxes.get(id);
   outboxes.set(id, messages);
+  for (const m of messages) settleReceipt(m.id);
   if (state.current === id) syncOutboxRows(messages);
+  if (modalChild?.id === id) modalChild.view.syncOutboxRows(messages);
   return messages;
 }
 
@@ -434,8 +467,6 @@ const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("co
   leave: remoteInfo(window.plyRemote)?.shell === "mobile" && typeof window.plyRemote.backToHosts === "function" ? () => window.plyRemote.backToHosts() : null });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
-// 受付を待つあいだの表示（sessionId -> ticket）。配送の状態は会話のキューから表示する
-const activeSubmits = new Map();
 
 const NL = String.fromCharCode(10);
 const PROTOCOL = 3;
@@ -582,6 +613,8 @@ const mainView = createConversationView({
     syncHistory: () => syncHistory(),
     // 主だけの仕事（画面全体の送信待ちの一覧・声の配送・走っている印・既読）
     paintOutbox: () => paintOutbox(),
+    // 送信待ちの吹き出しの［再送する］［取り消す］（サーバーの送信待ちへの操作。開いている会話の分）
+    messageAction: (messageId, action) => cmd('messageAction', { sessionId: state.current, messageId, action }),
     markFailedMessage: (row, item) => markFailedMessage(row, item),
     voiceDelivery,
     provisionalByMessage,
@@ -3396,7 +3429,9 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'notifyStatus') { notifySettings.event(ev); return; }
   if (ev.type === 'outbox') {
     outboxes.set(ev.sessionId, ev.messages);
+    for (const m of ev.messages) settleReceipt(m.id);   // サーバーの送信待ちに載ったら、以後の姿はサーバーが決める
     if (state.current === ev.sessionId) { syncOutboxRows(ev.messages); noAgent?.sync(); }
+    if (modalChild?.id === ev.sessionId) modalChild.view.syncOutboxRows(ev.messages);
     if (workComposer?.childId === ev.sessionId) workComposer.paintOutbox();
     return;
   }
@@ -3506,6 +3541,8 @@ function onEvent(ev, replay = false) {
     return;
   }
   if (ev.type === 'userMessage' && ev.sessionId && !replay) dropSuggestion(ev.sessionId);
+  // 渡った（会話の行になった）発言の受け取りは役目を終える（開いていない会話・子の会話の分も）
+  if ((ev.type === 'userMessage' || ev.type === 'userMessage.delivered') && ev.messageId) settleReceipt(ev.messageId);
   if (ev.type === 'nextSettings' && typeof ev.worktreePending === 'boolean') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.worktreePending = ev.worktreePending;
@@ -3780,7 +3817,8 @@ function cmd(command, args = {}, { timeoutMs = 0, bulk = false } = {}) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return rej(new Error(t("app.notConnected")));
     if (!timeoutMs) { pending.set(id, { res, rej }); }
     else {
-      const timer = setTimeout(() => { pending.delete(id); rej(new Error(t("app.noReply"))); }, timeoutMs);
+      // 応答が無かった（noReply）・線が切れた（disconnected）送信は、サーバーに届いたかどうか分からない
+      const timer = setTimeout(() => { pending.delete(id); rej(Object.assign(new Error(t("app.noReply")), { noReply: true })); }, timeoutMs);
       const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
       pending.set(id, { res: done(res), rej: done(rej) });
     }
@@ -7075,7 +7113,11 @@ function createModalChildView(item, th) {
       isBoundaryTool: (name, tools) => isBoundaryTool(name, tools),
       setUuid: none,   // 子の行は data-uuid を持たない（主の発言の分岐・検索が拾わない）。検索の飛び先は data-hit-uuid
       isEditing: () => false,
-      outbox: () => [],
+      // 送った発言の吹き出しの下（送信待ち・保留・結果不明・送れなかった）。主と同じ描きで、［編集］は入力欄へ戻す
+      outbox: () => outboxes.get(childId) ?? [],
+      messageAction: (messageId, action) => cmd('messageAction', { sessionId: childId, messageId, action }),
+      editQueued: (queued) => workComposer.editQueued(queued),
+      paintOutbox: () => { if (workComposer?.childId === childId) workComposer.paintOutbox(); },
       onEvent: (ev, replay) => {
         if (modalChild?.view !== view) return;
         if (view.isInstructionEvent(ev)) { if (replay) modalChild.instrStale = true; return; }
@@ -10005,8 +10047,6 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
   filePreview.sessionChanged(id);
   if (keepUpTo === undefined && !quiet) {
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
-    // 別の会話へ移ったら、入力欄に出ていた待ちの表示を片付ける。
-    if (!fresh && composerWait.queued) composerWait.cancel('switch');
     // ↑ で呼び出している間は、下書きへ戻してから保存する（呼び出した文を下書きにしない）
     chatRecall.release();
     if (!fresh) saveDraft().catch(() => {});
@@ -10329,7 +10369,6 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.loadingSession = null;
   $("prompt").disabled = false;
   composerWait.idle();
-  if (typeof syncActiveSubmitWait === 'function') syncActiveSubmitWait(id);
   syncRunState();
   syncTopbar();
   // まだ答えていない承認は本文の後（＝稼働表示の手前）に出す。届いたときに取りこぼしていても、
@@ -10606,11 +10645,12 @@ function syncRunState() {
 }
 
 function clearSentDraft(id, text, attachments, revision) {
-  const draft = state.current === id ? { text: $('prompt').value, attached: state.attached } : state.drafts.get(id);
+  const key = id ?? '';   // 新しい会話の欄（id が null）の下書きのキーは ''
+  const draft = state.current === id ? { text: $('prompt').value, attached: state.attached } : state.drafts.get(key);
   if (revision !== undefined) {
     if (state.current === id) {
       if (draftRevision !== revision) return;
-      const saved = state.drafts.get(id);
+      const saved = state.drafts.get(key);
       if (saved && (saved.text !== draft.text || JSON.stringify(saved.attached) !== JSON.stringify(draft.attached))) return;
     } else if (draft?.revision !== revision) return;
   } else {
@@ -10625,7 +10665,7 @@ function clearSentDraft(id, text, attachments, revision) {
     chatRecall.sent(sent);
   }
   dropSuggestion(id);
-  persistDraft(id, { text: '', attached: [], revision: cleared, dirty: true }).catch(() => {});
+  persistDraft(key, { text: '', attached: [], revision: cleared, dirty: true }).catch(() => {});
 }
 /**
  * 通話で確定した発言を会話へ送る（web/voice/index.mjs の slot.send）。入力欄を通さず、sendMessage へ直に渡して会話の行に置く
@@ -10729,12 +10769,6 @@ const chatSender = createSender({
   say: (text) => { $('settingsError').textContent = text; },
 });
 
-function syncActiveSubmitWait(sessionId) {
-  const active = activeSubmits.get(sessionId);
-  if (!active || state.current !== sessionId) return;
-  composerWait.queue(() => {}, { kind: 'sending', cancelable: false, lock: 'none' });
-}
-
 function captureSendSettings() {
   const { session, draft, backend, account, endpoint } = composerSelection();
   const prefs = (state.prefs.backends ? state.prefs.backends[backend] : state.prefs) ?? {};
@@ -10753,7 +10787,11 @@ function captureSendSettings() {
   };
 }
 
-async function submit({ at = armedSends.get(state.current), retry = false, detached = false } = {}) {
+/**
+ * 入力欄から送る。押した瞬間に入力欄を空にし、会話の中に吹き出し（下に「送信中」）を出す。渡れば行になり、
+ * 応答が無い・送れなかったときは、同じ吹き出しの下に［再送する］［取り消す］が残る（retry: 吹き出しの［再送する］）
+ */
+async function submit({ at = armedSends.get(state.current), retry = false } = {}) {
   if (!retry) {
     if (chatEdit.active) return chatEdit.send();
     if (shellComposer.active) return runShellFromComposer();
@@ -10763,7 +10801,7 @@ async function submit({ at = armedSends.get(state.current), retry = false, detac
     if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
     if (homeDest.bot) return sendToHomeBot(homeDest.bot);
   }
-  const target = detached ? null : state.current;
+  const target = state.current;
   if (submittingMessages.has(target) || state.busy ||
       (state.loadingSession && state.loadingSession !== freshSessionId) || (!retry && (composerWait.blocksSend() || retiredHere()))) return;
   const key = receipts.has(target ?? '') || receipts.get('')?.sessionId !== target ? target ?? '' : '';
@@ -10774,9 +10812,9 @@ async function submit({ at = armedSends.get(state.current), retry = false, detac
   if (!pending && !text.trim() && !ordered.length) return;
   if (retry && !pending) return;
   if (!retry) saveDraft().catch(() => {});
-  if (!retry && pending && pending.revision !== draftRevision) {
-    paintOutbox();
-    notify(t('chat.send.unknownPrevious'));
+  // 送りかけの発言（応答が無かった・送れなかった）が残っている間は、次の発言を送らない。その吹き出しの［再送する］か［取り消す］で片付ける
+  if (!retry && pending) {
+    if (text.trim() || ordered.length) { paintOutbox(); notify(t('chat.send.unknownPrevious')); }
     return;
   }
   completionNotifications.requestPermission();
@@ -10793,6 +10831,8 @@ async function submit({ at = armedSends.get(state.current), retry = false, detac
   const captured = pending ?? (!at && !compact ? chatSender.capture({ ...input, sessionId: target }) : null);
   if (captured && !pending && !target && state.draft.creationRequest) captured.creationRequest = state.draft.creationRequest;
   if (captured && !pending && ordered.length) provisionalByMessage.set(captured.messageId, ordered.map(provisionalPresent));
+  // 押した瞬間に入力欄を空にする。送れなかった発言は入力欄へ戻さず、会話の中の吹き出しに残る（［再送する］は同じ発言を送り直す）
+  if (captured && !retry) clearSentDraft(target, undefined, [], revision);
   const acceptStart = performance.now();
   let sessionId = target;
   const resolveSession = async () => {
@@ -10817,20 +10857,27 @@ async function submit({ at = armedSends.get(state.current), retry = false, detac
       captured.settings.worktreePending = Boolean(row?.worktreePending && row.cwd === captured.settings.cwd);
     }
     waitInfo.newSessionMs = Math.round(performance.now() - acceptStart);
+    // 会話を作ると画面が開き直る（吹き出しが消える）。受け取りが会話の id を持った後に、吹き出しを置き直す
+    setTimeout(paintOutbox, 0);
     return id;
   };
   const waitInfo = { phase: 'send', hasNewSession: !target, hadWorktree: Boolean(settings?.worktreePending) };
-  const ticket = {};
-  activeSubmits.set(target, ticket);
   submittingMessages.add(target);
-  syncActiveSubmitWait(target);
+  if (captured) { unsentLocal.delete(captured.messageId); sendingIds.add(captured.messageId); }
   syncRunState();
   let outcome = 'error';
   try {
     if (captured) {
-      const receipt = await chatSender.sendCaptured(key, captured, resolveSession);
+      // 受け取りは同期で置かれる。応答を待たずに、会話の中へ「送信中」の吹き出しを出す
+      const sending = chatSender.sendCaptured(key, captured, resolveSession);
+      paintOutbox();
+      const receipt = await sending;
       sessionId = receipt.sessionId;
-      if (receipt.revision !== undefined) clearSentDraft(sessionId, undefined, [], receipt.revision);
+      // 新しい会話の最初の発言も、↑ の並びと入力欄の呼び出しに足す（会話があるときは押した瞬間に足した）
+      if (!target && !retry && text.trim()) {
+        const sent = noteSent(sessionId, text);
+        if (state.current === sessionId) chatRecall.sent(sent);
+      }
       refreshOutbox(sessionId).catch(() => {});
     } else {
       sessionId ??= await resolveSession();
@@ -10845,15 +10892,24 @@ async function submit({ at = armedSends.get(state.current), retry = false, detac
     if (state.current === sessionId) $('settingsError').textContent = '';
     outcome = 'sent';
   } catch (e) {
-    const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
-    if (state.current === target || sessionId && state.current === sessionId) $('settingsError').textContent = message;
-    else notify(message);
+    const here = state.current === target || sessionId && state.current === sessionId;
+    if (captured) {
+      // 受け取りが残っているなら、吹き出しの下に出す（応答が無かった・線が切れた = 結果不明、それ以外 = 送れなかった）。
+      // 受け取りがもう無いのは、サーバーの送信待ちが引き取った（応答だけ失われた）とき。以後の姿はサーバーが決める
+      if ([...receipts.values()].some((r) => r.messageId === captured.messageId)) {
+        unsentLocal.set(captured.messageId, { kind: e.noReply || e.disconnected ? 'unknown' : 'failed', error: e.message });
+        if (!here) notify(`${t('chat.delivery.failed')} · ${e.message}`);
+      }
+    } else {
+      const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
+      if (here) $('settingsError').textContent = message;
+      else notify(message);
+    }
   } finally {
     waitInfo.sendMs = Math.round(performance.now() - acceptStart) - (waitInfo.newSessionMs ?? 0);
     slowClient.recordSubmitWait({ sessionId: sessionId ?? undefined, ms: performance.now() - acceptStart, outcome, wait: waitInfo });
-    if (activeSubmits.get(target) === ticket) activeSubmits.delete(target);
     submittingMessages.delete(target);
-    if (state.current === target || state.current === sessionId) composerWait.unqueue();
+    if (captured) sendingIds.delete(captured.messageId);
     paintOutbox();
     syncRunState();
   }
@@ -11010,7 +11066,7 @@ function connect() {
   ws.onclose = () => {
     // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない。
     // 開き直すのは connStatus（1.5 秒ごと。トークンが古いと分かったら開き直さない）
-    for (const [, p] of pending) p.rej(new Error(t("app.disconnected")));
+    for (const [, p] of pending) p.rej(Object.assign(new Error(t("app.disconnected")), { disconnected: true }));
     pending.clear();
     thread.classList.add("activity-offline");
     connStatus.closed();
@@ -11081,7 +11137,11 @@ workComposer = createWorkComposer({
   notify: (text) => notify(text),
   agentLang: (id) => state.sessions.find(s => s.id === id)?.agentLocale ?? uiLang,
   format: { attachedKey, attachmentLine },
-  send: { cmd: (command, args, options) => cmd(command, args, options), limitOp, randomId, receipts, saveReceipts, refreshOutbox },
+  send: { cmd: (command, args, options) => cmd(command, args, options), limitOp, randomId, receipts, saveReceipts, refreshOutbox,
+    // 子の吹き出しの「送りかけ」の表示（メインと同じ。paintReceiptRow）
+    sending: sendingIds, local: unsentLocal, shown: (id) => modalChild?.id === id,
+    paintRow: (id, retry) => { if (modalChild?.id === id) paintReceiptRow(modalChild.view, id, retry); },
+    settle: settleReceipt, cancelReceipt },
   submitting: submittingMessages,
   settled: async (id) => { await settingsWrites.get(id)?.catch(() => {}); await modeWrites.get(id)?.catch(() => {}); },
   sendOptions: (id) => { const s = workControls.selection(id); return { cwd: s.cwd || '', mode: s.mode || undefined }; },
@@ -11095,7 +11155,6 @@ workComposer = createWorkComposer({
   },
   controls: workControls,
   outbox: {
-    list: (id) => outboxes.get(id) ?? [],
     schedules: sendSchedules,
     cancelSchedule: (id) => limitOp('sessions.cancelSchedule', { id }),
     sendScheduledNow: (id) => limitOp('sessions.sendScheduledNow', { id }),

@@ -2783,8 +2783,6 @@
       "placeholder": "{{sendKeys}} to send",
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
-      "sending": "Sending…",
-      "queuedCancel": "Cancel",
       "historyLoading": "Loading history…",
       "connecting": "Connecting…",
       "historyNotLoaded": "The history isn't loaded yet, so this can't be sent.",
@@ -2863,7 +2861,7 @@
       "switchFailed": "Couldn't switch: {{error}}"
     },
     "send": {
-      "unknownPrevious": "Couldn't confirm the previous send. Retry with the original text.",
+      "unknownPrevious": "The previous message isn't settled yet. Use Resend or Cancel under it.",
       "failed": "Couldn't confirm the send. Your text is kept: {{error}}"
     }
   },
@@ -3800,17 +3798,13 @@
   },
   "outbox": {
     "status": {
-      "sending": "Sending…",
       "paused": "Sending paused",
-      "failed": "Couldn't send",
       "unknown": "Can't confirm whether it was sent"
     },
     "waitTurn": "Waiting to be sent — sends automatically when the current work finishes",
     "waitReply": "Waiting to be sent — sends automatically when the current reply finishes",
     "waitOrder": "Waiting to be sent — sends after the previous message is sent",
     "preparing": "Preparing to send",
-    "retryReceipt": "Check or retry the same send",
-    "retryNewReceipt": "Retry send to the new conversation",
     "waitLimit": "Waiting to be sent — sends after the limit resets at {{time}}",
     "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
     "retry": "Resend",

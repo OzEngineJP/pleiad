@@ -2723,8 +2723,6 @@
       "placeholder": "{{sendKeys}} で送信",
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
-      "sending": "送信中",
-      "queuedCancel": "取り消す",
       "historyLoading": "履歴を読み込み中…",
       "connecting": "接続しています…",
       "historyNotLoaded": "履歴を読み込めていないため、まだ送れません。",
@@ -2801,7 +2799,7 @@
       "switchFailed": "切り替えに失敗: {{error}}"
     },
     "send": {
-      "unknownPrevious": "前の送信結果を確認できません。元の入力で再試行してください。",
+      "unknownPrevious": "前の送信がまだ片付いていません。その吹き出しの［再送する］か［取り消す］を押してください。",
       "failed": "送信を確認できませんでした。入力は保持しています: {{error}}"
     }
   },
@@ -3699,17 +3697,13 @@
   },
   "outbox": {
     "status": {
-      "sending": "送信中",
       "paused": "送信を保留中",
-      "failed": "送信できませんでした",
       "unknown": "送信結果を確認できません"
     },
     "waitTurn": "送信待ち — 作業が終わると自動で送信",
     "waitReply": "送信待ち — 今の返答が終わると自動で送信",
     "waitOrder": "送信待ち — 前のメッセージが送られてから送信",
     "preparing": "送信準備中",
-    "retryReceipt": "同じ送信の受付を確認・再試行",
-    "retryNewReceipt": "新しい会話への送信を再試行",
     "waitLimit": "送信待ち — 上限の解除（{{time}}）の後に送信",
     "unknownHint": "会話を確認してください。再送すると同じ指示が2回届くことがあります。",
     "retry": "再送する",

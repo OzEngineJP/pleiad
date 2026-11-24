@@ -111,9 +111,10 @@ export default async function (t) {
   // 履歴の面の中の状態（paintingHistory・paintBefore）は、client の place・append からは historyPane 越しに見える（ADR 0319 段 6-4）
   const PANE_BRIDGE = [
     "const placeRow = (node, key) => append(node, key);",
+    "const pinned = new Set();",
     "const historyPane = { get painting() { return paintingHistory; }, get paintBefore() { return paintBefore; } };",
   ].join("\n");
-  const functions = ["wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable", "itemsOf"].map(cut).join("\n");
+  const functions = ["firstPinned", "wrap", "place", "append", "resetLiveTurn", "rowRole", "retainThread", "paintHistory", "paintHistoryRows", "paintable", "itemsOf"].map(cut).join("\n");
   const el = (tag, cls, text) => { const n = new Node(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // 履歴の 1 行。本物の historyRow（web/client.mjs）は発言 1 件から行を作る。ここでは中身が決まる作りものにして、行の並びと続きの見出しだけを見る
   // 人の発言には、結び付いた添付（presents）を本文の位置に取り込み、AI の発言はツールをまとまり（.bundle）にして持つ（main の historyRow と同じ形）

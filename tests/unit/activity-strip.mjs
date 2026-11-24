@@ -55,7 +55,7 @@ export default function(t) {
     stripIsNarrow: () => narrow,
     syncWorkEntry() { ctx.syncStripVisible(); },
   });
-  vm.runInContext(`${cut('syncStripVisible')}\n${cutView('wrap')}\n${cutView('place')}\n${cutView('append')}\n${actor}\nthis.activity = activity;`, ctx);
+  vm.runInContext(`${cut('syncStripVisible')}\nconst pinned = new Set();\n${cutView('firstPinned')}\n${cutView('wrap')}\n${cutView('place')}\n${cutView('append')}\n${actor}\nthis.activity = activity;`, ctx);
   const a = ctx.activity;
   const say = text => { const m = make('div', 'm ai'); m.textContent = text; ctx.append(m); return m; };
 

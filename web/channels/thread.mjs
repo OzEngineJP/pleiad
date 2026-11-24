@@ -20,6 +20,7 @@ import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 import { openSourceDialog } from '../message-actions.mjs';
 import { makeBranchRow } from '../branch-view.mjs';
 import { penGlyph } from '../resend-band.mjs';
+import { paintUnsent } from '../outbox.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
 import { createConversationNav } from '../conversation-nav-view.mjs';
@@ -530,6 +531,13 @@ export function createThread(host) {
     if (!main || p.deletedAt) return;
     const bodyEl = main.querySelector('.post-body');
     let below = bodyEl;
+    // bot へ届く前のあなたの投稿: 本文の下の 1 行（送信中 ＋［編集］［取り消す］。Chats の送信待ちの吹き出しと同じ。入力欄の上のカードは無い）
+    if (S.pending.some((x) => x.postId === p.id)) {
+      const line = el('div', 'outbox-status');
+      paintUnsent(line, 'queued', { act: { edit: () => composer.pendingAction(p.id, 'edit'), cancel: () => composer.pendingAction(p.id, 'cancel') } });
+      bodyEl.after(line);
+      below = line;
+    }
     if (p.presents?.length) {
       const box = el('div', 'post-presents');
       for (const ev of p.presents) {
@@ -824,11 +832,15 @@ export function createThread(host) {
     clearTimeout(pendingTimer);
     if (!S.threadId) return;
     const key = `${S.channelId}/${S.threadId}`;
+    const before = S.pending.map((x) => x.postId);
     try {
       const got = await host.invoke('channels.pending', { channelId: S.channelId, threadId: S.threadId });
       if (`${S.channelId}/${S.threadId}` !== key) return;
       S.pending = got?.items ?? [];
     } catch { S.pending = []; }
+    // 届く前の投稿の下の 1 行を、増えた・減ったものだけ描き直す
+    const now = new Set(S.pending.map((x) => x.postId));
+    for (const id of new Set([...before, ...now])) if (now.has(id) !== before.includes(id)) repaint(id);
     composer.paintSchedules();
   }
   const refreshPendingSoon = () => { clearTimeout(pendingTimer); pendingTimer = setTimeout(refreshPending, 250); };

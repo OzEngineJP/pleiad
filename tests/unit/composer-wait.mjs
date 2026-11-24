@@ -1,7 +1,7 @@
 // 入力欄の待ち（web/composer-wait.mjs、docs/design-system.md「入力欄の待ち」）。
 //   - 書けない待ち（会話を開く・初めて接続するまで）は readonly + aria-busy。disabled にしない。150ms を越えてから見せる
 //   - 読み込みの失敗で欄を書けるように戻し、欄の上に理由と「もう一度読む」。送信は押せない（理由を title に）
-//   - 作成中の送信の予約: readonly、150ms を越えたら送信に弧と「送信中 · 取り消す」。取り消すと字はそのまま
+//   - 送った発言の「送信中」・送信待ち・送れなかったは、入力欄ではなく会話の中の吹き出しへ出す（待たせる部品は持たない）
 // client.mjs の流れ（作っている間に書いた字が残る・失敗で欄が戻る）はブラウザーで tests/browser/composer-loading.cjs。
 // ここではその配線がコードに載っているかも見る。
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { createComposerWait } from '../../web/composer-wait.mjs';
 
 export const name = 'composer-wait';
-export const title = '入力欄の待ち（書けない待ち・読み込みの失敗・作成中の送信の予約）';
+export const title = '入力欄の待ち（書けない待ち・読み込みの失敗・保留）';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
@@ -74,26 +74,11 @@ export default function (t) {
   }
   {
     const s = setup();
+    t.ok('送信を待たせる部品（queue・unqueue・cancel・queued）は持たない', !('queue' in s.w) && !('unqueue' in s.w) && !('cancel' in s.w) && !('queued' in s.w));
     s.prompt.value = 'hello';
-    let cancelled = 0;
-    s.w.queue(() => cancelled++);
-    t.ok('予約した送信の間は readonly（字は保つ）', s.prompt.readOnly === true && s.prompt.value === 'hello' && !s.w.accepts() && !s.w.blocksSend());
-    t.ok('150ms までは弧も一行も出さない', s.note.hidden && s.send.children[0] === s.icon);
-    s.flush();
-    t.ok('150ms を越えたら送信ボタンに弧', s.send.classList.contains('wait') && s.send.querySelector('.run'));
-    t.ok('欄の上に「送信中」と「取り消す」', !s.note.hidden && s.note.shown.includes('[chat.composer.sending]')
-      && s.note.querySelector('button')?.textContent === '[chat.composer.queuedCancel]');
-    s.w.busy('history'); s.w.idle();
-    t.ok('待ちを解いても予約中は readonly のまま', s.prompt.readOnly === true);
-    s.note.querySelector('button').onclick();
-    t.ok('取り消すと書けるように戻り、字はそのまま', cancelled === 1 && s.prompt.readOnly === false && s.prompt.value === 'hello'
-      && s.note.hidden && s.send.children[0] === s.icon && !s.send.classList.contains('wait'));
-  }
-  {
-    const s = setup();
-    s.w.queue(() => {});
-    s.w.unqueue();
-    t.ok('150ms より前に作り終えたら何も出さない', s.pending() === 0 && s.note.hidden && s.send.children[0] === s.icon && !s.prompt.readOnly);
+    s.w.busy('history'); s.flush(); s.w.idle();
+    t.ok('待ちを解くと欄は書ける・字は保つ・送信ボタンは弧に差し替えない', s.prompt.readOnly === false && s.prompt.value === 'hello'
+      && s.send.children[0] === s.icon && !s.send.classList.contains('wait'));
   }
   {
     // 設定（作業ディレクトリ）を保存できなかった: 欄は書ける、欄の上に強い字の理由と操作、送信は押せない見た目（disabled にしない）
@@ -131,7 +116,7 @@ export default function (t) {
   t.ok('読み込みの失敗: 欄を戻して「もう一度読む」（composerWait.failed → select retry）', /composerWait\.failed\(\(\) => select\(id, \{ retry: true \}\)\)/.test(select));
   t.ok('初めての接続まで「接続しています…」', /composerWait\.busy\("connect"\);/.test(client)
     && /reason.*update-restart/.test(client) && /composerWait\.busy\("connect"\);[\s\S]*?connect\(\);/.test(client));
-  t.ok('作成中の送信は予約する', /composerWait\.queue\(/.test(client) && /creatingSession \?\? startNew\(\)/.test(client));
+  t.ok('作成中の送信は入力欄で待たせず、吹き出しを出して作る（composerWait.queue は無い）', !/composerWait\.queue\(/.test(client) && /creatingSession \?\? startNew\(\)/.test(client));
   t.ok('設定を保存できなかった会話は送らず、理由の一行へフォーカス（composerWait.hold・point）', /composerWait\.hold\(/.test(client) && /if \(composerWait\.held\) \{ composerWait\.point\(\); return; \}/.test(client));
   const hold = client.slice(client.indexOf('function syncSettingsHold('), client.indexOf('function paintSettingsNotice('));
   t.ok('「再試行」: また失敗したら出し直した一行の先頭のボタンへ、通ったら入力欄へ（押したボタンが消えて body に落ちていた）',
@@ -143,58 +128,8 @@ export default function (t) {
   t.ok('index.html に欄の上の一行と欄の中の待機表示', /id="composerNote"[^>]*role="status"/.test(html) && /id="composerBusy"/.test(html) && /id="composerBusyText"/.test(html));
   const css = read('web/style.css');
   t.ok('style.css: 待ちは 150ms 後の data-wait で字を隠し、流れる棒は reduced-motion で止める', /\.cbox\[data-wait\] :is\(#prompt,#thPrompt,#wkPrompt\)/.test(css) && /\.composer-busy-bar\{animation:none\}/.test(css));
-  const keys = ['sending', 'queuedCancel', 'historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
+  const keys = ['historyLoading', 'connecting', 'historyNotLoaded', 'historyRetry'];
   const missing = ['ja', 'en'].flatMap(lang => { const c = JSON.parse(read(`web/locales/${lang}/ui.json`)).chat.composer; return keys.filter(k => !c[k]).map(k => `${lang}:${k}`); });
   t.ok('文言は ja・en の辞書にある', missing.length === 0, missing.join(' '));
 
-  // queue の文言切り替え（設定待ち・キャンセル可 → 受理待ち・キャンセル不可）と switch 理由
-  {
-    const { w, prompt, send, note, flush } = setup();
-    const reasons = [];
-    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true, kind: 'queued' });
-    flush();
-    t.ok('150ms 後に指定した待ち文言と取り消すボタンが出る', !note.hidden && note.querySelector('b')?.textContent === '[waiting]' && note.querySelector('button')?.textContent === '[chat.composer.queuedCancel]' && send.classList.contains('wait'));
-    const waitChild = send.children[0];
-    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending' });
-    t.ok('再待ちでタイマーをやり直さず同じ枠で文言を切り替えて取り消すを外せる',
-      note.querySelector('b')?.textContent === '[sending]' && note.querySelector('button') === null && send.children[0] === waitChild && note.dataset.kind === 'sending');
-    w.cancel('switch');
-    t.ok('cancel(switch) は待ちを解く（onCancel が無い送信中は理由だけ消す）', !w.queued && !prompt.readOnly && note.hidden);
-
-    w.queue((r) => reasons.push(r), { text: '[waiting]', cancelable: true });
-    w.cancel('switch');
-    t.ok('onCancel に cancel の理由（switch / user）が渡る', reasons.length === 1 && reasons[0] === 'switch', JSON.stringify(reasons));
-  }
-
-  // lock: 'shown' は注記と同じ時点から readonly、'none' は書けるまま（取り消しの無い待ち）、'now'（既定）は即時
-  {
-    const { w, prompt, note, flush } = setup();
-    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
-    t.ok("lock:'shown' は 150ms までは欄を書ける・字も足せる", !prompt.readOnly && w.accepts() && note.hidden);
-    flush();
-    t.ok("lock:'shown' は注記が出る時点で readonly", prompt.readOnly === true && !w.accepts() && !note.hidden);
-    w.unqueue();
-    t.ok('解くと書ける', !prompt.readOnly);
-    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
-    w.unqueue();
-    t.ok('150ms 前に終われば readonly は一度も入らない', !prompt.readOnly);
-  }
-  {
-    const { w, prompt, note, flush } = setup();
-    w.queue(null, { text: '[sending]', kind: 'sending', cancelable: false, lock: 'none' });
-    flush();
-    t.ok("lock:'none' は注記が出ても欄は書けるまま（取り消すも無い）", !note.hidden && !prompt.readOnly && w.accepts() && note.querySelector('button') === null);
-    w.queue(() => {}, { text: '[waiting]', cancelable: true, lock: 'shown' });
-    t.ok('段が取り消せる待ちに変わったら readonly（注記が出ているので即時）', prompt.readOnly === true);
-    w.queue(null, { text: '[sending]', cancelable: false, kind: 'sending', lock: 'none' });
-    t.ok('取り消せない段へ戻ると書ける', !prompt.readOnly);
-    w.unqueue();
-  }
-  {
-    const { w, prompt } = setup();
-    w.queue(() => {});
-    t.ok('既定（新しい会話の予約）は即時に readonly', prompt.readOnly === true);
-  }
-  t.ok('会話ごとの受付待ちは欄を編集でき、キューに保存するまでは取り消しボタンを出さない',
-    /activeSubmits\.get\(sessionId\)/.test(client) && /kind: 'sending', cancelable: false, lock: 'none'/.test(client));
 }

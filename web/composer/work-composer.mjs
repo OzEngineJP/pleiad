@@ -3,7 +3,7 @@
 //   - 送る先は「いま詳細に出している子」。下書き・添付・送信中・送信待ちは子ごとに持ち、メインの下書きとも混ざらない
 //   - 送る核はメインと同じ（web/composer/sender.mjs）。受け取り（receipts）は会話の id で引くので、メインと共用できる
 //   - 出す部品: 字の欄・＋（メインと同じ「この端末から / ホストから」のメニュー）・モデル / effort / 作業場所 / 承認モードのチップ・/ のスキル・
-//     送信と ▾（日時の指定）・送信待ちの行（取り消す・編集・今すぐ送る）・文脈の帯（メーター・圧縮）・使用量の札・中断・再開
+//     送信と ▾（日時の指定）・送信予定の行（今すぐ送る・編集・取り消す）・文脈の帯（メーター・圧縮）・使用量の札・中断・再開
 //   - 出さない部品: 通話・バックグラウンドの入口・編集して再送信・↑ の呼び出し（recall）・`!`（シェルの行）・予定の編集中の札・下書きの保存の札
 //     （差は docs/adr/0317-modal-child-composer-stop-name-tags.md「主との違い」）
 // 入力欄は #workBody の外に置く。詳細の読み直し（refreshDetail）は #workBody の中身だけを作り直すので、打っている途中の文字・
@@ -30,13 +30,15 @@ const UNUSED = ['armedChip', 'draftSaved', 'armedNote', 'draftFail', 'connNote',
  * @param {(text: string) => void} h.notify
  * @param {(childId: string) => string} h.agentLang 添付の印を書く言語
  * @param {{ attachedKey: (p: string) => string, attachmentLine: (lang: string, p: string) => string }} h.format
- * @param {object} h.send メインと同じ送る核の道具（cmd・limitOp・randomId・receipts・saveReceipts・refreshOutbox）
+ * @param {object} h.send メインと同じ送る核の道具（cmd・limitOp・randomId・receipts・saveReceipts・refreshOutbox）と、
+ *   送りかけの吹き出しの持ち分（sending: 応答を待つ messageId の集合・local: 送れなかった姿・shown(id): その子の会話の面があるか・
+ *   paintRow(id, retry): 吹き出しを描く・settle(messageId): 受け取りを片付ける）
  * @param {Set<string>} h.submitting 送っている途中の会話（メインと共有。二重に送らない）
  * @param {() => Promise<void>} h.settled 設定の保存が済むのを待つ（日時を指定した送信だけ。今すぐの送信は押した時の設定を一緒に送る）
  * @param {(childId: string) => { cwd?: string, mode?: string }} h.sendOptions 送るときに添える作業場所・承認モード
  * @param {(childId: string) => object|undefined} h.captureSettings 押した時の子の設定（メインの captureSendSettings と同じ形。決められなければ undefined）
  * @param {{ get: (childId: string) => object, on: Record<string, (childId: string, ...args: any[]) => void> }} h.controls チップ（モデル・effort・作業場所・承認モード）
- * @param {{ list: (id: string) => object[], schedules: (id: string) => object[], cancelSchedule: (id: string) => Promise<any>, sendScheduledNow: (id: string) => Promise<any> }} h.outbox
+ * @param {{ schedules: (id: string) => object[], cancelSchedule: (id: string) => Promise<any>, sendScheduledNow: (id: string) => Promise<any> }} h.outbox 送信予定（送信待ちは会話の中の吹き出し）
  * @param {() => Promise<object>} h.environment 送信の日時の面の前提（常駐しているか）
  * @param {(childId: string) => string} h.cwdOf スキル候補を引く作業場所（添付のメニューでホストのファイルを最初に開く場所でもある）
  * @param {() => string} h.hostName 添付のメニューの見出しに出すホストの名前
@@ -284,20 +286,23 @@ export function createWorkComposer(h) {
       restoreText(args.prompt ?? '', (args.attachments ?? []).map((a) => ({ path: a.path, name: a.name, kind: 'file', mime: a.mime ?? '', from: 'host' })));
     },
   };
-  /** 送信待ちの行を描く。メインの送信待ちと同じ部品（取り消す・編集・今すぐ送る） */
+  /**
+   * 入力欄の上は送信予定だけ。送った発言は会話の中の吹き出しに出す（送信待ち・保留は web/conversation-view.mjs、
+   * 送りかけは h.send.paintRow。メインと同じ表示）
+   */
   function paintOutbox() {
     if (!childId) { els.outbox.replaceChildren(); return; }
     const id = childId;
-    const queued = h.outbox.list(id);
-    renderOutbox(els.outbox, queued, async (messageId, action) => {
-      const row = queued.find((m) => m.id === messageId);
-      await h.cmd('messageAction', { sessionId: id, messageId, action: action === 'edit' ? 'cancel' : action });
-      // 送信待ちの項目は { id, status, args: { prompt, attachments } }。取り下げた本文と添付を入力欄へ戻す（予定の［編集］と同じ形）
-      if (action === 'edit' && row && childId === id) {
-        const list = row.args?.attachments ?? [];
-        restoreText(withoutTailMarks(row.args?.prompt ?? '', list, id), list.map((a) => ({ path: a.path, name: a.name, kind: 'file', mime: a.mime ?? '', from: 'host' })));
-      }
-    }, new Set(), { schedules: h.outbox.schedules(id), scheduleActions, editQueued: true });
+    renderOutbox(els.outbox, h.outbox.schedules(id), scheduleActions);
+    h.send.paintRow(id, () => submit({ retry: true }));
+  }
+  /** 吹き出しの［編集］: 送信待ちを取り下げ、本文と添付を入力欄へ戻す（予定の［編集］と同じ形）。item は { id, status, args: { prompt, attachments } } */
+  async function editQueued(item) {
+    const id = childId;
+    await h.cmd('messageAction', { sessionId: id, messageId: item.id, action: 'cancel' });
+    if (childId !== id) return;
+    const list = item.args?.attachments ?? [];
+    restoreText(withoutTailMarks(item.args?.prompt ?? '', list, id), list.map((a) => ({ path: a.path, name: a.name, kind: 'file', mime: a.mime ?? '', from: 'host' })));
   }
 
   // ---- 送る
@@ -320,35 +325,48 @@ export function createWorkComposer(h) {
     } else attachedBy.delete(id);
     h.drafts.set(id, { text: '', attached: [], version: 2, revision: h.send.randomId(), dirty: true }).catch(() => {});
   }
-  async function submit({ at = null } = {}) {
+  /**
+   * 送る。押した瞬間に欄を空にし、会話の中に吹き出し（下に「送信中」）を出す。送れなかった発言は吹き出しに残り、
+   * ［再送する］は同じ発言を送り直す（retry。メインの submit と同じ形）。吹き出しを出せない描き方（読み直し）では、渡るまで欄に残す
+   */
+  async function submit({ at = null, retry = false } = {}) {
     const id = childId;
     if (!id || h.submitting.has(id)) return;
-    if (c.wait.held) { c.wait.point(); return; }
-    const blocked = att.blockReason();
-    if (blocked) { h.notify(blocked); att.flash(); return; }
+    if (!retry) {
+      if (c.wait.held) { c.wait.point(); return; }
+      const blocked = att.blockReason();
+      if (blocked) { h.notify(blocked); att.flash(); return; }
+      c.slash?.close();
+    }
     // 送る先・中身・設定・下書きの版は押した時に決める（メインの入力欄と同じ受け付けの道。ADR 0347）。
     // 応答を待つ間に別の子へ移っても、送り先と片付ける下書きはこの子のまま
-    c.slash?.close();
-    const text = input.value;
-    const ordered = att.ordered();
-    if (!text.trim() && !ordered.length) return;
-    saveDraft();
-    const revision = h.drafts.get(id)?.revision ?? h.send.randomId();
+    const text = retry ? '' : input.value;
+    const ordered = retry ? [] : att.ordered();
     const pending = at ? null : h.send.receipts.get(id);
-    if (pending && pending.revision !== revision) { paintOutbox(); h.notify(t('chat.send.unknownPrevious')); return; }
+    if (retry ? !pending : !text.trim() && !ordered.length) return;
+    if (!retry) saveDraft();
+    // 送りかけの発言（応答が無かった・送れなかった）が残っている間は、次の発言を送らない。その吹き出しの［再送する］か［取り消す］で片付ける
+    if (!retry && pending) { paintOutbox(); h.notify(t('chat.send.unknownPrevious')); return; }
+    const revision = h.drafts.get(id)?.revision ?? h.send.randomId();
     const sent = sendAttachments(ordered);   // 片付けるときに比べる添付（送った分）
     const options = h.sendOptions(id);
     const input0 = { text, ordered, at, ...options, attachedKey: h.format.attachedKey, attachmentLine: h.format.attachmentLine,
       agentLang: h.agentLang(id), inDoc: c.editor.attachmentKeys(), revision };
-    const settings = at ? undefined : h.captureSettings(id);
+    const settings = at ? undefined : pending?.settings ?? h.captureSettings(id);
     // 設定を決められない子（行がまだ無い）は、これまでどおり保存を待ってから送る
     const captured = at ? null : pending ?? (settings ? sender.capture({ ...input0, sessionId: id, settings }) : null);
+    const bubble = Boolean(captured) && h.send.shown(id);
+    if (bubble && !retry) clearSent(id, text, sent);
     h.submitting.add(id);
+    if (captured) { h.send.local.delete(captured.messageId); h.send.sending.add(captured.messageId); }
     sync();
     try {
       if (captured) {
-        await sender.sendCaptured(id, captured, async () => id);
-        clearSent(id, text, sent);
+        // 受け取りは同期で置かれる。応答を待たずに、会話の中へ「送信中」の吹き出しを出す
+        const sending = sender.sendCaptured(id, captured, async () => id);
+        if (bubble) paintOutbox();
+        await sending;
+        if (!bubble) clearSent(id, text, sent);
         h.send.refreshOutbox(id).catch(() => {});
       } else {
         // 日時を指定した送信は予定として置く（設定は時刻が来たときの会話の設定。保存が済むのを待ってから置く）
@@ -357,10 +375,20 @@ export function createWorkComposer(h) {
       }
       if (childId === id) say('');
     } catch (e) {
-      const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
-      if (childId === id) say(message, true); else h.notify(message);
+      if (bubble) {
+        // 受け取りが残っているなら、吹き出しの下に出す（応答が無かった・線が切れた = 結果不明、それ以外 = 送れなかった）。無いのは、サーバーが引き取った後
+        if (h.send.receipts.get(id)?.messageId === captured.messageId) {
+          h.send.local.set(captured.messageId, { kind: e.noReply || e.disconnected ? 'unknown' : 'failed', error: e.message });
+          if (childId !== id) h.notify(`${t('chat.delivery.failed')} · ${e.message}`);
+        }
+      } else {
+        if (captured) h.send.settle(captured.messageId);
+        const message = at ? t('schedule.scheduleFailed', { error: e.message }) : t('chat.send.failed', { error: e.message });
+        if (childId === id) say(message, true); else h.notify(message);
+      }
     } finally {
       h.submitting.delete(id);
+      if (captured) h.send.sending.delete(captured.messageId);
       sync();
       paintOutbox();
     }
@@ -423,6 +451,7 @@ export function createWorkComposer(h) {
     /** 設定のチップや送信ボタンを今の値に合わせる（子の行・語彙が変わったとき） */
     paintControls() { if (childId) c.controls?.paint(); },
     paintOutbox,
+    editQueued,
     sync,
     /** 外から入れる口（メインの入力欄の「会話で使う」・git の文と同じ形）。files は添付に積み、text は書きかけの末尾に足す */
     insert({ text = '', files = [] } = {}) {

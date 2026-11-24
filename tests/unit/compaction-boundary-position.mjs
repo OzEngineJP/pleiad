@@ -60,7 +60,7 @@ const at = (n) => new Date(Date.UTC(2026, 8, 29, 0, n)).toISOString();
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
   const view = readConversationView();   // wrap・place・append の本体は web/conversation-view.mjs（ADR 0319 段 6-5）
-  const functions = ['wrap', 'place', 'append', 'ensureMessageRow'].map(name => cutFunction(view, name)).join('\n') + '\n' + ['compactionBoundary', 'paintCompactions', 'acceptCompaction'].map(name => {
+  const functions = ['firstPinned', 'wrap', 'place', 'append', 'ensureMessageRow'].map(name => cutFunction(view, name)).join('\n') + '\n' + ['compactionBoundary', 'paintCompactions', 'acceptCompaction'].map(name => {
     const start = source.indexOf(`function ${name}(`);
     if (start < 0) throw new Error(`client.mjs に ${name} が無い`);
     return source.slice(start, source.indexOf('\n}', start) + 2);
@@ -98,7 +98,7 @@ export default async function (t) {
     closeTurnEl: noop, plainTextHtml: x => x, hhmm: x => x, markDelivery: noop, syncOutboxRows: noop, outboxes: new Map(),
     deliveredEarly: new Set(), voiceDelivery: { owns: () => false, adopt: noop }, document: { createTextNode: x => x },
   });
-  vm.runInContext(`let seq = 0, initialMessageId;\nconst replaying_ = false;\n${functions}`, context);
+  vm.runInContext(`let seq = 0, initialMessageId;\nconst replaying_ = false;\nconst pinned = new Set();\n${functions}`, context);
   vm.runInContext(`function onUserMessage(ev, replay = false) {\n${userMessage}\n}`, context);
   const send = (id, text, when) => { context.ev = { type: 'userMessage', messageId: id, text, at: when }; vm.runInContext('onUserMessage(ev)', context); };
   const history = (id, text, when) => {

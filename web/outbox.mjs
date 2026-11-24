@@ -3,18 +3,54 @@ import { limitTime } from './interrupt.mjs';
 import { el, svgEl, dotsIcon } from './dom.mjs';
 import { whenText, leftText } from './schedule-times.mjs';
 
-// i18n-dynamic: outbox.status.
-const STATUSES = ['sending', 'paused', 'failed', 'unknown'];
-const statusLabel = (status) => (STATUSES.includes(status) ? t(`outbox.status.${status}`) : status);
-
-// 送信待ちが何を待っているか（core/message-queue.mjs の waiting）
+// 送信待ちが何を待っているか（core/message-queue.mjs の waiting）。待ちの理由が無い送信待ち（受け付けたばかり）は「送信中」
 function queuedLabel(wait) {
   // 次のターンの設定の予約がある間は、main の返答が終わった時点（裏だけを待つ間も含む）で流れる（core/message-queue.mjs）
   if (wait?.reason === 'turn') return wait.detail === 'reserved' ? t('outbox.waitReply') : t('outbox.waitTurn');
   if (wait?.reason === 'order') return t('outbox.waitOrder');
   if (wait?.reason === 'preparing') return t('outbox.preparing');
   if (wait?.reason === 'limit') return t('outbox.waitLimit', { time: limitTime(wait.resetsAt) ?? t('interrupt.unknownTime') });
-  return statusLabel('sending');
+  return t('chat.delivery.sending');
+}
+
+/**
+ * 送った発言の吹き出しの下の 1 行を、渡るまでの間の姿へ描く（docs/design-system.md「送信の表示」）。
+ * 送信待ち・保留・結果不明・送れなかったものは、入力欄の上のカードではなく、会話の中の吹き出しの下に出す。
+ *   queued   送信待ち（待っている理由）            ［取り消す］（act.edit があれば［編集］も）
+ *   paused   送信を保留中（中断のあと）             ［再送する］［取り消す］
+ *   unknown  送信結果を確認できません ＋ 注意の一文  ［再送する］［取り消す］
+ *   failed   ✕ 送れませんでした · 理由              ［再送する］［取り消す］
+ * 「送信中」（渡る前の弧と一言）は conversation-view.mjs の markDelivery が描く。
+ * @param {HTMLElement} status 吹き出しの下の .outbox-status
+ * @param {'queued'|'paused'|'unknown'|'failed'} kind
+ * @param {{ waiting?: object|null, error?: string, act?: Record<string, () => Promise<unknown>> }} [o]
+ *   act: 押したときの動き（retry・cancel・edit のうち使うもの）。失敗したら行の中に理由を出す
+ */
+export function paintUnsent(status, kind, { waiting = null, error = '', act = {} } = {}) {
+  status.classList.remove('outbox-status-mark', 'outbox-fix', 'conn-fail');
+  status.classList.add('outbox-status-failed');
+  delete status.dataset.connectors;
+  if (kind === 'failed') status.replaceChildren(el('b', null, t('chat.delivery.failed')), document.createTextNode(error ? ` · ${error}` : ''));
+  else if (kind === 'unknown') status.replaceChildren(el('b', null, t('outbox.status.unknown')), el('span', 'hint', t('outbox.unknownHint')));
+  else status.replaceChildren(document.createTextNode(kind === 'paused' ? t('outbox.status.paused') : queuedLabel(waiting)));
+  unsentActions(status, kind === 'queued' ? ['edit', 'cancel'] : ['retry', 'cancel'], act);
+}
+
+/** 吹き出しの下の行に操作のボタンを足す（act に無いものは出さない）。押して失敗したら、行の最後に理由を出す */
+export function unsentActions(status, names, act) {
+  for (const name of names) {
+    if (!act[name]) continue;
+    const button = el('button', 'btn', name === 'retry' ? t('outbox.retry') : name === 'edit' ? t('schedule.rowEdit') : t('outbox.cancel'));
+    button.type = 'button';
+    button.onclick = async () => {
+      button.disabled = true;
+      status.querySelector(':scope > .hint.err')?.remove();
+      try { await act[name](); }
+      catch (e) { status.append(el('span', 'hint err', e?.message ?? String(e))); }
+      finally { button.disabled = false; }
+    };
+    status.append(button);
+  }
 }
 
 // 画面に出した送信予定の id。新しく増えた行だけ、下から滑り込ませる
@@ -61,51 +97,12 @@ function scheduleRow(entry, actions, now) {
 }
 
 /**
- * @param {object} [extra]
- * @param {object[]} [extra.schedules] この会話の送信予定（schedule.json の kind: 'send'。時刻順）
- * @param {{ now: Function, edit: Function, cancel: Function }} [extra.scheduleActions]
- * @param {boolean} [extra.editQueued] 送信待ちの行に［編集］（取り下げて本文を入力欄へ戻す。チャンネルのスレッド）
+ * 入力欄の上の送信予定の行（送信待ちのメッセージは会話の中の吹き出しへ出す。paintUnsent）。
+ * @param {object[]} schedules この会話の送信予定（schedule.json の kind: 'send'。時刻順）
+ * @param {{ now: Function, edit: Function, cancel: Function }|null} scheduleActions
  */
-export function renderOutbox(root, messages, action, shown = new Set(), { schedules = [], scheduleActions = null, editQueued = false } = {}) {
+export function renderOutbox(root, schedules = [], scheduleActions = null) {
   root.replaceChildren();
-  for (const item of messages.filter(m => !['sent', 'cancelled'].includes(m.status) && !shown.has(m.id))) {
-    const row = document.createElement('div');
-    row.className = 'outbox-message';
-    const text = document.createElement('div');
-    text.className = 'outbox-text';
-    text.textContent = item.args.prompt;
-    const status = document.createElement('div');
-    status.className = 'outbox-status';
-    status.textContent = item.status === 'queued' ? queuedLabel(item.waiting) : statusLabel(item.status);
-    row.append(text, status);
-    if (item.error) {
-      const error = document.createElement('div');
-      error.className = 'outbox-status';
-      error.textContent = item.error;
-      row.append(error);
-    }
-    if (item.status === 'unknown') {
-      const hint = document.createElement('div');
-      hint.className = 'outbox-status';
-      hint.textContent = t('outbox.unknownHint');
-      row.append(hint);
-    }
-    for (const [name, label] of item.status === 'sending' ? [] : [
-      ...(item.status !== 'queued' ? [['retry', t('outbox.retry')]] : []), ...(editQueued && item.status === 'queued' ? [['edit', t('schedule.rowEdit')]] : []), ['cancel', t('outbox.cancel')],
-    ]) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'btn';
-      button.textContent = label;
-      button.onclick = async () => {
-        button.disabled = true;
-        try { await action(item.id, name); }
-        catch (e) { status.textContent = e.message; button.disabled = false; }
-      };
-      row.append(button);
-    }
-    root.append(row);
-  }
   if (scheduleActions) {
     const now = Date.now();
     for (const entry of schedules) root.append(scheduleRow(entry, scheduleActions, now));
