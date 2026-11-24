@@ -1,7 +1,7 @@
 // 登録した Claude アカウントの claude.ai のコネクター（ADR 0340 段 3）で止まった会話の、失敗の行の中身。
 // 止めた理由の一文と、直す入口・［コネクターをオフにして送る］・［取り消す］を出す（docs/design-system.md「登録した Claude アカウントごとの claude.ai のコネクター」）。
 //   - 直す入口: ログイン切れ・設定の破損 → ［claude.ai にログインし直す］、未ログイン → ［claude.ai にログイン］、持ち主の不一致 → ［アカウントを開く］、
-//     共有の設定フォルダーへの反映の失敗 → ［再送する］。版・OS・環境変数・settings.json・履歴の置き場は直す入口が無い（オフにして送るが塗り）
+//     共有の設定フォルダーへの反映の失敗・Mac のキーチェーンを開けない（ロックの解除の後） → ［再送する］。版・OS・環境変数・settings.json・履歴の置き場は直す入口が無い（オフにして送るが塗り）
 //   - ログインが済んだら、発言は渡っていない・ターンで何も出ていないので自動でもう一度送る（「✓ claude.ai にログインし直して、もう一度送りました」）
 //   - ［コネクターをオフにして送る］は、そのアカウントのスイッチを切って（同じアカウントのほかの会話にも効く。横に一文で書く）送り直す
 // 置き場は 2 つ: 送れなかった発言の下（layout: 'outbox'。発言は送信待ちの「送れませんでした」に戻っている）と、
@@ -9,8 +9,8 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
-const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile'];
-const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend', ownDirLogin: 'login', ownDirProfile: 'resend' };
+const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile', 'keychain'];
+const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend', ownDirLogin: 'login', ownDirProfile: 'resend', keychain: 'resend' };
 
 /** 止めた理由の鍵（env の settings.json の分は settings） */
 export function connectorsFailKey(ce) {

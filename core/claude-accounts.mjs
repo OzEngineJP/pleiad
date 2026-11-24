@@ -164,7 +164,7 @@ export class AccountError extends Error {
  * @param {string} [o.cliConfig]      ログイン中のアカウントの .claude.json（既定は cliConfigFile()）
  */
 export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChecked = () => {}, cliConfig = cliConfigFile(),
-  retryMs = TOKEN_CHECK_RETRY_MS, now = Date.now } = {}) {
+  retryMs = TOKEN_CHECK_RETRY_MS, now = Date.now, logout = null } = {}) {
   const file = path.join(dataDir, 'claude-accounts.json');
   let queue = Promise.resolve();
   const serial = fn => { const run = queue.catch(() => {}).then(fn); queue = run; return run; };
@@ -345,6 +345,8 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
         if (next.length === data.accounts.length) throw new Error(t('claude.accounts.notRegistered'));
         const dir = usageDir(id);
         await withClaudeUsageDir(dir, async () => {
+          // macOS はフォルダを消す前に CLI に自分のキーチェーンの項目を消させる（ADR 0351。失敗しても削除は止めない）
+          if (logout) await Promise.resolve().then(() => logout(dir)).catch(() => {});
           await unlinkClaudeOwnDirLinks(dir);
           const info = await fs.lstat(dir).catch(err => { if (err.code !== 'ENOENT') throw err; });
           await write({ ...data, accounts: next });
