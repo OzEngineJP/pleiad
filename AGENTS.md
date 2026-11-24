@@ -18,7 +18,7 @@
 
 ## 構成
 
-core/（サーバー。backends/ はエージェント 1 種類 1 ファイル、ops/ は画面・MCP・CLI へ出す操作の正本）・web/（画面。ビルド無し）・desktop/（Electron）・mobile/・relay/・bin/（CLI）・tests/・scripts/・docs/（`design.md`・`design-system.md`・`adr/`）。Node.js 22.13 以上。
+core/（サーバー。backends/ はエージェント 1 種類 1 ファイル、ops/ は画面・MCP・CLI へ出す操作の正本）・web/（画面。ビルド無し）・desktop/（Electron）・mobile/・relay/・bin/（CLI）・tests/・scripts/・docs/（`design.md`・`design-system.md`・`adr/`）。Node.js 22.16 以上。
 
 環境変数: `AGENT_HOST_PORT`（既定 7420。使用中なら空きへ移る）・`AGENT_HOST_DATA`（既定 `~/.agent-host`）・`AGENT_HOST_BACKENDS`・各 CLI の実行ファイル（`AGENT_HOST_CLAUDE_BIN`・`AGENT_HOST_CODEX_BIN`・`AGENT_HOST_AGY_BIN`・`AGENT_HOST_OPENCODE_BIN`・`AGENT_HOST_DEVIN_BIN`・`AGENT_HOST_GROK_BIN`）。ほかの `AGENT_HOST_*` は使う所のコードと ADR にある（`git grep <名前>`）。
 
