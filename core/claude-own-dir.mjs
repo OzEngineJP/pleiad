@@ -159,7 +159,8 @@ export async function claudeLoginPresent(dir, { platform = process.platform, run
 /**
  * macOS で、専用フォルダのログインを使った CLI・使用量の読み取りが認証の失敗で終わったときの見分け（ADR 0351 の M7）。
  * -w なしの有無の判定は、鍵束がロック中でも 0（有り）を返す（実機）。項目が有る（または有無を確かめられない）のに断られたら、
- * 鍵束を開けなかったとみて 'keychain' を返す（期限切れの印を付けず、ログインし直しを出さない）。
+ * 鍵束を開けなかった（ロック中）か、サーバー側で取り消された（M6。未確認で見分けられない）とみて 'keychain' を返す。
+ * 呼び手は期限切れの印を付けず、ロックの解除と再送を主に、続くときのログインし直しも出す（会話は keychainAuth、使用量は keychain の行）。
  * 項目が無い（44）・security が無い・macOS 以外は null（今までどおり期限切れとして扱う）
  */
 export async function macKeychainAuthFailure(dir, { platform = process.platform, present = claudeLoginPresent } = {}) {

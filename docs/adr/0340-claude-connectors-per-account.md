@@ -1,7 +1,7 @@
 # 0340 登録した Claude アカウントで claude.ai のコネクターを使う（方式 b1・入口は既定でオフ・段階の出し方）
 
-- 状態: 承認（2026-11-19。段 4 の作業まで承認。OS ごとの実機確認の範囲と未確認項目は下記。macOS は止めたまま。ADR 0350 により、対応は別の ADR で決める）
-- 関係: [ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP と claude.ai のコネクターの一覧）・[ADR 0270](0270-server-may-die-anytime.md)・[ADR 0350](0350-claude-own-config-dir-default-remove-b1.md)（方式 b1 の削除。macOS は止めたまま）
+- 状態: 承認（2026-11-19。段 4 の作業まで承認。OS ごとの実機確認の範囲と未確認項目は下記。macOS は [ADR 0351](0351-claude-own-config-dir-macos-keychain.md) で対応（専用フォルダ方式だけ。b1 は macOS では止めたまま））
+- 関係: [ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP と claude.ai のコネクターの一覧）・[ADR 0270](0270-server-may-die-anytime.md)・[ADR 0350](0350-claude-own-config-dir-default-remove-b1.md)（方式 b1 の削除）・[ADR 0351](0351-claude-own-config-dir-macos-keychain.md)（macOS の専用フォルダ方式）
 
 ## 状況
 
@@ -99,7 +99,7 @@ CLI の下限を 2.1.322 とし、取得できない版・下限未満は停止�
 | `expired` | 更新を試してもアクセス用トークンの期限が過ぎているか、更新用トークンの期限が過ぎている |
 | `owner` | 登録したアカウントと使用量のログインの組織が違う・確かめられない（組織の単位。下の「持ち主の確かめの限り」） |
 | `version` | CLI が下限（2.1.322）未満・版を取れない、または SDK が確認済み一覧の固定版と違う |
-| `platform` | Windows・Linux 以外（macOS は止めたまま。ADR 0350。対応は別の ADR で決める。実機で確かめた項目名の規則は下の「macOS の実機確認」） |
+| `platform` | Windows・Linux 以外（b1 は macOS では止めたまま。macOS は ADR 0351 で対応し、専用フォルダ方式だけを通す。実機で確かめた項目名の規則は下の「macOS の実機確認」） |
 | `env` | 親の環境に別の認証・接続先がある（`ANTHROPIC_API_KEY`・`ANTHROPIC_AUTH_TOKEN`・`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`・`ANTHROPIC_BASE_URL`・Bedrock・Vertex・Foundry などの指定）か、401 のときに渡したトークンから別の資格情報へ乗り換える道を開く指定（下の「401 で乗り換える道を開く指定」の 7 つ）がある。共有の設定フォルダの `settings.json` の `env` に同じ指定（名前の大文字小文字は問わない）か、渡す 3 つの名前（`CLAUDE_CODE_OAUTH_TOKEN`・`CLAUDE_CODE_OAUTH_SCOPES`・`CLAUDE_CONFIG_DIR`）がある、`apiKeyHelper` がある。`settings.json` が読めない・壊れている・形が違う（コメント入りを含む）も止める（CLI がどう読むか分からないため） |
 | `history` | 履歴の置き場を動かす `CLAUDE_CODE_PROJECT_DIR_NAME` が親か、共有の `settings.json` の `env` にある |
 | `profile` | 設定の反映に失敗した |
@@ -208,7 +208,7 @@ b1 で確かめた結果。[ADR 0350](0350-claude-own-config-dir-default-remove-
 - **履歴**: スイッチをオフにして同じ履歴を再開できた。アカウント削除後も履歴は残り、古い CLI（2.1.319）で同じ履歴を再開できた。アカウント削除は設定フォルダーを消すが、macOS のキーチェーンの項目は残る（未対応・別途）。
 - **試験**: 関連の単体試験（claude-connectors-auth・claude-connectors-off・server-claude-connectors-list・claude-accounts・claude-accounts-ui・server-claude-accounts・server-claude-account-models・connectors-fail-ui・claude-launch-main-pinned・cli-launcher）が、darwin を許可した実装で macOS で通過。macOS が子の環境に足す `SHLVL`・`__CF_USER_TEXT_ENCODING` は、起動記録の試験の比較から外した。全体試験は macOS では実行していない。
 
-macOS は許可しない。`platform` は darwin を従来どおり止める（ADR 0350）。ここに書いたのは b1 での確認の結果で、合格済みの組み合わせとしては出さない。headless・実機のロック／拒否・ファイル保存・成功するコネクター呼び出し・全体試験は未確認。コードに残したのは、キーチェーンの `account` を OS のログイン名にする `readMacAccessCredentials` の引数と、起動記録の試験の darwin の除外だけで、後の macOS の ADR でも使う（`readMacAccessCredentials` は [ADR 0351](0351-claude-own-config-dir-macos-keychain.md) で消し、ログイン名の規則は有無の判定に移した）。専用フォルダ方式（[ADR 0345](0345-claude-account-own-config-dir.md)）は今回の確認の対象外で、macOS では確かめていない（コードの上では、その検査 `ownDirLogin` は設定フォルダーの `.credentials.json` の有無を見て `platform` の検査を通らないので、キーチェーンに保存する macOS ではログインなしで止まる。ADR 0350 は、これを「ログインし直す」ではなく「この OS ではまだ使えない」と出すと決めた）。
+b1 では macOS を許可しない。`platform` は b1 の darwin を従来どおり止める（ADR 0350）。macOS は ADR 0351 で対応（専用フォルダ方式だけ）。ここに書いたのは b1 での確認の結果で、合格済みの組み合わせとしては出さない。headless・実機のロック／拒否・ファイル保存・成功するコネクター呼び出し・全体試験は未確認。コードに残したのは、キーチェーンの `account` を OS のログイン名にする `readMacAccessCredentials` の引数と、起動記録の試験の darwin の除外だけで、後の macOS の ADR でも使う（`readMacAccessCredentials` は [ADR 0351](0351-claude-own-config-dir-macos-keychain.md) で消し、ログイン名の規則は有無の判定に移した）。専用フォルダ方式（[ADR 0345](0345-claude-account-own-config-dir.md)）は今回の確認の対象外で、macOS では確かめていない（コードの上では、その検査 `ownDirLogin` は設定フォルダーの `.credentials.json` の有無を見て `platform` の検査を通らないので、キーチェーンに保存する macOS ではログインなしで止まる。ADR 0350 は、これを「ログインし直す」ではなく「この OS ではまだ使えない」と出すと決めた）。
 
 所要時間は厳密に測っていない。会話の記録からの概算で、AI の処理（待ち 10 分未満の間隔の合計）は約 100 分、ログイン・キーチェーンの許可・画面収録の許可・ロック解除などの本人操作の待ちは別（記録上は分離できないので、厳密な値は出さない）。
 

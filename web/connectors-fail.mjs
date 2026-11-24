@@ -1,7 +1,8 @@
 // 登録した Claude アカウントの claude.ai のコネクター（ADR 0340 段 3）で止まった会話の、失敗の行の中身。
 // 止めた理由の一文と、直す入口・［コネクターをオフにして送る］・［取り消す］を出す（docs/design-system.md「登録した Claude アカウントごとの claude.ai のコネクター」）。
 //   - 直す入口: ログイン切れ・設定の破損 → ［claude.ai にログインし直す］、未ログイン → ［claude.ai にログイン］、持ち主の不一致 → ［アカウントを開く］、
-//     共有の設定フォルダーへの反映の失敗・Mac のキーチェーンを開けない（ロックの解除の後） → ［再送する］。版・OS・環境変数・settings.json・履歴の置き場は直す入口が無い（オフにして送るが塗り）
+//     共有の設定フォルダーへの反映の失敗・Mac のキーチェーンを開けない（ロックの解除の後） → ［再送する］、
+//     Mac でログインが断られた（ロックか取り消し） → ［再送する］と［claude.ai にログインし直す］。版・OS・ssh からの起動・環境変数・settings.json・履歴の置き場は直す入口が無い（オフにして送るが塗り）
 //   - ログインが済んだら、発言は渡っていない・ターンで何も出ていないので自動でもう一度送る（「✓ claude.ai にログインし直して、もう一度送りました」）
 //   - ［コネクターをオフにして送る］は、そのアカウントのスイッチを切って（同じアカウントのほかの会話にも効く。横に一文で書く）送り直す
 // 置き場は 2 つ: 送れなかった発言の下（layout: 'outbox'。発言は会話の中の吹き出しに戻っていて、その下の 1 行になる）と、
@@ -9,8 +10,11 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 
-const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile', 'keychain'];
-const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend', ownDirLogin: 'login', ownDirProfile: 'resend', keychain: 'resend' };
+const KEYS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile', 'keychain', 'keychainAuth', 'ssh'];
+const FIX = { expired: 'relogin', format: 'relogin', login: 'login', owner: 'openAccount', profile: 'resend', ownDirLogin: 'login', ownDirProfile: 'resend', keychain: 'resend', keychainAuth: 'resend' };
+// 主の入口のあとに並べる 2 つ目の入口。Mac でログインが断られたとき（keychainAuth）は、ロックの解除の後の再送を主に、
+// 解除しても続くとき（サーバー側の取り消しかもしれない。ADR 0351 の M6 は未確認）のログインし直しも出す
+const FIX_ALSO = { keychainAuth: 'relogin' };
 
 /** 止めた理由の鍵（env の settings.json の分は settings） */
 export function connectorsFailKey(ce) {
@@ -34,6 +38,7 @@ export function connectorsFailMessage(ce, name = '') {
 export function paintConnectorsFailure(node, { ce, name = '', layout = 'outbox', on = {} }) {
   const key = connectorsFailKey(ce);
   const fix = FIX[key] ?? null;
+  const also = FIX_ALSO[key] ?? null;
   const who = name || ce?.accountName || '';
   const cause = connectorsFailMessage(ce, who);
   const acts = el('div', 'acts');
@@ -65,6 +70,7 @@ export function paintConnectorsFailure(node, { ce, name = '', layout = 'outbox',
     const items = [];
     if (next === 'waiting') { const s = el('span', 'wait'); s.append(on.spinner?.() ?? el('span'), el('span', null, t('chat.connectorsFail.waiting'))); items.push(s); }
     if (fix) items.push(button(t(`chat.connectorsFail.fix.${fix}`), () => runFix(), next !== 'waiting', 'fix'));
+    if (also) items.push(button(t(`chat.connectorsFail.fix.${also}`), () => runFix(also, 'also'), false, 'also'));
     items.push(button(t('chat.connectorsFail.off'), () => runOff(), !fix, 'off'));
     if (on.cancel) items.push(button(t('chat.connectorsFail.cancel'), (b) => { b.disabled = true; on.cancel(); }, false, 'cancel'));
     acts.replaceChildren(...items, el('span', 'auth-fail-note', t('chat.connectorsFail.offNote', { name: who })));
@@ -80,16 +86,16 @@ export function paintConnectorsFailure(node, { ce, name = '', layout = 'outbox',
     if (sent) paint('done', { done });
     else paint('failed', { error: error ? t('chat.connectorsFail.resendFailed', { error }) : '', focus: focusBack });
   }
-  async function runFix() {
-    const back = hadFocus() ? 'fix' : '';
-    if (fix === 'openAccount') { on.openAccount?.(); return; }
-    if (fix === 'resend') { await resendAfter('resend', back); return; }
+  async function runFix(which = fix, data = 'fix') {
+    const back = hadFocus() ? data : '';
+    if (which === 'openAccount') { on.openAccount?.(); return; }
+    if (which === 'resend') { await resendAfter('resend', back); return; }
     if (phase === 'waiting') { on.login?.(); return; }   // 面を閉じてしまったときに開き直す（待ちは前のまま）
     paint('waiting');
     let r;
     try { r = await on.login?.(); } catch { r = 'error'; }
     if (!node.isConnected || phase !== 'waiting') return;
-    if (r === 'done') await resendAfter(fix, back);
+    if (r === 'done') await resendAfter(which, back);
     else paint('failed', { error: r === 'error' ? t('chat.connectorsFail.loginFailed') : '', focus: back });
   }
   async function runOff() {

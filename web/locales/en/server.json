@@ -551,7 +551,7 @@
       "loginAccount": "Signed-in account",
       "failed": "Could not get usage: {{message}}",
       "failedReauth": "Could not get usage: {{message}}. If this keeps happening, press \"Log in to claude.ai again\".",
-      "keychain": "Could not get usage because the Mac keychain can't be opened. Unlock the screen and it will show on the next read.",
+      "keychain": "Could not get usage because the Mac keychain can't be opened. Unlock the screen and it will show on the next read. If it keeps failing after unlocking, sign in again.",
       "relogin": "Can't read usage because the sign-in details have no token. You need to sign in again: run claude auth login in a terminal.",
       "reauthNeeded": "The claude.ai login for this account has expired. Press \"Log in to claude.ai again\"."
     },
@@ -607,6 +607,8 @@
     "connectors": {
       "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
       "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
+      "keychainAuth": "The sign-in for Claude account “{{name}}” was refused. Unlock the Mac keychain, then send again. If it keeps happening after unlocking, sign in again.",
+      "ssh": "Connectors for Claude account “{{name}}” can't be used from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
       "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
       "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
       "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",

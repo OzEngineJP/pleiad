@@ -60,10 +60,10 @@ const SCOPE = /^[A-Za-z0-9:_.-]{1,64}$/;
 /** ファイルでログインを持つ OS。macOS はキーチェーンに置くので、対応を別の ADR で決めるまで止めたままにする（ADR 0350・ADR 0340 段 4） */
 const FILE_PLATFORMS = ['win32', 'linux'];
 /**
- * 専用フォルダ方式を既定で使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351）が、実機の確かめに合格するまで止める（ADR 0350）。
- * 試験用のサーバーだけ、環境変数 AGENT_HOST_MACOS_OWN_DIR=1 で止めを外せる
+ * 専用フォルダ方式を使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351。2026-11-24 の実機の確かめで通した）。
+ * macOS でも ssh からの起動は止める（ssh。画面が無いと CLI が鍵束を開けない）
  */
-const OWN_DIR_PLATFORMS = ['win32', 'linux'];
+const OWN_DIR_PLATFORMS = ['win32', 'linux', 'darwin'];
 /**
  * 401 のとき、CLI が渡したトークンを捨てて、共有の .credentials.json・ホストが持つトークン・別の出どころのトークンへ
  * 乗り換える道を開く指定（CLI 2.1.322 のコードで確かめた。足さなかった候補と理由は ADR 0340）
@@ -107,7 +107,7 @@ function attachConnectorsError(error, account, fallbackKind = 'login') {
       code: error.code,
       accountId: account?.id ?? null,
       accountName: account?.name ?? account?.id ?? '',
-      reauth: ['expired', 'login', 'format', 'ownDirLogin'].includes(kind),
+      reauth: ['expired', 'login', 'format', 'ownDirLogin', 'keychainAuth'].includes(kind),
       needsOwnerCheck: kind === 'owner',
       params: error.connectorsParams ?? {},
     };
@@ -610,12 +610,9 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
 
   async function ownDirChecks(account, cwd) {
     const name = account.name ?? account.id;
-    // macOS は実機の確かめ（ADR 0351 の M1〜M9）に合格するまで止める（ADR 0350）。試験用のサーバーだけ AGENT_HOST_MACOS_OWN_DIR=1 で外す
-    if (!OWN_DIR_PLATFORMS.includes(platform) && !(platform === 'darwin' && env.AGENT_HOST_MACOS_OWN_DIR === '1')) {
-      throw new ConnectorsAuthError('platform', { name, platform });
-    }
+    if (!OWN_DIR_PLATFORMS.includes(platform)) throw new ConnectorsAuthError('platform', { name, platform });
     // ssh で起動した Mac は、画面が無いので CLI が鍵束を開けない（M8 の実機で loggedIn:false のまま失敗した）。待たずに止める（ADR 0351）
-    if (platform === 'darwin' && sshSession(env)) throw new ConnectorsAuthError('platform', { name, platform });
+    if (platform === 'darwin' && sshSession(env)) throw new ConnectorsAuthError('ssh', { name });
     const ver = await versionCheck(name);
     const dir = accounts.usageDir(account.id);
     await ownDirLogin(account, dir);
@@ -665,11 +662,13 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
       },
       /**
        * 会話の CLI がこのフォルダのログインで断られたときに呼ぶ（core/backends/claude.mjs）。macOS で項目が有るなら鍵束を開けなかった
-       * （ロック中など。ADR 0351 の M7）とみて keychain の connectorsError を返す。それ以外は null（呼び手は期限切れとして扱う）
+       * （ロック中など。ADR 0351 の M7）とみて keychainAuth の connectorsError を返す。サーバー側でログインが取り消されたとき（M6）も
+       * 項目は残るので見分けられない。期限切れの印は付けず、ロックの解除と送り直しを先に、続くときのログインし直しも出す（reauth）。
+       * それ以外は null（呼び手は期限切れとして扱う）
        */
       async authFailure() {
         if (await macKeychainAuthFailure(dir, { platform, present: loginPresent }) !== 'keychain') return null;
-        return attachConnectorsError(new ConnectorsAuthError('keychain', { name: account.name ?? account.id }), account);
+        return attachConnectorsError(new ConnectorsAuthError('keychainAuth', { name: account.name ?? account.id }), account);
       },
     } } };
   }

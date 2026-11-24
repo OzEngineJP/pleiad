@@ -229,9 +229,10 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       // ログイン切れの印は、CLI が認証失敗を返したときに付ける。429・時間切れ・起動失敗は「取得できませんでした」
       const reason = quotaFailure(e);
       const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
-      // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など）だけ。ログイン切れの印も「ログインし直す」も付けない（ADR 0351 の M7）
+      // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など。ADR 0351 の M7）か、サーバー側でログインが取り消された（M6。未確認）か。
+      // 見分けられないので、ログイン切れの印（cliAuthFailed）は付けず、ロックの解除を先に、続くときの「ログインし直す」も出す（reauth）
       if (auth && await Promise.resolve().then(() => keychainFailure(a.configDir)).catch(() => null) === 'keychain') {
-        return { ...base, windows: [], reason, keychain: true, message: t('claude.usage.keychain') };
+        return { ...base, windows: [], reason, keychain: true, reauth: true, message: t('claude.usage.keychain') };
       }
       return { ...base, windows: [], reason, ...(auth ? { reauth: true, cliAuthFailed: true } : {}),
         message: auth ? t('claude.usage.failedReauth', { message: errorText(e) }) : t('claude.usage.failed', { message: errorText(e) }) };

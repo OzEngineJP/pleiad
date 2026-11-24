@@ -265,7 +265,7 @@ export default async function (t) {
 
       // 止める条件
       const stops = [
-        ['platform', 'macOS（止めたまま。対応は別の ADR で決める。ADR 0350）', () => {}, { platform: 'darwin' }, false],
+        ['platform', 'macOS（今の方式は止めたまま。macOS は専用フォルダ方式だけ使える。ADR 0350・0351）', () => {}, { platform: 'darwin' }, false],
         ['platform', 'Windows・Linux 以外の OS', () => {}, { platform: 'freebsd' }, false],
         ['env', 'ANTHROPIC_API_KEY', () => {}, { env: { ANTHROPIC_API_KEY: 'fake-api-key-0003' } }, false],
         ['env', 'ANTHROPIC_AUTH_TOKEN', () => {}, { env: { ANTHROPIC_AUTH_TOKEN: 'fake-auth-0004' } }, false],

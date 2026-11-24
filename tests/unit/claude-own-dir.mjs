@@ -110,7 +110,7 @@ async function macKeychain(t, root) {
   t.ok('使用量（macOS）: 登録したアカウントは項目の有無で判定し、44 のときだけログインし直しを出す。ログイン中のアカウントと API キーは見ない',
     usageBad.length === 0 && mine === false && apiKey === false && loggedIn.calls.length === 0, usageBad.join(' | '));
 
-  // 5. 会話の検査: 種類と、macOS の止め・試験用の外し方
+  // 5. 会話の検査: macOS の種類
   const dataDir = path.join(root, 'mac-data');
   await fs.mkdir(dataDir, { recursive: true });
   await put(dataDir, 'claude-accounts.json', JSON.stringify({ version: 1, accounts: [account] }));
@@ -135,27 +135,20 @@ async function macKeychain(t, root) {
     },
   });
   await wiringFor('darwin').settings.setEnabled(id, true, OWN_DIR);
-  const stopped = await wiringFor('darwin').inspect(account, { mode: OWN_DIR });
-  const wrongValue = await wiringFor('darwin', { AGENT_HOST_MACOS_OWN_DIR: 'true' }).inspect(account, { mode: OWN_DIR });
-  t.ok('macOS: 既定は止めたまま（platform。「ログインし直す」は出さない・security も呼ばない）。1 以外の値では外れない',
-    stopped.kind === 'platform' && stopped.reauth === false && wrongValue.kind === 'platform' && seenDirs.length === 0, JSON.stringify(stopped));
-  await assert.rejects(wiringFor('darwin').resolve(id), { code: 'connectors-platform' });
-  const lifted = wiringFor('darwin', { AGENT_HOST_MACOS_OWN_DIR: '1' });
+  const lifted = wiringFor('darwin');
   const kinds = {};
   for (const a of Object.keys(CODES)) {
     answer = a;
     const r = await lifted.inspect(account, { mode: OWN_DIR });
     kinds[a] = `${r.kind}:${r.reauth ?? ''}`;
   }
-  t.ok('macOS（AGENT_HOST_MACOS_OWN_DIR=1 のときだけ）: 0 → 使える・44 → ownDirLogin（ログインし直す）・36 → keychain（ログインし直しは出さない）・50 → platform',
+  t.ok('macOS（既定で使える。ADR 0351）: 0 → 使える・44 → ownDirLogin（ログインし直す）・36 → keychain（ログインし直しは出さない）・50 → platform',
     kinds.present === 'ok:' && kinds.missing === 'ownDirLogin:true' && kinds.keychain === 'keychain:false' && kinds.platform === 'platform:false', JSON.stringify(kinds));
   answer = 'keychain';
   await assert.rejects(lifted.resolve(id), e => e.code === 'connectors-keychain' && e.connectorsError?.reauth === false);
   answer = 'present';
-  await put(own, '.credentials.json', '{}');
-  const linuxEnvOnly = await wiringFor('linux', { AGENT_HOST_MACOS_OWN_DIR: '1' }).inspect(account, { mode: OWN_DIR });
-  await fs.unlink(path.join(own, '.credentials.json'));
-  t.ok('Windows・Linux は止めの外し方の影響を受けない', linuxEnvOnly.kind === 'ok', JSON.stringify(linuxEnvOnly));
+  const oldMarker = await wiringFor('darwin', { AGENT_HOST_MACOS_OWN_DIR: '0' }).inspect(account, { mode: OWN_DIR });
+  t.ok('macOS: 前の試験用の目印（AGENT_HOST_MACOS_OWN_DIR）は見ない', oldMarker.kind === 'ok', JSON.stringify(oldMarker));
 
   // 6. 4 つの経路（ログイン・会話・使用量・有無の判定）と削除の logout が同じ文字列を使う
   const pty = { last: null };
@@ -218,8 +211,9 @@ async function macKeychain(t, root) {
 
 /**
  * Mac の実機の M7・M8 を受けた直し（ADR 0351）。偽の security と偽の CLI の失敗で確かめる（本物の鍵束・CLI には触れない）
- *   M7: 項目が有るのに CLI・使用量が断られた = 鍵束を開けなかった（ロック中）。期限切れの印を付けず keychain の失敗にする
- *   M8: ssh で起動したら止める（platform）
+ *   M7: 項目が有るのに CLI・使用量が断られた = 鍵束を開けなかった（ロック中）か、サーバー側で取り消された（M6 は未確認で見分けられない）。
+ *       期限切れの印は付けず、会話は keychainAuth（再送と、ログインし直しも出す）、使用量は keychain の行（ログインし直しも出す）にする
+ *   M8: ssh で起動したら止める（ssh）
  */
 async function macAuthFailures(t, root) {
   const dir = '/Users/example/pleiad-data/claude-usage/acct-abcdef012345';
@@ -277,15 +271,15 @@ async function macAuthFailures(t, root) {
     loginPresent: (d, o) => { checks++; return presentWith({ exitCode: CODES[answer] })(d, o); },
   });
   await wiringFor('darwin').settings.setEnabled(id, true, OWN_DIR);
-  const lifted = { AGENT_HOST_MACOS_OWN_DIR: '1' };
+  const lifted = {};
   const sshKinds = {};
   for (const name of ['SSH_CONNECTION', 'SSH_TTY', 'SSH_CLIENT']) {
     const r = await wiringFor('darwin', { ...lifted, [name]: 'example' }).inspect(account, { mode: OWN_DIR });
     sshKinds[name] = `${r.kind}:${r.reauth}`;
   }
-  t.ok('M8（macOS・止めを外していても）: ssh で起動したら platform で止め、「ログインし直す」を出さず、鍵束も見ない',
-    Object.values(sshKinds).every(v => v === 'platform:false') && checks === 0, JSON.stringify(sshKinds));
-  await assert.rejects(wiringFor('darwin', { ...lifted, SSH_TTY: '/dev/ttys001' }).resolve(id), { code: 'connectors-platform' });
+  t.ok('M8（macOS）: ssh で起動したら ssh で止め（OS の止めとは別の理由）、「ログインし直す」を出さず、鍵束も見ない',
+    Object.values(sshKinds).every(v => v === 'ssh:false') && checks === 0, JSON.stringify(sshKinds));
+  await assert.rejects(wiringFor('darwin', { ...lifted, SSH_TTY: '/dev/ttys001' }).resolve(id), e => e.code === 'connectors-ssh' && /ssh/.test(e.message) && !/darwin/.test(e.message));
   const emptySsh = await wiringFor('darwin', { ...lifted, SSH_TTY: '' }).inspect(account, { mode: OWN_DIR });
   await put(own, '.credentials.json', '{}');
   const linuxSsh = await wiringFor('linux', { SSH_CONNECTION: 'example' }).inspect(account, { mode: OWN_DIR });
@@ -304,11 +298,11 @@ async function macAuthFailures(t, root) {
   await fs.unlink(path.join(own, '.credentials.json'));
   const linuxFailure = await linuxRuntime.connectors.authFailure();
   const ce = failed?.connectorsError;
-  t.ok('M7（入口）: 項目が有るのに断られたら keychain（ログインし直しは出さない・アカウントを添える）。項目が無ければ null（期限切れ）。Linux は null',
-    ce?.kind === 'keychain' && ce.reauth === false && ce.accountId === id && /キーチェーン|keychain/i.test(failed.message)
+  t.ok('M7（入口）: 項目が有るのに断られたら keychainAuth（ロックの解除と、続くときのログインし直しを書く・アカウントを添える）。項目が無ければ null（期限切れ）。Linux は null',
+    ce?.kind === 'keychainAuth' && ce.reauth === true && /ログインし直|sign in again/i.test(failed.message) && ce.accountId === id && /キーチェーン|keychain/i.test(failed.message)
     && relogin === null && linuxFailure === null, JSON.stringify({ ce, message: failed?.message, relogin, linuxFailure }));
 
-  // 5. 会話（偽の CLI の失敗）: 401 の result で終わる・例外で終わる。どちらも connectorsError（keychain）を添え、server は期限切れの印を付けない
+  // 5. 会話（偽の CLI の失敗）: 401 の result で終わる・例外で終わる。どちらも connectorsError（keychainAuth）を添え、server は期限切れの印を付けない
   const SESSION = '11111111-2222-4333-8444-555555555557';
   const MESSAGE = 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}';
   const init = () => ({ type: 'system', subtype: 'init', session_id: SESSION, model: 'claude-test' });
@@ -339,12 +333,12 @@ async function macAuthFailures(t, root) {
   const keychainConnectors = connectorsWith(() => runtime.connectors.authFailure());
   const viaResult = await runClaude([init(), authResult()], null, keychainConnectors);
   const viaThrow = await runClaude([init()], 'Claude Code process exited with code 1: ' + MESSAGE, keychainConnectors);
-  t.ok('M7（会話・401 の result）: 項目が有れば kind auth に keychain の connectorsError を添える（期限切れにしない）',
-    viaResult.result?.kind === 'auth' && viaResult.result.connectorsError?.kind === 'keychain' && viaResult.result.connectorsError.reauth === false
+  t.ok('M7（会話・401 の result）: 項目が有れば kind auth に keychainAuth の connectorsError を添える（期限切れにしない）',
+    viaResult.result?.kind === 'auth' && viaResult.result.connectorsError?.kind === 'keychainAuth' && viaResult.result.connectorsError.reauth === true
     && /キーチェーン|keychain/i.test(viaResult.result.error), JSON.stringify(viaResult.result));
-  t.ok('M7（会話・CLI が例外で終わる）: turnResult と投げる例外の両方に keychain の connectorsError を添える',
-    viaThrow.result?.kind === 'auth' && viaThrow.result.connectorsError?.kind === 'keychain'
-    && viaThrow.error?.connectorsError?.kind === 'keychain', JSON.stringify({ result: viaThrow.result, error: viaThrow.error?.message }));
+  t.ok('M7（会話・CLI が例外で終わる）: turnResult と投げる例外の両方に keychainAuth の connectorsError を添える',
+    viaThrow.result?.kind === 'auth' && viaThrow.result.connectorsError?.kind === 'keychainAuth'
+    && viaThrow.error?.connectorsError?.kind === 'keychainAuth', JSON.stringify({ result: viaThrow.result, error: viaThrow.error?.message }));
   answer = 'missing';
   const missingResult = await runClaude([init(), authResult()], null, keychainConnectors);
   const missingThrow = await runClaude([init()], 'Claude Code process exited with code 1: ' + MESSAGE, keychainConnectors);
@@ -360,7 +354,7 @@ async function macAuthFailures(t, root) {
     ok.result?.outcome === 'ok' && otherFail.result?.kind !== 'auth' && notOwnDir.result?.kind === 'auth' && !notOwnDir.result.connectorsError
     && asked === askedBefore, JSON.stringify({ asked, askedBefore, ok: ok.result, otherFail: otherFail.result }));
 
-  // 6. 使用量（偽の CLI の失敗）: 項目が有れば keychain の行（ログイン切れの印・ログインし直しを付けない）。無ければ今までどおり
+  // 6. 使用量（偽の CLI の失敗）: 項目が有れば keychain の行（ログイン切れの印は付けず、取り消しに備えてログインし直しは出す）。無ければ今までどおり
   const usageAccount = { id, name: 'Example', configDir: dir, usageLogin: true };
   const read = async ({ configDir }) => {
     if (!configDir) return { windows: [] };
@@ -372,9 +366,9 @@ async function macAuthFailures(t, root) {
   const missingRow = (await usageFor({ exitCode: 44 })).accounts.find(r => r.accountId === id);
   const linuxRow = (await readClaudeAccountsUsage({ accounts: [usageAccount], read,
     keychainFailure: d => macKeychainAuthFailure(d, { platform: 'linux', present: presentWith({ exitCode: 0 }) }) })).accounts.find(r => r.accountId === id);
-  t.ok('M7（使用量・macOS）: 項目が有るのに断られたら keychain の行。期限切れの印（cliAuthFailed）も「ログインし直す」（reauth）も付けない',
-    lockedRow?.keychain === true && !lockedRow.cliAuthFailed && !lockedRow.reauth && !shouldMarkUsageExpired(lockedRow)
-    && /キーチェーン|keychain/i.test(lockedRow.message), JSON.stringify(lockedRow));
+  t.ok('M7（使用量・macOS）: 項目が有るのに断られたら keychain の行。期限切れの印（cliAuthFailed）は付けず、「ログインし直す」（reauth）は出す',
+    lockedRow?.keychain === true && !lockedRow.cliAuthFailed && lockedRow.reauth === true && !shouldMarkUsageExpired(lockedRow)
+    && /キーチェーン|keychain/i.test(lockedRow.message) && /ログインし直|sign in again/i.test(lockedRow.message), JSON.stringify(lockedRow));
   t.ok('M7（使用量）: 項目が無い（44）・Windows・Linux は今までどおり期限切れの印を付ける',
     shouldMarkUsageExpired(missingRow) && missingRow.reauth === true && !missingRow.keychain
     && shouldMarkUsageExpired(linuxRow) && !linuxRow.keychain, JSON.stringify({ missingRow, linuxRow }));

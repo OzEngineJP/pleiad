@@ -97,14 +97,14 @@ export default async function (t) {
 
     // 1. 理由ごとの一文（両方の言語に訳がある・名前と版が埋まる・{{ が残らない）
     const ownDirKinds = ['ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile'];
-    const KINDS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', ...ownDirKinds];
+    const KINDS = ['expired', 'login', 'owner', 'version', 'platform', 'env', 'settings', 'history', 'profile', 'format', ...ownDirKinds, 'keychain', 'keychainAuth', 'ssh'];
     for (const lng of ['ja', 'en']) {
       await i18n.setLanguage(lng);
       const bad = [];
       for (const k of KINDS) {
         const c = k === 'settings' ? ce('env', { scope: 'settings' }) : ce(k, k === 'version' ? { params: { cli: '9.9.9', sdk: '8.8.8', verified: 'CLI 1 / SDK 2' } } : {});
         const msg = connectorsFailMessage(c, NAME);
-        if (!i18n.has(`chat.connectorsFail.why.${k}`) || msg.includes('{{') || msg.includes('chat.connectorsFail') || (['expired', 'login', 'owner', 'profile', ...ownDirKinds].includes(k) && !msg.includes(NAME))) bad.push(`${k}: ${msg}`);
+        if (!i18n.has(`chat.connectorsFail.why.${k}`) || msg.includes('{{') || msg.includes('chat.connectorsFail') || (['expired', 'login', 'owner', 'profile', 'keychainAuth', ...ownDirKinds].includes(k) && !msg.includes(NAME))) bad.push(`${k}: ${msg}`);
         if (k === 'version' && !(msg.includes('9.9.9') && msg.includes('8.8.8'))) bad.push(`version の版が出ない: ${msg}`);
       }
       for (const k of ['fix.relogin', 'fix.login', 'fix.openAccount', 'fix.resend', 'off', 'offNote', 'cancel', 'waiting', 'sending', 'done.relogin', 'done.login', 'done.off', 'done.resend', 'resendFailed', 'loginFailed', 'offFailed']) {
@@ -201,13 +201,47 @@ export default async function (t) {
     // 6. 直す入口が無い理由は、オフにして送るが主
     {
       const bad = [];
-      for (const k of ['version', 'platform', 'env', 'history']) {
+      for (const k of ['version', 'platform', 'env', 'history', 'ssh']) {
         const v = mount(k);
         if (v.btn('fix') || !v.btn('off')?.classList.contains('btn-primary')) bad.push(k);
       }
       const s = mount('env', { extra: { scope: 'settings' } });
       if (s.btn('fix') || !s.btn('off')?.classList.contains('btn-primary')) bad.push('settings');
-      t.ok('版・OS・環境変数・settings.json・履歴の置き場: 直す入口を出さず、［コネクターをオフにして送る］が主', bad.length === 0, bad.join(','));
+      t.ok('版・OS・ssh からの起動・環境変数・settings.json・履歴の置き場: 直す入口を出さず、［コネクターをオフにして送る］が主', bad.length === 0, bad.join(','));
+    }
+    // 6b. Mac でログインが断られた（keychainAuth。キーチェーンのロックか取り消しかを見分けられない。ADR 0351）: ［再送する］が主、横に［claude.ai にログインし直す］
+    {
+      const v = mount('keychainAuth');
+      const names = v.node.querySelectorAll('button').map(b => b.dataset.fix);
+      t.ok('Mac でログインが断られた: ［再送する］（主）・［claude.ai にログインし直す］（主でない）・オフにして送る・取り消すの順',
+        JSON.stringify(names) === JSON.stringify(['fix', 'also', 'off', 'cancel']) && v.btn('fix').textContent === tr('chat.connectorsFail.fix.resend')
+          && v.btn('fix').classList.contains('btn-primary') && v.btn('also').textContent === tr('chat.connectorsFail.fix.relogin')
+          && !v.btn('also').classList.contains('btn-primary') && !v.btn('off').classList.contains('btn-primary'), JSON.stringify(names));
+      v.btn('fix').click();
+      await settle();
+      t.ok('Mac でログインが断られた: ［再送する］はログインを開かずに送り直す', v.calls.login === 0 && v.calls.resend.length === 1 && v.view.phase === 'sending');
+      v.ctl.resend.resolve(false);
+      await settle();
+      v.btn('also').focus();
+      v.btn('also').click();
+      await settle();
+      t.ok('Mac でログインが断られた: ［claude.ai にログインし直す］はログインを開いて待つ（送らない）',
+        v.calls.login === 1 && v.view.phase === 'waiting' && v.calls.resend.length === 1);
+      v.ctl.login.resolve('cancelled');
+      await settle();
+      t.ok('Mac でログインが断られた: ログインを取り消したら元の行へ戻り、［claude.ai にログインし直す］へ焦点を戻す',
+        v.view.phase === 'failed' && doc.activeElement === v.btn('also'));
+      v.ctl.login = null;
+      v.btn('also').click();
+      await settle();
+      v.ctl.login.resolve('done');
+      await settle();
+      v.ctl.resend.resolve(true);
+      await settle();
+      t.ok('Mac でログインが断られた: ログインが済んだら自動で送り、「ログインし直して、もう一度送りました」',
+        v.calls.resend.length === 2 && v.calls.resend[1]?.auto === true && v.view.phase === 'done' && v.text().includes(tr('chat.connectorsFail.done.relogin', { name: NAME })), v.text());
+      const k = mount('keychain');
+      t.ok('Mac のキーチェーンを開けない（keychain）: ［再送する］だけで、ログインし直しは出さない', k.btn('fix')?.textContent === tr('chat.connectorsFail.fix.resend') && !k.btn('also'));
     }
     // 7. 持ち主・反映
     {
