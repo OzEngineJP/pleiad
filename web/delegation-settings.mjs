@@ -830,7 +830,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
       };
       renderModel({ pop, explicitModels: true, blocked,
         target: { backend, backendSwitchable: true, backends: backendIds().map(b => ({ id: b, label: labelOf(b) })),
-          backendUsage: b => usage(b, undefined, model), account, model, models: current, modelsPending: loading,
+          backendUsage: b => usage(b, undefined, model), backendHasAccounts: b => Boolean(accountsOf(b)),
+          account, model, models: current, modelsPending: loading,
           accounts: scopedOf({ backend, account: rawAccount }) ? [...new Set([...accountRows(backend).map(a => a.account), account])].filter(value => {
             const available = modelsFor(backend, value);
             return value === account || duplicate(candidateOf(backend, model, value))
