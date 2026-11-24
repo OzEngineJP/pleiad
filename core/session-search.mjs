@@ -1,7 +1,7 @@
 // セッション検索（会話の本文まで）。画面・MCP・CLI が同じ search(input) を呼ぶ（docs/design.md「セッション検索」・ADR 0349）。
 //
 // 方式: 本文はデータ置き場の別ファイル search-index.db（SQLite FTS5・2 字ずつの語。core/session-search-index.mjs）に持ち、
-// 語ごとに候補の発言を引いて、今までと同じ照合で確かめる。
+// 語ごとに候補の発言を引いて、今までと同じ照合で確かめる（全部の語が字の連なりなら、候補がそのまま本物の一致なので確かめない）。
 //   - 前半は DOM にも I/O にも触らない純粋な部分（語の解釈・照合・関連度・抜粋）。tests が直接呼ぶ。
 //   - 後半 createSessionSearch が索引を持ち、裏で会話を読んで入れ、search() に答える。
 //     一覧（listSessions）と本文の読み方（readStored / readFull）は呼び出し側が渡す。
@@ -9,7 +9,7 @@
 // 照合: 空白区切りは AND（語ごとに題・状態・場所・どの発言に当たってもよい）。"…" で囲んだ語は畳まずそのまま、
 // ほかは NFKC と小文字に畳んだ部分一致。場所は作業ディレクトリのフォルダー名だけに当てる。
 import { isInternalConversationMeta } from './channels/types.mjs';
-import { openSearchIndex, termQuery } from './session-search-index.mjs';
+import { openSearchIndex, termQuery, exactInIndex } from './session-search-index.mjs';
 
 const DAY_MS = 86_400_000;
 // 新しさの減点の上限（30 日で 1、3 まで = 90 日以上は同じ）
@@ -257,7 +257,7 @@ export function fieldMasks(meta, terms) {
 /**
  * 1 つの会話を語に照らす。全部の語が（題・状態・場所・発言のどこかに）当たらなければ null。
  * @param {{ title, status, cwd }} meta
- * @param {Array} msgs extractMessages の結果
+ * @param {Array} msgs extractMessages の結果（known を持つ発言は、本文の代わりに、当たった語のビットを持つ）
  * @param {Array} terms
  * @param {{ speaker: string, toolInputs: boolean, hits: number }} opts
  */
@@ -274,8 +274,9 @@ export function matchSession(meta, msgs, terms, opts) {
 
   if (terms.length) for (const msg of msgs) {
     let mask = 0;
-    if (msg.text && (opts.speaker === "any" || opts.speaker === msg.role)) {
-      for (let i = 0; i < terms.length; i++) if (includesTerm(terms[i], msg.text, msg.folded)) mask |= 1 << i;
+    if (opts.speaker === "any" || opts.speaker === msg.role) {
+      if (msg.known !== undefined) mask = msg.known;   // 索引が本物の一致と請け合った語（本文は持たない）
+      else if (msg.text) for (let i = 0; i < terms.length; i++) if (includesTerm(terms[i], msg.text, msg.folded)) mask |= 1 << i;
     }
     let toolMask = 0;
     if (opts.toolInputs && msg.tool && (opts.speaker === "any" || opts.speaker === msg.role)) {
@@ -396,6 +397,10 @@ const toMessage = (r) => {
   if (r.tool) { entry.tool = r.tool; entry.toolFolded = fold(r.tool); }
   return entry;
 };
+
+/** 索引の候補（本文なし）を、matchSession に渡す発言の形にする。known は索引が当たると請け合った語のビット */
+const toKnown = (r) => ({ id: r.id, index: r.idx, role: r.role, at: r.at ?? null, known: r.known });
+const byIndex = (a, b) => a.index - b.index;
 
 /**
  * @param {object} deps
@@ -541,7 +546,8 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
 
   /**
    * 語ごとに、本文に当たる発言の候補を引く（索引は本物の一致の上位集合を返す。確かめは matchSession）。
-   * 会話ごとに { mask: 候補のある語（位置のビット）, ids: 候補の発言 }。字の無い語（記号だけ）は everything のビットに立てる（全部の発言が候補）
+   * 会話ごとに { mask: 候補のある語（位置のビット）, msgs: 候補の発言（id → 行。known に、その発言が候補になった語のビット） }。
+   * 字の無い語（記号だけ）は everything のビットに立てる（全部の発言が候補）
    */
   function candidatesOf(terms, toolInputs) {
     const byConv = new Map();
@@ -549,11 +555,15 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     terms.forEach((term, i) => {
       const expr = termQuery(term.exact ? fold(term.needle) : term.needle, toolInputs ? null : "body");
       if (expr === null) { everything |= 1 << i; return; }
-      for (const [conv, ids] of open().candidates(expr)) {
+      for (const [conv, list] of open().candidates(expr)) {
         let entry = byConv.get(conv);
-        if (!entry) byConv.set(conv, entry = { mask: 0, ids: new Set() });
+        if (!entry) byConv.set(conv, entry = { mask: 0, msgs: new Map() });
         entry.mask |= 1 << i;
-        for (const id of ids) entry.ids.add(id);
+        for (const r of list) {
+          const seen = entry.msgs.get(r.id);
+          if (seen) seen.known |= 1 << i;
+          else { r.known = 1 << i; entry.msgs.set(r.id, r); }
+        }
       }
     });
     return { byConv, everything };
@@ -587,6 +597,9 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     const all = (1 << q.terms.length) - 1;
     const { sigs, messagesOf } = open();
     const cand = q.terms.length ? candidatesOf(q.terms, f.includeToolInputs) : null;
+    // 全部の語が 1 つの字の連なりで、本文だけを引いたときは、候補がそのまま本物の一致。本文を読んで確かめない
+    // （よくある語は数万の発言が候補になり、読んで畳むのが一番長くかかる）。表に出す発言の本文だけ、後で読む
+    const trusted = cand !== null && !f.includeToolInputs && q.terms.every((term) => !term.exact && exactInIndex(term.needle));
     const found = [];
     let sliceStart = performance.now();
     for (const row of scope) {
@@ -599,7 +612,8 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
         // 題・状態・場所と候補の発言で全部の語が揃わない会話は、発言を読まずに外す
         if ((title | status | place | (c?.mask ?? 0) | cand.everything) !== all) continue;
         if (cand.everything) msgs = messagesOf(row.id).map(toMessage);
-        else if (c) msgs = messagesOf(row.id, [...c.ids]).map(toMessage);
+        else if (c && trusted) msgs = [...c.msgs.values()].map(toKnown).sort(byIndex);
+        else if (c) msgs = messagesOf(row.id, [...c.msgs.keys()]).map(toMessage);
       }
       const m = matchSession(row, msgs, q.terms, opts);
       if (!m) continue;
@@ -609,6 +623,12 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     const recent = (a, b) => (b.row.lastModified ?? 0) - (a.row.lastModified ?? 0) || (a.row.id < b.row.id ? -1 : 1);
     found.sort(q.sort === "recent" || !q.terms.length ? recent : (a, b) => b.score - a.score || recent(a, b));
 
+    /** 本文を持たない当たり（trusted）の本文を、表に出す発言の分だけ読む。読めなかった（その間に書き直された）発言は出さない */
+    const withText = (row, top) => {
+      if (!trusted || !top.length) return top;
+      const loaded = new Map(messagesOf(row.id, top.map((h) => h.msg.id)).map((r) => [r.idx, toMessage(r)]));
+      return top.flatMap((h) => { const msg = loaded.get(h.msg.index); return msg ? [{ ...h, msg }] : []; });
+    };
     const page = found.slice(q.offset, q.offset + q.limit);
     const next = q.offset + page.length;
     return {
@@ -625,7 +645,7 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
           score,
           matched: m.matched,
           hitCount: m.hitCount,
-          hits: m.top.map((h) => buildHit(h, q.terms)),
+          hits: withText(row, m.top).map((h) => buildHit(h, q.terms)),
         };
       }),
     };

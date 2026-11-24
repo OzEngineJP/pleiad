@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { bigrams, termQuery, openSearchIndex, INDEX_FILE, INDEX_FORMAT } from '../../core/session-search-index.mjs';
-import { createSessionSearch, extractMessages, extractShellCommands, fold } from '../../core/session-search.mjs';
+import { createSessionSearch, extractMessages, extractShellCommands, fold, normalizeInput, matchSession, findRanges, makeExcerpt } from '../../core/session-search.mjs';
 import { loadSqlite } from '../../core/db.mjs';
 
 export const name = 'session-search-index';
@@ -34,12 +34,13 @@ export default async function (t) {
     t.ok("2 字の語・1 字の語・日本語で候補を引く", convs(index, termQuery("翻訳")) === "a" && convs(index, termQuery("ci")) === "a" && convs(index, termQuery("猫")) === "" && convs(index, termQuery("c")) === "a,b");
     t.ok("`!` のコマンドは語に入らない", convs(index, termQuery("ls")) === "");
     t.ok("messagesOf は idx 順で、`!` のコマンドを含まない", index.messagesOf("a").map((r) => r.uuid).join() === "u1,u2");
-    const first = [...index.candidates(termQuery("翻訳")).get("a")];
+    const first = index.candidates(termQuery("翻訳")).get("a").map((r) => r.id);
+    t.ok("候補は本文を持たず、idx・role・at を持つ", (() => { const [r] = index.candidates(termQuery("翻訳")).get("a"); return r.id === first[0] && r.idx === 0 && r.role === "user" && r.at === index.messagesOf("a")[0].at && !("text" in r); })());
     t.ok("messagesOf に ids を渡すとその発言だけ", index.messagesOf("a", first).length === 1 && index.messagesOf("a", first)[0].uuid === "u1");
 
     // 先頭の同じ発言は残し、違う所から後ろだけ入れ直す
     put(index, "a", 200, [msg("user", "翻訳の ci を直したい", { uuid: "u1", at: index.messagesOf("a")[0].at }), msg("assistant", "了解", { uuid: "u2", at: index.messagesOf("a")[1].at }), msg("user", "足した発言 worktree", { uuid: "u4" })]);
-    t.ok("足した発言だけ書く（先頭の発言の行は同じ）", JSON.stringify([...index.candidates(termQuery("翻訳")).get("a")]) === JSON.stringify(first) && convs(index, termQuery("worktree")) === "a" && index.sigs.get("a") === 200);
+    t.ok("足した発言だけ書く（先頭の発言の行は同じ）", JSON.stringify(index.candidates(termQuery("翻訳")).get("a").map((r) => r.id)) === JSON.stringify(first) && convs(index, termQuery("worktree")) === "a" && index.sigs.get("a") === 200);
     put(index, "a", 300, [msg("user", "翻訳の ci を直したい", { uuid: "u1", at: index.messagesOf("a")[0].at }), msg("assistant", "書き換えた cat", { uuid: "u2" })]);
     t.ok("途中から違うときは、そこから後ろを入れ直す（消えた発言には当たらず、新しい発言には当たる）",
       convs(index, termQuery("worktree")) === "" && convs(index, termQuery("cat")) === "a,b" && index.messagesOf("a").length === 2 && index.messagesOf("a")[1].text === "書き換えた cat");
@@ -156,6 +157,44 @@ export default async function (t) {
       if (JSON.stringify(got) === JSON.stringify(want)) same++; else differ.push(`${query}: ${got.length} vs ${want.length}`);
     }
     t.ok(`索引で引いた結果が、総当たりの照合と全部の語で同じ（${queries.length} 語）`, differ.length === 0, differ.join(" / "));
+    search.stop(); await search.idle();
+  }
+
+  // ------------------------------------------------------------ 字の連なりだけの語は、索引の候補をそのまま一致にする（本文を読んで確かめたときと件数・順位・抜粋まで同じ）
+  {
+    const texts = ["ＣＩ が落ちた。ci の設定", "Éclair と éclair", "𠮷野家の𠮷", "ﾊﾟｰﾄ ﾊﾟｰﾄﾅｰ とパート", "ǅ ǆ ǈ", "same-word_other.word", "ΑΣ ΑΣΒ", "…あ…あ", "c++ と c# と C", "の の の", "Ｈｅｌｌｏ ｗｏｒｌｄ Hello", "…", "ゲートウェイ gateway"];
+    let seed = 11;
+    const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
+    const sessions = Array.from({ length: 24 }, (_, i) => row(`t${i}`, {
+      title: rnd() < 0.2 ? texts[Math.floor(rnd() * texts.length)] : `会話${i}`, lastModified: NOW - i * 3_600_000,
+      messages: Array.from({ length: 1 + Math.floor(rnd() * 7) }, (_, k) => msg(rnd() < 0.5 ? "user" : "assistant", `${texts[Math.floor(rnd() * texts.length)]} ${texts[Math.floor(rnd() * texts.length)]} ${k}`, { at: new Date(NOW - (i * 10 + k) * 60_000).toISOString() })),
+    }));
+    const bodies = new Map(sessions.map((s) => [s.id, s.messages]));
+    const listed = sessions.map(({ messages, ...r }) => r);
+    const search = createSessionSearch({ listSessions: async () => listed, readStored: async (id) => bodies.get(id), readFull: async (id) => bodies.get(id), now: () => NOW });
+    await search.search({ query: "" }); await search.idle();
+    const byId = (a, b) => (a.id < b.id ? -1 : 1);
+    // 基準: 全部の発言の本文を読んで確かめる（matchSession を、本文を持つ発言に当てる）
+    const want = (query, speaker, hits) => {
+      const q = normalizeInput({ query, hitsPerSession: hits, filters: { speaker } });
+      return sessions.flatMap((s) => {
+        const m = matchSession(s, extractMessages(s.messages), q.terms, { speaker, toolInputs: false, hits });
+        if (!m) return [];
+        const hitsOf = m.top.map(({ msg: x }) => { const { excerpt, ranges } = makeExcerpt(x.text, findRanges(x.text, x.folded, q.terms)); return { uuid: x.uuid, index: x.index, role: x.role, at: x.at ?? "", excerpt, ranges }; });
+        return [{ id: s.id, hitCount: m.hitCount, matched: m.matched, hits: hitsOf }];
+      }).sort(byId);
+    };
+    const queries = ["ci", "ＣＩ", "ｅ́", "éclair", "𠮷", "𠮷野", "パート", "ぱ", "word", "other", "ας", "ασ", "あ", "の", "は", "c", "ｗｏｒｌｄ hello", "ci の", "gateway ゲート", "…", "c++", "same-word", "同じ語 ci"];
+    const differ = [];
+    for (const query of queries) for (const speaker of ["any", "user", "assistant"]) {
+      const got = (await search.search({ query, limit: 200, hitsPerSession: 3, filters: { speaker } })).sessions
+        .map((s) => ({ id: s.sessionId, hitCount: s.hitCount, matched: s.matched, hits: s.hits })).sort(byId);
+      const expected = want(query, speaker, 3);
+      if (JSON.stringify(got) !== JSON.stringify(expected)) differ.push(`${query}/${speaker}: ${got.length} vs ${expected.length}`);
+    }
+    t.ok(`字の連なりだけの語は、本文を読んで確かめた結果と同じ（件数・一致の場所・上位の発言・抜粋。${queries.length} 語 × 話者 3）`, differ.length === 0, differ.join(" / "));
+    const hit = (await search.search({ query: "ci", limit: 1 })).sessions[0]?.hits[0];
+    t.ok("表に出す発言には本文の抜粋が付く", typeof hit?.excerpt === "string" && hit.excerpt.length > 0 && hit.ranges.length > 0, JSON.stringify(hit));
     search.stop(); await search.idle();
   }
 }
