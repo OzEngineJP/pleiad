@@ -1,6 +1,19 @@
 {
-  "version": "0.43.0-beta.20",
+  "version": "0.43.0-beta.21",
   "releases": [
+    {
+      "version": "0.43.0-beta.21",
+      "date": "2026-11-24",
+      "title": "Mac でも、登録した Claude アカウントの会話で claude.ai のコネクターを使えるようにしました（出し直し）",
+      "sections": [
+        {
+          "title": "Claude アカウント",
+          "items": [
+            "0.43.0-beta.20 は公開の前の Mac の試験で止まったため、同じ内容をこの版で出し直しました。中身は 0.43.0-beta.20 の項目のとおりです。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.43.0-beta.20",
       "date": "2026-11-24",
