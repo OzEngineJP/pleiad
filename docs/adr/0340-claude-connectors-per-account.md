@@ -1,7 +1,7 @@
 # 0340 登録した Claude アカウントで claude.ai のコネクターを使う（方式 b1・入口は既定でオフ・段階の出し方）
 
-- 状態: 承認（2026-11-19。段 4 の作業まで承認。OS ごとの実機確認の範囲と未確認項目は下記。macOS は実機未合格のため停止）
-- 関係: [ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP と claude.ai のコネクターの一覧）・[ADR 0270](0270-server-may-die-anytime.md)
+- 状態: 承認（2026-11-19。段 4 の作業まで承認。OS ごとの実機確認の範囲と未確認項目は下記。macOS は止めたまま。ADR 0350 により、対応は別の ADR で決める）
+- 関係: [ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0327](0327-external-mcp-by-name-and-agent.md)（外部 MCP と claude.ai のコネクターの一覧）・[ADR 0270](0270-server-may-die-anytime.md)・[ADR 0350](0350-claude-own-config-dir-default-remove-b1.md)（方式 b1 の削除。macOS は止めたまま）
 
 ## 状況
 
@@ -99,7 +99,7 @@ CLI の下限を 2.1.322 とし、取得できない版・下限未満は停止�
 | `expired` | 更新を試してもアクセス用トークンの期限が過ぎているか、更新用トークンの期限が過ぎている |
 | `owner` | 登録したアカウントと使用量のログインの組織が違う・確かめられない（組織の単位。下の「持ち主の確かめの限り」） |
 | `version` | CLI が下限（2.1.322）未満・版を取れない、または SDK が確認済み一覧の固定版と違う |
-| `platform` | Windows・Linux 以外（macOS はキーチェーンの項目名が設定フォルダに依存するので段 4 まで出さない） |
+| `platform` | Windows・Linux 以外（macOS は止めたまま。ADR 0350。対応は別の ADR で決める。実機で確かめた項目名の規則は下の「macOS の実機確認」） |
 | `env` | 親の環境に別の認証・接続先がある（`ANTHROPIC_API_KEY`・`ANTHROPIC_AUTH_TOKEN`・`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`・`ANTHROPIC_BASE_URL`・Bedrock・Vertex・Foundry などの指定）か、401 のときに渡したトークンから別の資格情報へ乗り換える道を開く指定（下の「401 で乗り換える道を開く指定」の 7 つ）がある。共有の設定フォルダの `settings.json` の `env` に同じ指定（名前の大文字小文字は問わない）か、渡す 3 つの名前（`CLAUDE_CODE_OAUTH_TOKEN`・`CLAUDE_CODE_OAUTH_SCOPES`・`CLAUDE_CONFIG_DIR`）がある、`apiKeyHelper` がある。`settings.json` が読めない・壊れている・形が違う（コメント入りを含む）も止める（CLI がどう読むか分からないため） |
 | `history` | 履歴の置き場を動かす `CLAUDE_CODE_PROJECT_DIR_NAME` が親か、共有の `settings.json` の `env` にある |
 | `profile` | 設定の反映に失敗した |
@@ -184,10 +184,6 @@ Windows の段 3 から残る実失効の 2 項目（ブラウザーでログイ
 
 全体試験は Windows で `npm test -- --jobs 6` を完走し、752 本・26,361 判定すべて通過（650.8 秒）。入口がオフの起動を固定した `claude-connectors-off` も通過した。
 
-macOS の読み取り経路は準備のみ。使用量の設定フォルダーを明示した場合は、その NFC 正規化した文字列の SHA-256 の先頭 8 桁を付けた `Claude Code-credentials-<hash>`、無指定の場合は `Claude Code-credentials` を読む。アカウント名は `claude-code-user`。非公開の項目名の上書き環境変数を使わない。アクセス用トークン・期限・権限だけを返す。項目なし・鍵束なし・security 利用不可の場合だけファイル保存を確認し、ロック・拒否・確認待ちのタイムアウト・壊れた項目ではファイルへ乗り換えない。偽物の試験を実装し、実機合格までは `platform` で止める。
-
-macOS の実機確認には、対応する CLI / SDK を入れた Mac、private アカウント、隔離したサーバーとデータ置き場が必要。本人によるブラウザーの認可とキーチェーンのアクセス許可・ロック解除が必要になる。無指定と明示指定（同じ物理パスを含む）、ロック・拒否・ヘッドレス・ファイル保存・401・履歴継続を確認する。所要時間は未実測であり、AI の処理時間と本人操作の待ち時間を分けて初回に記録する。
-
 ### CLI 自動更新対応の実機再確認（2026-11-19）
 
 Windows の CLI 2.1.328 / SDK 0.3.288 で、private の専用データ置き場・別ポートのサーバーを使った。開始直前の資格情報は期限まで216分あり、試験側には更新用トークンを残さなかった。初回確認が成功して記録を1件作成し、Haiku が Claude Docs を1回読み取った。他の道具呼び出しは無い。
@@ -195,6 +191,26 @@ Windows の CLI 2.1.328 / SDK 0.3.288 で、private の専用データ置き場�
 並行確認は private の会話2本・private の委譲の子1本・ログイン中のアカウントの通常会話1本が完了した。初回確認の専用・共有の起動は合計2回で、確認1組にまとまった。3会話と子の履歴はそれぞれの合言葉だけを含み、他の合言葉を含まなかった。ただし各会話の初期化直後のコネクター状態の観測は一覧0件で、会話ごとのコネクター分離の証明には使わない。初回確認では専用・共有とも9件で一致した。
 
 ホームの `oauthAccount` の識別と元の private の資格情報ファイルは不変、共有設定は正常な JSON だった。試験用サーバーを終了し、資格情報の複製と試験用作業場所を削除した。鍵更新後の他の会話の継続は未確認。写しで更新すると元の更新用トークンを失効させるため、強制更新は実施していない。Google Calendar・Google Drive・Notion・composio の読み取りも今回未確認。
+
+### macOS の実機確認（2026-11-24）
+
+b1 で確かめた結果。[ADR 0350](0350-claude-own-config-dir-default-remove-b1.md) により b1 は削除予定で、macOS は止めたまま。専用フォルダ方式での macOS 対応の材料とする。
+
+環境は macOS（Darwin 27.0.0）、Aqua のログインの中、CLI 2.1.322 / SDK 0.3.288 を専用の置き場に入れて使い、private アカウント（Max）だけを専用の設定フォルダーでログインした（既定の設定フォルダーと既定の項目 `Claude Code-credentials` は属性の読み取りだけで、中身は読んでいない）。隔離したサーバー・データ置き場で確認した。
+
+- **項目名**: 設定フォルダーを明示すると `Claude Code-credentials-<NFC 正規化した文字列の SHA-256 の先頭 8 桁>`、無指定は `Claude Code-credentials`。実機で一致を確認した。**account は `claude-code-user` ではなく OS のログイン名**だった（準備段階の実装の誤り。修正済み）。パスの文字列そのもので決まるため、同じ物理パスへの symlink 経由の別名と末尾のスラッシュ付きは別の項目を見に行き、ログインなしになる（乗り換えは起きず、見つからない扱いで止まる）。Pleiad は `path.join` の同じ文字列でログインと読み取りを行う。
+- **状態**: 項目なし（終了コード 44）は実機で確認。ロック（36）・拒否（128）・認証失敗（51）・確認待ちのタイムアウト・鍵束なし（50）・既定の鍵束なし（37）・security 実行ファイルなしは、security を差し替えて確認した。項目なし・鍵束なし・実行ファイルなしだけファイル保存を確認し、ロック・拒否・タイムアウトは共有の（ファイルの）ログインへ乗り換えず止まる。実機でロック・拒否を起こす確認はしていない。
+- **ファイル保存**: macOS では Claude Code は既定でキーチェーンを使うため、ファイルへの保存を実機では作っていない（単体試験の範囲）。
+- **headless**: ssh を使えず（sshd 停止）確かめていない。macOS は `platform` で一律に止めるので、ssh の有無で分ける検査は入れていない。
+- **401**: 無効なアクセス用トークンを `CLAUDE_CODE_OAUTH_TOKEN` に渡し、同じフォルダーに有効なログインがある条件で、CLI は 401 で失敗し、そのログインへ乗り換えなかった。対照（トークンなし）は成功した。
+- **期限切れ**: 期限を 639 分過ぎたトークンの登録では持ち主の確認が 401 になり、Pleiad はコネクターを有効にせず理由を出して止めた。専用の CLI で最小の呼び出し（Haiku・1 ターン）をするとキーチェーンの項目が更新され、再ログインは要らなかった。
+- **実会話**: Haiku が、private アカウントの会話で ToolSearch から読み取り専用の Google Drive の道具 1 つを呼べた（承認は 1 件だけ許可）。結果は「Drive が再サインインを求めている」で、この private アカウントは claude.ai 側でコネクターを認可していなかった。Claude Docs も同じく未接続で、一覧に Google Calendar は出なかった（同じログインの CLI 単体の `mcp list` も同じ）。道具の見え方・渡るトークン・サインイン要求の理由の返りまでは確認した。成功する読み取りは未確認（b1 の削除が決まったため打ち切り）。
+- **履歴**: スイッチをオフにして同じ履歴を再開できた。アカウント削除後も履歴は残り、古い CLI（2.1.319）で同じ履歴を再開できた。アカウント削除は設定フォルダーを消すが、macOS のキーチェーンの項目は残る（未対応・別途）。
+- **試験**: 関連の単体試験（claude-connectors-auth・claude-connectors-off・server-claude-connectors-list・claude-accounts・claude-accounts-ui・server-claude-accounts・server-claude-account-models・connectors-fail-ui・claude-launch-main-pinned・cli-launcher）が、darwin を許可した実装で macOS で通過。macOS が子の環境に足す `SHLVL`・`__CF_USER_TEXT_ENCODING` は、起動記録の試験の比較から外した。全体試験は macOS では実行していない。
+
+macOS は許可しない。`platform` は darwin を従来どおり止める（ADR 0350）。ここに書いたのは b1 での確認の結果で、合格済みの組み合わせとしては出さない。headless・実機のロック／拒否・ファイル保存・成功するコネクター呼び出し・全体試験は未確認。コードに残したのは、キーチェーンの `account` を OS のログイン名にする `readMacAccessCredentials` の引数と、起動記録の試験の darwin の除外だけで、後の macOS の ADR でも使う。専用フォルダ方式（[ADR 0345](0345-claude-account-own-config-dir.md)）は今回の確認の対象外で、macOS では確かめていない（コードの上では、その検査 `ownDirLogin` は設定フォルダーの `.credentials.json` の有無を見て `platform` の検査を通らないので、キーチェーンに保存する macOS ではログインなしで止まる。ADR 0350 は、これを「ログインし直す」ではなく「この OS ではまだ使えない」と出すと決めた）。
+
+所要時間は厳密に測っていない。会話の記録からの概算で、AI の処理（待ち 10 分未満の間隔の合計）は約 100 分、ログイン・キーチェーンの許可・画面収録の許可・ロック解除などの本人操作の待ちは別（記録上は分離できないので、厳密な値は出さない）。
 
 ## 理由と捨てた案
 
