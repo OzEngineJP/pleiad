@@ -13,7 +13,8 @@
 //   - window.open の popup の別窓: 中継が範囲に足したあと adoptPopup。外形（CDP の Browser.getWindowBounds）で窓を見つけて隠す。
 //     外形で探すときは、先に CDP でその窓を一意な位置（画面の外）へ置き、つないだ Chrome のプロセスの窓で、開く前の写しに無いものだけを見る
 //     （利用者の窓・Edge の窓・別の Chrome の窓を取り違えて隠さない）。プロセスが分からなければ採用しない
-//   - Chrome の接続が切れたとき・窓の開きかけに失敗したときは、隠した窓を閉じる（閉じられなければ見える形へ戻す）。見えない窓を残さない
+//   - Chrome の接続が切れたとき・窓の開きかけに失敗したときは、隠した窓を閉じる（閉じられなければ見える形へ戻す）。見えない窓を残さない。
+//     隠す層の無い OS（macOS。ADR 0219）でも、開きかけに失敗した題（nonce）のページの窓は残さない（見えたまま残ると利用者に見える）
 //   - 更新（ADR 0167）: 隠した窓は閉じずに持ち越す。窓ごとの印（os.exportAgent）を snapshot() で接続の子に預け（relay の carry）、新しいサーバーが
 //     restore() で受けて、main の層が戻ったら readopt()（os.adoptAgent）で記録を作り直す。層が窓を引き継げなかった窓は readopt() の返り値で relay に渡し、CDP で閉じる
 //     main が居ない間（層が pending）に窓を開く・採用する依頼は、readyWaitMs だけ待ち、それでも戻らなければ「更新中」で失敗させる
@@ -33,6 +34,12 @@ export const WINDOW_DIP = Object.freeze({ width: 800, height: 800 });
 const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, targetPollMs: 50, popupWaitMs: 3000, boundsWaitMs: 1000, navigateMs: 15_000, readyWaitMs: 20_000 };
 /** 外形で探す前に窓を置く、画面の外の位置の揺らぎ（DIP）と、最初の窓の大きさの端数。同時に外形で探す窓同士が同じ外形にならないように */
 const MARK_STEP = 8, MARK_SLOTS = 20, MARK_SIZE_EXTRA = { width: 3, height: 5 }, MARK_TOLERANCE = 2;
+/**
+ * launchWindow が「起こせなかった」と答えた reason のうち、窓を開いていないと分かるもの（mac.cjs・win32.cjs は、
+ * 起こす前の引数の検査か起動そのものの失敗でしか失敗を返さない）。返事が無いとき・知らない reason は、窓が開いているかもしれないので探して閉じる
+ */
+const LAUNCH_NO_WINDOW = new Set(['unknown-browser', 'invalid-browser', 'profile', 'invalid-profile', 'invalid-nonce',
+  'url', 'invalid-url', 'user-data-dir', 'invalid-user-data-dir', 'spawn', 'spawn-failed', 'unsupported']);
 
 /** 選んだプロフィールの窓を chrome.exe で開けなかった（探し直してやり直した後）。ほかのプロフィールの窓には開かないので、エージェントが次に取れる手を書く */
 export const PROFILE_LAUNCH_FAILED = 'could not open a window in the selected Chrome profile, and no window was opened in another profile instead. '
@@ -190,17 +197,29 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const reason = typeof result?.reason === 'string' && /^[a-z-]{1,32}$/.test(result.reason) ? result.reason : null;   // 層の決まった語だけ（ログに任意の文字を出さない）
       log(`chrome-windows: launching chrome.exe failed (${reason ?? 'no answer'})`);
       browser = undefined;   // 次は探し直す
-      // 呼び出しの途中で層が入れ替わった・切れたなら、返事を聞けなかっただけで、chrome.exe は窓を開いている（隠せず、どの記録にも載らない窓になる）。
-      // この呼び出しが付けた題（nonce）の窓だけを CDP で閉じる
-      if ((os.generation?.() ?? 0) !== layer) { await closeStray(cdp, nonce); return false; }
-      if (!reason) return false;
+      // 呼び出しの途中で層が入れ替わった・切れた・返事が無かったなら、chrome.exe は窓を開いているかもしれない（聞けなかっただけ。
+      // 隠せず、どの記録にも載らない窓になる）。この呼び出しが付けた題（nonce）の窓だけを CDP で閉じる。起こし直さない
+      if ((os.generation?.() ?? 0) !== layer || !reason) {
+        if (await closeStray(cdp, nonce)) log('chrome-windows: closed a leftover window (its answer was lost)');
+        return false;
+      }
+      // 層が答えた失敗でも、起こした後の失敗なら窓が残る。開いていないと分かる reason 以外は、次に試す前・あきらめる前に閉じる
+      if (!LAUNCH_NO_WINDOW.has(reason) && await closeStray(cdp, nonce)) log('chrome-windows: closed a leftover window (launch may have opened it)');
     }
     return false;
   }
 
-  /** 題の nonce の窓（この呼び出しが開いたもの）を CDP で閉じる。ほかの窓には触らない */
+  /** 題の nonce の窓（この呼び出しが開いたもの）を CDP で閉じる。ほかの窓には触らない。見つけて閉じたら true */
   async function closeStray(cdp, nonce) {
     const targetId = await waitFor(() => findTarget(cdp, nonce), time.targetWaitMs, time.targetPollMs);
+    if (!targetId) return false;
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    return true;
+  }
+
+  /** この呼び出しが開いた窓を閉じる。層に出した窓は層で閉じる（閉じられなければ見える形へ戻る決まり）。それでも残れば CDP でタブを閉じる */
+  async function closeOpened(cdp, ref, targetId) {
+    if (ref && await os.closeAgent(ref).catch(() => false)) return;
     if (targetId) await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
   }
 
@@ -293,12 +312,22 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         try { profileUsed(id, { browser: 'chrome', dir: profile }); } catch { /* 覚えられなくても窓は使える */ }
       }
     } catch (error) {
-      // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。閉じる（だめなら戻す）
-      if (ref) await os.closeAgent(ref).catch(() => {});
-      else if (targetId) await cdp.send('Target.closeTarget', { targetId }).catch(() => {});   // 隠せていない新しい窓（まだ題のページだけ）を残さない
+      // 隠した窓の記録だけを残さない（見えない窓が、誰にも戻せないまま残る）。この呼び出しが開いた窓を閉じる（だめなら戻す）。
+      // 題のタブがまだ CDP に出ていないだけなら（chrome.exe で開いた窓は遅れて出ることがある）、もう一度探して閉じる
+      if (entry.windows.delete(windowId)) changed();
+      if (ref || targetId) await closeOpened(cdp, ref, targetId);
+      else if (await closeStray(cdp, nonce)) log('chrome-windows: closed a marker window that appeared late (the new window was not found)');
       throw error;
     }
-    await navigate(cdp, targetId, url);
+    try {
+      await navigate(cdp, targetId, url);
+    } catch (error) {
+      // 頼まれたページへ移せなかった。この呼び出しが開いた窓を、題のページのまま残さず、閉じて記録を消して失敗を返す
+      if (entry.windows.delete(windowId)) changed();
+      log('chrome-windows: could not navigate the new window, so it was closed');
+      await closeOpened(cdp, ref, targetId);
+      throw error;
+    }
     return { targetId, windowId };
   }
 

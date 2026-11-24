@@ -681,4 +681,85 @@ export default async function (t) {
       t.ok('隠した窓は閉じる（見えない窓の記録だけが残らない）。会話の窓の記録も残さない', agentWindows(r).length === 1 && agentWindows(r)[0].closed === true && r.scope.windows('x').length === 0, JSON.stringify(r.os.hwnds()));
     } finally { await r.stop(); }
   }
+
+  // ===== 12. 題のページ（PLY-<nonce>）の窓を残さない: 開きかけの失敗のあと、開いた窓を閉じて記録を消す =====
+  {
+    // 頼まれた URL への移動（navigate）が失敗したら: 隠して記録した窓を閉じ、記録を残さない
+    const r = await rig();
+    try {
+      const cdp = await r.conn.demand();
+      const broken = { port: cdp.port, send: (method, ...rest) => (method === 'Page.navigate' ? Promise.reject(new Error('navigate boom')) : cdp.send(method, ...rest)) };
+      const failed = await r.scope.openTab({ cdp: broken, entryId: 'x' }).then(() => null, error => error);
+      t.ok('頼まれたページへ移せなければ openTab はその失敗を返す', failed?.message === 'navigate boom', String(failed?.message));
+      t.ok('移せなかった窓は閉じる（題のページを残さない）。会話の窓の記録も残さない', agentWindows(r).length === 1 && agentWindows(r)[0].closed === true && r.scope.windows('x').length === 0, JSON.stringify(r.os.hwnds()));
+      t.ok('偽の Chrome の窓も閉じた（利用者の窓だけが残る）', r.fake.windows().length === 1 && r.fake.windows()[0].windowId === r.fake.userWindow, JSON.stringify(r.fake.windows()));
+      t.ok('どこで失敗して閉じたかがログに出る', r.logs.includes('chrome-windows: could not navigate the new window, so it was closed'), r.logs.join(' | '));
+    } finally { await r.stop(); }
+  }
+  {
+    // 同じ失敗で、窓が隠せていなければ（ref が無い）: 層ではなく CDP の closeTarget で閉じる
+    const r = await rig();
+    try {
+      r.os.opts.hideNonce = true; r.os.opts.hideBounds = true;
+      const cdp = await r.conn.demand();
+      const broken = { port: cdp.port, send: (method, ...rest) => (method === 'Page.navigate' ? Promise.reject(new Error('navigate boom')) : cdp.send(method, ...rest)) };
+      const failed = await r.scope.openTab({ cdp: broken, entryId: 'x' }).then(() => null, error => error);
+      t.ok('隠せていない窓（ref が無い）も CDP の closeTarget で閉じる', failed?.message === 'navigate boom'
+        && r.chrome.calls.filter(c => c.method === 'Target.closeTarget').length === 1 && !r.fake.targets().some(x => String(x.url).includes('PLY-'))
+        && r.fake.windows().length === 1 && r.scope.windows('x').length === 0, JSON.stringify({ targets: r.fake.targets().map(x => x.url) }));
+    } finally { await r.stop(); }
+  }
+  {
+    // launchWindow は ok と答えたが、窓のタブが targetWaitMs 内に CDP に出ない: 遅れて出た題の窓をもう一度探して閉じる
+    const r = await rig();
+    try {
+      const nonce = () => r.os.calls('launchWindow').at(-1)?.args?.nonce;
+      r.os.launchWindow = async args => {
+        r.os.log.push({ op: 'launchWindow', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
+        setTimeout(() => r.fake.launchWindow({ url: args.url, profileDir: args.profileDir }), TIMING.targetWaitMs + 300);   // 窓（題のタブ）は遅れて出る
+        return { ok: true };
+      };
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('窓のタブが時間内に CDP に出なければ失敗を返す（エージェントを黙って待たせない）', !!created.error && /did not open/.test(created.error.message), JSON.stringify(created));
+      t.ok('遅れて出た題の窓を探して閉じる（残さない）', await until(() => r.chrome.calls.some(c => c.method === 'Target.closeTarget'))
+        && !r.fake.targets().some(x => String(x.url).includes(nonce() ?? 'PLY-')) && r.fake.windows().length === 1, JSON.stringify(r.fake.targets().map(x => x.url)));
+      t.ok('窓の記録は残らない', r.scope.windows('one').length === 0);
+      t.ok('遅れて出た窓を閉じたことがログに出る', r.logs.includes('chrome-windows: closed a marker window that appeared late (the new window was not found)'), r.logs.join(' | '));
+    } finally { await r.stop(); }
+  }
+  {
+    // 層が reason 付きで失敗を返したが窓は開いていた: 2 回目の試行の前と、あきらめる前に題の窓を閉じる
+    const r = await rig();
+    try {
+      r.os.launchWindow = async args => {
+        r.os.log.push({ op: 'launchWindow', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
+        r.fake.launchWindow({ url: args.url, profileDir: args.profileDir });   // 起こせたが失敗と答えた
+        return { ok: false, reason: 'flaky' };
+      };
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('窓を開いたかもしれない失敗では、開いた題の窓を閉じてから createTarget の窓に落とす', !created.error
+        && r.chrome.calls.filter(c => c.method === 'Target.closeTarget').length === 2 && !r.fake.targets().some(x => String(x.url).includes('PLY-'))
+        && r.fake.windows().length === 2 && r.scope.windows('one').length === 1, JSON.stringify({ targets: r.fake.targets().map(x => x.url), windows: r.fake.windows() }));
+      t.ok('残った窓を閉じたことがログに出る（試行ごと）', r.logs.filter(line => line === 'chrome-windows: closed a leftover window (launch may have opened it)').length === 2, r.logs.join(' | '));
+    } finally { await r.stop(); }
+  }
+  {
+    // 返事が無い（時間切れ・層が切れた）が窓は開いていた: あきらめる前に題の窓を閉じる
+    const r = await rig();
+    try {
+      r.os.launchWindow = async args => {
+        r.os.log.push({ op: 'launchWindow', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
+        r.fake.launchWindow({ url: args.url, profileDir: args.profileDir });
+        return { ok: false };
+      };
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('返事が無くても、開いていた題の窓は閉じてから createTarget に落とす（起こし直さない）', !created.error
+        && r.os.calls('launchWindow').length === 1 && r.chrome.calls.filter(c => c.method === 'Target.closeTarget').length === 1
+        && !r.fake.targets().some(x => String(x.url).includes('PLY-')) && r.fake.windows().length === 2 && r.scope.windows('one').length === 1, JSON.stringify(r.fake.targets().map(x => x.url)));
+      t.ok('残った窓を閉じたことがログに出る', r.logs.includes('chrome-windows: closed a leftover window (its answer was lost)'), r.logs.join(' | '));
+    } finally { await r.stop(); }
+  }
 }
