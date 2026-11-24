@@ -8,7 +8,9 @@
 //   会話を開く（paint）: setUuid(m, uuid) / isEditing() / outbox(sessionId) / onEvent(ev, replay) / batchPaint(fn)
 //   出来事を描く（apply）: userMsg(text, opts) / userRaw(row) / paintUser(row, text, presents) / paintUserTools(row) / markSentBy(row, by) / markSentLate(row, at, planned) /
 //     hhmm(at) / taskNoticeNode(text, at) / paintInterruptLine(live) / turnFailedRow(ev) / syncHistory()
-//   主だけの仕事（子の会話は渡さない）: paintOutbox() / markFailedMessage(row, item) / voiceDelivery / provisionalByMessage /
+//   送った発言の吹き出しの下（syncOutboxRows）: messageAction(messageId, action) 取り消し・再送 / editQueued(item) 送信待ちの［編集］（無ければ出さない） /
+//     paintOutbox() 一覧を読み終えたあとの描き直し
+//   主だけの仕事（子の会話は渡さない）: markFailedMessage(row, item)（直す入口まで描く。子は理由と［再送する］［取り消す］だけ） / voiceDelivery / provisionalByMessage /
 //     onStopping(ev) / onTurnOk() / onReplyArrived(ev, replay) / onTurnSettled(ev)
 //   歴史の面の下請け（history-pane.mjs の hooks と同じ）: spine, placeJunctions, paintDelegateStates, paintCompactions, syncEdit, paintable,
 //     updateBranches, cmd, select, finalizing, systemHistoryNode, stripActions, userMsg, noteEndpointFailure, linkDelegateCard,
@@ -27,6 +29,7 @@ import { isComputerTool } from "./computer-use.mjs";
 import { attachmentMessageIndex, normalizeAttachmentPath } from "./timeline.mjs";
 import { sysFold } from "./system-messages.mjs";
 import { runMark, satMark } from "./arc.mjs";
+import { paintUnsent } from "./outbox.mjs";
 import { CHILD_MENU } from "./message-actions.mjs";
 import { waitsForNextTurn, injectTaskInstructions } from "./task-instructions.mjs";
 
@@ -162,15 +165,25 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
    */
   function place(w) {
     if (historyPane.paintBefore) { historyPane.paintBefore.before(w); return; }
+    if (pinned.has(w)) { thread.append(w); return; }
     const act = liveTurn.activity.el?.isConnected ? liveTurn.activity.el.closest(".mw") : null;
-    if (act && !w.classList.contains("activity")) act.before(w);
-    else thread.append(w);
+    if (act && !w.classList.contains("activity")) { act.before(w); return; }
+    const tail = firstPinned();
+    if (tail) tail.before(w); else thread.append(w);
   }
 
-  function append(node, key) {
-    if (historyPane.painting || replaying) { const w = wrap(node, key); place(w); return w; }
-    const stick = !isBusy() && atBottom();
+  // まだ会話に入っていない発言（送信待ち・保留）の吹き出し。会話の一番下に並べ、あとから渡った発言はその手前に入る
+  const pinned = new Set();
+  function firstPinned() {
+    for (const w of pinned) { if (w.isConnected) return w; pinned.delete(w); }
+    return null;
+  }
+
+  function append(node, key, pin = false) {
     const w = wrap(node, key);
+    if (pin) pinned.add(w);
+    if (historyPane.painting || replaying) { place(w); return w; }
+    const stick = !isBusy() && atBottom();
     place(w);
     relayoutBranches();
     if (stick) log.scrollTop = log.scrollHeight;
@@ -366,6 +379,10 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     const status = row.querySelector('.outbox-status');
     if (!status) return;
     clearTimeout(deliveryTimers.get(row));
+    // 送信待ち・保留・送れなかったの姿（paintUnsentRow）から渡る側へ戻る。送信待ちの吹き出しは、渡った位置（一番下の手前）へ移る
+    row.classList.remove('notyet');
+    delete row.dataset.unsent;
+    if (pinned.delete(row)) place(row);
     if (kind === 'pending') row.dataset.deliveryPending = '1';
     else delete row.dataset.deliveryPending;
     if (kind === 'sending') row.dataset.deliverySending = '1';
@@ -383,14 +400,14 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     }, 150));
   }
 
-  function ensureMessageRow(messageId, text, at, sentBy = null, word = null) {
+  function ensureMessageRow(messageId, text, at, sentBy = null, word = null, pin = false) {
     let row = messageRow(messageId);
     if (!row) {
       const presents = provisionalByMessage.get(messageId) ?? [];
       provisionalByMessage.delete(messageId);
       const node = hooks.userMsg(text, { at, presents, sentBy });
       if (word) node.querySelector(".who > span").textContent = word;
-      row = append(node, `live:${++seq}`);
+      row = append(node, `live:${++seq}`, pin);
       row.dataset.messageId = messageId;
       if (voiceDelivery.owns(messageId)) voiceDelivery.adopt(row);
     } else if (sentBy) hooks.markSentBy(row.querySelector('.m.user') ?? row, sentBy);
@@ -401,33 +418,84 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   /** 発言の行の配達の時計を止める（送れなかった行へ替えるとき） */
   const clearDeliveryTimer = (row) => clearTimeout(deliveryTimers.get(row));
 
-  /** 送れなかった行・送信待ちの行を、送信待ちの一覧（outbox）の今の中身に合わせる */
+  /**
+   * 渡っていない発言の吹き出しの下を、送信待ち・保留・結果不明・送れなかったの姿にする（docs/design-system.md「送信の表示」。描きは web/outbox.mjs の paintUnsent）。
+   * 送信待ちと保留は薄い面にして会話の一番下へ並べる。押したら opts.act の動きをして、取り消し・編集なら吹き出しを会話から下げる
+   * @param {HTMLElement} row 発言の行（.mw）
+   * @param {'queued'|'paused'|'unknown'|'failed'} kind
+   * @param {{ waiting?: object|null, error?: string, act?: Record<string, () => Promise<unknown>>, leave?: string[] }} [opts]
+   *   leave: 押したあとに吹き出しを下げる操作の名前（既定は cancel・edit）
+   */
+  function paintUnsentRow(row, kind, opts = {}) {
+    const status = row.querySelector('.outbox-status');
+    if (!status) return;
+    clearTimeout(deliveryTimers.get(row));
+    delete row.dataset.deliveryPending;
+    delete row.dataset.deliverySending;
+    row.dataset.unsent = kind;
+    const notYet = kind === 'queued' || kind === 'paused';
+    row.classList.toggle('notyet', notYet);
+    if (notYet && !pinned.has(row)) { pinned.add(row); place(row); }
+    else if (!notYet && pinned.delete(row)) place(row);
+    const leave = opts.leave ?? ['cancel', 'edit'];
+    const act = Object.fromEntries(Object.entries(opts.act ?? {}).map(([name, run]) => [name, async () => {
+      await run();
+      if (leave.includes(name)) { pinned.delete(row); row.remove(); relayoutBranches(); }
+    }]));
+    paintUnsent(status, kind, { waiting: opts.waiting, error: opts.error, act });
+  }
+
+  /** 送信待ち・保留・結果不明の吹き出しを、いったん普通の行へ戻す（渡った・失敗の描きの前） */
+  function leaveUnsent(row) {
+    row.classList.remove('notyet');
+    delete row.dataset.unsent;
+    if (pinned.delete(row)) place(row);
+  }
+
+  /** 送信待ちの一覧（outbox）の今の中身に合わせて、まだ会話に入っていない発言を吹き出しで出す */
   function syncOutboxRows(messages) {
     if (!here() || isLoadingSession()) { hooks.paintOutbox?.(); return; }
-    let withdrawn = false;
+    let moved = false;
     for (const item of messages ?? []) {
       const row = messageRow(item.id);
-      // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］。入力欄の脇の一覧にも出さない）
+      // 声で送った発言は、送信待ちでも会話の行に残す（時計の一行と［取り消す］）
       if (item.status === 'queued' && (item.waiting || row?.dataset.messageStarted) && voiceDelivery.isVoice(row)) { voiceDelivery.queued(row, item); continue; }
-      // 新しいターンで始めた発言（initial）は、受け付けられるまで queued のまま届く。待ちの印が無い間は消さない
-      if ((item.status === 'queued' && (item.waiting || (row?.dataset.messageStarted && !row.dataset.initialStart)))
-        || ['paused', 'unknown', 'cancelled'].includes(item.status)) {
-        if (row) { row.remove(); withdrawn = true; }
+      if (item.status === 'cancelled') {
+        if (row) { pinned.delete(row); row.remove(); moved = true; }
       } else if (item.status === 'failed') {
-        hooks.markFailedMessage?.(ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy), item);
+        const failed = ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy);
+        leaveUnsent(failed);
+        // 主は直す入口（再ログイン・コネクター）まで描く。子は理由と［再送する］［取り消す］だけ
+        if (hooks.markFailedMessage) hooks.markFailedMessage(failed, item);
+        else paintUnsentRow(failed, 'failed', { error: item.error, act: { retry: () => hooks.messageAction(item.id, 'retry'), cancel: () => hooks.messageAction(item.id, 'cancel') } });
         const failure = turnErrorRows.get(here());
         if (failure?.messageId === item.id) {
           failure.node.closest('.mw')?.remove();
           turnErrorRows.delete(here());
-          withdrawn = true;
+          moved = true;
         }
-      } else if (item.status === 'sending' && row) {
+      } else if (item.status === 'sending') {
+        if (!row) continue;
         delete row.dataset.initialStart;
         row.dataset.messageStarted = '1';
         if (!row.dataset.deliveryPending) markDelivery(row, 'sending');
+      } else if (item.status === 'queued' && !item.waiting) {
+        // 受け付けたばかり（新しいターンの始まりも、ここで受け付けられるまで待つ）。吹き出しは「送信中」のまま。
+        // 待ちの印を外した（渡し始める）ところは「送信中」へ戻す。もう渡った行（messageStarted）は触らない
+        if (!row) markDelivery(ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy), 'sending');
+        else if (row.dataset.unsent) markDelivery(row, 'sending');
+      } else if (item.status === 'queued' || item.status === 'paused' || item.status === 'unknown') {
+        const made = !row;
+        const target = row ?? ensureMessageRow(item.id, item.args.prompt, item.at, item.args.sentBy, null, item.status !== 'unknown');
+        const act = (action) => () => hooks.messageAction(item.id, action);
+        paintUnsentRow(target, item.status, {
+          waiting: item.waiting,
+          act: { ...(item.status === 'queued' ? (hooks.editQueued ? { edit: () => hooks.editQueued(item) } : {}) : { retry: act('retry') }), cancel: act('cancel') },
+        });
+        if (made) moved = true;
       }
     }
-    if (withdrawn) relayoutBranches();
+    if (moved) relayoutBranches();
     hooks.paintOutbox?.();
   }
 
@@ -507,9 +575,9 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
         return;
       }
       case 'userMessage.dropped':
-        // 読まれないままターンが死んだ。発言は送信待ち（保留）へ戻るので、会話からは下げる
-        messageRow(ev.messageId)?.remove();
-        hooks.paintOutbox?.();
+        // 読まれないままターンが死んだ。発言は送信待ち（保留）へ戻るので、いったん下げ、送信待ちの一覧から吹き出しを作り直す
+        { const row = messageRow(ev.messageId); if (row) { pinned.delete(row); row.remove(); } }
+        syncOutboxRows(hooks.outbox(here()));
         return;
 
       case "text.delta":
@@ -886,7 +954,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
     set initialMessageId(id) { initialMessageId = id; },
     nextSeq: () => ++seq,
     prepare, adopt, paint, finish, branchAnchor,
-    apply, messageRow, markDelivery, ensureMessageRow, syncOutboxRows, settleSending, clearDeliveryTimer,
+    apply, messageRow, markDelivery, ensureMessageRow, paintUnsentRow, syncOutboxRows, settleSending, clearDeliveryTimer,
     userWord, historyRowOptions, skipsPresent, instructionRow, activityRow,
     childState, childItems, setChild, setInstructions, syncInstructions, isInstructionEvent, dispose,
     atBottom, followBottom, scrollToEnd, relayoutBranches, wrap, place, append,

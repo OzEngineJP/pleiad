@@ -128,7 +128,10 @@
 | 作業場所 | working directory |
 | 共通（探索元 .agents） | Shared |
 | 探索（コンテキスト） | scan / search |
-| 送信待ち | waiting to be sent |
+| 送信待ち（吹き出しの下の行。理由は「— 作業が終わると自動で送信」のように続ける） | Waiting to be sent |
+| 送信を保留中（中断のあと。吹き出しの下の行） | Sending paused |
+| 送信結果を確認できません（吹き出しの下の行。届いたか分からない） | Can't confirm whether it was sent |
+| 送れませんでした（吹き出しの下の行。理由が続く） | Couldn't send |
 | 作業が完了しました（通知） | Work finished |
 | 返事を待っています（通知） | Waiting for your reply |
 | 鍵束（OS） | keyring |

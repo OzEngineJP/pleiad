@@ -1543,10 +1543,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   background:linear-gradient(90deg,var(--surface-2) 40%,var(--surface-1) 50%,var(--surface-2) 60%) 0 0/300% 100% no-repeat;
   animation:title-think 1.6s var(--ease-organic) infinite}
 @media (prefers-reduced-motion:reduce){.composer-busy-bar{animation:none}}
-/* 欄の上の一行。作成中の送信の予約（弧・強くない本文の字・取り消す）と、読み込みの失敗（理由・もう一度読む） */
+/* 欄の上の一行。読み込みの失敗（理由・もう一度読む）と、設定を保存できず送らせない保留 */
 .composer-note{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:var(--fs-xs);color:var(--ink-weak);padding:0 6px 6px;min-height:22px}
 .composer-note[hidden]{display:none}
-.composer-note b{color:var(--ink);font-weight:500}
 .composer-note .composer-note-action{color:var(--ink-blue);padding:0 6px;font-size:var(--fs-xs)}
 /* 設定を保存できず送らせない一行（hold）。理由は強い字。送信が押されたらここへフォーカスを移し、一度だけ輪を光らせる */
 .composer-note .composer-note-strong{color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
@@ -1584,8 +1583,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .conn-note .conn-result{margin-top:4px;color:var(--ink-weak)}
 .conn-note[data-kind=stale] .btn,.conn-note[data-kind=stop] .btn{margin-left:auto;flex:none;font-size:var(--fs-s);color:var(--ink-blue)}
 .conn-note .btn[aria-disabled=true]{cursor:progress}
-/* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
-.send.wait,.send.wait:hover,.send.wait:disabled{background:var(--surface-3);color:var(--ink);cursor:progress;opacity:1}
 /* チップと送信の行。折り返さない。送信は常に右端 */
 .crow{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:nowrap}
 .send{width:34px;height:34px;border-radius:50%;padding:0;margin-left:4px;flex:none}   /* 唯一の塗り */
@@ -2209,10 +2206,9 @@ main.dropping #log{background:var(--surface-1)}
   .agent-actions{flex-basis:100%;margin-left:0;padding-left:28px;justify-content:flex-start}
   .agent-conn{padding:4px 0 2px 0}
 }
-/* Accepted messages stay beside the composer until handed to the agent. */
+/* 送った発言の吹き出しの下の一行（web/conversation-view.mjs・web/outbox.mjs。docs/design-system.md「送信の表示」）。
+   送信中は弧と一言、送信待ち・保留・結果不明・送れなかったは本文の字に操作のボタン。入力欄の上には出さない */
 .outbox { max-height: 180px; overflow-y: auto; }
-.outbox-message { background: var(--surface-1); color: var(--ink); padding: 8px 16px; margin-bottom: 8px; border-radius: 14px; }
-.outbox-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 80px; overflow-y: auto; }
 .outbox-status { color: var(--ink-weak); font-size: 12px; margin-top: 4px; }
 /* 途中送信がまだエージェントに渡っていない間だけ、回る弧を一言の前に置く（design-system.md §6。色は本文と同じ） */
 .outbox-status:empty { display: none; }
@@ -2221,6 +2217,9 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .outbox-status-failed b { color: var(--ink-strong); }
 .outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
+.outbox-status .hint { flex-basis: 100%; }
+/* まだ渡っていない発言（送信待ち・保留）。末尾に置き、一段明るい面にする（音声の送信待ち .vc-queued と同じ見た目） */
+.mw.notyet .m.user .body { background: var(--surface-1); }
 /* 送信予定（web/outbox.mjs の scheduleRow）。1 行に畳む。時刻が先で強い字、「あと 7 時間」と本文は弱い字。狭ければ操作は ⋯ にまとめる */
 .outbox{container-type:inline-size}
 .sched{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--surface-1);border-radius:var(--r-m);padding:5px 6px 5px 12px;margin-bottom:6px;font-size:13px;min-width:0;transition:opacity var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}

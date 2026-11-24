@@ -209,15 +209,16 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       restoreOutboxText(text);
     },
   };
-  // 送信待ち（bot へ届く前のあなたの投稿）の行。［編集］は取り下げて本文を入力欄へ戻す、［取り消し］は取り下げる
+  // 送信待ち（bot へ届く前のあなたの投稿）は、その投稿の下の 1 行（web/channels/thread.mjs の decorate）。
+  // ［編集］は取り下げて本文を入力欄へ戻す、［取り消す］は取り下げる
   const pendingAction = async (postId, name) => {
     const row = pending().find((p) => p.id === postId);
     await withdrawPending(postId);
     if (name === 'edit' && row) restoreOutboxText(row.text);
   };
+  /** 入力欄の上は送信予定だけ */
   function paintSchedules() {
-    const queued = pending().map((p) => ({ id: p.id, status: 'queued', args: { prompt: p.text } }));
-    renderOutbox(els.outbox, queued, pendingAction, new Set(), { schedules: schedules(), scheduleActions, editQueued: true });
+    renderOutbox(els.outbox, schedules(), scheduleActions);
   }
 
   // クリップ: この端末のファイルを選ぶ（出どころの面はチャンネルには無い。ADR 0116）
@@ -542,6 +543,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     invalidateVocab() { vocabFor = null; effortKey = ''; paintDest(); },
     /** 予定が動いた */
     paintSchedules,
+    /** 送信待ちの投稿の下の［編集］［取り消す］ */
+    pendingAction,
     say,
     clear() { dismissWake(); input.value = ''; att.clear(); say(''); saveDraft(); paintHint(); },
     mention,

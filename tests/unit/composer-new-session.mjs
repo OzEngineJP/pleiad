@@ -2,11 +2,11 @@
 //   - 作っている間（newSession の応答待ち・一覧の読み直し・空の履歴の読み込み）に書いた字が、最後まで欄に残り、
 //     作った会話の下書きとして保存される。欄は無効にも readonly にもならない（以前は一覧の読み直しの間に書いた字が消えた）
 //   - "" の下書き（作っている間の仮置き）は、作った会話が引き取ったら消える
-//   - 作っている間の送信は予約され、できしだい送る。取り消せば送らず、字は残る
+//   - 作っている間の送信は、押した瞬間に欄が空になり（入力欄の上に「送信中」は出さない）、できしだい作った会話へ送る。送った発言は会話の吹き出しが持つ
 //   - 別の会話を開く間は readonly + aria-busy。読み込みに失敗したら欄を書けるように戻し、「もう一度読む」で読み直す
 //   - 作っている間に選んだ設定（作業場所・モデル・effort・承認モード・エージェント）は、変えた時点（newSession の応答前・応答後の一覧の読み直し中・
 //     履歴の読み込み中）によらず、できた会話の setTurnSettings に載る。承認モードは setPref でグローバルの既定を書き換えない
-// 見た目（150ms 後の弧・待機文言）は tests/unit/composer-wait.mjs、ブラウザーでは tests/browser/composer-loading.cjs。
+// 見た目（150ms 後の弧・待機文言）は tests/unit/composer-wait.mjs、送った発言の吹き出しは tests/unit/send-display.mjs、ブラウザーでは tests/browser/composer-loading.cjs。
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
@@ -23,7 +23,7 @@ export const name = 'composer-new-session';
 export const title = '新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・作成中の作業場所と設定の反映・読み込み失敗で欄が戻る';
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
-  'syncRunState', 'captureSendSettings', 'syncActiveSubmitWait', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
+  'syncRunState', 'captureSendSettings', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
   'reserveSettings', 'writeMode', 'settleNext', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree', 'chooseModel'];
 
 export default async function (t) {
@@ -41,6 +41,7 @@ export default async function (t) {
   $('send').append(new N('svg'));
   $('composerBusyText');
   $('composerBusy').append($('composerBusyText'));
+  let repaints = 0;
   let timers = [];
   const flushTimers = () => { const run = timers; timers = []; for (const h of run) h.fn(); };
 
@@ -116,7 +117,7 @@ export default async function (t) {
     activity: { show: noop, hide: noop }, sessionLoads: createSessionLoads(), openGate: createOpenGate(),
     batchToolMeasurements: fn => fn(), batchTerminalUpdates: fn => fn(), batchToolUpdates: fn => fn(),
     runningTools: { batch: fn => fn() }, flushStream: noop,
-    branchSnapshots: () => [], paintOutbox: noop, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,
+    branchSnapshots: () => [], paintOutbox: () => { repaints++; }, refreshOutbox: async () => [], branches: { load: async () => {}, reset: noop, has: () => false, nameOf: () => '' }, scrollToEnd: noop, atBottom: () => false,
     log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, thread: { children: [], querySelectorAll: () => [], classList: { toggle: noop } },
     setUuid: noop, closeTurnEl: noop, paintHistory: () => [], syncOutboxRows: noop, outboxes: new Map(), onEvent: noop, paintPendingPerms: noop, paintComputerWait: noop,
     acknowledgeDisplayed: noop, placeJunctions: () => [], refreshContextInfo: async () => null,
@@ -125,7 +126,8 @@ export default async function (t) {
     isRunningHere: () => false, behindHere: () => null, backgroundCounts: () => ({ live: 0, ended: 0 }), relayoutBranches: noop, branchIsFresh: () => true, promptPlaceholder: () => '',
     ACTIVITY_LABEL: {}, attachMenu: null, setDraftNote: noop,
     isWaitingHere: () => false, stoppingHere: () => false, controls: { fit: noop, paint: noop }, retiredHere: () => null, submittingMessages: new Set(),
-    activeSubmits: new Map(), openConversation: noop,
+    // 送りかけの発言の吹き出し（client.mjs の paintOutbox → paintReceiptRow）。ここでは何回描き直したかだけ数える
+    unsentLocal: new Map(), sendingIds: new Set(), openConversation: noop,
     slowClient: { track: (_c, _a, p) => p, recordSubmitWait: noop, configure: noop, flush: noop },
     connStatus: { blocksSend: () => false },
     // 会話の移動（web/conversation-nav-view.mjs）。最新へのボタンの弧を合わせる呼び出しだけ受ける
@@ -143,7 +145,7 @@ export default async function (t) {
     // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
     chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
     // 入力欄の ↑ の呼び出し・次のメッセージの候補・設定 › 入力（web/composer/recall.mjs・suggestion.mjs・web/input-settings.mjs）。このテストの対象外
-    chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, noteSent: noop, inputSettings: { paint: noop },
+    chatRecall: { release: noop, reset: noop, sent: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, noteSent: noop, inputSettings: { paint: noop },
     // 中断と再開（web/interrupt.mjs・client.mjs の syncResume / paintInterruptLine）。ここでは中断していない会話だけ
     syncResume: noop, syncWorkResume: noop, syncWorkStop: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 送信予定（日時を指定した送信。web/client.mjs の submit が引く）。このテストは日時を指定しない
@@ -214,9 +216,10 @@ export default async function (t) {
   const making2 = run('startNew()');
   type('送る字');
   const sending = run('submit()');
-  t.ok('作っている間に送信を押しても欄に書ける', !prompt.readOnly && prompt.value === '送る字' && !prompt.disabled);
+  t.ok('作っている間に送信を押すと、その瞬間に欄が空になる（書けるまま。無効にも readonly にもしない）', prompt.value === '' && !prompt.readOnly && !prompt.disabled);
+  t.ok('押した瞬間に、会話の中の吹き出しを描く（受け取りが同期で置かれる）', repaints > 0 && [...context.receipts.values()].some(r => r.prompt === '送る字'));
   flushTimers();
-  t.ok('150ms を越えたら「送信中」と送信ボタンの弧', !$('composerNote').hidden && $('composerNote').shown.includes('chat.composer.sending') && $('send').querySelector('.run'));
+  t.ok('入力欄の上に「送信中」も、送信ボタンの弧も出さない（待たせる表示は吹き出しだけ）', !$('composerNote').shown && !$('send').querySelector('.run') && !$('send').classList.contains('wait'));
   await reply('newSession', { sessionId: 'new2' });
   t.ok('新規会話は一覧・履歴の応答前に送信できる', calls.some(c => c.command === 'sendMessage' && c.args.sessionId === 'new2')
     && waiting.some(c => c.command === 'loadSession') && typeof releaseRefresh === 'function');
@@ -225,7 +228,8 @@ export default async function (t) {
   await making2; await sending;
   const sent = calls.filter(c => c.command === 'sendMessage');
   t.ok('できしだい、作った会話へ送る', sent.length === 1 && sent[0].args.sessionId === 'new2' && sent[0].args.prompt === '送る字', JSON.stringify(sent.map(s => s.args)));
-  t.ok('送った後は欄が空で書ける・一行も消える', prompt.value === '' && !prompt.readOnly && $('composerNote').hidden && !$('send').classList.contains('wait'));
+  t.ok('送った後は欄が空で書ける・受け取りも片付く', prompt.value === '' && !prompt.readOnly && !$('composerNote').shown && !$('send').classList.contains('wait')
+    && context.receipts.size === 0 && context.sendingIds.size === 0);
 
   // ---------------------------------------------------------------- 別の会話を開く・読み込みの失敗
   state.drafts.set('existing', { text: '既存の下書き', attached: [] });
@@ -602,12 +606,12 @@ export default async function (t) {
   t.ok('設定保存中にもクリック時の本文・設定・worktree の予定で A の送信を受け付ける',
     sends().length === count + 1 && sends().at(-1)?.args.sessionId === a.id
     && sends().at(-1)?.args.prompt === 'A の本文' && sends().at(-1)?.args.settings.worktreePending);
-  t.ok('受付の応答待ちは入力でき、重複送信を防ぐ', !prompt.readOnly && $('send').disabled && !$('composerNote').hidden);
+  t.ok('受付の応答待ちも押した瞬間に欄は空・書けて、重複送信を防ぐ（欄の上の一行は出さない）', !prompt.readOnly && prompt.value === '' && $('send').disabled && !$('composerNote').shown);
   await switchTo(b.id);
   prompt.value = 'B の下書き';
   await switchTo(a.id);
   flushTimers();
-  t.ok('A に戻ると受付待ちの表示が戻る', !$('composerNote').hidden && $('send').disabled);
+  t.ok('A に戻ると、受付待ちの間は送信を押せず、欄の上の一行は出ない（吹き出しは会話の中）', $('send').disabled && !$('composerNote').shown && context.sendingIds.size === 1);
   prompt.value = '書き直し中';
   run('saveDraftSoon()');
   prompt.value = 'A の本文';

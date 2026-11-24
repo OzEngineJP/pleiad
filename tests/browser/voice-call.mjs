@@ -298,7 +298,7 @@ try {
       check(/送信待ち · この作業が終わると送ります/.test(await label(1)) && /送信待ち · この作業が終わると送ります/.test(await label(2)), '作業中に渡せないものは「送信待ち · この作業が終わると送ります」（時計）。会話の中の同じ場所に置く');
       check(await rows.nth(1).getByRole('button', { name: '取り消す' }).isVisible() && await rows.nth(2).getByRole('button', { name: '取り消す' }).isVisible(), '送信待ちの行に［取り消す］');
       check(await page.locator('#thread .mw.vc-queued').count() === 2 && /AI に渡しました/.test(await label(0)), '送信待ちは面を一段薄くし、先に渡ったものは「AI に渡しました」');
-      check((await page.locator('#outbox .outbox-message').count()) === 0, '入力欄の脇の送信待ちの一覧には二重に出ない');
+      check((await page.locator('#outbox > *').count()) === 0, '入力欄の上には何も出ない（送信待ちは会話の中だけ）');
       await shot(page, 'chat-delivery-queued-1280-light');
       await rows.nth(2).getByRole('button', { name: '取り消す' }).click();
       await until(async () => (await rows.count()) === 2, 'cancelled row gone', 8000);

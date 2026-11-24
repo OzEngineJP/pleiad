@@ -164,6 +164,10 @@ try {
     };
   });
 
+  // 送った発言の「送信中」は入力欄の上ではなく、会話の中の吹き出しの下に出る（入力欄は押した瞬間に空になる）
+  const sendingBubble = (text) => page.locator('#thread .mw[data-message-id]').filter({ hasText: text }).locator('.outbox-status');
+  const isSending = async (text) => (await sendingBubble(text).first().innerText({ timeout: 500 }).catch(() => '')).includes('送信中');
+
   const toastShown = () => page.evaluate(() => {
     const t = document.querySelector('.file-toast');
     return Boolean(t && !t.hidden);
@@ -207,29 +211,27 @@ try {
   await sleep(200);
   console.log('OK 1b: a held mode write does not hold the send; the send carries the chosen mode');
 
-  // 1c. 送信受理（sendMessage）の遅れ -> 取り消し無しの送信中注記が出て、返ると完了する
+  // 1c. 送信受理（sendMessage）の遅れ -> 吹き出しの下に取り消し無しの「送信中」が出て、返ると消える
   await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
   await setPromptText('echo:SlowAcceptSend');
   const userCountBefore1c = await page.locator('#thread .m.user').count();
   await page.locator('#send').click();
-  await waitUntil(async () => {
-    const st = await readComposer();
-    return !st.noteHidden && st.noteText.includes('送信中');
-  }, '1c sending note shown');
+  await waitUntil(() => isSending('echo:SlowAcceptSend'), '1c sending status shown under the bubble');
   const ui1c = await readComposer();
-  assert.equal(ui1c.cancelVisible, false, '1c sendMessage wait must not show Cancel');
+  assert.ok(ui1c.noteHidden && !ui1c.sendWaitClass && ui1c.promptValue === '', `1c nothing above the input box and the input is already empty: ${JSON.stringify(ui1c)}`);
+  assert.equal(await sendingBubble('echo:SlowAcceptSend').locator('button').count(), 0, '1c sendMessage wait must not show Cancel');
   await page.screenshot({ path: path.join(shotDir, 'slow-wait-sending.png') });
   await sleep(220);
   await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
   await waitUntil(async () => (await page.locator('#thread .m.user').count()) > userCountBefore1c, '1c message accepted after release');
-  await waitUntil(async () => (await readComposer()).noteHidden, '1c note cleared');
-  console.log('OK 1c: sendMessage delay shows non-cancelable sending note then completes');
+  await waitUntil(async () => !(await isSending('echo:SlowAcceptSend')), '1c sending status cleared');
+  console.log('OK 1c: sendMessage delay shows a non-cancelable sending line under the bubble then clears');
 
   // 2. 受付の待ちの間に別の会話へ移っても送信は続く。移った先の欄は変わらず、知らせも出ない。戻ると送った版の下書きは片付いている
   await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
   await setPromptText('echo:SwitchedSend');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '2 sending note before switch');
+  await waitUntil(async () => isSending('echo:SwitchedSend'), '2 sending status before switch');
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
   await page.locator('#thread .m.user', { hasText: 'echo:BetaBody' }).waitFor();
   await waitUntil(async () => (await readComposer()).noteHidden, '2 no note on the other conversation');
@@ -252,7 +254,7 @@ try {
   await page.locator('#newSession').click();
   await setPromptText('echo:HomeSwitchSend');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '3 sending note while creating');
+  await waitUntil(async () => isSending('echo:HomeSwitchSend'), '3 sending status while creating');
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
   await page.locator('#thread .m.user', { hasText: 'echo:BetaBody' }).waitFor();
   await sleep(220);
@@ -270,12 +272,12 @@ try {
   await page.locator('#thread .m.user', { hasText: 'echo:HomeSwitchSend' }).waitFor();
   console.log('OK 3: a send made while creating reaches the created conversation after switching away');
 
-  // 6. 取り消しの無い待ち（受理）では欄を書けるままにする。別の会話へ移って戻っても書ける
+  // 6. 取り消しの無い待ち（受理）では欄は空で書けるまま。別の会話へ移って戻っても吹き出しの「送信中」が残り、書ける
   await openSession(sA);
   await page.evaluate(() => window.__wsTest.holdCommand('sendMessage', 1));
   await setPromptText('echo:AcceptHeld');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '6 sending note shown');
+  await waitUntil(async () => isSending('echo:AcceptHeld'), '6 sending status shown');
   assert.equal((await readComposer()).promptReadOnly, false, '6 prompt stays writable while sendMessage is pending');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.type('XY');
@@ -283,13 +285,13 @@ try {
   await page.locator(`#groups .row[data-session="${sB}"]`).click();
   await sleep(150);
   await openSession(sA);
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '6 note restored after returning');
+  await waitUntil(async () => isSending('echo:AcceptHeld'), '6 sending status restored after returning');
   assert.equal((await readComposer()).promptReadOnly, false, '6 prompt writable after switching away and back');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.type('Z');
   assert.ok((await readComposer()).promptValue.includes('Z'), '6 can type after returning');
   await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
-  await waitUntil(async () => (await readComposer()).noteHidden, '6 note cleared');
+  await waitUntil(async () => !(await isSending('echo:AcceptHeld')), '6 sending status cleared');
   await sleep(200);
   await setPromptText('');
   console.log('OK 6: non-cancelable acceptance wait keeps the prompt writable (also after switching back)');
@@ -300,13 +302,13 @@ try {
   await setPromptText('echo:EnterTwice');
   const sentBefore7 = await page.evaluate(() => window.__wsTest.countSent('sendMessage'));
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '7 sending note');
+  await waitUntil(async () => isSending('echo:EnterTwice'), '7 sending status');
   await page.evaluate(() => document.getElementById('prompt').focus());
   await page.keyboard.press('Enter');
   await sleep(120);
-  assert.ok((await readComposer()).noteText.includes('送信中'), '7 the wait survives a second Enter');
+  assert.ok(await isSending('echo:EnterTwice'), '7 the wait survives a second Enter');
   await page.evaluate(() => window.__wsTest.unholdCommand('sendMessage'));
-  await waitUntil(async () => (await readComposer()).noteHidden, '7 note cleared');
+  await waitUntil(async () => !(await isSending('echo:EnterTwice')), '7 sending status cleared');
   await sleep(300);
   assert.equal(await page.evaluate(() => window.__wsTest.countSent('sendMessage')), sentBefore7 + 1, '7 sent exactly once');
   console.log('OK 7: second Enter during the acceptance wait does not send twice');
@@ -393,7 +395,7 @@ try {
   });
   await setPromptText('echo:NewSendWithoutList');
   await page.locator('#send').click();
-  await waitUntil(async () => (await readComposer()).noteText.includes('送信中'), '11 first send waits while creating session');
+  await waitUntil(async () => isSending('echo:NewSendWithoutList'), '11 first send waits while creating session');
   await page.evaluate(() => window.__wsTest.unholdCommand('newSession'));
   await page.locator('#thread .m.user', { hasText: 'echo:NewSendWithoutList' }).waitFor();
   await waitUntil(async () => {

@@ -336,7 +336,7 @@ Electron main が electron-updater と更新設定を持ち、sandbox preload �
 
 画面の送信は `sendMessage` で受け付け、実行を開始する `runTurn` と分ける。セッションごとの `outbox` を sidecar に保存してから受領応答を返す。送信IDはブラウザーでも保持し、同じIDの再送を重複実行しない。本文・添付・送信時刻・配送状態を保持する。
 
-受領応答を受けた画面は送信 ID の吹き出しを会話にすぐ置き、渡るまで「送信中」を出す。同じ ID の `userMessage` はその行へ合流する。初回の `userMessage` は `pending: true` を付けて文脈の保存・MCP 接続より前に出し、準備後の `userMessage.delivered` まで「送信中」を保つ。渡す前に失敗した送信は `failed` と理由を保存し、吹き出しの下から再送・取り消しを選べるようにする。外部 MCP への接続は `activity` の `preparing` と件数を送り、接続後は通常の稼働表示に戻す。
+画面は送信を押した瞬間に（受領応答を待たず。2026-11-24 承認）、送信 ID の吹き出しを会話に置いて入力欄を空にし、渡るまでその下に「送信中」を出す。入力欄の上に送信待ちのカード・「送信中」の一行・送信ボタンの弧は出さない。同じ ID の `userMessage` はその行へ合流する。初回の `userMessage` は `pending: true` を付けて文脈の保存・MCP 接続より前に出し、準備後の `userMessage.delivered` まで「送信中」を保つ。渡す前に失敗した送信は `failed` と理由を保存し、吹き出しの下から再送・取り消しを選べるようにする。送信待ち（`queued`）・保留（`paused`）・結果不明（`unknown`）も同じく、会話の中の吹き出しの下の 1 行に出す（送信待ちと保留は会話の末尾に固定し、一段薄い面にする）。画面で送れなかったもの（未接続・受け付けの拒否）は本文を吹き出しに残し、［再送する］は同じ送信 ID で送り直す。結果不明・送れなかったものが残る間は次の送信を受け付けない（`chat.send.unknownPrevious`）。見た目の決まりは `docs/design-system.md`「送信の表示」。外部 MCP への接続は `activity` の `preparing` と件数を送り、接続後は通常の稼働表示に戻す。
 
 途中送信は `control.steer(item)` で渡す。`item` は outbox の項目そのもの（`{ id, args }`）で、バックエンドは本文に `item.args.prompt` を、相手に預ける照合用の id に `item.id` を使う。返りは true = 受理 / false = 受理できない（送信待ちへ戻す）/ throw = 結果不明。
 

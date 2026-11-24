@@ -79,17 +79,17 @@ async page => {
   await page.locator('#newSession').click();
   await page.locator('#prompt').pressSequentially('echo:queued-hello');
   await page.locator('#send').click();
-  await page.waitForFunction(() => !document.querySelector('#composerNote').hidden);
+  const pendingRow = (text) => page.locator('#thread .mw[data-message-id]').filter({ hasText: text });
+  await pendingRow('echo:queued-hello').locator('.outbox-status').filter({ hasText: '送信中' }).waitFor();
   s = await ui();
-  check('作成中の送信: 欄は書けて字を保ち、欄の上に「送信中」と送信ボタンに弧', !s.readOnly && !s.disabled && s.value === 'echo:queued-hello'
-    && s.note.includes('送信中') && !s.note.includes('取り消す') && s.sendWait, JSON.stringify(s));
+  check('作成中の送信: 押した瞬間に欄は空・書ける。入力欄の上に「送信中」も弧も出さず、会話の中の吹き出しの下に「送信中」', !s.readOnly && !s.disabled && s.value === ''
+    && s.note === null && !s.sendWait, JSON.stringify(s));
   await page.screenshot({ path: `${shots}/4-queued-send.png` });
-  await page.locator('#composerNote').screenshot({ path: `${shots}/4b-queued-note.png` }).catch(() => {});
   await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /queued-hello/.test(l.args.prompt)), null, { timeout: 10000 });
   const sent = await page.evaluate(() => window.__hold.log.find(l => l.command === 'sendMessage' && /queued-hello/.test(l.args.prompt)).args.sessionId);
   const selNow = await page.evaluate(() => document.querySelector('.row.sel')?.dataset.session);
   check('作成中の送信: できしだい作った会話へ送る', sent && sent === selNow, `${sent} / ${selNow}`);
-  await page.waitForFunction(() => document.querySelector('#composerNote').hidden && !document.querySelector('#prompt').readOnly);
+  await page.waitForFunction(() => !document.querySelector('#prompt').readOnly);
   await page.waitForTimeout(600);
   await page.screenshot({ path: `${shots}/5-queued-sent.png` });
 
@@ -110,7 +110,7 @@ async page => {
   const settingsB = await settings();
   await row(sent).click();
   await ready();
-  await page.waitForFunction(() => document.querySelector('#composerNote').textContent.includes('送信中'));
+  await pendingRow('echo:switch-receipt').locator('.outbox-status').filter({ hasText: '送信中' }).waitFor();
   await row(created).click();
   await ready();
   await page.evaluate(() => window.__hold.release());
@@ -221,8 +221,8 @@ async page => {
   await page.waitForTimeout(400);
   await page.locator('#prompt').fill('echo:hello-queued-cwd');
   await page.locator('#send').click();
-  await page.waitForFunction(() => !document.querySelector('#composerNote').hidden);
-  check('作成中の送信: 予約状態になる', (await ui()).note.includes('送信中'));
+  await pendingRow('echo:hello-queued-cwd').locator('.outbox-status').filter({ hasText: '送信中' }).waitFor();
+  check('作成中の送信: 吹き出しの下に「送信中」（入力欄の上には出さない）', (await ui()).note === null);
 
   await page.waitForFunction(() => window.__hold.log.some(l => l.command === 'sendMessage' && /hello-queued-cwd/.test(l.args?.prompt)), null, { timeout: 10000 });
   await page.waitForTimeout(1000);

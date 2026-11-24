@@ -11,7 +11,7 @@ export const title = "履歴を描く間、1 行ごとに筋を探し回らな�
 export default async function (t) {
   const source = readConversationView();   // wrap・place・append の本体は web/conversation-view.mjs（ADR 0319 段 6-5）
   const cut = name => cutFunction(source, name);
-  t.ok("conversation-view.mjs から wrap・place・append を切り出せる", !!cut("wrap") && !!cut("place") && !!cut("append"));
+  t.ok("conversation-view.mjs から wrap・place・append を切り出せる", !!cut("wrap") && !!cut("place") && !!cut("append") && !!cut("firstPinned"));
 
   /** 筋の身代わり。子は配列で持ち、筋への querySelector の呼び出しを数える */
   const screen = () => {
@@ -41,7 +41,7 @@ export default async function (t) {
     };
     const activity = { el: null };
     const context = vm.createContext({ thread, el, log: {}, atBottom: () => false, relayoutBranches() {}, isBusy: () => true, liveTurn: { activity }, historyPane: { painting: true, paintBefore: null }, replaying: false });
-    vm.runInContext(`${cut("wrap")}\n${cut("place")}\n${cut("append")}\nthis.append = append;`, context);
+    vm.runInContext(`const pinned = new Set();\n${cut("firstPinned")}\n${cut("wrap")}\n${cut("place")}\n${cut("append")}\nthis.append = append;`, context);
     return { rows, el, activity, append: context.append, queries: () => queries };
   };
 

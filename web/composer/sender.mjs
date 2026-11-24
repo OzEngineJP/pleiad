@@ -60,15 +60,8 @@ export function createSender(d) {
         d.saveReceipts();
       }
       const { revision, creationRequest, ...request } = receipt;
-      try {
-        await d.cmd('sendMessage', request, { timeoutMs: 15_000 });
-      } catch (error) {
-        if (error.commandRejected) {
-          d.receipts.delete(key);
-          d.saveReceipts();
-        }
-        throw error;
-      }
+      // 失敗しても受け取りは残す。送れなかった発言は会話の中の吹き出しに残り、［再送する］は同じ発言（同じ messageId）として送り直す
+      await d.cmd('sendMessage', request, { timeoutMs: 15_000 });
       d.receipts.delete(key);
       d.saveReceipts();
       return receipt;
