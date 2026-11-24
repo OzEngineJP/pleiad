@@ -6,7 +6,7 @@ import { loadClaudeSdk } from '../claude-sdk.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota, LOGIN_ACCOUNT, quotaFailure } from '../usage.mjs';
 import { claudeEnv, TOKEN_ENV } from '../claude-accounts.mjs';
-import { claudeLoginPresent } from '../claude-own-dir.mjs';
+import { claudeLoginPresent, macKeychainAuthFailure } from '../claude-own-dir.mjs';
 import { isClaudeAuthError } from './claude-normalize.mjs';
 import { t } from '../i18n.mjs';
 
@@ -205,7 +205,8 @@ export const NEEDS_USAGE_LOGIN = needsUsageLogin();
  * skip は読む間隔を延ばしている行（ログイン中は 'login'、ほかはアカウントの id。core/usage.mjs の createQuotaStore）。
  * 読まずに { skipped: true } の行を返し、ストアが前回の行を残す
  */
-export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('claude.usage.loginAccount'), read = readClaudeUsage, skip = [] } = {}) {
+export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('claude.usage.loginAccount'), read = readClaudeUsage, skip = [],
+  keychainFailure = macKeychainAuthFailure } = {}) {
   if (!accounts.length) {
     try { return await read({}); }
     catch (e) { return { windows: [], reason: quotaFailure(e), message: t('claude.usage.failed', { message: errorText(e) }) }; }
@@ -228,6 +229,10 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       // ログイン切れの印は、CLI が認証失敗を返したときに付ける。429・時間切れ・起動失敗は「取得できませんでした」
       const reason = quotaFailure(e);
       const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
+      // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など）だけ。ログイン切れの印も「ログインし直す」も付けない（ADR 0351 の M7）
+      if (auth && await Promise.resolve().then(() => keychainFailure(a.configDir)).catch(() => null) === 'keychain') {
+        return { ...base, windows: [], reason, keychain: true, message: t('claude.usage.keychain') };
+      }
       return { ...base, windows: [], reason, ...(auth ? { reauth: true, cliAuthFailed: true } : {}),
         message: auth ? t('claude.usage.failedReauth', { message: errorText(e) }) : t('claude.usage.failed', { message: errorText(e) }) };
     }

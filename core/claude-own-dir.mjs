@@ -157,6 +157,23 @@ export async function claudeLoginPresent(dir, { platform = process.platform, run
 }
 
 /**
+ * macOS で、専用フォルダのログインを使った CLI・使用量の読み取りが認証の失敗で終わったときの見分け（ADR 0351 の M7）。
+ * -w なしの有無の判定は、鍵束がロック中でも 0（有り）を返す（実機）。項目が有る（または有無を確かめられない）のに断られたら、
+ * 鍵束を開けなかったとみて 'keychain' を返す（期限切れの印を付けず、ログインし直しを出さない）。
+ * 項目が無い（44）・security が無い・macOS 以外は null（今までどおり期限切れとして扱う）
+ */
+export async function macKeychainAuthFailure(dir, { platform = process.platform, present = claudeLoginPresent } = {}) {
+  if (platform !== 'darwin' || !dir) return null;
+  const found = await Promise.resolve().then(() => present(dir, { platform })).catch(() => 'keychain');
+  return found === 'present' || found === 'keychain' ? 'keychain' : null;
+}
+
+/** macOS で ssh 経由で起動したか（ADR 0351 の M8。画面の無いセッションでは鍵束を開けない） */
+export function sshSession(env = process.env) {
+  return ['SSH_CONNECTION', 'SSH_TTY', 'SSH_CLIENT'].some(name => Boolean(env?.[name]));
+}
+
+/**
  * アカウントを消す前に、CLI に自分のキーチェーンの項目を消させる（macOS だけ。ADR 0351）。Pleiad は security delete-generic-password を呼ばない。
  * 消えたかを有無で確かめ、残っていればログに書く。失敗しても削除は止めない（戻り値で結果だけ返す）
  */

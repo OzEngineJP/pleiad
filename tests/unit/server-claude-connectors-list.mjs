@@ -260,10 +260,21 @@ export default async function (t) {
       await c.cmd('setTurnSettings', { sessionId, account: s.id });
       const turns = () => fss.existsSync(s.probeLog) ? fss.readFileSync(s.probeLog, 'utf8').trim().split('\n') : [];
       before = turns().length;
+      // 前に付いた期限切れの印（使用量の読み取りが控えに回っている間も残っていた。ADR 0351 の M7）
+      const expiredMarker = path.join(dir, 'ply-usage-expired.json');
+      await fs.writeFile(expiredMarker, JSON.stringify({ at: new Date().toISOString(), reason: 'no-login' }));
+      const markedBefore = (await c.cmd('claudeAccounts')).accounts.find(a => a.id === s.id)?.usageExpired === true;
       const turn = await c.runTurn({ sessionId, prompt: 'hello' });
       const launches = turns().slice(before);
       t.ok('専用フォルダ方式: 会話用トークン無し、期限の時刻が過去でも起動し、子を事前に再起動しない',
         turn.outcome === 'ok' && launches.length === 1 && launches[0] === 'login', JSON.stringify({ outcome: turn.outcome, launches }));
+      let cleared = false;
+      for (let i = 0; i < 100 && !cleared; i++) {
+        cleared = !fss.existsSync(expiredMarker) && (await c.cmd('claudeAccounts')).accounts.find(a => a.id === s.id)?.usageExpired === false;
+        if (!cleared) await sleep(50);
+      }
+      t.ok('専用フォルダ方式: そのアカウントのログインで会話が通ったら、前に付いた期限切れの印（ply-usage-expired.json）を外す（ADR 0351 の M7）',
+        markedBefore && cleared, JSON.stringify({ markedBefore, cleared }));
       await set(false);
       const b1Error = await models().then(() => null, e => e.message);
       t.ok('コネクターをオフにすると方式の表示が消え、モデル一覧は同じ理由で止まる',

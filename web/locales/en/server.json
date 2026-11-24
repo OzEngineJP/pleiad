@@ -551,6 +551,7 @@
       "loginAccount": "Signed-in account",
       "failed": "Could not get usage: {{message}}",
       "failedReauth": "Could not get usage: {{message}}. If this keeps happening, press \"Log in to claude.ai again\".",
+      "keychain": "Could not get usage because the Mac keychain can't be opened. Unlock the screen and it will show on the next read.",
       "relogin": "Can't read usage because the sign-in details have no token. You need to sign in again: run claude auth login in a terminal.",
       "reauthNeeded": "The claude.ai login for this account has expired. Press \"Log in to claude.ai again\"."
     },

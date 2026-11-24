@@ -4,14 +4,16 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { backend, probeClaudeConnectors, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
-import { credentialsMissing } from '../../core/backends/claude-usage.mjs';
+import { credentialsMissing, readClaudeAccountsUsage, shouldMarkUsageExpired } from '../../core/backends/claude-usage.mjs';
 import { createClaudeAccounts } from '../../core/claude-accounts.mjs';
 import * as connectorsAuth from '../../core/claude-connectors-auth.mjs';
 import { claudeOwnDirEnv, createClaudeConnectorsWiring, VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
 import { createClaudeLogin } from '../../core/claude-login.mjs';
 import {
-  claudeKeychainService, claudeLoginPresent, ensureClaudeOwnDirLinks, KEYCHAIN_TIMEOUT_MS, logoutClaudeOwnDir, OWN_DIR, withClaudeUsageDir,
+  claudeKeychainService, claudeLoginPresent, ensureClaudeOwnDirLinks, KEYCHAIN_TIMEOUT_MS, logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR, sshSession,
+  withClaudeUsageDir,
 } from '../../core/claude-own-dir.mjs';
+import { recordPlatform } from '../lib/claude-launch-record.mjs';
 
 export const name = 'claude-own-dir';
 export const title = 'コネクターの専用フォルダ方式（macOS のキーチェーンの有無の判定を含む）';
@@ -214,9 +216,180 @@ async function macKeychain(t, root) {
   t.ok('ADR 0340 の準備経路 readMacAccessCredentials は無い', !('readMacAccessCredentials' in connectorsAuth));
 }
 
+/**
+ * Mac の実機の M7・M8 を受けた直し（ADR 0351）。偽の security と偽の CLI の失敗で確かめる（本物の鍵束・CLI には触れない）
+ *   M7: 項目が有るのに CLI・使用量が断られた = 鍵束を開けなかった（ロック中）。期限切れの印を付けず keychain の失敗にする
+ *   M8: ssh で起動したら止める（platform）
+ */
+async function macAuthFailures(t, root) {
+  const dir = '/Users/example/pleiad-data/claude-usage/acct-abcdef012345';
+  const all = [];
+  const presentWith = reply => (d, o) => {
+    const sec = fakeSecurity(reply);
+    return claudeLoginPresent(d, { ...o, run: sec.run, account: 'login-name-0001' }).finally(() => all.push(...sec.calls));
+  };
+
+  // 1. 断られたときの見分け: 項目が有る（0）・確かめられない（ロック・打ち切り・例外）→ keychain、無い（44）・使えない（50・security なし）→ null
+  const rows = [
+    [{ exitCode: 0 }, 'keychain', '0（有る。ロック中でも 0 が返る）'],
+    [{ exitCode: 36 }, 'keychain', '36（ロック）'],
+    [{ timedOut: true }, 'keychain', '打ち切り'],
+    [{ exitCode: 44 }, null, '44（項目なし）'],
+    [{ exitCode: 50 }, null, '50（鍵束なし）'],
+    [{ startCode: 'ENOENT', startError: 'spawn ENOENT' }, null, 'security が無い'],
+  ];
+  const bad = [];
+  for (const [reply, want, label] of rows) {
+    const got = await macKeychainAuthFailure(dir, { platform: 'darwin', present: presentWith(reply) });
+    if (got !== want) bad.push(`${label} → ${got}`);
+  }
+  const thrown = await macKeychainAuthFailure(dir, { platform: 'darwin', present: async () => { throw new Error('boom'); } });
+  let otherCalls = 0;
+  const other = present => async (...a) => { otherCalls++; return present(...a); };
+  const onLinux = await macKeychainAuthFailure(dir, { platform: 'linux', present: other(presentWith({ exitCode: 0 })) });
+  const onWin = await macKeychainAuthFailure(dir, { platform: 'win32', present: other(presentWith({ exitCode: 0 })) });
+  const noDir = await macKeychainAuthFailure('', { platform: 'darwin', present: other(presentWith({ exitCode: 0 })) });
+  t.ok('M7 の見分け（macOS）: 項目が有る・確かめられない → keychain（期限切れにしない）、44・50・security なし → null（今までどおり期限切れ）',
+    bad.length === 0 && thrown === 'keychain', bad.join(' | '));
+  t.ok('M7 の見分け: Windows・Linux とフォルダの無いときは null で、有無も見ない',
+    onLinux === null && onWin === null && noDir === null && otherCalls === 0);
+
+  // 2. ssh の見分け
+  t.ok('M8: SSH_CONNECTION・SSH_TTY・SSH_CLIENT のどれかがあれば ssh。空の値・無いときは ssh でない',
+    sshSession({ SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22' }) && sshSession({ SSH_TTY: '/dev/ttys001' }) && sshSession({ SSH_CLIENT: '192.0.2.1 50000 22' })
+    && !sshSession({}) && !sshSession({ SSH_TTY: '' }) && !sshSession(undefined) && !sshSession({ SSH_AUTH_SOCK: '/tmp/agent' }));
+
+  // 3. 会話の入口（専用フォルダ方式）
+  const dataDir = path.join(root, 'mac-auth-data');
+  await fs.mkdir(dataDir, { recursive: true });
+  await put(dataDir, 'claude-accounts.json', JSON.stringify({ version: 1, accounts: [account] }));
+  const accounts = createClaudeAccounts({ dataDir, secrets: { get: async () => null, delete: async () => {} }, cliConfig: path.join(root, 'mac-auth.claude.json') });
+  const own = accounts.usageDir(id);
+  await fs.mkdir(own, { recursive: true });
+  await put(own, 'ply-usage-login.json', '{}');
+  const unexpected = () => assert.fail('own-dir entered the b1 authentication path');
+  const CODES = { present: 0, missing: 44, keychain: 36 };
+  let answer = 'present';
+  let checks = 0;
+  const wiringFor = (platform, extraEnv = {}) => createClaudeConnectorsWiring({
+    dataDir, accounts, env: { CLAUDE_CONFIG_DIR: path.join(root, 'mac-auth-shared'), ...extraEnv }, home: root, managedFiles: [], platform,
+    versions: async () => VERIFIED_VERSIONS[0], usage: { refresh: unexpected, guard: unexpected }, probe: unexpected,
+    loginPresent: (d, o) => { checks++; return presentWith({ exitCode: CODES[answer] })(d, o); },
+  });
+  await wiringFor('darwin').settings.setEnabled(id, true, OWN_DIR);
+  const lifted = { AGENT_HOST_MACOS_OWN_DIR: '1' };
+  const sshKinds = {};
+  for (const name of ['SSH_CONNECTION', 'SSH_TTY', 'SSH_CLIENT']) {
+    const r = await wiringFor('darwin', { ...lifted, [name]: 'example' }).inspect(account, { mode: OWN_DIR });
+    sshKinds[name] = `${r.kind}:${r.reauth}`;
+  }
+  t.ok('M8（macOS・止めを外していても）: ssh で起動したら platform で止め、「ログインし直す」を出さず、鍵束も見ない',
+    Object.values(sshKinds).every(v => v === 'platform:false') && checks === 0, JSON.stringify(sshKinds));
+  await assert.rejects(wiringFor('darwin', { ...lifted, SSH_TTY: '/dev/ttys001' }).resolve(id), { code: 'connectors-platform' });
+  const emptySsh = await wiringFor('darwin', { ...lifted, SSH_TTY: '' }).inspect(account, { mode: OWN_DIR });
+  await put(own, '.credentials.json', '{}');
+  const linuxSsh = await wiringFor('linux', { SSH_CONNECTION: 'example' }).inspect(account, { mode: OWN_DIR });
+  await fs.unlink(path.join(own, '.credentials.json'));
+  t.ok('M8: 空の値では止めない。Linux（と Windows）は ssh でも今までどおり',
+    emptySsh.kind === 'ok' && linuxSsh.kind === 'ok', JSON.stringify({ emptySsh, linuxSsh }));
+
+  // 4. 入口が会話へ渡す authFailure（断られたときに呼ぶ）
+  answer = 'present';
+  const runtime = await wiringFor('darwin', lifted).resolve(id);
+  const failed = await runtime.connectors.authFailure();
+  answer = 'missing';
+  const relogin = await runtime.connectors.authFailure();
+  await put(own, '.credentials.json', '{}');
+  const linuxRuntime = await wiringFor('linux').resolve(id);
+  await fs.unlink(path.join(own, '.credentials.json'));
+  const linuxFailure = await linuxRuntime.connectors.authFailure();
+  const ce = failed?.connectorsError;
+  t.ok('M7（入口）: 項目が有るのに断られたら keychain（ログインし直しは出さない・アカウントを添える）。項目が無ければ null（期限切れ）。Linux は null',
+    ce?.kind === 'keychain' && ce.reauth === false && ce.accountId === id && /キーチェーン|keychain/i.test(failed.message)
+    && relogin === null && linuxFailure === null, JSON.stringify({ ce, message: failed?.message, relogin, linuxFailure }));
+
+  // 5. 会話（偽の CLI の失敗）: 401 の result で終わる・例外で終わる。どちらも connectorsError（keychain）を添え、server は期限切れの印を付けない
+  const SESSION = '11111111-2222-4333-8444-555555555557';
+  const MESSAGE = 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}';
+  const init = () => ({ type: 'system', subtype: 'init', session_id: SESSION, model: 'claude-test' });
+  const authResult = () => ({ type: 'result', subtype: 'success', is_error: true, api_error_status: 401, result: MESSAGE, session_id: SESSION, num_turns: 1, total_cost_usd: 0 });
+  const runClaude = async (messages, throws, connectors) => {
+    const query = ({ prompt }) => {
+      (async () => { for await (const _ of prompt) { /* 最初のプロンプト */ } })();
+      return {
+        interrupt: () => Promise.resolve({}), close() {},
+        async *[Symbol.asyncIterator]() { for (const m of messages) yield m; if (throws) throw new Error(throws); },
+      };
+    };
+    const restore = setClaudeSdkForTest({ query, executable: () => 'claude-fake', resumeGraceMs: 30 });
+    const events = [];
+    let error = null;
+    try {
+      await backend.runTurn({
+        prompt: 'work', sessionId: null, cwd: process.cwd(), mode: 'bypass', connectors, connectorsEnv: { CLAUDE_CONFIG_DIR: own },
+        emit: ev => events.push(ev), askPermission: async () => ({ allow: true }),
+        signal: new AbortController(), control: {}, hostSessionId: 'host-own-dir-keychain',
+      });
+    } catch (err) { error = err; } finally { restore(); }
+    return { result: events.find(e => e.type === 'turnResult') ?? null, error };
+  };
+  let asked = 0;
+  const connectorsWith = reply => ({ identity: OWN_DIR, authFailure: () => { asked++; return reply(); } });
+  answer = 'present';
+  const keychainConnectors = connectorsWith(() => runtime.connectors.authFailure());
+  const viaResult = await runClaude([init(), authResult()], null, keychainConnectors);
+  const viaThrow = await runClaude([init()], 'Claude Code process exited with code 1: ' + MESSAGE, keychainConnectors);
+  t.ok('M7（会話・401 の result）: 項目が有れば kind auth に keychain の connectorsError を添える（期限切れにしない）',
+    viaResult.result?.kind === 'auth' && viaResult.result.connectorsError?.kind === 'keychain' && viaResult.result.connectorsError.reauth === false
+    && /キーチェーン|keychain/i.test(viaResult.result.error), JSON.stringify(viaResult.result));
+  t.ok('M7（会話・CLI が例外で終わる）: turnResult と投げる例外の両方に keychain の connectorsError を添える',
+    viaThrow.result?.kind === 'auth' && viaThrow.result.connectorsError?.kind === 'keychain'
+    && viaThrow.error?.connectorsError?.kind === 'keychain', JSON.stringify({ result: viaThrow.result, error: viaThrow.error?.message }));
+  answer = 'missing';
+  const missingResult = await runClaude([init(), authResult()], null, keychainConnectors);
+  const missingThrow = await runClaude([init()], 'Claude Code process exited with code 1: ' + MESSAGE, keychainConnectors);
+  t.ok('M7（会話）: 項目が無い（44）なら connectorsError を添えない（server が期限切れの印を付け、ログインし直しを出す）',
+    missingResult.result?.kind === 'auth' && !missingResult.result.connectorsError
+    && missingThrow.result?.kind === 'auth' && !missingThrow.result.connectorsError && !missingThrow.error?.connectorsError,
+    JSON.stringify({ a: missingResult.result, b: missingThrow.result }));
+  const askedBefore = asked;
+  const ok = await runClaude([init(), { type: 'result', subtype: 'success', result: 'done', session_id: SESSION, num_turns: 1, total_cost_usd: 0 }], null, keychainConnectors);
+  const otherFail = await runClaude([init()], 'Claude Code process exited with code 1', keychainConnectors);
+  const notOwnDir = await runClaude([init(), authResult()], null, { identity: 'token', authFailure: () => { asked++; return runtime.connectors.authFailure(); } });
+  t.ok('M7（会話）: 通ったとき・認証でない失敗・専用フォルダでない会話では、有無を見に行かない',
+    ok.result?.outcome === 'ok' && otherFail.result?.kind !== 'auth' && notOwnDir.result?.kind === 'auth' && !notOwnDir.result.connectorsError
+    && asked === askedBefore, JSON.stringify({ asked, askedBefore, ok: ok.result, otherFail: otherFail.result }));
+
+  // 6. 使用量（偽の CLI の失敗）: 項目が有れば keychain の行（ログイン切れの印・ログインし直しを付けない）。無ければ今までどおり
+  const usageAccount = { id, name: 'Example', configDir: dir, usageLogin: true };
+  const read = async ({ configDir }) => {
+    if (!configDir) return { windows: [] };
+    throw new Error('Invalid API key · Please run /login');
+  };
+  const usageFor = reply => readClaudeAccountsUsage({ accounts: [usageAccount], read,
+    keychainFailure: d => macKeychainAuthFailure(d, { platform: 'darwin', present: presentWith(reply) }) });
+  const lockedRow = (await usageFor({ exitCode: 0 })).accounts.find(r => r.accountId === id);
+  const missingRow = (await usageFor({ exitCode: 44 })).accounts.find(r => r.accountId === id);
+  const linuxRow = (await readClaudeAccountsUsage({ accounts: [usageAccount], read,
+    keychainFailure: d => macKeychainAuthFailure(d, { platform: 'linux', present: presentWith({ exitCode: 0 }) }) })).accounts.find(r => r.accountId === id);
+  t.ok('M7（使用量・macOS）: 項目が有るのに断られたら keychain の行。期限切れの印（cliAuthFailed）も「ログインし直す」（reauth）も付けない',
+    lockedRow?.keychain === true && !lockedRow.cliAuthFailed && !lockedRow.reauth && !shouldMarkUsageExpired(lockedRow)
+    && /キーチェーン|keychain/i.test(lockedRow.message), JSON.stringify(lockedRow));
+  t.ok('M7（使用量）: 項目が無い（44）・Windows・Linux は今までどおり期限切れの印を付ける',
+    shouldMarkUsageExpired(missingRow) && missingRow.reauth === true && !missingRow.keychain
+    && shouldMarkUsageExpired(linuxRow) && !linuxRow.keychain, JSON.stringify({ missingRow, linuxRow }));
+
+  t.ok('M7・M8: security は find-generic-password だけで、-w・-g・書き換えは一度も使わない',
+    all.length > 10 && !readsSecret(all) && all.every(c => c.args[0] === 'find-generic-password'), String(all.length));
+
+  // 7. 起動の記録（tests/lib/claude-launch-record.mjs）: macOS は linux として入口に渡す（b1 の入口は macOS では platform で止まるため）
+  t.ok('起動の記録: macOS は linux の記録と同じ OS として入口に渡す（Windows は win32 のまま）',
+    recordPlatform('darwin') === 'linux' && recordPlatform('linux') === 'linux' && recordPlatform('win32') === 'win32');
+}
+
 export default async function (t) {
   const macRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-own-dir-mac-'));
-  try { await macKeychain(t, macRoot); }
+  try { await macKeychain(t, macRoot); await macAuthFailures(t, macRoot); }
   finally { await fs.rm(macRoot, { recursive: true, force: true }); }
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-own-dir-'));
