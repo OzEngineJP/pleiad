@@ -23,7 +23,7 @@ jobs:
     # 組織のリポジトリでは持ち主が組織になり、人の push と一致しないので、出す人を変数で決める（docs/desktop-releases.md「自己署名の配布」）
     if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 25 分（shard に分けた 1 ジョブは 10 分前後）
+    # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 25 分（shard に分けた 1 ジョブは 6〜9 分。PR #234 の実測）
     timeout-minutes: 50
     permissions:
       actions: read
