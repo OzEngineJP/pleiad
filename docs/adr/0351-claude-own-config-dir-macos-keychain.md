@@ -1,6 +1,6 @@
 # 0351 macOS でも専用フォルダ方式を使えるようにする（キーチェーンの読み書きは CLI に任せ、Pleiad は項目の有無だけを見る）
 
-- 状態: 提案
+- 状態: 承認（2026-11-24、利用者が委任）。実装済み。macOS の止めは下の「Mac の確かめ」に合格するまで外さない
 - 関係: [ADR 0345](0345-claude-account-own-config-dir.md)（専用フォルダ方式）・[ADR 0350](0350-claude-own-config-dir-default-remove-b1.md)（段 2。macOS を止め、対応はこの ADR に回した）・[ADR 0340](0340-claude-connectors-per-account.md)（b1。macOS の読み取り経路の準備）
 
 ## 状況
@@ -9,7 +9,7 @@
 
 2026-11-24 に Mac の実機で確かめた（CLI 2.1.322 / SDK 0.3.288、Darwin 27、画面のあるログイン。b1 の確かめのときに得たもの）:
 - CLI は資格情報をキーチェーンの汎用パスワードに置き、`.credentials.json` を作らない。
-- 項目名は、`CLAUDE_CONFIG_DIR` を渡すと `Claude Code-credentials-<その文字列を NFC 正規化した SHA-256 の先頭 8 桁>`、渡さないと `Claude Code-credentials` になる。パスの文字列で決まるため、symlink の別名や末尾の `/` があると別の項目になる。account は OS のログイン名（ADR 0340 の準備経路にある `claude-code-user` は誤り）。
+- 項目名は、`CLAUDE_CONFIG_DIR` を渡すと `Claude Code-credentials-<その文字列を NFC 正規化した SHA-256 の先頭 8 桁>`、渡さないと `Claude Code-credentials` になる。パスの文字列で決まるため、symlink の別名や末尾の `/` があると別の項目になる。account は OS のログイン名（ADR 0340 の準備経路は当初 `claude-code-user` としていたが、ADR 0340 段 4 の記録でログイン名に直した）。
 - `security find-generic-password -s <名前> -a <ログイン名>` を `-w` なしで呼ぶと、中身を読まず、確認のダイアログも出さずに項目の有無が分かる。`-w` で中身を読むとアクセスの確認が出る（「許可」で通る）。画面のロック中は確認を出せないので待ち続ける。
 - 終了コード: 項目なし 44・ロック 36・拒否 128・認証失敗 51・鍵束なし 50・既定の鍵束なし 37。
 - 専用フォルダで `claude auth login` を実行してブラウザーで認可すると、ハッシュ付きの項目ができる。アクセス用トークンが期限切れでも、同じフォルダの CLI を 1 回呼ぶと項目ごと更新され、ログインし直す必要はなかった。
@@ -33,7 +33,8 @@ Pleiad がトークンの中身を読む必要があるかを洗った。本人�
 - headless は別に判定しない。上の結果で `keychain` か `platform` になる。実機で確かめるまでは、headless で使えるとは書かない。
 - 期限切れのとき Pleiad は何もしない（CLI が更新する。実機で確かめた）。CLI が認証の失敗を返したときは、Windows と同じくログイン切れの印を付け、「ログイン」を出す。
 - アカウントを消すとき（macOS だけ）は、専用フォルダを消す前に同じ `CLAUDE_CONFIG_DIR` で `claude auth logout` を呼び、CLI に自分の項目を消させる（Pleiad が `security delete-generic-password` を呼ぶとダイアログが出るおそれがあるため）。その後に有無を見て、項目が残っていればログに書き、削除は止めない。すでに消したアカウントの項目は、パスが分からないので掃除しない。
-- ADR 0340 の準備経路 `readMacAccessCredentials`（b1 用。`-w` で中身を読み、account の名前も誤っている）は、この実装で消す。b1 は macOS で一度も動いていない。
+- ADR 0340 の準備経路 `readMacAccessCredentials`（b1 用。`-w` で中身を読む）は、この実装で消す。b1 は macOS で一度も動いていない。
+- macOS の止め（ADR 0350）は、専用フォルダ方式の検査の入口（`ownDirChecks`）で `platform` として止める。止めを外すのは、環境変数 `AGENT_HOST_MACOS_OWN_DIR=1` があるときだけにする。これは下の確かめに使う試験用のサーバーにだけ付ける。既定（変数なし・`1` 以外の値）は止めたままで、利用者の Mac ではこの判定に入らない。合格したら、この変数をやめて darwin を既定で通す。
 - 段との並び:
   - 実装は b1 に触れないので、いつ入れてもよい。ただし ADR 0350 の macOS の止めを外すのは、下の確かめに合格してからにする。
   - 段 2a の既定の切り替えに Mac を含めるのは、2a のリリースまでに合格した場合だけ。間に合わなければ Mac は止めたまま 2a を出し、合格したリリースで止めを外す。2a・2b は Mac の確かめを待たない。
@@ -56,7 +57,9 @@ Pleiad がトークンの中身を読む必要があるかを洗った。本人�
 | M8 | ssh で入ってサーバーを立て、画面をロックした状態で送る | **ssh の用意と画面のロック** | 待ち続けず、理由（`keychain` か `platform`）が出るか、会話が動く |
 | M9 | アカウントを消す | なし | `claude auth logout` で項目が消え（44）、ダイアログが出ない。共有の `projects/` などは残る |
 
-止めたままにする範囲: M4 でダイアログが出たら（CLI の更新のたびに確認が出るので）止めを外さず、別の ADR で扱う。M8 で待ち続けたら、headless の Mac は `platform` で止める（判定の方法は別に決める）。試していない macOS の版や、CLI が `.credentials.json` に保存する形は、動くとは書かない（版では止めない）。
+試験用のサーバーは `AGENT_HOST_MACOS_OWN_DIR=1` を付けて立てる（付けないと M1 から `platform` で止まる）。
+
+止めたままにする範囲（2026-11-24 に決めた）: M4 でダイアログが出たら（CLI の更新のたびに確認が出るので）止めを外さず、別の ADR で扱う。M8 で待ち続けたら、headless の Mac は `platform` で止める（判定の方法は別に決める）。試していない macOS の版や、CLI が `.credentials.json` に保存する形は、動くとは書かない（版では止めない）。
 
 ## 理由
 
@@ -72,9 +75,10 @@ Pleiad がトークンの中身を読む必要があるかを洗った。本人�
 
 ## 影響
 
-- `core/claude-connectors-auth.mjs`: `ownDirLogin` が有無を判定する関数を使うようにし、種類 `keychain` を足し、`readMacAccessCredentials` を消す。止めを外すときに、ADR 0350 で入れる darwin の止めを外す。
-- `core/backends/claude-usage.mjs`: `credentialsMissing` の darwin の分岐を、有無を判定する関数に替える。
-- `core/claude-accounts.mjs`: macOS では、`remove` でフォルダを消す前に `claude auth logout` を呼ぶ。
-- `web/connectors-fail.mjs`・`web/mcp-matrix.mjs`・`web/session-context.mjs`・`web/locales/*`: `keychain` の文面を足す（ログインし直しは出さない）。
-- 試験: 偽物の `security` で、終了コードごとの種類・ダイアログの出る呼び方（`-w`）をしないこと・4 つの経路の文字列が同じことを確かめる。
+- `core/claude-own-dir.mjs`: 有無を判定する `claudeLoginPresent`（項目名は `claudeKeychainService`）と、削除の前の `logoutClaudeOwnDir` を置く。
+- `core/claude-connectors-auth.mjs`: `ownDirLogin` が `claudeLoginPresent` を使い、種類 `keychain`（ログインし直しは出さない）を足し、`readMacAccessCredentials` を消す。`ownDirChecks` に darwin の止めと試験用の外し方を入れる。合格したら止めを外す。
+- `core/backends/claude-usage.mjs`: `credentialsMissing` の darwin の分岐を `claudeLoginPresent` に替える（44 のときだけ「ログインし直す」）。
+- `core/claude-accounts.mjs`・`core/server.mjs`: `remove` でフォルダを消す前に `logoutClaudeOwnDir` を呼ぶ（macOS 以外と、フォルダの無いアカウントでは何もしない）。
+- `web/connectors-fail.mjs`・`web/locales/*`: `keychain` の文面を足す（直し方は「送り直す」）。`web/mcp-matrix.mjs`・`web/session-context.mjs` は種類ごとの文面を locales から引き、「ログインし直す」を出す種類に `keychain` を含めないので、変えない。
+- 試験（`tests/unit/claude-own-dir.mjs`）: 偽物の `security` で、終了コードごとの種類・ダイアログの出る呼び方（`-w`・`-g`）や書き換えをしないこと・4 つの経路と削除の logout の文字列が同じこと・darwin の止めと試験用の外し方を確かめる。CI に macOS は無いので、どの OS でも偽物で回る。
 - Mac の確かめには、この実装のブランチを Mac で動かす必要がある（リモートへの push が要る）。

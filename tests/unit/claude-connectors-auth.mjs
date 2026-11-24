@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { recordAll, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
 import { createClaudeConnectorsGate, CONNECTORS_FILE, identitySuffix } from '../../core/claude-connectors.mjs';
 import {
-  createClaudeConnectorsAuth, readAccessCredentials, readMacAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, REFRESH_WINDOW_MS, READ_ATTEMPTS,
+  createClaudeConnectorsAuth, readAccessCredentials, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, IDENTITY, REFRESH_WINDOW_MS, READ_ATTEMPTS,
   projectKeyOf, settingsOverrides, PROFILE_IO, connectorListProbe, createClaudeConnectorsWiring, supportedConnectorVersions, createConnectorVerification,
 } from '../../core/claude-connectors-auth.mjs';
 import { withUsageLock, createUsageReadsForTest } from '../../core/backends/claude-usage.mjs';
@@ -961,30 +961,6 @@ export default async function (t) {
       }
       t.ok('settings.json の確かめ: 401 で乗り換える道を開く 7 つの指定（大文字小文字を問わない）は、解決のとき（版を聞く前）にも起動の直前（fresh）にも env で止める。メッセージに値を出さない',
         switchBad.length === 0, switchBad.slice(0, 3).join(' | '));
-    }
-    {
-      const dir = '/private/test-usage';
-      let args, options, fileReads = 0;
-      const run = async (file, argv, opts) => { args = [file, ...argv]; options = opts; return { exitCode: 0, stdout: credsJson() }; };
-      const readFile = async () => { fileReads++; return credsJson(); };
-      const cred = await readMacAccessCredentials(dir, { run, readFile, account: 'login-name-0001' });
-      const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
-      t.ok('macOS: 明示した設定フォルダーのハッシュ付き項目を読み、アクセス用の3項目だけ返す',
-        args.at(-1) === `Claude Code-credentials-${hash}` && args.includes('login-name-0001') && !args.includes('claude-code-user')
-        && options.timeoutMs === 10_000 && cred.token === ACCESS && Object.keys(cred).sort().join() === 'expiresAt,scopes,token' && fileReads === 0);
-      await readMacAccessCredentials(dir, { configDir: null, run, readFile });
-      t.ok('macOS: 設定フォルダー無指定はハッシュなしの項目名', args.at(-1) === 'Claude Code-credentials');
-      for (const code of [44, 37, 50, 'ENOENT']) {
-        const value = await readMacAccessCredentials(dir, { run: async () => ({ exitCode: typeof code === 'number' ? code : null, startCode: typeof code === 'string' ? code : undefined }), readFile });
-        t.ok(`macOS: 項目なし・鍵束なし・利用不可 (${code}) はファイル保存を読む`, value?.token === ACCESS);
-      }
-      fileReads = 0;
-      for (const failure of [{ code: 36 }, { code: 51 }, { code: 128 }, { code: 1 }, { code: 44, killed: true }]) {
-        const value = await readMacAccessCredentials(dir, { run: async () => ({ exitCode: failure.code, timedOut: failure.killed }), readFile });
-        t.ok(`macOS: ロック・拒否・確認待ち (${failure.code}, ${!!failure.killed}) はファイルへ乗り換えない`, value === null && fileReads === 0);
-      }
-      const bad = await readMacAccessCredentials(dir, { run: async () => ({ exitCode: 0, stdout: '{' }), readFile });
-      t.ok('macOS: 壊れたキーチェーン項目はファイルへ乗り換えない', bad?.malformed === true && fileReads === 0);
     }
     if (process.platform !== 'win32') {
       const dir = path.join(tmp, 'profile-links');

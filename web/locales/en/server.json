@@ -605,6 +605,7 @@
     },
     "connectors": {
       "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+      "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
       "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
       "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
       "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",

@@ -1801,6 +1801,7 @@
         "history": "The conversation history location is moved",
         "profile": "Couldn't apply the settings",
         "ownDirLogin": "Dedicated folder login required",
+        "keychain": "Can't open the keychain",
         "ownDirLinks": "Couldn't prepare links to shared settings",
         "ownDirLinksWindows": "Check Windows permissions to create links",
         "ownDirProfile": "Couldn't apply settings to the dedicated folder",
@@ -1818,6 +1819,7 @@
         "history": "A setting moves the conversation history, so this can't be turned on",
         "profile": "Couldn't apply the connector settings for \"{{name}}\"",
         "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+        "keychain": "Can't open the Mac keychain. Unlock the screen, then send again (no need to sign in again).",
         "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
         "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
         "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
@@ -2064,6 +2066,7 @@
     "connectorsFail": {
       "why": {
         "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+        "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
         "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
         "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
         "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
@@ -3475,6 +3478,7 @@
           "profile": "couldn't apply settings",
           "format": "unreadable login",
           "ownDirLogin": "dedicated folder login required",
+          "keychain": "keychain can't be opened",
           "ownDirLinks": "couldn't prepare links to shared settings",
           "ownDirLinksWindows": "Windows link creation permission required",
           "ownDirProfile": "couldn't apply settings to the dedicated folder"
