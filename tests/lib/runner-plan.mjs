@@ -2,7 +2,7 @@
 //
 //   - 引数の解釈（--jobs / --shard / --timings / --weights / --list / --json と、suite 名の絞り込み）。値を取る引数の値は suite 名にならない
 //   - 登録の検査（重複・読めない名前・ファイルが無い・tests/unit に有るのに登録していない）。落とすのは、走らない suite を黙って作らないため
-//   - 時間の重み（tests/suite-weights.json）と、その重みでの決定的な分割（LPT）・worker に配る順
+//   - 時間の重み（tests/suite-weights.<win32|linux>.json）と、その重みでの決定的な分割（LPT）・worker に配る順
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +22,7 @@ export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプシ
   --jobs N, -j N     子プロセスの worker を N 本使う（1〜${MAX_JOBS}。既定は利用可能な CPU 数（最大 12）。1 は同じプロセスで順に）
   --shard k/N        N 分割したうちの k 番目だけ走らせる（時間の重みで決定的に分ける。k は 1〜N）
   --timings <path>   suite ごとの時間・判定数・skip・worker を JSON で書く
-  --weights <path>   時間の重みの JSON（既定 tests/suite-weights.json）
+  --weights <path>   時間の重みの JSON（既定 tests/suite-weights.<win32|linux>.json。OS で選ぶ）
   --retry-failed n   落ちた suite だけを n 回（0 か 1。既定 0 = 流し直さない）新しい worker で流し直す。通ったら緑として扱い、流し直したことを必ず出す（CI 用）
   --list [--json]    走らせずに、選ばれた suite と重みを出す
   --help, -h         これ

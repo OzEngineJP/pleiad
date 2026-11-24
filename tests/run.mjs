@@ -4,7 +4,7 @@
 //   npm test -- markdown              名前で絞る（部分一致）
 //   npm test -- --jobs 1              同じプロセスで登録順に 1 本ずつ
 //   npm test -- --jobs 2              子プロセスの worker 2 本で並列に（重い suite から配る）
-//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.json で決定的に分ける。CI のジョブ分けに）
+//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.<win32|linux>.json で決定的に分ける。CI のジョブ分けに）
 //   npm test -- --timings out.json    suite ごとの時間・判定数・skip・worker を JSON で書く
 //   npm test -- --list [--json]       走らせずに、選ばれた suite と重みを出す
 //
@@ -692,6 +692,8 @@ const SUITES = [
   './unit/data-lock.mjs',
   // どの公開関数も、DB に書けなければ例外を返し、メモリは書く前のまま
   './unit/store-failures.mjs',
+  // 圧縮の記録（compactions）は起動の全件読みに載せず、使うときに DB から読む。読み書きは載せていた頃と同じ
+  './unit/store-compactions.mjs',
   // 保存が全部失敗しても、サーバーは落ちず、拒否を受け損ねない（[unhandledRejection] が出ない）
   './unit/server-store-failures.mjs',
   './unit/db-tables.mjs',
@@ -1263,7 +1265,8 @@ const code = await main({
   unitDir: path.join(TESTS, "unit"),
   argv: process.argv.slice(2),
   root: ROOT,
-  weightsFile: path.join(TESTS, "suite-weights.json"),
+  // 時間の重みは OS ごと（CI の実測の中央値）。Windows 以外（macOS の手元も）は linux の表を使う
+  weightsFile: path.join(TESTS, `suite-weights.${process.platform === "win32" ? "win32" : "linux"}.json`),
   testEnv,
 });
 await testEnv.cleanupTestData();

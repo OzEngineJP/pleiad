@@ -25,29 +25,38 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # 全部の suite を、重みで割った shard ごとのジョブに分けて並べる（tests/run.mjs --shard。重みは OS ごとの tests/suite-weights.<win32|linux>.json）。
+  # 同じ (os, node) の shard は、1..shards が欠けず揃っていること（tests/unit/release-ci-gate.mjs が突き合わせる）。
   test:
     # 週次の起動は safe-storage-macos のためだけ。同じ main をもう一度回さない
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        # 直積（4 本）をやめて 3 本にした。Windows の実行枠は 2 倍で計上されるうえ、
-        # npm test 自体も ubuntu の約 2 倍かかる（150 秒 / 78 秒）ので、1 本あたりの費用は約 4 倍になる。
+        # (os, node) は 3 本（直積の 4 本から Windows の node 24 を外した）。Windows の実行枠は 2 倍で計上されるので、1 本あたりの費用は ubuntu の約 4 倍になる。
+        # shard の数は、重みの合計（Windows 約 61 分・ubuntu 約 33 分。worker 2 本）から、1 ジョブが 5〜8 分になるように決めた。
         include:
           # 下限（engines の node>=22.16。node:sqlite の FTS5 が使える最初の版。ADR 0115・0349）と最新。プラットフォーム非依存の壊れ方は実績上ここで捕まる
-          - { os: ubuntu-latest, node: "22.16" }
-          - { os: ubuntu-latest, node: "24" }
-          # Windows は 1 本だけ残す。Windows 固有の経路（パス・ファイルの掴み合い・疑似端末など）を
+          - { os: ubuntu-latest, node: "22.16", shard: 1, shards: 2 }
+          - { os: ubuntu-latest, node: "22.16", shard: 2, shards: 2 }
+          - { os: ubuntu-latest, node: "24", shard: 1, shards: 2 }
+          - { os: ubuntu-latest, node: "24", shard: 2, shards: 2 }
+          # Windows は (os, node) を 1 本だけ残す。Windows 固有の経路（パス・ファイルの掴み合い・疑似端末など）を
           # main の push と PR で自動で通すのはこのジョブだけ（evaluation-release.yml も Windows で npm test を回すが、
           # 発火はリリースのタグ v* のみ）。
           # node 24 ではなく下限（22.16）を残す理由: リリースは node 22、開発機は node 24 なので、
           # 下限 × Windows はここを外すとどこでも検証されなくなる。
           # 直近30日の Windows 固有の失敗 4 件は node の版と相関していない（20 が 3、24 が 2）。
-          - { os: windows-latest, node: "22.16" }
+          - { os: windows-latest, node: "22.16", shard: 1, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 2, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 3, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 4, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 5, shards: 6 }
+          - { os: windows-latest, node: "22.16", shard: 6, shards: 6 }
+    name: test (${{ matrix.os }}, ${{ matrix.node }}, ${{ matrix.shard }}/${{ matrix.shards }})
     runs-on: ${{ matrix.os }}
-    # Windows は npm test だけで 24〜30 分かかる（main と PR で 29m55s・29m57s、PR #202 は 30m7s で打ち切られた）。
-    # 30 分だと本物の失敗ではなく時間切れで赤になるので、Windows だけ 45 分にする。ubuntu は 14〜16 分で、30 分のまま（止まったときに枠を占有し続けないための上限）
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
+    # 1 shard は worker 2 本で Windows が 5〜8 分・ubuntu が 8 分ほど。止まったときに枠を占有し続けないための上限
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -55,26 +64,27 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      # 本物の Electron を起こす検査は Windows の 1 本目の shard だけで回す（npm test の suite は Electron の実体を使わない）
       - name: Prepare verified Electron
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
         run: node scripts/prepare-electron.mjs
       - name: Source UI startup smoke
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
         timeout-minutes: 5
         run: node scripts/release-ui-smoke.mjs --source
-      # 共有ランナーでは worker 2 本に固定する（ローカルの CPU 数に応じた既定値は使わない）。ジョブは増やさない。
+      # 共有ランナーでは worker 2 本に固定する（ローカルの CPU 数に応じた既定値は使わない）。
       # npm test を通さず直に呼ぶ。Windows の既定の shell（pwsh）は `npm test -- --jobs 2` の `--` を食べ、
       # npm が --jobs を自分の設定として取るので、tests/run.mjs には `2 temporary/…` だけが suite 名として届いて落ちる（0.8.0 で起きた）
       # --retry-failed 1: 落ちた suite だけを新しい worker で 1 回流し直し、通れば緑にする（Windows の負荷で時々 1 本だけ落ちる試験を、リリースの足止めにしない。
       # 手元の npm test は流し直さない）。流し直したら、警告の注釈とジョブのまとめに、どの suite が 1 回目に落ちたかが必ず残る。2 回目も落ちたら赤（docs/adr/0162）
-      - run: node tests/run.mjs --jobs 2 --retry-failed 1 --timings temporary/test-timings.json
+      - run: node tests/run.mjs --jobs 2 --retry-failed 1 --shard ${{ matrix.shard }}/${{ matrix.shards }} --timings temporary/test-timings.json
       # suite ごとの時間・判定数・skip の記録（tests/run.mjs --timings）だけを残す。ログや環境変数・トークンは上げない。
       # 落ちた実行でも残し（always）、npm test が引数の不正などで書けなかったときは警告だけ（失敗にしない）
       - name: Upload test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: test-timings-${{ matrix.os }}-node${{ matrix.node }}
+          name: test-timings-${{ matrix.os }}-node${{ matrix.node }}-shard${{ matrix.shard }}
           path: temporary/test-timings.json
           if-no-files-found: warn
           retention-days: 30
@@ -132,6 +142,16 @@ jobs:
       - name: Smoke (no keyring)
         if: runner.os == 'Linux' && !matrix.keyring
         run: xvfb-run -a npx electron --no-sandbox tests/desktop/safe-storage-smoke.cjs
+
+  # push で回るジョブが全部通ったことを、1 つの名前にまとめる。リリースの ci-gate（scripts/release-ci-gate.mjs）が必須とするのはこのジョブだけで、
+  # shard の数や matrix を変えても ci-gate は直さなくてよい。`needs` が全部 success のときだけ走るので、落ちた・飛ばされた shard があればこのジョブは走らない。
+  # needs の一覧は、push で回るほかのジョブ全部と一致させる（tests/unit/release-ci-gate.mjs が突き合わせる）
+  test-summary:
+    needs: [test, safe-storage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "test と safe-storage の全部のジョブが通った"
 
   # macOS の Keychain 側。リリース時の検査に加え、週次と手動でも確かめる。
   safe-storage-macos:

@@ -219,7 +219,7 @@ export default async function (t) {
   const serverContext = vm.createContext({
     createLoadTiming, performance, liveSnapshot,
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
-    resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
+    resolveBackendForSession: async () => ({}), store: { get: async () => ({}), getCompactions: async () => [] }, compactionScheduler: { get: () => null },
     mergeCompactionHistory, attachCompactSummaries, serveFrom, serveHistory,
     // 入力欄の `!`（core/shell-runs.mjs）。このテストの対象外
     shellRuns: { decorate: m => m, rows: () => [], placeKept: m => m },

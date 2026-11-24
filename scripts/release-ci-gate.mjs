@@ -14,16 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 export const WORKFLOW_PATH = '.github/workflows/test.yml';
 export const BRANCH = 'main';
-// test.yml が main の push で必ず回すジョブ（3 つの Node / OS の npm test と、safe-storage の 3 つ）。
-// 名前は GitHub が matrix の include から付けるもの。test.yml を変えたら合わせる（tests/unit/release-ci-gate.mjs が test.yml と突き合わせる）
-export const REQUIRED_JOBS = Object.freeze([
-  'test (ubuntu-latest, 22.16)',
-  'test (ubuntu-latest, 24)',
-  'test (windows-latest, 22.16)',
-  'safe-storage (windows-dpapi)',
-  'safe-storage (linux-gnome-keyring)',
-  'safe-storage (linux-no-keyring)',
-]);
+// test.yml が main の push で必ず回すジョブ。shard に分けた npm test と safe-storage の全部が success のときだけ走る test-summary 1 つにまとめてある
+// （shard の数や matrix を変えても、ここは変えずに済む。tests/unit/release-ci-gate.mjs が、test-summary の needs が push で回るほかのジョブ全部であることを突き合わせる）
+export const REQUIRED_JOBS = Object.freeze(['test-summary']);
 // test.yml にあって、main の push では if で飛ばすジョブ（週次・手動だけ）。skipped でよいのはこれだけ
 export const SKIPPED_ON_PUSH = Object.freeze(['safe-storage-macos']);
 // main が赤いとみなす結論。これがあれば、ほかの run が成功していても公開しない
