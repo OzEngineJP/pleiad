@@ -78,6 +78,7 @@ export function createBotPage(host) {
     sessions: () => new Map((host.state?.sessions ?? []).map((s) => [s.id, s])),
     gone: false,
     accounts: new Map(),  // backend → 登録したアカウント [{ id, name, ready }]（web/client.mjs の accountList と同じ形）。無い = まだ読んでいない
+    accountsAsked: new Set(),// 登録したアカウントを読んでいる最中の backend（一覧のほかのエージェントの棒の判定用。読み終えたら外す）
     quotaAsked: new Set(),// 面を開いている間に使用量を頼んだ backend（閉じたら忘れ、次に開いたとき読み直す）
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
@@ -277,7 +278,7 @@ export function createBotPage(host) {
   // 使用量はホストの 1 本の取得口（usageSource）を購読する。新しい値が届いたら開いている面を描き直す
   host.onUsage?.(() => { if (modelPanel.open) { modelPanel.render(); modelPanel.place(); } });
   const modelPanel = place(panel(modelChip, modelPop, { width: 360, onHide: () => S.quotaAsked.clear(),
-    render: () => { askQuota(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
+    render: () => { askQuota(); askAccounts(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
   const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); if (iconDialog.open) iconDialog.close(); };
@@ -373,6 +374,14 @@ export function createBotPage(host) {
       if (S.quotaAsked.has(b.id)) continue;
       S.quotaAsked.add(b.id);
       Promise.resolve(host.quota(b.id)).catch(() => {});
+    }
+  }
+  /** モデルの面を描くとき、一覧のほかのエージェントの登録も読んでおく（棒を出すかの判定。読んでいない・読んでいる最中のものだけ） */
+  function askAccounts() {
+    for (const b of backends()) {
+      if (S.accounts.has(b.id) || S.accountsAsked.has(b.id) || !takesAccount(b.id)) continue;
+      S.accountsAsked.add(b.id);
+      loadAccounts(b.id).finally(() => S.accountsAsked.delete(b.id));
     }
   }
   /** 選んだアカウントが消えた・使えない（トークン・資格情報が無い）ときの一文（入力欄と同じ文） */
@@ -721,6 +730,8 @@ export function createBotPage(host) {
     return {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
       backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
+      // 一覧のほかのエージェントがアカウントを登録しているか（今のエージェントは accounts で決まる。composer-labels.mjs の agentRowUsage）
+      backendHasAccounts: (id) => (accountsOf(id)?.length ?? 0) > 0,
       agentView: (id) => host.agentView?.(id) ?? null,
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
