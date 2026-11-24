@@ -6,6 +6,7 @@ import { loadClaudeSdk } from '../claude-sdk.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota, LOGIN_ACCOUNT, quotaFailure } from '../usage.mjs';
 import { claudeEnv, TOKEN_ENV } from '../claude-accounts.mjs';
+import { claudeLoginPresent, macKeychainAuthFailure } from '../claude-own-dir.mjs';
 import { isClaudeAuthError } from './claude-normalize.mjs';
 import { t } from '../i18n.mjs';
 
@@ -109,19 +110,22 @@ const filled = value => typeof value === 'string' && value.length > 0;
  * トークンの値は比べも返しもせず、項目（claudeAiOauth）があるか・アクセス用のトークンが空でないかだけを見る。
  *   configDir あり … 登録したアカウントの使用量の設定フォルダ。無し … ログイン中のアカウント（CLAUDE_CONFIG_DIR、無ければ ~/.claude）
  * API キー（やログイン中のアカウントの会話用のトークン）が env にあれば、CLI はそちらで動くのでファイルは手がかりにならない（false）。
- * macOS の CLI はキーチェーンに置くので、ファイルが無い・項目が無いことは手がかりにしない。
+ * macOS の CLI はキーチェーンに置く。登録したアカウント（configDir あり）は、claudeLoginPresent で項目の有無だけを見る（中身は読まない。ADR 0351）。
+ *   ログイン中のアカウントは今までどおり手がかりにしない。
  * ログイン中のアカウントは API の接続でもファイルが無いので、ファイルが無いことは手がかりにしない（登録したアカウントは Pleiad がログインさせた設定フォルダ）
  */
-export async function credentialsMissing({ configDir, env = process.env, home = os.homedir(), platform = process.platform, readFile = fs.readFile } = {}) {
+export async function credentialsMissing({ configDir, env = process.env, home = os.homedir(), platform = process.platform, readFile = fs.readFile,
+  present = claudeLoginPresent } = {}) {
   const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', ...(configDir ? [] : [TOKEN_ENV])];
   if (keys.some(key => filled(env[key]))) return false;
+  if (platform === 'darwin') return Boolean(configDir) && await present(configDir, { platform }) === 'missing';
   const dir = configDir || env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
   let text;
   try { text = await readFile(path.join(dir, '.credentials.json'), 'utf8'); }
-  catch (e) { return e?.code === 'ENOENT' && Boolean(configDir) && platform !== 'darwin'; }
+  catch (e) { return e?.code === 'ENOENT' && Boolean(configDir); }
   let oauth;
   try { oauth = JSON.parse(text)?.claudeAiOauth; } catch { return false; }
-  if (!oauth || typeof oauth !== 'object') return platform !== 'darwin';
+  if (!oauth || typeof oauth !== 'object') return true;
   return !filled(oauth.accessToken);
 }
 
@@ -201,7 +205,8 @@ export const NEEDS_USAGE_LOGIN = needsUsageLogin();
  * skip は読む間隔を延ばしている行（ログイン中は 'login'、ほかはアカウントの id。core/usage.mjs の createQuotaStore）。
  * 読まずに { skipped: true } の行を返し、ストアが前回の行を残す
  */
-export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('claude.usage.loginAccount'), read = readClaudeUsage, skip = [] } = {}) {
+export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('claude.usage.loginAccount'), read = readClaudeUsage, skip = [],
+  keychainFailure = macKeychainAuthFailure } = {}) {
   if (!accounts.length) {
     try { return await read({}); }
     catch (e) { return { windows: [], reason: quotaFailure(e), message: t('claude.usage.failed', { message: errorText(e) }) }; }
@@ -224,6 +229,11 @@ export async function readClaudeAccountsUsage({ accounts = [], loginLabel = t('c
       // ログイン切れの印は、CLI が認証失敗を返したときに付ける。429・時間切れ・起動失敗は「取得できませんでした」
       const reason = quotaFailure(e);
       const auth = reason !== 'rate-limited' && reason !== 'timeout' && claudeUsageAuthFailure(e);
+      // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など。ADR 0351 の M7）か、サーバー側でログインが取り消された（M6。未確認）か。
+      // 見分けられないので、ログイン切れの印（cliAuthFailed）は付けず、ロックの解除を先に、続くときの「ログインし直す」も出す（reauth）
+      if (auth && await Promise.resolve().then(() => keychainFailure(a.configDir)).catch(() => null) === 'keychain') {
+        return { ...base, windows: [], reason, keychain: true, reauth: true, message: t('claude.usage.keychain') };
+      }
       return { ...base, windows: [], reason, ...(auth ? { reauth: true, cliAuthFailed: true } : {}),
         message: auth ? t('claude.usage.failedReauth', { message: errorText(e) }) : t('claude.usage.failed', { message: errorText(e) }) };
     }

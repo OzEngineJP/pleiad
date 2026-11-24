@@ -22,13 +22,12 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
-import { run as runProcess } from './process.mjs';
 import { AccountError, cliConfigFile } from './claude-accounts.mjs';
 import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 import { claudeUsageAuthFailure } from './backends/claude-usage.mjs';
-import { ensureClaudeOwnDirLinks, OWN_DIR, withClaudeUsageDir } from './claude-own-dir.mjs';
+import { claudeLoginPresent, ensureClaudeOwnDirLinks, macKeychainAuthFailure, OWN_DIR, sshSession, withClaudeUsageDir } from './claude-own-dir.mjs';
 
 /** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
 export const VERIFIED_VERSIONS = [{ cli: '2.1.322', sdk: '0.3.288' }];
@@ -60,6 +59,11 @@ const TOKEN = /^[\x21-\x7e]{20,4096}$/;
 const SCOPE = /^[A-Za-z0-9:_.-]{1,64}$/;
 /** ファイルでログインを持つ OS。macOS はキーチェーンに置くので、対応を別の ADR で決めるまで止めたままにする（ADR 0350・ADR 0340 段 4） */
 const FILE_PLATFORMS = ['win32', 'linux'];
+/**
+ * 専用フォルダ方式を使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351。2026-11-24 の実機の確かめで通した）。
+ * macOS でも ssh からの起動は止める（ssh。画面が無いと CLI が鍵束を開けない）
+ */
+const OWN_DIR_PLATFORMS = ['win32', 'linux', 'darwin'];
 /**
  * 401 のとき、CLI が渡したトークンを捨てて、共有の .credentials.json・ホストが持つトークン・別の出どころのトークンへ
  * 乗り換える道を開く指定（CLI 2.1.322 のコードで確かめた。足さなかった候補と理由は ADR 0340）
@@ -103,7 +107,7 @@ function attachConnectorsError(error, account, fallbackKind = 'login') {
       code: error.code,
       accountId: account?.id ?? null,
       accountName: account?.name ?? account?.id ?? '',
-      reauth: ['expired', 'login', 'format', 'ownDirLogin'].includes(kind),
+      reauth: ['expired', 'login', 'format', 'ownDirLogin', 'keychainAuth'].includes(kind),
       needsOwnerCheck: kind === 'owner',
       params: error.connectorsParams ?? {},
     };
@@ -115,38 +119,6 @@ const sleepFor = ms => new Promise(resolve => setTimeout(resolve, ms));
 const present = (env, names) => names.filter(name => typeof env[name] === 'string' && env[name] !== '');
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stripBom = text => String(text).replace(/^﻿/, '');
-
-/** Claude Code が項目に付ける account は OS のログイン名（実機 CLI 2.1.319 の既定項目・CLI 2.1.322 の明示項目で確認）。 */
-function macKeychainAccount() {
-  try { return os.userInfo().username; } catch { return process.env.USER || ''; }
-}
-
-/** macOS のキーチェーンから、設定フォルダーを明示した使用量ログインの項目を読む（実機 CLI 2.1.322 で項目名・account を確認。ADR 0340 段 4）。platform の停止は解除しないので、製品の経路では darwin はここへ届かない（ADR 0350）。 */
-export async function readMacAccessCredentials(dir, {
-  configDir = dir, run = runProcess, readFile = fs.readFile, sleep = sleepFor,
-  account = macKeychainAccount(),
-} = {}) {
-  // 使用量の CLI は設定フォルダーを明示する。無指定の通常 CLI とは項目名が異なる。
-  const suffix = configDir === null ? '' : `-${crypto.createHash('sha256').update(configDir.normalize('NFC')).digest('hex').slice(0, 8)}`;
-  let text;
-  try {
-    const result = await run('/usr/bin/security', ['find-generic-password', '-a', account, '-w', '-s', `Claude Code-credentials${suffix}`],
-      { timeoutMs: 10_000, maxOutputChars: 1024 * 1024, windowsHide: true });
-    if (result.exitCode !== 0 || result.timedOut || result.stopped || result.truncated) {
-      throw { code: result.startCode ?? result.exitCode, killed: result.timedOut || result.stopped || result.truncated };
-    }
-    text = result.stdout;
-  } catch (error) {
-    // 項目なし・鍵束なし・実行ファイルなしだけファイル保存を確認する。
-    // ロック・拒否・確認待ちのタイムアウトでは古いファイルへ乗り換えない。
-    if ([44, 37, 50, 'ENOENT'].includes(error?.code) && !error?.killed) {
-      return readAccessCredentials(dir, { readFile, sleep });
-    }
-    return null;
-  }
-  // 既存の検査を共用し、アクセス用トークン・期限・権限だけを返す。
-  return readAccessCredentials(dir, { readFile: async () => text, sleep: async () => {} });
-}
 
 /**
  * 使用量の認可のログインから、アクセス用トークン・期限・権限を読む。更新用トークンは返さない。
@@ -509,7 +481,7 @@ async function projectProfileNow({ source, target, cwd, platform = process.platf
  */
 export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard = () => {}, env = process.env, home = os.homedir(), platform = process.platform,
   now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
-  onLoginExpired = async () => {}, verify = null } = {}) {
+  onLoginExpired = async () => {}, verify = null, loginPresent = claudeLoginPresent } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
   async function checkSettingsFile(name, file) {
@@ -549,8 +521,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   }
 
   async function credentials(account, dir, { skipSleep = false } = {}) {
-    const read = platform === 'darwin' ? readMacAccessCredentials : readAccessCredentials;
-    const cred = await read(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
+    const cred = await readAccessCredentials(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
     if (!cred) throw new ConnectorsAuthError('login', { name: account.name ?? account.id });
     if (cred.malformed) throw new ConnectorsAuthError('format', { name: account.name ?? account.id });
     return cred;
@@ -622,11 +593,14 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
   return resolveAuth;
 
   async function ownDirLogin(account, dir) {
-    const isFile = file => fs.lstat(path.join(dir, file)).then(info => info.isFile(), () => false);
+    const name = account.name ?? account.id;
     const root = await fs.lstat(dir).catch(() => null);
-    if (!root?.isDirectory() || !await accounts.hasUsageLogin(account.id) || !await isFile(CREDENTIALS_FILE)) {
-      throw new ConnectorsAuthError('ownDirLogin', { name: account.name ?? account.id });
-    }
+    if (!root?.isDirectory() || !await accounts.hasUsageLogin(account.id)) throw new ConnectorsAuthError('ownDirLogin', { name });
+    // ログインの有無だけを見る（macOS はキーチェーンの項目の有無。中身は読まない。ADR 0351）
+    const found = await loginPresent(dir, { platform });
+    if (found === 'keychain') throw new ConnectorsAuthError('keychain', { name });
+    if (found === 'platform') throw new ConnectorsAuthError('platform', { name, platform });
+    if (found !== 'present') throw new ConnectorsAuthError('ownDirLogin', { name });
     const profile = await fs.lstat(path.join(dir, '.claude.json')).catch(error => {
       if (error.code !== 'ENOENT') throw error;
       return null;
@@ -636,6 +610,9 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
 
   async function ownDirChecks(account, cwd) {
     const name = account.name ?? account.id;
+    if (!OWN_DIR_PLATFORMS.includes(platform)) throw new ConnectorsAuthError('platform', { name, platform });
+    // ssh で起動した Mac は、画面が無いので CLI が鍵束を開けない（M8 の実機で loggedIn:false のまま失敗した）。待たずに止める（ADR 0351）
+    if (platform === 'darwin' && sshSession(env)) throw new ConnectorsAuthError('ssh', { name });
     const ver = await versionCheck(name);
     const dir = accounts.usageDir(account.id);
     await ownDirLogin(account, dir);
@@ -682,6 +659,16 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
           await prepareOwnDir(account, dir, cwd, true);
           return { env: { CLAUDE_CONFIG_DIR: dir } };
         } catch (error) { throw attachConnectorsError(error, account); }
+      },
+      /**
+       * 会話の CLI がこのフォルダのログインで断られたときに呼ぶ（core/backends/claude.mjs）。macOS で項目が有るなら鍵束を開けなかった
+       * （ロック中など。ADR 0351 の M7）とみて keychainAuth の connectorsError を返す。サーバー側でログインが取り消されたとき（M6）も
+       * 項目は残るので見分けられない。期限切れの印は付けず、ロックの解除と送り直しを先に、続くときのログインし直しも出す（reauth）。
+       * それ以外は null（呼び手は期限切れとして扱う）
+       */
+      async authFailure() {
+        if (await macKeychainAuthFailure(dir, { platform, present: loginPresent }) !== 'keychain') return null;
+        return attachConnectorsError(new ConnectorsAuthError('keychainAuth', { name: account.name ?? account.id }), account);
       },
     } } };
   }

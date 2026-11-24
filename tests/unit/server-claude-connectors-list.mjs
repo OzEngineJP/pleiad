@@ -8,6 +8,9 @@
 //   覚えはアカウントごとの覚え（CONNECTORS_CACHE_FILE。名前と要認可だけ）に書き、ログイン中の覚え（claude-connectors.json）は書かない
 //   4. 段 3 のスイッチ（accounts.setConnectors。人だけ）: 止める条件に当たれば入れない（設定を書かない）・使えれば入れる・切れる。
 //      オンで止める条件に当たった会話は、CLI を起こさず発言を「送れませんでした」に戻し、止めた理由（connectorsError）と直す入口（auth.mode connectorsLogin）を渡す
+//   macOS: 今の方式（.credentials.json を読む b1）は OS の理由で止める（ADR 0350。macOS は専用フォルダ方式だけ。ADR 0351）。2・3・4 の代わりに、
+//      オンにしても platform で止まり CLI を起こさないことを確かめる。専用フォルダ方式の通しは本物のキーチェーンを見るので macOS では飛ばす
+//      （偽の security での確かめは tests/unit/claude-own-dir.mjs）
 // 一覧の読み取りは 5 分覚える（読めた後は起こさない）ので、オフとオンは別のサーバー・別のデータ置き場で確かめる
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
@@ -112,8 +115,21 @@ export default async function (t) {
         JSON.stringify({ saw: r.saw, lines, saved: fss.existsSync(s.savedList) }));
     } finally { await s.close(); }
   }
-  // 2・3. オン
-  {
+  // 2・3. オン（macOS は今の方式を OS の理由で止める）
+  const mac = process.platform === 'darwin';
+  if (mac) {
+    const s = await boot('on-mac');
+    try {
+      await s.enable(true);
+      const r = await s.read();
+      const row = await s.refreshRow();
+      t.ok('オン（macOS・今の方式）: OS の理由（platform）で止め、一覧のための CLI を起こさない・覚えの一覧を書かない',
+        r.state === 'none' && row?.status === 'blocked' && row?.blockKind === 'platform' && row?.connectors === null
+          && s.envLines().length === 0 && !fss.existsSync(s.savedList) && !fss.existsSync(s.accountCache),
+        JSON.stringify({ r, row: row && { status: row.status, kind: row.blockKind }, lines: s.envLines().length }));
+      t.skip('今の方式（b1）の読み取り・スイッチ・会話の経路（macOS は止めるため。Windows・Linux で確かめる）');
+    } finally { await s.close(); }
+  } else {
     const s = await boot('on');
     try {
       await s.enable(true);
@@ -210,7 +226,8 @@ export default async function (t) {
       t.ok('取り消すと止めた理由も消える', cancelled?.status === 'cancelled' && !cancelled.connectorsError, JSON.stringify(cancelled && { status: cancelled.status, ce: Boolean(cancelled.connectorsError) }));
     } finally { await s.close(); }
   }
-  {
+  if (mac) t.skip('専用フォルダ方式の通し（macOS は本物のキーチェーンを見るため。偽の security での確かめは claude-own-dir）');
+  else {
     const s = await boot('own-dir');
     try {
       const { c } = s;
@@ -260,10 +277,21 @@ export default async function (t) {
       await c.cmd('setTurnSettings', { sessionId, account: s.id });
       const turns = () => fss.existsSync(s.probeLog) ? fss.readFileSync(s.probeLog, 'utf8').trim().split('\n') : [];
       before = turns().length;
+      // 前に付いた期限切れの印（使用量の読み取りが控えに回っている間も残っていた。ADR 0351 の M7）
+      const expiredMarker = path.join(dir, 'ply-usage-expired.json');
+      await fs.writeFile(expiredMarker, JSON.stringify({ at: new Date().toISOString(), reason: 'no-login' }));
+      const markedBefore = (await c.cmd('claudeAccounts')).accounts.find(a => a.id === s.id)?.usageExpired === true;
       const turn = await c.runTurn({ sessionId, prompt: 'hello' });
       const launches = turns().slice(before);
       t.ok('専用フォルダ方式: 会話用トークン無し、期限の時刻が過去でも起動し、子を事前に再起動しない',
         turn.outcome === 'ok' && launches.length === 1 && launches[0] === 'login', JSON.stringify({ outcome: turn.outcome, launches }));
+      let cleared = false;
+      for (let i = 0; i < 100 && !cleared; i++) {
+        cleared = !fss.existsSync(expiredMarker) && (await c.cmd('claudeAccounts')).accounts.find(a => a.id === s.id)?.usageExpired === false;
+        if (!cleared) await sleep(50);
+      }
+      t.ok('専用フォルダ方式: そのアカウントのログインで会話が通ったら、前に付いた期限切れの印（ply-usage-expired.json）を外す（ADR 0351 の M7）',
+        markedBefore && cleared, JSON.stringify({ markedBefore, cleared }));
       await set(false);
       const b1Error = await models().then(() => null, e => e.message);
       t.ok('コネクターをオフにすると方式の表示が消え、モデル一覧は同じ理由で止まる',

@@ -91,7 +91,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { OWN_DIR } from './claude-own-dir.mjs';
+import { logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
@@ -567,9 +567,13 @@ claudeAccountSecrets.migrate().catch(() => {});
 // トークンの持ち主（発行された組織）を GET /v1/models の応答ヘッダーで確かめ、使用量の認可と食い違えば一覧で知らせる。
 // AGENT_HOST_ANTHROPIC_API は確認の送り先（テストの偽物用）。off なら確かめない（テストは既定で off。本物へは送らない）
 const tokenCheckApi = process.env.AGENT_HOST_ANTHROPIC_API || ANTHROPIC_API;
+// 子の claude CLI の起動の形（ログインとアカウントの削除の logout で同じものを使う）
+const claudeCliCommand = () => cliCommand('claude');
 const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: claudeAccountSecrets,
   checkOrg: tokenCheckApi === 'off' ? null : token => fetchTokenOrg(token, { baseUrl: tokenCheckApi }),
-  onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }) });
+  onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }),
+  // macOS だけ、アカウントを消す前に同じ CLAUDE_CONFIG_DIR で claude auth logout を呼ぶ（ADR 0351。ほかの OS は何もしない）
+  logout: dir => logoutClaudeOwnDir(dir, { command: claudeCliCommand }) });
 // claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340）。設定がオン（試験と手元の確かめだけ）のアカウントの会話だけが認証側を通る。
 // 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。更新は CLI に任せ（使用量の読み取りを 1 回流す）、Pleiad は更新用トークンを持ち出さない
 // 使用量の読み取りの印（guard）はオンの間だけ効き、オフにすると次の読み取りで外れる。更新（refresh）は印を付ける前から走っていた読み取りも待つ
@@ -587,7 +591,14 @@ const claudeAccountConnectors = createClaudeConnectorsWiring({
 });
 const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
 async function markConnectorsLoginExpired(accountId, reason) {
+  // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など）だけ。期限切れの印は付けない（ADR 0351 の M7）
+  if (await macKeychainAuthFailure(claudeAccounts.usageDir(accountId)).catch(() => null) === 'keychain') return;
   const result = await claudeAccounts.markUsageExpired(accountId, reason).catch(() => null);
+  if (result?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+}
+// そのアカウントのログインで会話が通った = ログインは生きている。期限切れの印（ply-usage-expired.json）を外す（ADR 0340・0351）
+async function clearConnectorsLoginExpired(accountId) {
+  const result = await claudeAccounts.clearUsageExpired(accountId).catch(() => null);
   if (result?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
 }
 const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 'token') ?? null;
@@ -595,7 +606,7 @@ const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 't
 // アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
 // トークンは画面へ返さず、そのままアカウントの秘密へしまう
 const claudeLogin = createClaudeLogin({
-  command: () => cliCommand('claude'),
+  command: claudeCliCommand,
   emit: event => emitGlobal({ ...event, sessionId: null }),
   saveToken: async ({ accountId, name, token }) => {
     const current = accountId ? (await claudeAccounts.list()).accounts.find(a => a.id === accountId) : null;
@@ -4015,6 +4026,12 @@ function makeEmit(turn) {
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
       if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
+      // コネクターの入口がオンのアカウントで通った = そのアカウントのログインは生きている。前に付けた期限切れの印を外す
+      // （外さないと、使用量の読み取りが控えに回っている間、ログインし直しの印が残り続けた。ADR 0351 の M7）
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && turn.connectorsEnabled && accountKind(turn.backend) === 'token') {
+        const accountId = limitAccount(turn.backend, turn.info.account);
+        if (accountId) void clearConnectorsLoginExpired(accountId);
+      }
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
