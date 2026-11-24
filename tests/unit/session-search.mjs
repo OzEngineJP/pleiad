@@ -1,11 +1,11 @@
-// セッション検索の core（core/session-search.mjs。docs/design.md「セッション検索」・ADR 0080）。
-// 純粋な部分（語の解釈・照合・関連度・抜粋）と、写しを持つ部分（読み込み・更新・partial）を、偽の一覧と偽の読み手で確かめる。
+// セッション検索の core（core/session-search.mjs。docs/design.md「セッション検索」・ADR 0349）。
+// 純粋な部分（語の解釈・照合・関連度・抜粋）と、索引を持つ部分（読み込み・更新・partial）を、偽の一覧と偽の読み手で確かめる。
 import {
   parseQuery, fold, placeName, findRanges, makeExcerpt, extractMessages, normalizeInput, encodeCursor, createSessionSearch,
 } from "../../core/session-search.mjs";
 
 export const name = "session-search";
-export const title = "セッション検索: 照合の規則・関連度の順・抜粋の ranges・写しの更新と partial";
+export const title = "セッション検索: 照合の規則・関連度の順・抜粋の ranges・索引の更新と partial";
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0, 0);
@@ -250,36 +250,5 @@ export default async function (t) {
     const stopped = make([row("x", { messages: [msg("user", "x")] })]);
     stopped.search.stop(); stopped.search.refresh("x");
     t.ok("stop した後は読み込みを始めない", stopped.calls.stored.length + stopped.calls.full.length === 0);
-  }
-
-  // ------------------------------------------------------------ 写しの予算（Issue #225）
-  {
-    // 会話 1 つ ≒ 1 万字（約 20KB）。予算 100KB なら新しい 4 つほどで止まる
-    const body = (id) => [msg("user", `${id} の本文 ${"あ".repeat(10_000)}`)];
-    const sessions = Array.from({ length: 40 }, (_, i) => row(`b${i}`, { lastModified: NOW - i * 1000, messages: body(`b${i}`) }));
-    const fx = make(sessions, { budgetBytes: 100_000 });
-    await fx.search.search({ query: "" }); await fx.search.idle();
-    const st = fx.search.status();
-    t.ok("予算: 写しの合計は予算を超えない", st.bytes <= 100_000 && st.indexed >= 3, JSON.stringify(st));
-    t.ok("予算: 裏の読み込みは予算に近づいたら止め、古い会話は読まない", fx.calls.stored.length + fx.calls.full.length < 10, `${fx.calls.stored.length}+${fx.calls.full.length}`);
-    t.ok("予算: 持たない会話を pending に数えない（partial にし続けない）", st.pending === 0 && st.skipped === 40 - st.indexed, JSON.stringify(st));
-    const recent = await fx.search.search({ query: "本文" });
-    t.ok("予算: 新しい会話の本文は探せ、partial ではない", ids(recent).includes("b0") && !ids(recent).includes("b39") && recent.partial === false, JSON.stringify({ ids: ids(recent), partial: recent.partial }));
-    t.ok("予算: 古い会話も題では当たる", ids(await fx.search.search({ query: "b39" })).join() === "b39");
-    const named = await fx.search.search({ query: "本文", filters: { sessionIds: ["b39"] } });
-    t.ok("予算: 会話を名指しした検索は、持っていない会話も読んで本文に当てる", ids(named).join() === "b39" && named.sessions[0].matched.includes("message"), JSON.stringify(named.sessions[0]?.matched));
-    t.ok("予算: 名指しで読んでも予算を超えない（古い写しを捨てる）", fx.search.status().bytes <= 100_000, JSON.stringify(fx.search.status()));
-    // ターンの終わりの読み直しは、古い会話でも写す
-    fx.search.refresh("b30"); await fx.search.idle();
-    t.ok("予算: ターンが終わった会話は読み、ほかの古い写しを捨てて予算に収める", ids(await fx.search.search({ query: "b30 の本文" })).join() === "b30" && fx.search.status().bytes <= 100_000);
-  }
-  {
-    // #225 の再現: 予算を絞らない既定でも、会話 3,000 件（各 240KB 相当。合計は予算の約 3 倍）を読んで写しが予算に収まる
-    const big = Array.from({ length: 3000 }, (_, i) => row(`h${i}`, { lastModified: NOW - i }));
-    const text = "検索の本文 " + "あいうえおかきくけこ".repeat(12_000);
-    const fx = make(big.map((r) => ({ ...r, messages: [msg("user", text)] })));
-    await fx.search.search({ query: "" }); await fx.search.idle();
-    const st = fx.search.status();
-    t.ok("予算: 既定の予算（256MB）で、3,000 件の大きな会話でも写しが予算に収まり、残りは読まない", st.bytes <= 256 * 1024 * 1024 && st.indexed < 3000 && st.indexed + st.skipped === 3000 && fx.calls.stored.length < 3000, JSON.stringify(st));
   }
 }

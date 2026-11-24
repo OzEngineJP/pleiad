@@ -933,8 +933,10 @@ const SUITES = [
   './unit/cwd-recent-places.mjs',
   './unit/conversations.mjs',
   './unit/conversations-storage.mjs',
-  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・写しの更新と partial
+  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・索引の更新と partial
   './unit/session-search.mjs',
+  // 検索の索引（core/session-search-index.mjs・ADR 0349）: 2 字ずつの語・候補・先頭を残す更新・持ち越しと作り直し・結果が総当たりの照合と同じ
+  './unit/session-search-index.mjs',
   // 読み込み元（core/session-search-host.mjs）: 保存分は直接・それ以外は getMessages・完了通知とコマンドの行とツールの出力は写さない
   './unit/session-search-host.mjs',
   // 脇の検索の手元の照合（web/session-find.mjs）: core と同じ規則・並び・期間・最近の検索・近道
