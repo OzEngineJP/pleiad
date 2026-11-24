@@ -91,7 +91,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { logoutClaudeOwnDir, OWN_DIR } from './claude-own-dir.mjs';
+import { logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
@@ -591,7 +591,14 @@ const claudeAccountConnectors = createClaudeConnectorsWiring({
 });
 const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
 async function markConnectorsLoginExpired(accountId, reason) {
+  // macOS で項目が有るのに断られたのは、鍵束を開けなかった（ロック中など）だけ。期限切れの印は付けない（ADR 0351 の M7）
+  if (await macKeychainAuthFailure(claudeAccounts.usageDir(accountId)).catch(() => null) === 'keychain') return;
   const result = await claudeAccounts.markUsageExpired(accountId, reason).catch(() => null);
+  if (result?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+}
+// そのアカウントのログインで会話が通った = ログインは生きている。期限切れの印（ply-usage-expired.json）を外す（ADR 0340・0351）
+async function clearConnectorsLoginExpired(accountId) {
+  const result = await claudeAccounts.clearUsageExpired(accountId).catch(() => null);
   if (result?.changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
 }
 const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 'token') ?? null;
@@ -4019,6 +4026,12 @@ function makeEmit(turn) {
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
       if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
+      // コネクターの入口がオンのアカウントで通った = そのアカウントのログインは生きている。前に付けた期限切れの印を外す
+      // （外さないと、使用量の読み取りが控えに回っている間、ログインし直しの印が残り続けた。ADR 0351 の M7）
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && turn.connectorsEnabled && accountKind(turn.backend) === 'token') {
+        const accountId = limitAccount(turn.backend, turn.info.account);
+        if (accountId) void clearConnectorsLoginExpired(accountId);
+      }
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）

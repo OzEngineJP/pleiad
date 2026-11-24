@@ -26,6 +26,11 @@ export const FAKE = {
  */
 export const fixtureFile = (platform = process.platform) =>
   fileURLToPath(new URL(`../fixtures/claude-launch-main.${platform === 'win32' ? 'win32' : 'linux'}.json`, import.meta.url));
+/**
+ * 記録で入口（createClaudeConnectorsAuth）に渡す OS。macOS は linux とみなす（期待値も linux の記録。b1 の入口は macOS では platform で止まり、
+ * 記録が「起動されない」になって比べられない）。記録が見るのは起動の組み立て（ファイルの資格情報から env へ）で、鍵束は関わらない
+ */
+export const recordPlatform = (platform = process.platform) => platform === 'win32' ? 'win32' : 'linux';
 // 機械ごとに違う env は有無だけ記録する
 const MACHINE = new Set(['path', 'systemroot', 'comspec', 'pathext', 'temp', 'tmp', 'windir', 'systemdrive', 'home', 'userprofile']);
 
@@ -96,7 +101,8 @@ async function waitFile(file, ms) {
 
 /**
  * root の core で全経路を流して記録を返す。
- *   accountFor(accounts, id, { data })  … 会話が使うアカウントの決め方（既定: accounts.resolve。段 1 以降は入口を通す関数を渡す。data = 試験のデータ置き場）
+ *   accountFor(accounts, id, { data, platform })  … 会話が使うアカウントの決め方（既定: accounts.resolve。段 1 以降は入口を通す関数を渡す。data = 試験のデータ置き場、
+ *                                       platform = 入口に渡す OS（recordPlatform。macOS も linux の記録と比べる）)
  *   onSetup({ data })         … 流す前に、データ置き場へ足すものがあれば（段 1 の設定ファイルなど）
  */
 export async function recordAll({ root, accountFor = (accounts, id, ctx) => accounts.resolve(id), onSetup = null, only = null, dumpName = 'records' } = {}) {
@@ -133,7 +139,8 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
       for (const k of ['PATH', 'SystemRoot', 'windir', 'ComSpec', 'PATHEXT', 'SystemDrive']) { const v = pick(k); if (v !== undefined) base[k] = v; }
       Object.assign(process.env, base, { TEMP: tmp, TMP: tmp, AGENT_HOST_DATA: data, AGENT_HOST_CLAUDE_BIN: installed.bin, AGENT_HOST_CLAUDE_HOLDER: 'off' });
       for (const [k, v] of Object.entries(PARENTS[p])) if (v !== undefined) process.env[k] = v;
-      const account = a === 'registered' ? await accountFor(accounts, ACCOUNT_ID, { data }) : await accountFor(accounts, '', { data });
+      const ctx = { data, platform: recordPlatform() };
+      const account = a === 'registered' ? await accountFor(accounts, ACCOUNT_ID, ctx) : await accountFor(accounts, '', ctx);
       const endpoint = ENDPOINTS[e];
       const scoped = account?.id ? claude.forAccount(account) : claude;
       const paths = {

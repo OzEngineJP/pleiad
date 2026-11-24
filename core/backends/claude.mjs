@@ -976,6 +976,10 @@ export const backend = {
     let activeConnectorsEnv = connectorsEnv;
     const ownDir = connectors?.identity === OWN_DIR || adopt?.card.connectorsMode === OWN_DIR;
     let activeExpiresAt = ownDir ? null : adopt ? (adopt.card.connectorsExpiresAt ?? connectorsExpiresAt) : connectorsExpiresAt;
+    // 専用フォルダのログインで CLI が断られたとき、macOS で項目が有れば鍵束を開けなかった（ロック中など）とみて keychain の失敗にする
+    // （server は connectorsError があれば期限切れの印を付けない。ADR 0351 の M7）。それ以外は null
+    const ownDirAuthFailure = async () => ownDir && typeof connectors?.authFailure === 'function'
+      ? await connectors.authFailure().catch(() => null) : null;
     let resumeTarget = sessionId;
     let promptDeliveredOnce = false;
     let input = createInputQueue();
@@ -1652,6 +1656,10 @@ export const backend = {
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
       else if (authFailed) {
+        if (!authFailed.connectorsError) {
+          const keychain = await ownDirAuthFailure();
+          if (keychain) authFailed = { message: keychain.message, connectorsError: keychain.connectorsError };
+        }
         emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced, ...(authFailed.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) });
         if (!promptSent) return { sessionId: ctx.sessionId, undelivered: true };
       }
@@ -1674,12 +1682,17 @@ export const backend = {
         return { sessionId: ctx.sessionId };
       }
       const errOut = preExpiryAuthError ?? err;
-      const message = authFailed?.message ? hide(authFailed.message) : hide(errOut?.message ?? errOut);
+      let message = authFailed?.message ? hide(authFailed.message) : hide(errOut?.message ?? errOut);
       const auth = authFailed || isClaudeAuthError(errOut?.message ?? errOut);
-      const connectorsError = preExpiryAuthError?.connectorsError ?? authFailed?.connectorsError ?? errOut?.connectorsError ?? null;
+      let connectorsError = preExpiryAuthError?.connectorsError ?? authFailed?.connectorsError ?? errOut?.connectorsError ?? null;
+      let ownDirKeychain = false;
+      if (auth && !connectorsError) {
+        const keychain = await ownDirAuthFailure();
+        if (keychain) { message = keychain.message; connectorsError = keychain.connectorsError; ownDirKeychain = true; }
+      }
       const modelFailed = !auth && (modelRejected || isClaudeModelError(err?.message ?? err));
       emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced, ...(connectorsError ? { connectorsError } : {}) } : modelFailed ? { kind: 'model', pristine: !produced } : {}) });
-      const thrown = (activeOauthToken || endpoint) && errOut?.message && message !== errOut.message ? Object.assign(new Error(message), connectorsError ? { connectorsError } : {}) : errOut;
+      const thrown = ownDirKeychain || ((activeOauthToken || endpoint) && errOut?.message && message !== errOut.message) ? Object.assign(new Error(message), connectorsError ? { connectorsError } : {}) : errOut;
       throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();

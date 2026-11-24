@@ -27,7 +27,7 @@ import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnecto
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 import { claudeUsageAuthFailure } from './backends/claude-usage.mjs';
-import { claudeLoginPresent, ensureClaudeOwnDirLinks, OWN_DIR, withClaudeUsageDir } from './claude-own-dir.mjs';
+import { claudeLoginPresent, ensureClaudeOwnDirLinks, macKeychainAuthFailure, OWN_DIR, sshSession, withClaudeUsageDir } from './claude-own-dir.mjs';
 
 /** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
 export const VERIFIED_VERSIONS = [{ cli: '2.1.322', sdk: '0.3.288' }];
@@ -614,6 +614,8 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     if (!OWN_DIR_PLATFORMS.includes(platform) && !(platform === 'darwin' && env.AGENT_HOST_MACOS_OWN_DIR === '1')) {
       throw new ConnectorsAuthError('platform', { name, platform });
     }
+    // ssh で起動した Mac は、画面が無いので CLI が鍵束を開けない（M8 の実機で loggedIn:false のまま失敗した）。待たずに止める（ADR 0351）
+    if (platform === 'darwin' && sshSession(env)) throw new ConnectorsAuthError('platform', { name, platform });
     const ver = await versionCheck(name);
     const dir = accounts.usageDir(account.id);
     await ownDirLogin(account, dir);
@@ -660,6 +662,14 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
           await prepareOwnDir(account, dir, cwd, true);
           return { env: { CLAUDE_CONFIG_DIR: dir } };
         } catch (error) { throw attachConnectorsError(error, account); }
+      },
+      /**
+       * 会話の CLI がこのフォルダのログインで断られたときに呼ぶ（core/backends/claude.mjs）。macOS で項目が有るなら鍵束を開けなかった
+       * （ロック中など。ADR 0351 の M7）とみて keychain の connectorsError を返す。それ以外は null（呼び手は期限切れとして扱う）
+       */
+      async authFailure() {
+        if (await macKeychainAuthFailure(dir, { platform, present: loginPresent }) !== 'keychain') return null;
+        return attachConnectorsError(new ConnectorsAuthError('keychain', { name: account.name ?? account.id }), account);
       },
     } } };
   }

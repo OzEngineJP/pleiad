@@ -386,10 +386,11 @@ export default async function (t) {
           await fs.mkdir(path.join(data, 'claude-usage', ACCOUNT_ID), { recursive: true });
           await fs.writeFile(path.join(data, 'claude-usage', ACCOUNT_ID, '.credentials.json'), credsJson({ expiresAt: Date.now() + 8 * 3600_000 }));
         },
-        accountFor: async (accounts, id, { data }) => {
+        accountFor: async (accounts, id, { data, platform }) => {
           const { gate } = createClaudeConnectorsGate({
             dataDir: data,
             resolveAuth: createClaudeConnectorsAuth({
+              platform,
               accounts: { usageDir: i => path.join(data, 'claude-usage', i), ownerStatus: async () => 'ok' },
               versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
               refresh: async () => { log.push('refresh'); },
@@ -459,11 +460,12 @@ export default async function (t) {
             await fs.mkdir(path.join(data, 'claude-usage', ACCOUNT_ID), { recursive: true });
             await fs.writeFile(path.join(data, 'claude-usage', ACCOUNT_ID, '.credentials.json'), credsJson({ expiresAt: Date.now() + 8 * 3600_000 }));
           },
-          accountFor: async (accounts, id, { data }) => {
+          accountFor: async (accounts, id, { data, platform }) => {
             const credFile = path.join(data, 'claude-usage', ACCOUNT_ID, '.credentials.json');
             const { gate } = createClaudeConnectorsGate({
               dataDir: data,
               resolveAuth: createClaudeConnectorsAuth({
+                platform,
                 accounts: { usageDir: i => path.join(data, 'claude-usage', i), ownerStatus: async () => 'ok' },
                 versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
                 refresh: async () => { refreshed++; },
