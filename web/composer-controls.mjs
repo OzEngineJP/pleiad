@@ -12,7 +12,7 @@
 //     面の外を押すと閉じる。面は画面の幅に収める（360px の画面でもはみ出さない）
 import { el, svgEl, relTime } from "./dom.mjs";
 import { isComposingKey } from "./keyboard.mjs";
-import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel, splitModelRows } from "./composer-labels.mjs";
+import { resolvedModel, effortStops, modelChipLabel, modelRowIds, holdsDefault, endpointChipLabel, splitModelRows, agentRowUsage } from "./composer-labels.mjs";
 import { compatModelLabel, modelCandidates, searchModels, resolveTyped, moreText, ONE_M_TITLE } from "./compat-models.mjs";
 import { t } from "./i18n.mjs";
 import { splitChipLabel } from "./composer-layout.mjs";
@@ -560,6 +560,8 @@ function unusableAgentRow(b, v) {
  * @param {HTMLElement} o.pop 描画先（面の開閉は panel() で呼び出し側が扱う）
  * @param {object} o.target 今の値と候補。backend/backends/backendSwitchable、model/models、effort/efforts/effortDisabled。
  *   endpoint と account/accounts、modes/mode、destination は任意。省けばその行を出さない。
+ *   週の使用量は backendUsage(id)。棒を出す行は composer-labels.mjs の agentRowUsage（アカウントの行・互換の接続先があれば
+ *   エージェントの行に出さない。一覧のほかのエージェントは backendHasAccounts(id)）。
  * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account?, mode? }。保存後、更新した target で描き直す。
  *   既定に戻す model/effort は空文字を渡す。
  * @param {(returnFocus?: boolean) => void} o.hide 面の外へ移るとき（接続先の管理・使用量・bot のページ）、面を閉じる
@@ -608,7 +610,7 @@ function topView(ctx) {
   }
   if (d.backend) {
     rows.push(navRow({ key: "nav:agent", ic: logo(d.backend), label: t("composer.agent"), value: labelOf(d.backend),
-      meta: weekMeta(d.backendUsage?.(d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));
+      meta: weekMeta(agentRowUsage(d, d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));
   }
   // 接続先（Claude Code・Codex）。「公式」だけのときは出さない（「接続先を管理…」はエージェントの一覧の下と設定から）
   const ep = d.endpoint;
@@ -690,7 +692,7 @@ function subView(ctx) {
       for (const b of d.backends ?? []) {
         const v = d.agentView?.(b.id) ?? null;
         if (!v || v.usable) {
-          usable.push(optRow({ key: `backend:${b.id}`, sel: b.id === d.backend, ic: logo(b.id), name: b.label, meta: weekMeta(d.backendUsage?.(b.id)),
+          usable.push(optRow({ key: `backend:${b.id}`, sel: b.id === d.backend, ic: logo(b.id), name: b.label, meta: weekMeta(agentRowUsage(d, b.id)),
             disabledReason: b.id === d.backend ? null : ctx.blocked?.("agent", b.id),
             onPick: () => ctx.pick("agent", () => { if (b.id !== d.backend) ctx.on.backend(b.id); }) }));
         } else other.push(unusableAgentRow(b, v));

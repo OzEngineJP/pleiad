@@ -435,6 +435,8 @@ const SUITES = [
   './unit/composer-agy.mjs',
   // モデルの一覧の「ほかのモデル」の分け方（Claude は系統ごとに新しい版だけを上に）
   './unit/composer-labels.mjs',
+  // 設定の面の使用量の棒は、使用枠を決める行に 1 本だけ（アカウントの行があればそこだけ・互換の接続先では出さない・エージェントの一覧も同じ）
+  './unit/composer-usage-placement.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   './unit/compat-endpoints.mjs',
   // API キーの置き場（設定 › API キー。ADR 0155）: 移行（同じ値は 1 件・違う値は別の件・登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・古い置き場にも書く・確認・接続先の keyRef
