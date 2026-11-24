@@ -16,13 +16,14 @@ concurrency:
   cancel-in-progress: false
 jobs:
   # 同じ commit の main の CI（test.yml の push の run）を読み、release の npm test を省けるかを決める（docs/release-ci-reuse.md）。
-  # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。CI が赤ければここで止まり、release のジョブは走らない
+  # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。
+  # ビルド（windows・mac）はこの判定を待たずに並んで走る。CI が赤ければここで止まり、publish が走らない（赤い commit は公開しない）
   ci-gate:
     # 出せるのは、リポジトリの持ち主と Repository Variable PLY_RELEASE_ACTORS（JSON の配列。例 ["tekalu1"]）にある人だけ。
     # 組織のリポジトリでは持ち主が組織になり、人の push と一致しないので、出す人を変数で決める（docs/desktop-releases.md「自己署名の配布」）
     if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は Windows が 45 分・ほかは 30 分（Windows の通常は 27 分前後）
+    # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 25 分（shard に分けた 1 ジョブは 6〜9 分。PR #234 の実測）
     timeout-minutes: 50
     permissions:
       actions: read
@@ -46,12 +47,105 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
+  # CI の結果を使えないとき（run が無い・cancelled・一部だけ・期限までに終わらない・API の失敗。reuse 以外の値はすべて）に、release の中で全部のテストを回す。
+  # ビルドとは別のジョブにして並べる（ビルドはテストを待たない）。publish がこの結果を待つので、通らなければ公開しない。reuse のときは走らない（skipped）。
+  # test.yml と同じく、落ちた suite だけを 1 回流し直す（--retry-failed 1。流し直したことは注釈とまとめに残る）。PowerShell は `npm test -- …` の `--` を食べるので node を直に呼ぶ
+  release-tests:
+    needs: ci-gate
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && needs.ci-gate.outputs.decision != 'reuse'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: powershell
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$') { throw 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
+          if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
+      # test.yml の Windows の脚と同じ Node
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.13"
+          cache: npm
+      - name: Configure isolated test paths
+        run: |
+          $testTemp = Join-Path $env:RUNNER_TEMP 'ply-tests'
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+          "TEMP=$testTemp" >> $env:GITHUB_ENV
+          "TMP=$testTemp" >> $env:GITHUB_ENV
+      - run: npm ci
+      - name: Full test (main CI result not reusable)
+        run: node tests/run.mjs --jobs 2 --retry-failed 1
+  # macOS 固有の実行環境と、認証用ディレクトリ・CLI の接続・Keychain を公開前に検査する。実サービスや利用者の資格情報は使わない。
+  # 署名・公証のビルド（mac）とは別のジョブにして並べ、ビルドを遅らせない。publish がこの結果を待つ
+  mac-smoke:
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
+    strategy:
+      # 片方が落ちたら公開しないので、もう片方を待たない
+      fail-fast: true
+      matrix:
+        arch: [x64, arm64]
+    name: mac-smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'x64' && 'macos-15-intel' || 'macos-15' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)'; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo 'Release source must be on main'; exit 1; }
+          [ "$GITHUB_EVENT_NAME" != push ] || [ "$(git rev-parse HEAD)" = "$(git rev-parse "$GITHUB_SHA^{commit}")" ] || { echo 'Checkout does not match the pushed tag commit'; exit 1; }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.13"
+          cache: npm
+      - run: npm ci
+      # 準備スクリプトはワークフローの commit から取る。古いタグには scripts/prepare-electron.mjs が無い。検査するソースは上の checkout のまま
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-prep
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Prepare verified Electron
+        run: node release-prep/scripts/prepare-electron.mjs --release
+      - name: Release environment smoke
+        run: |
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version })"
+          node -e "require('node-pty')"
+          node tests/run.mjs --jobs 2 desktop-updates account usage claude-login mcp-secret-store delegation-routing opencode-adopt devin backend-contract backend-conformance backend-registry backend-test-env context-owner-capability
+      - name: macOS credential storage smoke
+        timeout-minutes: 5
+        env:
+          SMOKE_EXPECT_ENCRYPTED: "1"
+        run: npm run test:safe-storage
   # macOS の配布（Developer ID の署名と公証。docs/desktop-releases.md「macOS の配布」）。リポジトリの変数 PLY_MAC_RELEASE が on のときだけ走る。
   # 時間の大半は Apple の公証の待ちなので、CPU ごとのジョブに分けて並べる（PLY_MAC_ARCH。scripts/release-signing.cjs の macArchTargets）。
-  # windows のジョブとも並んで走り、publish のジョブが両方の配布物を同じ下書きに入れてから公開する（immutable releases なので、公開した後には足せない）。
+  # ci-gate・windows のジョブとも並んで走り、publish のジョブが両方の配布物を同じ下書きに入れてから公開する（immutable releases なので、公開した後には足せない）。
   # どれかが落ちたら publish は走らず、Windows だけで公開しない
   mac:
-    needs: ci-gate
     # 署名・公証の Secrets は Environment「release」にだけ置く（ADR 0214）
     environment: release
     if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
@@ -68,7 +162,6 @@ jobs:
       contents: read
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
       PLY_MAC_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -80,7 +173,7 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)'; exit 1; }
           git merge-base --is-ancestor HEAD origin/main || { echo 'Release source must be on main'; exit 1; }
-          [ "$(git rev-parse HEAD)" = "$CI_SHA" ] || { echo 'Checkout does not match the commit checked against main CI'; exit 1; }
+          [ "$GITHUB_EVENT_NAME" != push ] || [ "$(git rev-parse HEAD)" = "$(git rev-parse "$GITHUB_SHA^{commit}")" ] || { echo 'Checkout does not match the pushed tag commit'; exit 1; }
           [ "v$(node -p "require('./package.json').version")" = "$RELEASE_TAG" ] || { echo 'Tag must match package version'; exit 1; }
       # 同梱する Swift のヘルパー（scripts/build-computer-mac.cjs）を computer-mac-helper.yml と同じ Xcode で作る
       - name: Select Xcode
@@ -99,18 +192,7 @@ jobs:
           persist-credentials: false
       - name: Prepare verified Electron
         run: node release-prep/scripts/prepare-electron.mjs --release
-      # macOS 固有の実行環境と、認証用ディレクトリ・CLI の接続を公開前に検査する。実サービスや利用者の資格情報は使わない。
-      - name: Release environment smoke
-        run: |
-          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
-          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version })"
-          node -e "require('node-pty')"
-          node tests/run.mjs --jobs 2 desktop-updates account usage claude-login mcp-secret-store delegation-routing opencode-adopt devin backend-contract backend-conformance backend-registry backend-test-env context-owner-capability
-      - name: macOS credential storage smoke
-        timeout-minutes: 5
-        env:
-          SMOKE_EXPECT_ENCRYPTED: "1"
-        run: npm run test:safe-storage
+      # macOS 固有の実行環境の検査（Release environment smoke・credential storage smoke）は、別のジョブ mac-smoke に出した
       # App Store Connect の API キー（.p8）は中身を Secret に置き、electron-builder にはファイルの場所を渡す（scripts/release-signing.cjs）
       - name: Prepare notarization key
         env:
@@ -185,9 +267,8 @@ jobs:
             dist-desktop/*.zip
             dist-desktop/*.blockmap
             dist-desktop/latest-mac.yml
-  # Windows のテスト・ビルド・署名。mac のジョブと並んで走り、配布物を artifact windows-release に置く（公開は publish のジョブ）
+  # Windows のビルド・署名。ci-gate・mac のジョブと並んで走り、配布物を artifact windows-release に置く（公開は publish のジョブ。全部のテストは release-tests）
   windows:
-    needs: ci-gate
     # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
     environment: release
     if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
@@ -200,7 +281,6 @@ jobs:
         shell: powershell
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -212,7 +292,7 @@ jobs:
           if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$') { throw 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)' }
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
-          if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and (git rev-parse HEAD) -cne (git rev-parse "$($env:GITHUB_SHA)^{commit}")) { throw 'Checkout does not match the pushed tag commit' }
       # test.yml の Windows の脚と同じ Node（CI の結果を使うとき、OS・Node・lockfile・commit が CI と同じになる）
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -252,15 +332,10 @@ jobs:
           foreach ($arch in 'x64', 'arm64') {
             if (!(Test-Path -LiteralPath "node_modules/@koromix/koffi-win32-$arch/win32_$arch/koffi.node")) { throw "Missing koffi binary for win32-$arch" }
           }
-      # CI の結果を使えないとき（run が無い・cancelled・一部だけ・期限までに終わらない・API の失敗）は、ここで全部回す。reuse 以外の値はすべてこちら
-      # test.yml と同じく、落ちた suite だけを 1 回流し直す（--retry-failed 1。流し直したことは注釈とまとめに残る）。PowerShell は `npm test -- …` の `--` を食べるので node を直に呼ぶ
-      - name: Full test (main CI result not reusable)
-        if: needs.ci-gate.outputs.decision != 'reuse'
-        run: node tests/run.mjs --jobs 2 --retry-failed 1
       # CI に無い release だけの差は、npm ci の後に --force で足した koffi の arm64 本体。足した後の node_modules でネイティブを読めるかと、
-      # 配布の手順（desktop-updates）・本物の koffi の構造体の配置（computer-native）を確かめる
-      - name: Release environment smoke (main CI result reused)
-        if: needs.ci-gate.outputs.decision == 'reuse'
+      # 配布の手順（desktop-updates）・本物の koffi の構造体の配置（computer-native）を確かめる。
+      # 全部のテスト（CI の結果を使えないとき）は別のジョブ release-tests。ビルドは CI の判定を待たないので、この検査は毎回回す
+      - name: Release environment smoke
         run: |
           node -e "require('koffi'); require('node-pty')"
           if ($LASTEXITCODE -ne 0) { throw 'Native modules failed to load' }
@@ -304,11 +379,13 @@ jobs:
           retention-days: 7
           path: release-assets/
   # 両 OS の配布物を 1 つの下書きに入れ、照合してから一緒に公開する。秘密は使わず、書く権限はこのジョブだけが持つ。
-  # mac は PLY_MAC_RELEASE が on でなければ skipped（Windows だけで公開）。落ちた・取り消されたら走らない（macOS を欠いた版を公開しない）
+  # 公開してよいかの判定はここで初めて待つ: 同じ commit の CI が通ったこと（ci-gate が success）、CI の結果を使えないときは release-tests が通ったこと（reuse のときは skipped）、
+  # macOS の検査（mac-smoke）と配布物（mac）が通ったこと。mac・mac-smoke は PLY_MAC_RELEASE が on でなければ skipped（Windows だけで公開）。
+  # どれかが落ちた・取り消されたら走らない（赤い commit も macOS を欠いた版も公開しない）
   publish:
-    needs: [ci-gate, windows, mac]
+    needs: [ci-gate, release-tests, windows, mac, mac-smoke]
     environment: release
-    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.ci-gate.outputs.decision == 'reuse' || needs.release-tests.result == 'success') && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && (needs.mac-smoke.result == 'success' || needs.mac-smoke.result == 'skipped') && (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
@@ -331,6 +408,8 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
           if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
+          # ビルド（windows・mac）は照合を待たずに、タグの push の commit で作っている。照合した commit もそれと同じであること
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:CI_SHA -cne (git rev-parse "$($env:GITHUB_SHA)^{commit}")) { throw 'Checked commit does not match the pushed tag commit' }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22.13"

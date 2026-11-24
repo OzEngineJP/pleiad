@@ -4,7 +4,7 @@
 //   npm test -- markdown              名前で絞る（部分一致）
 //   npm test -- --jobs 1              同じプロセスで登録順に 1 本ずつ
 //   npm test -- --jobs 2              子プロセスの worker 2 本で並列に（重い suite から配る）
-//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.json で決定的に分ける。CI のジョブ分けに）
+//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.<win32|linux>.json で決定的に分ける。CI のジョブ分けに）
 //   npm test -- --timings out.json    suite ごとの時間・判定数・skip・worker を JSON で書く
 //   npm test -- --list [--json]       走らせずに、選ばれた suite と重みを出す
 //
@@ -1263,7 +1263,8 @@ const code = await main({
   unitDir: path.join(TESTS, "unit"),
   argv: process.argv.slice(2),
   root: ROOT,
-  weightsFile: path.join(TESTS, "suite-weights.json"),
+  // 時間の重みは OS ごと（CI の実測の中央値）。Windows 以外（macOS の手元も）は linux の表を使う
+  weightsFile: path.join(TESTS, `suite-weights.${process.platform === "win32" ? "win32" : "linux"}.json`),
   testEnv,
 });
 await testEnv.cleanupTestData();

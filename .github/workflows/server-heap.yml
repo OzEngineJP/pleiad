@@ -1,0 +1,36 @@
+# 会話が何千件・合計で数 GB あるデータ置き場でも、内部サーバーが起動後のヒープの上限で落ちないことを確かめる（Issue #225 の回帰。tests/perf/server-heap.mjs）。
+# 数 GB の偽の置き場を作って 2〜3 分かかるので、test.yml には入れない。保存や検索のコード（core/）を触る PR と、毎晩だけ回す。
+# リリースの ci-gate（scripts/release-ci-gate.mjs）が見るのは test.yml だけなので、このワークフローはリリースを待たせず、赤でも止めない（まだ必須にしない）。
+name: server-heap
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'tests/perf/server-heap.mjs'
+      - 'tests/lib/server.mjs'
+      - '.github/workflows/server-heap.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '47 18 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-heap-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server-heap:
+    runs-on: ubuntu-latest
+    # 偽の置き場を作る数秒と、見張る 150 秒、npm ci。止まったときに枠を占有し続けないための上限
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: node tests/perf/server-heap.mjs
