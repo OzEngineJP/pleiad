@@ -124,6 +124,24 @@ export function splitModelRows(models, ids) {
   return { main, other, quiet };
 }
 
+// ---------------------------------------------------------------- 使用量の棒
+
+/**
+ * エージェントの行（1 段目と一覧）に出す週の使用量。使用量の棒は、使用枠を決める行に 1 本だけ置く
+ * （承認済み（2026-11-24）。docs/design-system.md「入力欄の設定」）。
+ *   - アカウントの行がある面は、棒をアカウントの行だけにする。エージェントの行の値は「ログイン中」のもので、選んでいるアカウントとは別のものを指す
+ *   - 互換の接続先はアカウントの枠を使わないので、その接続先で動くエージェントの行に棒を出さない
+ *   - アカウントの行が無い面（アカウント未登録・アカウントの無いエージェント・スレッドの面）は、エージェントの行に 1 本
+ * 今のエージェントは、面が出しているアカウントの行（d.accounts）と接続先（d.endpoint.row）で決める。
+ * 一覧のほかのエージェントは d.backendHasAccounts(id)（アカウントを登録しているか。面にアカウントの行が無ければ渡さない）で決める。
+ * @param {{ backend?: string, accounts?: any[]|null, endpoint?: { row?: any }|null, backendUsage?: (id: string) => any, backendHasAccounts?: (id: string) => boolean }} d
+ * @returns {{ used: number, high: boolean }|null} 棒を出さないときは null
+ */
+export function agentRowUsage(d, id) {
+  const held = id === d.backend ? Boolean(d.endpoint?.row || d.accounts) : Boolean(d.backendHasAccounts?.(id));
+  return held ? null : d.backendUsage?.(id) ?? null;
+}
+
 // ---------------------------------------------------------------- 接続先
 
 /** 長い字を真ん中で詰める（モデル ID は頭と末尾で見分けることが多い） */

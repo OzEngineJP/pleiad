@@ -30,7 +30,7 @@
 - **保存の失敗が例外として返るので、受けていない呼び出しを洗い出して直した（2026-10-03）。** `core/` の store・usage・agentTasks・outbox・conversations の保存を呼ぶ箇所を、名前で呼び出しの関係を辿る走査と、サーバーの DB への書き込みを 25%・60% の確率で失敗させたサーバーのテスト 91 本の実行（`unhandledRejection` を記録）で調べた。直接の呼び出し 173 件はすべて await・return・`.catch`・try/catch・`Promise.all` の後の `.catch` のどれかで受けていた（受けていないものは見つからなかった）。念のため、`core/server.mjs` に `process.on('unhandledRejection')` を置き、ログ（`[unhandledRejection]`）に出してサーバーは落とさない（Node の既定は、1 件の保存の失敗でサーバーごと落とし、走っている他の会話のターンまで止める）。`tests/unit/server-store-failures.mjs` が、書き込みを全部失敗させたサーバーで、落ちない・`[unhandledRejection]` が出ない・エラーとして返る・書けるようになれば通る、を確かめる。
 - **形式番号（`data-schema.json`）を 1 → 2 にする。** 起動時、書き込みを始める前に、対象の JSON を `<data>/backup-schema1-<日時>/` へ写し、DB へ移し、読み戻して元と突き合わせてから番号を 2 にする。突き合わせは元の JSON の全体と読み戻した値を比べる（`usage.json` の version・since・migrations・records 以外の最上位の項目も DB に持ち、落ちるなら移行を止める）。失敗したら作りかけの DB と写しを消し、元の JSON に触れず、番号も上げず、起動を止める（[desktop-releases.md](../desktop-releases.md)「適用とデータ保護」）。形式 2 を見た古い版は起動を止める（既存の検査）。番号を 2 にしたあとの元の JSON の削除が失敗しても（Windows の削除拒否など）起動は止めない: 形式 2 の次の起動で、DB が使えることを確かめたうえで、写しに同じ中身がある元の JSON だけを外し直す。形式 2 では元の JSON を読む経路が無い。
 - **形式 2 では、DB の存在・形式番号（`user_version`）・必要な表を確かめ、合わなければ空の DB を作らずに起動を止める。** 新しい置き場（JSON も DB も無い）だけが DB を新しく作ってよく、DB を作ってから形式番号を 2 にする。
-- **Node の下限を 22.13.0 にする**（`engines`・CI）。`node:sqlite` が実行時の旗なしで使える最初の版。同梱の Electron 44 の Node は 24 系。`node:sqlite` が読み込み時に出す ExperimentalWarning は、その 1 回の読み込みの間だけ、SQLite についての警告に限って捨てる（ほかの警告は通す）。
+- **Node の下限を 22.13.0 にする**（`engines`・CI）。`node:sqlite` が実行時の旗なしで使える最初の版（検索の索引が FTS5 を要るので、下限は ADR 0349 で 22.16.0 に上げた）。同梱の Electron 44 の Node は 24 系。`node:sqlite` が読み込み時に出す ExperimentalWarning は、その 1 回の読み込みの間だけ、SQLite についての警告に限って捨てる（ほかの警告は通す）。
 
 ## ADR 0005 との関係
 
@@ -55,5 +55,6 @@
   - **JSON のまま、上限と理由を許可リストに書いた**: `bots.json`・`routines.json`・`channels/index.json`（人が作る定義と既読の印）、`channels/inbox.json`（送り終えたものは 100 件まで）。
   - **追記だけのログ**（`appendOnly`。1 回の更新が 1 行の追記で、更新の重さが大きさに比例しない）: `channels/<channelId>.jsonl`（ADR 0108）・`memory/log.jsonl`。
   - **既知の例外に足した**: 記憶の markdown（`memory/user.md`・`memory/bots/<botId>.md`。変更のたびに 1 層を丸ごと書く。件数の上限はコードに無い）。記憶の正本は人が読んで直せる markdown だと [ADR 0110](0110-bot-memory.md) が決めているので、行にするなら、その決定の置き換えが要る。
+- 全会話をメモリに載せる決まりの例外は `compactions`（圧縮の記録）だけ（2026-11-24）。要約の本文が大きく、実データ（会話 6,737 件）では全会話の記録の 57%（308MB）を占めた。起動の全件読み（`loadAll({ without })`）から外し、1 つの会話を扱う所だけが `store.getCompactions(sessionId)` でその会話の分を DB から読む。書くのは今までどおり `setSessionData(..., 'compactions', ...)`（DB を先に書く。メモリには載せない）。DB の形は変えていない。
 - データ置き場を直接読む手順は DB に合わせた。実データの写しは `scripts/copy-data-dir.mjs`（`remote/`・`*-secrets.json` を写さず、DB は読み取り専用の接続で `VACUUM INTO`）、テストは `tests/lib/data-store.mjs`。
 - 2026-10-03 の実データでの測定（開発機。写しで測った）: JSON 4 つ計 35.4MB（`sessions.json` 27.3MB・`agent-tasks.json` 5.0MB・`usage.json` 1.4MB・`conversations.json` 1.7MB）が `pleiad.db` 25.5MB になった。移行は 0.9 秒。会話 1,112 件の読み込み 0.13 秒（以前と同じメモリへの読み込み）。1 回の更新は、`sessions.json` の全体を書き直す 70〜80 ミリ秒（`JSON.stringify` と書き込み。毎回）に対して、`synchronous=FULL`（初めの設定）で会話の項目 0.6〜0.8 ミリ秒（`contextSession` は 1.3 ミリ秒）、タスクの状態変化 2.5 ミリ秒（1 回の操作で数回書く）、使用量の記録 0.6 ミリ秒（`NORMAL` なら 0.02〜0.08 ミリ秒だった。fsync の分）。`contextSession` は 9.4MB が 1.8MB（`report.entries` は 788 行・0.34MB に寄る）。

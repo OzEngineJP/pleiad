@@ -283,7 +283,8 @@ export const DATA_WRITES = [
   { file: 'core/context-runtime.mjs', sites: 1, targets: [
     { name: 'context-snapshots/<hash>.txt', limit: '内容アドレス。同じ中身は 1 つ（flag wx）', reason: '会話に固定した指示の本文。書き換えない' },
   ] },
-  { file: 'core/viz-bundle.mjs', sites: 2, targets: [
+  { file: 'core/viz-bundle.mjs', sites: 3, targets: [
+    { name: 'viz-blobs/.swept', limit: '固定（時刻のミリ秒 1 つ。片付けのたびに上書き）', reason: '起動の片付けを終えた時刻。前の片付けから 7 日は、記録のファイルを全部読む片付けをしないために読む。無い・壊れていれば毎回片付ける' },
     { name: 'viz-blobs/<sha256>（一時ファイル <sha256>.<乱数>.tmp から名前を変える）', limit: '内容アドレス。束は 200 ファイル・32 MiB・1 ファイル 8 MiB まで。同じ中身は 1 つ', reason: '可視化の束の中身と目録（ADR 0295 の 3 の 4）。書き換えない。記録に名前が出ないものは起動の片付けで消す' },
   ] },
   { file: 'core/agent-browser.mjs', sites: 3, targets: [

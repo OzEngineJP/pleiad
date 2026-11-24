@@ -442,6 +442,7 @@ import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
+import { INDEX_FILE as SEARCH_INDEX_FILE } from './session-search-index.mjs';
 import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, settingsResumePrompt } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
@@ -3132,11 +3133,12 @@ async function sessionList({ limit = 100, track = true, includeInternal = false 
 }
 
 /**
- * セッション検索（会話の本文まで。docs/design.md「セッション検索」）。本文の写しを持ち、search(input) に答える。
- * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で写しを作り、ターンの終わり・loadSession で更新する。
+ * セッション検索（会話の本文まで。docs/design.md「セッション検索」・ADR 0349）。本文はデータ置き場の search-index.db に持ち、search(input) に答える。
+ * ここから呼ぶ（画面・MCP・CLI への口は core/ops/ が持つ）。起動後に裏で索引を作り、ターンの終わり・loadSession で更新する。
  * 一覧は workspaceRoots に足さない（検索が読むだけで、ファイルの許可を広げない）。
  */
 const sessionSearch = createHostSessionSearch({
+  file: path.join(store.dataDir, SEARCH_INDEX_FILE),
   listSessions: () => sessionList({ limit: 500, track: false }),
   resolveBackend: resolveBackendForSession,
   onError: (id, err) => console.error(`  セッション検索の読み込みに失敗${id ? ` (${id})` : ''}:`, String(err?.message ?? err)),
@@ -3906,7 +3908,7 @@ function makeEmit(turn) {
       if (phase !== 'start' && turn.info.sessionId && !replay) {
         const sessionId = turn.info.sessionId;
         turn.compactionWrite = turn.compactionWrite.then(async () => {
-          const previous = (await store.get(sessionId)).compactions ?? [];
+          const previous = await store.getCompactions(sessionId);
           const index = previous.findIndex(x => x.id === entry.id);
           const next = [...previous];
           if (index >= 0) next[index] = { ...entry }; else next.push({ ...entry });
@@ -4499,7 +4501,7 @@ async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunn
     // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
     if (Number.isFinite(since)) {
       const time = at => (typeof at === 'number' ? at : Date.parse(at ?? ''));
-      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['rebuilds', entry.rebuilds, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)], ['closedQuestions', entry.closedQuestions, q => Number(q.at)]]) {
+      for (const [field, list, at] of [['compactions', await store.getCompactions(sessionId), c => Number(c.at)], ['rebuilds', entry.rebuilds, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)], ['closedQuestions', entry.closedQuestions, q => Number(q.at)]]) {
         if (list?.some(x => at(x) >= since)) await store.setSessionData(sessionId, field, list.filter(x => !(at(x) >= since)));
       }
     }
@@ -5112,6 +5114,7 @@ async function deleteSessionOf(sessionId) {
     pageWatch.removeSession(sessionId);   // ファイルの変化の見張りの登録（page:changed）も消す
     pageTranscripts.delete(sessionId);
     vizSourceIndex.delete(sessionId);
+    sessionSearch.remove(sessionId);   // 検索の索引の行
     const cleanups = [
       history.forgetPresents(sessionId),
       computerShots.removeSession(sessionId),
@@ -10513,7 +10516,7 @@ const queuedCompactions = new Set();
 async function compactionStartFailed(sessionId, trigger, err) {
   const entry = { id: crypto.randomUUID(), at: Date.now(), trigger, phase: 'failed', reason: String(err?.message ?? err) };
   try {
-    const previous = (await store.get(sessionId)).compactions ?? [];
+    const previous = await store.getCompactions(sessionId);
     await store.setSessionData(sessionId, 'compactions', [...previous, entry]);
   } catch (saveError) { console.error('  圧縮失敗の記録に失敗:', String(saveError?.message ?? saveError)); }
   emitGlobal({ type: 'compaction', sessionId, ...entry });
@@ -11793,7 +11796,7 @@ wss.on("connection", (ws, req) => {
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await timing.run('compactions', () => backend.getCompactions(sessionId).catch(() => [])) : [];
-            const savedCompactions = sidecar.compactions ?? [];
+            const savedCompactions = await store.getCompactions(sessionId);
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { deletedBot: sidecar.deletedBot ?? null, compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,

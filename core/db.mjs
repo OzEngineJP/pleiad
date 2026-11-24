@@ -292,6 +292,9 @@ function prepared(db, sql) {
 // context_entries に 1 つだけ持ち、会話側は context_entry_refs で並びだけを持つ。読むときに元の形へ組み直す。
 export const ENTRIES_MARK = '$entries';
 export const RAW_FIELD = '$raw';
+// 圧縮の記録（compactions）は要約の本文が大きく（実データでは全会話の記録の 57%）、1 つの会話を扱う所でしか読まない。
+// 起動で全会話をメモリへ読むとき（core/store.mjs）は外し、使うときにその会話の分を field で DB から読む
+export const ON_DEMAND_FIELD = 'compactions';
 
 function splitContext(value) {
   const entries = value?.report?.entries;
@@ -325,11 +328,11 @@ export function sessionTable(db) {
   };
   const isPlain = entry => entry && typeof entry === 'object' && !Array.isArray(entry);
   return {
-    /** 全会話。{ [sessionId]: 元の形の記録 } */
-    loadAll() {
+    /** 全会話。{ [sessionId]: 元の形の記録 }。without の項目は読まない（SQL で外すので、値の文字列も作らない） */
+    loadAll({ without = null } = {}) {
       const out = {};
       for (const row of prepared(db, 'SELECT session_id FROM sessions ORDER BY seq').iterate()) out[row.session_id] = {};
-      for (const row of prepared(db, 'SELECT session_id, field, value FROM session_fields').iterate()) {
+      for (const row of prepared(db, 'SELECT session_id, field, value FROM session_fields WHERE field IS NOT ?').iterate(without)) {
         const entry = out[row.session_id];
         if (!entry) continue;
         entry[row.field] = JSON.parse(row.value);
@@ -350,6 +353,11 @@ export function sessionTable(db) {
         }
       }
       return out;
+    },
+    /** 1 会話の 1 項目を DB から読む（無ければ undefined）。loadAll から外した項目（ON_DEMAND_FIELD）を使うときに引く */
+    field(id, name) {
+      const row = prepared(db, 'SELECT value FROM session_fields WHERE session_id = ? AND field = ?').get(id, name);
+      return row ? JSON.parse(row.value) : undefined;
     },
     /**
      * 既にある会話の、fields の項目を entry の今の値へ合わせる。値が undefined の項目は消す。

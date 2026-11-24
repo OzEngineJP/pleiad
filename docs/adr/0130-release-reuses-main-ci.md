@@ -31,7 +31,7 @@ release と CI の環境は少し違う。release は Node 22 の最新を使い
 
   判定の値が空・想定外のときも全部回す側にする。
 - **環境の差**:
-  - release の Node は、`test.yml` の Windows の脚と同じ `22.13` にそろえる。
+  - release の Node は、`test.yml` の Windows の脚と同じ `22.13` にそろえる（版は ADR 0349 で `22.16` に上げた）。
   - 使える成功があるときも、release だけの差（足した koffi の本体）は、`koffi`・`node-pty` の読み込みと `computer-native`・`desktop-updates` の 2 本で確かめる。
   - 署名・配布物の検査は今までどおり release で行う。
 - **権限**: 照合は、書く権限を持たない別のジョブ（`actions: read`・`contents: read`）が、GitHub の API の GET だけで行う。

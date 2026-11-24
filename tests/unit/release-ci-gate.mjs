@@ -23,8 +23,10 @@ function run(over = {}) {
     status: 'completed', conclusion: 'success', run_attempt: 2, html_url: 'https://github.com/tekalu1/pleiad/actions/runs/37186441550',
     repository: { full_name: REPO }, head_repository: { full_name: REPO }, ...over };
 }
+// test.yml が main の push で回すジョブの形（shard に分けた test と safe-storage。実物は test.yml）。ci-gate が必須とするのは test-summary だけで、ほかは「必須でないジョブ」として見る
+const PUSH_JOBS = ['test (ubuntu-latest, 22.16, 1/2)', 'test (windows-latest, 22.16, 1/6)', 'safe-storage (linux-no-keyring)'];
 function jobs(r = run(), over = {}) {
-  const names = [...REQUIRED_JOBS, 'safe-storage-macos'];
+  const names = [...REQUIRED_JOBS, ...PUSH_JOBS, 'safe-storage-macos'];
   return names.map((name, i) => ({ id: 111391832999 + i, run_id: r.id, run_attempt: r.run_attempt, head_sha: r.head_sha, name, status: 'completed',
     conclusion: name === 'safe-storage-macos' ? 'skipped' : 'success', ...(over[name] ?? {}) }));
 }
@@ -35,7 +37,7 @@ export default async function (t) {
   // ===== 1 回分の判定（evaluate）=====
   {
     const ok = evaluate(state([run()]));
-    t.ok('揃った成功（最新の attempt で必須の 6 ジョブが success）は reuse', ok.verdict === 'reuse' && ok.run.id === 37186441550, JSON.stringify(ok));
+    t.ok('揃った成功（最新の attempt で必須の test-summary と、ほかのジョブが success）は reuse', ok.verdict === 'reuse' && ok.run.id === 37186441550, JSON.stringify(ok));
 
     const wrongSha = evaluate(state([run({ head_sha: OTHER })]));
     t.ok('別の commit の成功は使わない（no-run で fallback）', wrongSha.verdict === 'fallback' && wrongSha.reason === 'no-run' && wrongSha.notes.some(n => n.includes('(sha)')), JSON.stringify(wrongSha));
@@ -56,11 +58,11 @@ export default async function (t) {
     t.ok('同じ commit の run が無ければ fallback（no-run）', missing.verdict === 'fallback' && missing.reason === 'no-run');
 
     const r = run();
-    const partial = evaluate(state([r], { [r.id]: jobs(r).filter(j => j.name !== 'test (windows-latest, 22.13)') }));
-    t.ok('必須のジョブが 1 つ欠けた成功は使わない（job-missing）', partial.verdict === 'fallback' && partial.reason === 'job-missing:test (windows-latest, 22.13)', JSON.stringify(partial));
-    const skipped = evaluate(state([r], { [r.id]: jobs(r, { 'safe-storage (linux-no-keyring)': { conclusion: 'skipped' } }) }));
-    t.ok('必須のジョブが skipped の成功は使わない', skipped.verdict === 'fallback' && skipped.reason === 'job-skipped:safe-storage (linux-no-keyring)');
-    const neutral = evaluate(state([r], { [r.id]: jobs(r, { 'test (ubuntu-latest, 24)': { conclusion: 'neutral' } }) }));
+    const partial = evaluate(state([r], { [r.id]: jobs(r).filter(j => j.name !== 'test-summary') }));
+    t.ok('必須の test-summary が無い成功は使わない（job-missing。shard が全部 success でも使わない）', partial.verdict === 'fallback' && partial.reason === 'job-missing:test-summary', JSON.stringify(partial));
+    const skipped = evaluate(state([r], { [r.id]: jobs(r, { 'test-summary': { conclusion: 'skipped' } }) }));
+    t.ok('必須の test-summary が skipped の成功は使わない（落ちた・取り消された shard があると走らない）', skipped.verdict === 'fallback' && skipped.reason === 'job-skipped:test-summary');
+    const neutral = evaluate(state([r], { [r.id]: jobs(r, { 'test-summary': { conclusion: 'neutral' } }) }));
     t.ok('必須のジョブが neutral でも使わない', neutral.verdict === 'fallback');
     const empty = evaluate(state([r], { [r.id]: [] }));
     t.ok('jobs が空なら、run が success でも使わない（workflow の総合 success だけでは使わない）', empty.verdict === 'fallback' && empty.reason.startsWith('job-missing'));
@@ -78,13 +80,13 @@ export default async function (t) {
     const otherShaJobs = jobs({ ...rerun, head_sha: OTHER });
     t.ok('別の commit の jobs は使わない', evaluate(state([rerun], { [rerun.id]: otherShaJobs })).reason.startsWith('job-mismatch'));
     const latestFailed = run({ run_attempt: 2, conclusion: 'failure' });
-    const lf = evaluate(state([latestFailed], { [latestFailed.id]: jobs(latestFailed, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } }) }));
+    const lf = evaluate(state([latestFailed], { [latestFailed.id]: jobs(latestFailed, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } }) }));
     t.ok('最新の attempt が failure なら fail（attempt 1 が成功していても公開しない）', lf.verdict === 'fail' && lf.reason === 'run-failure', JSON.stringify(lf));
 
     // 赤
-    const jobFailed = evaluate(state([run({ conclusion: null, status: 'in_progress' })], { [r.id]: jobs(run({ conclusion: null, status: 'in_progress' }), { 'test (ubuntu-latest, 22.13)': { conclusion: 'failure' }, 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) }));
-    t.ok('走っている途中でも、終わったジョブが failure なら待たずに fail', jobFailed.verdict === 'fail' && jobFailed.reason === 'job-failure:test (ubuntu-latest, 22.13)', JSON.stringify(jobFailed));
-    t.ok('timed_out は fail', evaluate(state([r], { [r.id]: jobs(r, { 'test (windows-latest, 22.13)': { conclusion: 'timed_out' } }) })).verdict === 'fail');
+    const jobFailed = evaluate(state([run({ conclusion: null, status: 'in_progress' })], { [r.id]: jobs(run({ conclusion: null, status: 'in_progress' }), { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'failure' }, 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) }));
+    t.ok('走っている途中でも、終わった shard が failure なら待たずに fail', jobFailed.verdict === 'fail' && jobFailed.reason === 'job-failure:test (ubuntu-latest, 22.16, 1/2)', JSON.stringify(jobFailed));
+    t.ok('timed_out は fail', evaluate(state([r], { [r.id]: jobs(r, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'timed_out' } }) })).verdict === 'fail');
     t.ok('action_required は fail', evaluate(state([run({ conclusion: 'action_required' })])).verdict === 'fail');
     t.ok('startup_failure は fail', evaluate(state([run({ conclusion: 'startup_failure', status: 'completed' })])).verdict === 'fail');
     t.ok('必須でないジョブの failure も fail（main が赤い）', evaluate(state([r], { [r.id]: jobs(r, { 'safe-storage-macos': { conclusion: 'failure' } }) })).verdict === 'fail');
@@ -92,15 +94,15 @@ export default async function (t) {
     t.ok('同じ commit の run が 2 つあり、片方が赤なら成功があっても fail', two.verdict === 'fail', JSON.stringify(two));
 
     // 取り消し・未完了
-    const cancelled = evaluate(state([run({ conclusion: 'cancelled' })], { [r.id]: jobs(r, { 'test (ubuntu-latest, 22.13)': { conclusion: 'cancelled' } }) }));
+    const cancelled = evaluate(state([run({ conclusion: 'cancelled' })], { [r.id]: jobs(r, { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'cancelled' } }) }));
     t.ok('cancelled（次の push に取り消された）は fallback', cancelled.verdict === 'fallback', JSON.stringify(cancelled));
     const queued = run({ status: 'queued', conclusion: null });
     t.ok('queued は pending', evaluate(state([queued], {})).verdict === 'pending');
     const progress = run({ status: 'in_progress', conclusion: null });
-    t.ok('in_progress は pending（成功したジョブがあっても使わない）', evaluate(state([progress], { [progress.id]: jobs(progress, { 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) })).verdict === 'pending');
+    t.ok('in_progress は pending（成功したジョブがあっても使わない）', evaluate(state([progress], { [progress.id]: jobs(progress, { 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) })).verdict === 'pending');
     const done = run();
     const other = run({ id: 37186441599, status: 'in_progress', conclusion: null });
-    const both = evaluate(state([done, other], { [done.id]: jobs(done), [other.id]: jobs(other, { 'test (windows-latest, 22.13)': { status: 'in_progress', conclusion: null } }) }));
+    const both = evaluate(state([done, other], { [done.id]: jobs(done), [other.id]: jobs(other, { 'test (windows-latest, 22.16, 1/6)': { status: 'in_progress', conclusion: null } }) }));
     t.ok('揃った成功と、別の id の走っている run が並べば、待つ', both.verdict === 'pending' && both.run.id === other.id, JSON.stringify(both.notes));
 
     // 必須でないジョブ: push で飛ばすと決めたものの skipped と success だけを許す
@@ -212,7 +214,7 @@ export default async function (t) {
     const responses = {
       [`/repos/${REPO}/actions/workflows/test.yml`]: WORKFLOW,
       [`/repos/${REPO}/actions/workflows/${WORKFLOW.id}/runs?head_sha=${SHA}&event=push&branch=main&per_page=100`]: { total_count: 2, workflow_runs: [r, run({ id: 5, head_sha: OTHER })] },
-      [`/repos/${REPO}/actions/runs/${r.id}/attempts/2/jobs?per_page=100`]: { total_count: 7, jobs: jobs(r) },
+      [`/repos/${REPO}/actions/runs/${r.id}/attempts/2/jobs?per_page=100`]: { total_count: jobs(r).length, jobs: jobs(r) },
     };
     const request = async p => { calls.push(p); return p in responses ? responses[p] : null; };
     const s = await readState({ request, repo: REPO, sha: SHA });
@@ -222,15 +224,15 @@ export default async function (t) {
     t.ok('読んだ状態の判定は reuse', evaluate(s).verdict === 'reuse');
     const nothing = await readState({ request: async () => null, repo: REPO, sha: SHA });
     t.ok('workflow が 404 なら workflow-missing', evaluate(nothing).reason === 'workflow-missing');
-    // 失敗したジョブだけの再実行（run 37186441550 の形）: attempt 1 は Windows の脚が failure、attempt 2 は 7 件すべて run_attempt 2 で success
+    // 失敗したジョブだけの再実行（run 37186441550 の形）: attempt 1 は Windows の shard が failure、attempt 2 は全部 run_attempt 2 で success
     const rerun = run({ run_attempt: 2 });
-    const attempt1 = jobs({ ...rerun, run_attempt: 1 }, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } });
+    const attempt1 = jobs({ ...rerun, run_attempt: 1 }, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' }, 'test-summary': { conclusion: 'skipped' } });
     const rerunCalls = [];
     const rerunResponses = {
       [`/repos/${REPO}/actions/workflows/test.yml`]: WORKFLOW,
       [`/repos/${REPO}/actions/workflows/${WORKFLOW.id}/runs?head_sha=${SHA}&event=push&branch=main&per_page=100`]: { total_count: 1, workflow_runs: [rerun] },
-      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/1/jobs?per_page=100`]: { total_count: 7, jobs: attempt1 },
-      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/2/jobs?per_page=100`]: { total_count: 7, jobs: jobs(rerun) },
+      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/1/jobs?per_page=100`]: { total_count: attempt1.length, jobs: attempt1 },
+      [`/repos/${REPO}/actions/runs/${rerun.id}/attempts/2/jobs?per_page=100`]: { total_count: jobs(rerun).length, jobs: jobs(rerun) },
     };
     const rerunState = await readState({ request: async p => { rerunCalls.push(p); return p in rerunResponses ? rerunResponses[p] : null; }, repo: REPO, sha: SHA });
     t.ok('再実行: attempt 1 の失敗は読まず、最新の attempt 2 の jobs だけで reuse', evaluate(rerunState).verdict === 'reuse' && !rerunCalls.some(p => p.includes('/attempts/1/')) && rerunCalls.some(p => p.includes('/attempts/2/')), rerunCalls.join(' '));
@@ -341,17 +343,17 @@ export default async function (t) {
 
     const red = await cli(api(s => [run({ head_sha: s, conclusion: 'failure' })]));
     t.ok('CLI: main の CI が赤なら終了コード 1、decision を出さない（release のジョブが走らない）', red.code === 1 && !red.output.includes('decision=') && /main CI is red/.test(red.log), JSON.stringify(red.log + red.output));
-    const latestRed = await cli(api(s => [run({ head_sha: s, run_attempt: 3, conclusion: 'failure' })], r => jobs(r, { 'test (windows-latest, 22.13)': { conclusion: 'failure' } })));
+    const latestRed = await cli(api(s => [run({ head_sha: s, run_attempt: 3, conclusion: 'failure' })], r => jobs(r, { 'test (windows-latest, 22.16, 1/6)': { conclusion: 'failure' } })));
     t.ok('CLI: 最新の attempt が赤なら終了コード 1', latestRed.code === 1 && latestRed.hits.some(h => h.url.includes('/attempts/3/jobs')));
 
-    const cancelled = await cli(api(s => [run({ head_sha: s, conclusion: 'cancelled' })], r => jobs(r, { 'test (ubuntu-latest, 22.13)': { conclusion: 'cancelled' } })));
+    const cancelled = await cli(api(s => [run({ head_sha: s, conclusion: 'cancelled' })], r => jobs(r, { 'test (ubuntu-latest, 22.16, 1/2)': { conclusion: 'cancelled' } })));
     t.ok('CLI: cancelled なら decision=fallback（release の中で全部回す）', cancelled.code === 0 && cancelled.output.includes('decision=fallback\n'), JSON.stringify(cancelled.output));
     const none = await cli(api(() => []));
     t.ok('CLI: run が無ければ decision=fallback', none.code === 0 && none.output.includes('decision=fallback\n') && none.output.includes('reason=no-run'));
     const wrong = await cli(api(() => [run({ head_sha: OTHER })]));
     t.ok('CLI: 別の commit の成功しか無ければ decision=fallback', wrong.code === 0 && wrong.output.includes('decision=fallback\n'));
-    const partial = await cli(api(s => [run({ head_sha: s })], r => jobs(r).filter(j => !j.name.startsWith('safe-storage ('))));
-    t.ok('CLI: 一部のジョブだけの成功なら decision=fallback', partial.code === 0 && partial.output.includes('decision=fallback\n'));
+    const partial = await cli(api(s => [run({ head_sha: s })], r => jobs(r).filter(j => j.name !== 'test-summary')));
+    t.ok('CLI: 必須の test-summary が無い成功なら decision=fallback', partial.code === 0 && partial.output.includes('decision=fallback\n'));
     const pending = await cli(api(s => [run({ head_sha: s, status: 'in_progress', conclusion: null })], () => []));
     t.ok('CLI: 期限までに終わらなければ decision=fallback（pending-deadline）', pending.code === 0 && pending.output.includes('decision=fallback\n') && pending.output.includes('reason=pending-deadline'), JSON.stringify(pending.output));
     const denied = await cli(() => ({ httpStatus: 403 }));
@@ -399,18 +401,22 @@ export default async function (t) {
     const known = new Set([undefined, "github.event_name != 'schedule'", "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"]);
     const unknown = Object.entries(testYml.jobs).filter(([, job]) => !known.has(job.if)).map(([id]) => id);
     t.ok('test.yml の各ジョブの if は、push で走るかを判定できる形', unknown.length === 0, unknown.join(', '));
-    const names = [];
-    for (const [id, job] of Object.entries(testYml.jobs)) {
-      if (!onPush(job)) continue;
-      const include = job.strategy?.matrix?.include;
-      if (!include) { names.push(job.name ?? id); continue; }
-      for (const m of include) names.push(job.name ? job.name.replace(/\$\{\{\s*matrix\.(\w+)\s*\}\}/g, (_, k) => m[k]) : `${id} (${Object.values(m).join(', ')})`);
-    }
-    t.ok('REQUIRED_JOBS は test.yml が main の push で回すジョブ全部と一致（matrix を変えたらここで落ちる）', JSON.stringify([...names].sort()) === JSON.stringify([...REQUIRED_JOBS].sort()), names.join(' | '));
+    // ci-gate が必須とするのは test-summary 1 つ。test-summary は push で回るほかのジョブ全部を needs に持ち、全部 success のときだけ走る（if なし）。
+    // shard や matrix を変えても ci-gate は変えずに済み、ジョブを足して needs に入れ忘れたときはここで落ちる
+    const summary = testYml.jobs['test-summary'];
+    const pushIds = Object.entries(testYml.jobs).filter(([id, job]) => onPush(job) && id !== 'test-summary').map(([id]) => id);
+    t.ok('REQUIRED_JOBS は test.yml の test-summary 1 つ', JSON.stringify(REQUIRED_JOBS) === JSON.stringify(['test-summary']) && summary && onPush(summary) && (summary.name ?? 'test-summary') === 'test-summary');
+    t.ok('test-summary は main の push で回るほかのジョブ全部を待ち、if を持たない（落ちた・飛ばされた・取り消された shard があれば走らない）', JSON.stringify([...(summary?.needs ?? [])].sort()) === JSON.stringify([...pushIds].sort()) && summary.if == null, JSON.stringify([summary?.needs, summary?.if, pushIds]));
+    // npm test の shard は (os, node) ごとに 1..N が欠けず・重ならず揃う（全 suite がちょうど 1 つの shard に入ることは runner-contract が確かめる。ここは matrix の書き間違いを防ぐ）
+    const groups = new Map();
+    for (const m of testYml.jobs.test.strategy.matrix.include) groups.set(`${m.os} / node ${m.node}`, [...(groups.get(`${m.os} / node ${m.node}`) ?? []), m]);
+    const broken = [...groups].filter(([, ms]) => ms.some(m => m.shards !== ms.length) || JSON.stringify(ms.map(m => m.shard).sort((a, b) => a - b)) !== JSON.stringify(ms.map((_, i) => i + 1))).map(([k]) => k);
+    t.ok('test の shard は (os, node) ごとに 1..shards が揃い、重ならない', groups.size > 0 && broken.length === 0, broken.join(', ') || [...groups.keys()].join(' | '));
     t.ok('test.yml は main の push で走る', testYml.on.push.branches.includes('main'));
     // 落ちた suite だけを 1 回流し直した run も、ジョブが success で終わる（注釈は結論を変えない）ので、evaluate はそのまま reuse と読む。流し直しの設定が外れていないことをここで固める
     const testSteps = testYml.jobs.test.steps.map(s => s.run).filter(Boolean);
     t.ok('test.yml の npm test の脚は、落ちた suite だけを 1 回流し直す（--retry-failed 1。docs/adr/0162）', testSteps.some(r => /^node tests\/run\.mjs.*--retry-failed 1/.test(r)), testSteps.join(' | '));
+    t.ok('test.yml の npm test の脚は、自分の shard だけを走らせる（--shard matrix.shard/matrix.shards）', testSteps.some(r => /^node tests\/run\.mjs .*--shard \$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.shards \}\}/.test(r)), testSteps.join(' | '));
     const conc = testYml.concurrency;
     const groupOf = (event, ref, sha) => String(conc.group).replace(/\$\{\{[^}]*\}\}/, event === "pull_request" ? ref : sha);
     t.ok('test.yml: main への push は後の push で取り消さない（cancel-in-progress は PR だけ）', String(conc['cancel-in-progress']) === "${{ github.event_name == 'pull_request' }}", String(conc['cancel-in-progress']));
@@ -425,18 +431,23 @@ export default async function (t) {
     t.ok('照合のジョブは actions: read と contents: read だけ', JSON.stringify(gate.permissions) === JSON.stringify({ actions: 'read', contents: 'read' }), JSON.stringify(gate.permissions));
     t.ok('照合のジョブのトークンは github.token（秘密を渡さない）', JSON.stringify(gate.steps).includes('${{ github.token }}') && !JSON.stringify(gate).includes('secrets.'));
     const ACTOR_IF = "(github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')";
-    // ビルドの windows と mac（CPU ごと。PLY_MAC_RELEASE が on のときだけ）は照合の後に並んで走り、publish が両方を待つ。
-    // mac は skipped でも publish が走れる形に包むので、照合と windows が通ったことは publish が自分で確かめる
+    // ビルドの windows と mac（CPU ごと。PLY_MAC_RELEASE が on のときだけ）は照合を待たずに並んで走る（署名・公証を CI の結果と重ねる）。
+    // 公開してよいかは publish が全部を待って決める: 照合が success、reuse でなければ release-tests が success、windows が success、mac・mac-smoke が success か skipped。
+    // mac・mac-smoke は skipped でも publish が走れる形に包むので、ほかが通ったことは publish が自分で確かめる
     const mac = rel.jobs.mac;
-    const PUBLISH_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && ${ACTOR_IF} }}`;
+    const macSmoke = rel.jobs['mac-smoke'];
+    const releaseTests = rel.jobs['release-tests'];
+    const PUBLISH_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.ci-gate.outputs.decision == 'reuse' || needs.release-tests.result == 'success') && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && (needs.mac-smoke.result == 'success' || needs.mac-smoke.result == 'skipped') && ${ACTOR_IF} }}`;
     // サイトの組み直し（site/README.md）は秘密を使うので、書く権限を持つ publish から分け、publish が通ったときだけ走る
     const siteRebuild = rel.jobs['site-rebuild'];
     const SITE_REBUILD_IF = `\${{ !cancelled() && needs.publish.result == 'success' && ${ACTOR_IF} }}`;
-    t.ok('ジョブは照合・ビルド・公開・サイトの組み直しだけ（足したら下の権限・秘密・動かせる人の判定に入れる）', JSON.stringify(Object.keys(rel.jobs).sort()) === JSON.stringify(['ci-gate', 'mac', 'publish', 'site-rebuild', 'windows']), JSON.stringify(Object.keys(rel.jobs)));
-    t.ok('どのジョブも動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && windows.if === ACTOR_IF && publishJob.if === PUBLISH_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'` && siteRebuild?.if === SITE_REBUILD_IF, JSON.stringify([gate.if, windows.if, publishJob.if, mac.if, siteRebuild?.if]));
-    t.ok('windows と mac は照合のジョブだけを待って並んで走り、publish は全部を待つ', windows.needs === 'ci-gate' && mac.needs === 'ci-gate' && JSON.stringify(publishJob.needs) === JSON.stringify(['ci-gate', 'windows', 'mac']));
-    t.ok('mac は CPU ごとのジョブで、片方が落ちたらもう片方も止める', JSON.stringify(mac.strategy?.matrix?.arch) === JSON.stringify(['x64', 'arm64']) && mac.strategy['fail-fast'] === true && mac.env.PLY_MAC_ARCH === '${{ matrix.arch }}');
-    t.ok('書く権限は publish だけ（ビルドのジョブは contents: read）', JSON.stringify(publishJob.permissions) === JSON.stringify({ contents: 'write' }) && [windows, mac].every(job => JSON.stringify(job.permissions) === JSON.stringify({ contents: 'read' })));
+    t.ok('ジョブは照合・テスト・ビルド・macOS の検査・公開・サイトの組み直しだけ（足したら下の権限・秘密・動かせる人の判定に入れる）', JSON.stringify(Object.keys(rel.jobs).sort()) === JSON.stringify(['ci-gate', 'mac', 'mac-smoke', 'publish', 'release-tests', 'site-rebuild', 'windows']), JSON.stringify(Object.keys(rel.jobs)));
+    t.ok('どのジョブも動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && windows.if === ACTOR_IF && publishJob.if === PUBLISH_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'` && macSmoke.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'` && releaseTests.if === `${ACTOR_IF} && needs.ci-gate.outputs.decision != 'reuse'` && siteRebuild?.if === SITE_REBUILD_IF, JSON.stringify([gate.if, windows.if, publishJob.if, mac.if, macSmoke.if, releaseTests.if, siteRebuild?.if]));
+    t.ok('ビルド（windows・mac）と macOS の検査は照合を待たずに並んで走る。全部のテストは照合の後で、reuse 以外のすべてで回る（空・想定外の値でも省かない）', windows.needs == null && mac.needs == null && macSmoke.needs == null && releaseTests.needs === 'ci-gate', JSON.stringify([windows.needs, mac.needs, macSmoke.needs, releaseTests.needs]));
+    t.ok('publish は全部を待つ（照合・テスト・windows・mac・macOS の検査）', JSON.stringify(publishJob.needs) === JSON.stringify(['ci-gate', 'release-tests', 'windows', 'mac', 'mac-smoke']), JSON.stringify(publishJob.needs));
+    t.ok('mac と mac-smoke は CPU ごとのジョブで、片方が落ちたらもう片方も止める', [mac, macSmoke].every(job => JSON.stringify(job.strategy?.matrix?.arch) === JSON.stringify(['x64', 'arm64']) && job.strategy['fail-fast'] === true && job['runs-on'] === mac['runs-on']) && mac.env.PLY_MAC_ARCH === '${{ matrix.arch }}');
+    t.ok('書く権限は publish だけ（ほかのジョブは contents: read）', JSON.stringify(publishJob.permissions) === JSON.stringify({ contents: 'write' }) && [windows, mac, macSmoke, releaseTests].every(job => JSON.stringify(job.permissions) === JSON.stringify({ contents: 'read' })));
+    t.ok('秘密を使うのはビルド（windows・mac）だけ。macOS の検査と全部のテストは秘密を使わない（release の環境も持たない）', [macSmoke, releaseTests].every(job => !JSON.stringify(job).includes('secrets.') && job.environment == null) && windows.environment === 'release' && mac.environment === 'release');
     t.ok('publish は秘密を使わない', !JSON.stringify(publishJob).includes('secrets.'));
     t.ok('サイトの組み直しは publish だけを待ち、権限を何も持たず、checkout しない', siteRebuild?.needs === 'publish' && JSON.stringify(siteRebuild.permissions) === '{}' && !siteRebuild.steps.some(s => String(s.uses ?? '').startsWith('actions/checkout')), JSON.stringify(siteRebuild));
     t.ok('サイトの組み直しが使う秘密は CF_SITE_DEPLOY_HOOK だけ（publish と同じ release の環境）', JSON.stringify(JSON.stringify(siteRebuild).match(/secrets\.\w+/g)) === JSON.stringify(['secrets.CF_SITE_DEPLOY_HOOK']) && siteRebuild.environment === publishJob.environment, JSON.stringify(siteRebuild?.environment));
@@ -447,16 +458,24 @@ export default async function (t) {
       && /windows-release/.test(pubSteps[pub].env.PLY_WINDOWS_ASSETS) && !/-BuildOnly/.test(pubSteps[pub].run));
     t.ok('publish の Windows の署名の別は、windows のジョブと同じ変数から決める', pubSteps[pub].env.PLY_WINDOWS_SIGNING === "${{ vars.PLY_WINDOWS_SIGNING == 'none' && 'none' || '' }}");
     const steps = windows.steps;
-    const full = steps.findIndex(s => s.run === 'node tests/run.mjs --jobs 2 --retry-failed 1');
     const smoke = steps.findIndex(s => /Release environment smoke/.test(s.name ?? ''));
     const builds = steps.map((s, i) => /publish-evaluation\.ps1 -Tag \$env:RELEASE_TAG -BuildOnly/.test(s.run ?? '') ? i : -1).filter(i => i >= 0);
     t.ok('windows のジョブは署名あり・無署名のどちらでも、公開せずにビルドだけをする', builds.length === 2 && !steps.some(s => /publish-evaluation\.ps1/.test(s.run ?? '') && !/-BuildOnly/.test(s.run)));
-    t.ok('全部のテストは reuse 以外のすべてで回る（空・想定外の値でも省かない）', steps[full]?.if === "needs.ci-gate.outputs.decision != 'reuse'", steps[full]?.if);
-    t.ok('reuse のときは release の環境の短い検査を回す', steps[smoke]?.if === "needs.ci-gate.outputs.decision == 'reuse'" && /require\('koffi'\)/.test(steps[smoke].run));
-    t.ok('テストと短い検査はビルドの前', full >= 0 && smoke >= 0 && builds.every(i => full < i && smoke < i));
-    t.ok('ビルドと公開のジョブは照合した commit と checkout が同じかを確かめる', [windows, mac, publishJob].every(job => job.steps.some(s => /CI_SHA/.test(s.run ?? '')) && /needs\.ci-gate\.outputs\.sha/.test(job.env.CI_SHA)));
+    t.ok('windows のジョブは全部のテストを回さず、release の環境の短い検査だけを毎回ビルドの前に回す', !steps.some(s => /tests\/run\.mjs --jobs 2 --retry-failed 1/.test(s.run ?? '')) && smoke >= 0 && steps[smoke].if == null && /require\('koffi'\)/.test(steps[smoke].run) && builds.every(i => smoke < i));
+    const fullTest = releaseTests.steps.find(s => s.run === 'node tests/run.mjs --jobs 2 --retry-failed 1');
+    t.ok('release-tests は全部のテストを（test.yml と同じく落ちた suite だけ 1 回流し直して）回す', fullTest != null && fullTest.if == null);
+    const macSmokeRuns = macSmoke.steps.map(s => s.run ?? '').join('\n');
+    const macBuildRuns = mac.steps.map(s => s.run ?? '').join('\n');
+    t.ok('macOS の環境の検査（Release environment smoke・Keychain の検査）は mac-smoke に置き、mac のビルドには置かない', /require\('node-pty'\)/.test(macSmokeRuns) && /npm run test:safe-storage/.test(macSmokeRuns) && !/node-pty|test:safe-storage|tests\/run\.mjs/.test(macBuildRuns));
+    // ビルドは照合を待たない。ビルド・検査・テストは同じ commit を使い、公開はそれが照合した commit だと確かめてからだけ。
+    // タグの push は github.sha のタグの commit に、全部のテストは照合した commit に、publish は両方に合わせる
+    const PIN = /GITHUB_EVENT_NAME.*push.*GITHUB_SHA.*\^\{commit\}/;
+    const validateRun = job => job.steps.find(s => s.name === 'Validate release source')?.run ?? '';
+    t.ok('ビルド・macOS の検査は、タグの push のときは github.sha のタグの commit と checkout が同じかを確かめる', [windows, mac, macSmoke].every(job => PIN.test(validateRun(job)) && !/CI_SHA/.test(JSON.stringify(job))));
+    t.ok('全部のテストと公開のジョブは、照合した commit と checkout が同じかを確かめる', [releaseTests, publishJob].every(job => /CI_SHA/.test(validateRun(job)) && /needs\.ci-gate\.outputs\.sha/.test(job.env.CI_SHA)));
+    t.ok('公開のジョブは、照合した commit がタグの push の commit と同じかも確かめる（ビルドが使った commit で照合している）', /CI_SHA.*GITHUB_SHA.*\^\{commit\}/.test(validateRun(publishJob)));
     const winNode = testYml.jobs.test.strategy.matrix.include.find(m => m.os === 'windows-latest').node;
-    const relNode = steps.find(s => String(s.uses).startsWith('actions/setup-node'))?.with?.['node-version'];
-    t.ok('release の Node は test.yml の Windows の脚と同じ版', String(relNode) === String(winNode), `${relNode} / ${winNode}`);
+    const nodeOf = job => job.steps.find(s => String(s.uses).startsWith('actions/setup-node'))?.with?.['node-version'];
+    t.ok('release の Node は test.yml の Windows の脚と同じ版', [windows, releaseTests].every(job => String(nodeOf(job)) === String(winNode)), `${nodeOf(windows)} / ${nodeOf(releaseTests)} / ${winNode}`);
   }
 }

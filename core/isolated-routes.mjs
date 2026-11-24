@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sendStatus } from './page-listener.mjs';
 import { inspectFile, readBounded } from './file-preview.mjs';
-import { blobPath, readManifest, sweepVizBlobs, isHash } from './viz-bundle.mjs';
+import { blobPath, readManifest, sweepVizBlobs, isHash, SWEEP_INTERVAL_MS } from './viz-bundle.mjs';
 import { HTML_SANDBOX, VIZ_SANDBOX, createOnceTokens, isolatedHeaders, previewPolicy } from './preview-policy.mjs';
 import { fileMark, vizMark } from './isolated-origins.mjs';
 import { ACTIVITY_BRIDGE, LINK_BRIDGE, VIOLATION_BRIDGE, visualizationDocument } from '../web/visualize-document.mjs';
@@ -88,7 +88,8 @@ export function createIsolatedRoutes(deps = {}) {
   const { dataDir = null, store = null, htmlKeys = null, fileAccessFor = null, secret = null, log = () => {}, now = Date.now } = deps;
   const onceTokens = createOnceTokens({ now });
   const manifests = new Map();
-  const sweep = () => (dataDir ? sweepVizBlobs({ dataDir, now, log }) : Promise.resolve({ removed: 0, kept: 0 }));
+  // 片付けは記録を全部読むので、前の片付けから SWEEP_INTERVAL_MS が経つまでは起動のたびにしない
+  const sweep = () => (dataDir ? sweepVizBlobs({ dataDir, now, log, minIntervalMs: SWEEP_INTERVAL_MS }) : Promise.resolve({ removed: 0, kept: 0 }));
   const sweepDelayMs = deps.sweepDelayMs === undefined ? 60_000 : deps.sweepDelayMs;
   const timer = dataDir && sweepDelayMs !== null ? setTimeout(() => { sweep().catch(error => log(`viz-blobs: sweep failed: ${String(error?.message ?? error)}`)); }, sweepDelayMs) : null;
   timer?.unref?.();

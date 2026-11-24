@@ -2,7 +2,7 @@
 //   - HTML と同じフォルダーの下を束にする。ドットで始まる名前・node_modules・ジャンクションは入れない。データ置き場の中のものは入れない（ADR 0050）
 //   - 上限（200 ファイル・32 MiB・1 ファイル 8 MiB）を超えたら HTML だけの束にして、行に理由を残す
 //   - 中身は sha256 の名前で 1 つだけ。目録のハッシュが束のハッシュ。名前と中身が合わない目録は読まない
-//   - 起動の片付け: 記録に名前が出ない束を消す（猶予の内は残す。記録が読めなければ何もしない）
+//   - 起動の片付け: 記録に名前が出ない束を消す（猶予の内は残す。記録が読めなければ何もしない）。前の片付けから 7 日は記録を読まない
 //   - 前の版の記録（束の無い行）は、読むときに HTML だけの束を付ける（記録は書き換えない）
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -112,6 +112,86 @@ export default async function (t) {
     await fs.mkdir(path.join(dataDir, 'presents', 'unreadable.jsonl'), { recursive: true });
     const unreadable = await sweepVizBlobs({ dataDir, now: later });
     t.ok('記録が読めなければ片付けない', unreadable.removed === 0 && (await fs.readdir(path.join(dataDir, BLOB_DIR))).length === kept.size);
+
+    // 片付けの間隔（minIntervalMs）: 起動のたびに記録を全部読まない。間隔の内は記録を 1 つも開かず、間隔を過ぎたら片付ける
+    {
+      const DAY = 24 * 60 * 60 * 1000;
+      const area = async name => {
+        const dir = path.join(scratch, name);
+        await fs.mkdir(path.join(dir, 'presents'), { recursive: true });
+        await fs.mkdir(path.join(dir, 'conversations'), { recursive: true });
+        return dir;
+      };
+      const html = (dir, text) => htmlOnlyBundle(dir, { entry: 'a.html', body: text, reason: 'legacy' });
+      const blobsOf = b => [b.hash, ...b.files.map(f => f.sha256)];
+      const listed = async dir => new Set((await fs.readdir(path.join(dir, BLOB_DIR))).filter(n => /^[0-9a-f]{64}$/.test(n)));
+      const row = b => ({ kind: 'visualization', bundle: cleanBundle(b) });
+      const same = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
+      const markFile = dir => path.join(dir, BLOB_DIR, '.swept');
+      const exists = file => fs.stat(file).then(() => true, () => false);
+      // 記録のファイル（presents・conversations の下）を読んだ回数
+      const reads = async fn => {
+        const real = fs.readFile;
+        let count = 0;
+        fs.readFile = (file, ...rest) => { if (/[\\/](presents|conversations)[\\/]/.test(String(file))) count++; return real.call(fs, file, ...rest); };
+        try { return { result: await fn(), count }; } finally { fs.readFile = real; }
+      };
+      const hour2 = () => Date.now() + 2 * 60 * 60 * 1000;           // 猶予（1 時間）を過ぎた時刻
+      const week = () => Date.now() + 2 * 60 * 60 * 1000 + 8 * DAY;  // 間隔（7 日）を過ぎた時刻
+
+      const dir = await area('gate');
+      const used = await html(dir, '<p>used</p>'), usedInConversation = await html(dir, '<p>conversation</p>');
+      const orphan1 = await html(dir, '<p>orphan1</p>');
+      await fs.writeFile(path.join(dir, 'presents', 's1.jsonl'), JSON.stringify(row(used)) + '\n');
+      await fs.writeFile(path.join(dir, 'conversations', 'c1.json'), JSON.stringify({ messages: [], presents: [row(usedInConversation)] }));
+      for (let i = 0; i < 200; i++) await fs.writeFile(path.join(dir, 'conversations', `many-${i}.json`), JSON.stringify({ messages: [{ role: 'user', text: `m${i}` }], presents: [] }));
+      const inUse = new Set([...blobsOf(used), ...blobsOf(usedInConversation)]);
+
+      const first = await reads(() => sweepVizBlobs({ dataDir: dir, now: hour2, minIntervalMs: DAY * 7 }));
+      t.ok('間隔を指定した最初の片付けは、記録を全部読み、使われている束（presents・conversations の記録）は残し、使われていない束を消す',
+        first.count === 202 && first.result.removed === blobsOf(orphan1).length && same(await listed(dir), inUse), `read ${first.count}, removed ${first.result.removed}`);
+      t.ok('片付けを終えたら、時刻を印に書く（束の数には数えない）',
+        Number.isFinite(Number(await fs.readFile(markFile(dir), 'utf8'))) && first.result.kept === inUse.size, `kept ${first.result.kept}`);
+
+      const orphan2 = await html(dir, '<p>orphan2</p>');
+      const within = await reads(() => sweepVizBlobs({ dataDir: dir, now: hour2, minIntervalMs: DAY * 7 }));
+      t.ok('間隔の内の片付けは、記録を 1 つも読まず何もしない（記録が 202 ファイルあっても、読んだのは 0）',
+        within.count === 0 && within.result.skipped === true && within.result.removed === 0, `read ${within.count}`);
+      t.ok('間隔の内は、使われていない束も消さない（次の間隔の片付けまで残る）', same(await listed(dir), new Set([...inUse, ...blobsOf(orphan2)])));
+
+      const after = await reads(() => sweepVizBlobs({ dataDir: dir, now: week, minIntervalMs: DAY * 7 }));
+      t.ok('間隔（7 日）を過ぎたら、また記録を読んで片付ける（使われている束は残し、使われていない束を消す）',
+        after.count === 202 && after.result.removed === blobsOf(orphan2).length && same(await listed(dir), inUse) && !after.result.skipped, `read ${after.count}`);
+      t.ok('印は片付けで消えず、残した束の数にも数えない', await exists(markFile(dir)) && after.result.kept === inUse.size, `kept ${after.result.kept}`);
+
+      // 時計が戻って印が未来になっても、片付けが止まらない。印が壊れていても片付ける
+      const orphan3 = await html(dir, '<p>orphan3</p>');
+      await fs.writeFile(markFile(dir), String(Date.now() + 30 * DAY));
+      const future = await sweepVizBlobs({ dataDir: dir, now: hour2, minIntervalMs: DAY * 7 });
+      t.ok('印の時刻が未来（時計が戻った）なら、間隔を待たずに片付ける', !future.skipped && future.removed === blobsOf(orphan3).length && same(await listed(dir), inUse), `${future.removed}`);
+      const orphan4 = await html(dir, '<p>orphan4</p>');
+      await fs.writeFile(markFile(dir), 'not a time');
+      const broken = await sweepVizBlobs({ dataDir: dir, now: hour2, minIntervalMs: DAY * 7 });
+      t.ok('印が読めなければ片付ける', !broken.skipped && broken.removed === blobsOf(orphan4).length && same(await listed(dir), inUse), `${broken.removed}`);
+
+      // 間隔を指定しなければ（0）、毎回片付け、印は書かない
+      const plain = await area('gate-plain');
+      const plainUsed = await html(plain, '<p>plain used</p>');
+      await fs.writeFile(path.join(plain, 'presents', 's1.jsonl'), JSON.stringify(row(plainUsed)) + '\n');
+      const p1 = await reads(() => sweepVizBlobs({ dataDir: plain, now: hour2 }));
+      const p2 = await reads(() => sweepVizBlobs({ dataDir: plain, now: hour2 }));
+      t.ok('間隔を指定しなければ、毎回記録を読み、印は書かない', p1.count === 1 && p2.count === 1 && !(await exists(markFile(plain))));
+
+      // 記録が読めずにやめたときは印を書かない（次の起動でやり直す）
+      const stuck = await area('gate-stuck');
+      const stuckBundle = await html(stuck, '<p>stuck</p>');
+      await fs.mkdir(path.join(stuck, 'presents', 'unreadable.jsonl'));
+      const skippedRun = await sweepVizBlobs({ dataDir: stuck, now: hour2, minIntervalMs: DAY * 7 });
+      t.ok('記録が読めずにやめたときは、何も消さず、印も書かない', skippedRun.removed === 0 && same(await listed(stuck), new Set(blobsOf(stuckBundle))) && !(await exists(markFile(stuck))));
+      await fs.rm(path.join(stuck, 'presents', 'unreadable.jsonl'), { recursive: true });
+      const retried = await sweepVizBlobs({ dataDir: stuck, now: hour2, minIntervalMs: DAY * 7 });
+      t.ok('読めるようになった次の片付けは、間隔を待たずに片付け、印を書く', retried.removed === blobsOf(stuckBundle).length && await exists(markFile(stuck)));
+    }
 
     // 前の版の記録（束の無い行）。読むときに HTML だけの束を付ける
     const sessionId = `viz-bundle-${Date.now()}`;

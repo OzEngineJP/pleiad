@@ -5090,6 +5090,8 @@ const controls = chatComposer.useControls({
       backends: state.backends, backend: bid,
       // エージェントの行の右端の週の使用量（取れないものは出さない）
       backendUsage: (id) => weekUsage(usageSource.get(id)?.quota, ""),
+      // 一覧のほかのエージェントがアカウントを登録しているか（登録していれば棒はアカウントの行だけ。今のエージェントは accounts で決まる）
+      backendHasAccounts: (id) => accountList(id).length > 0,
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
       agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
@@ -5158,6 +5160,11 @@ const controls = chatComposer.useControls({
       const { backend, account, endpoint, homeBot } = composerSelection();
       revalidateVocab(backend, endpoint ? '' : account, vocabCwd(state.sessions.find(x => x.id === state.current), homeBot));
       usageSource.load(backend).catch(() => {});
+      // エージェントの一覧で、ほかのエージェントの棒を出すかを決めるのに、そのアカウントの登録も要る（取ってあれば何もしない）
+      const registered = () => state.backends.map((b) => accountList(b.id).length > 0).join();
+      const before = registered();
+      Promise.all(state.backends.filter((b) => b.id !== backend && capsOf(b.id).accounts).map((b) => loadAccounts(b.id)))
+        .then(() => { if (registered() !== before && controls.panels.model.open) controls.paint(); }).catch(() => {});
     },
   },
 });

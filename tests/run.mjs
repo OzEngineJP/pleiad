@@ -4,7 +4,7 @@
 //   npm test -- markdown              名前で絞る（部分一致）
 //   npm test -- --jobs 1              同じプロセスで登録順に 1 本ずつ
 //   npm test -- --jobs 2              子プロセスの worker 2 本で並列に（重い suite から配る）
-//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.json で決定的に分ける。CI のジョブ分けに）
+//   npm test -- --shard 2/3           3 分割の 2 番目だけ（時間の重み tests/suite-weights.<win32|linux>.json で決定的に分ける。CI のジョブ分けに）
 //   npm test -- --timings out.json    suite ごとの時間・判定数・skip・worker を JSON で書く
 //   npm test -- --list [--json]       走らせずに、選ばれた suite と重みを出す
 //
@@ -435,6 +435,8 @@ const SUITES = [
   './unit/composer-agy.mjs',
   // モデルの一覧の「ほかのモデル」の分け方（Claude は系統ごとに新しい版だけを上に）
   './unit/composer-labels.mjs',
+  // 設定の面の使用量の棒は、使用枠を決める行に 1 本だけ（アカウントの行があればそこだけ・互換の接続先では出さない・エージェントの一覧も同じ）
+  './unit/composer-usage-placement.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
   './unit/compat-endpoints.mjs',
   // API キーの置き場（設定 › API キー。ADR 0155）: 移行（同じ値は 1 件・違う値は別の件・登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・古い置き場にも書く・確認・接続先の keyRef
@@ -694,6 +696,8 @@ const SUITES = [
   './unit/data-lock.mjs',
   // どの公開関数も、DB に書けなければ例外を返し、メモリは書く前のまま
   './unit/store-failures.mjs',
+  // 圧縮の記録（compactions）は起動の全件読みに載せず、使うときに DB から読む。読み書きは載せていた頃と同じ
+  './unit/store-compactions.mjs',
   // 保存が全部失敗しても、サーバーは落ちず、拒否を受け損ねない（[unhandledRejection] が出ない）
   './unit/server-store-failures.mjs',
   './unit/db-tables.mjs',
@@ -937,8 +941,10 @@ const SUITES = [
   './unit/cwd-recent-places.mjs',
   './unit/conversations.mjs',
   './unit/conversations-storage.mjs',
-  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・写しの更新と partial
+  // セッション検索（core/session-search.mjs）: 照合（AND・NFKC・"…"・場所はフォルダー名）・発言者・委譲・期間・関連度の順・抜粋の ranges・索引の更新と partial
   './unit/session-search.mjs',
+  // 検索の索引（core/session-search-index.mjs・ADR 0349）: 2 字ずつの語・候補・先頭を残す更新・持ち越しと作り直し・結果が総当たりの照合と同じ
+  './unit/session-search-index.mjs',
   // 読み込み元（core/session-search-host.mjs）: 保存分は直接・それ以外は getMessages・完了通知とコマンドの行とツールの出力は写さない
   './unit/session-search-host.mjs',
   // 脇の検索の手元の照合（web/session-find.mjs）: core と同じ規則・並び・期間・最近の検索・近道
@@ -1265,7 +1271,8 @@ const code = await main({
   unitDir: path.join(TESTS, "unit"),
   argv: process.argv.slice(2),
   root: ROOT,
-  weightsFile: path.join(TESTS, "suite-weights.json"),
+  // 時間の重みは OS ごと（CI の実測の中央値）。Windows 以外（macOS の手元も）は linux の表を使う
+  weightsFile: path.join(TESTS, `suite-weights.${process.platform === "win32" ? "win32" : "linux"}.json`),
   testEnv,
 });
 await testEnv.cleanupTestData();
