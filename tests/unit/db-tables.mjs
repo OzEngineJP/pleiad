@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { acquire, dbPath, createDb, sessionTable, usageTable, conversationTable, taskTable, transaction, loadSqlite } from '../../core/db.mjs';
+import { acquire, dbPath, createDb, ON_DEMAND_FIELD, sessionTable, usageTable, conversationTable, taskTable, transaction, loadSqlite } from '../../core/db.mjs';
 
 export const name = 'db-tables';
 export const title = 'DB の表: 項目ごとの行・report.entries の重複排除と掃除・形が崩れた入力・使用量・接続の共有';
@@ -64,6 +64,19 @@ export default async function (t) {
     t.ok('トランザクションの途中で投げたら、その分の書き込みは戻る', failed === 'boom' && !('tx' in sessions.loadAll()));
     transaction(db, () => { sessions.writeAll('outer', { title: 'o' }); transaction(db, () => sessions.writeAll('inner', { title: 'i' })); });
     t.ok('入れ子のトランザクションは外側の一部として動く', sessions.loadAll().outer.title === 'o' && sessions.loadAll().inner.title === 'i');
+
+    // ---- 使用するときに読む項目（compactions）: 起動の全件読みから外し、1 会話の分だけ field で読む
+    const pair = [{ id: 'c1', at: 1, summary: '要約 1' }, { id: 'c2', at: 2, summary: '要約 2' }];
+    sessions.writeAll('lazy', { history: [], title: 'l', compactions: pair });
+    sessions.writeAll('plain', { history: [], title: 'p' });
+    sessions.writeAll('nul', { history: [], compactions: null });
+    t.ok('loadAll は既定では全項目を読む（移行の検証・試験の読み出しが使う）', sameJson(sessions.loadAll().lazy.compactions, pair));
+    const resident = sessions.loadAll({ without: ON_DEMAND_FIELD });
+    t.ok('loadAll({ without }) はその項目だけを外し、ほかの項目と会話は残す', !('compactions' in resident.lazy) && resident.lazy.title === 'l'
+      && sameJson(resident.lazy.history, []) && 'plain' in resident && 'nul' in resident && !('compactions' in resident.nul));
+    t.ok('field は 1 会話の 1 項目を読む（順番はそのまま。無ければ undefined、null は null）', sameJson(sessions.field('lazy', ON_DEMAND_FIELD), pair)
+      && sessions.field('plain', ON_DEMAND_FIELD) === undefined && sessions.field('ghost', ON_DEMAND_FIELD) === undefined && sessions.field('nul', ON_DEMAND_FIELD) === null
+      && sessions.field('lazy', 'title') === 'l');
 
     // ---- 使用量
     const usage = usageTable(db);

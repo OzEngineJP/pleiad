@@ -35,7 +35,7 @@ import { isDeepStrictEqual } from "node:util";
 import { t } from "./i18n.mjs";
 import { assertNotGuarded } from "./test-guard.mjs";
 import { openData } from "./data-schema.mjs";
-import { sessionTable, transaction, waitingCardTable } from "./db.mjs";
+import { sessionTable, transaction, waitingCardTable, ON_DEMAND_FIELD } from "./db.mjs";
 import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
@@ -84,6 +84,7 @@ const statuses = jsonFile(STATUSES);
 // **DB を先に書き、書けたらメモリへ反映する。** 書けなければ例外を返し、メモリは書く前のまま。公開関数はどれも同じ（ADR 0115）。
 // 置き場は 1 つのプロセスだけが持つ（core/data-lock.mjs）ので、メモリの記録（cache）と DB は食い違わない。
 // cache にある会話は、DB に行がある会話に限る。
+// 例外は ON_DEMAND_FIELD（compactions）。大きいので cache に載せず、DB だけが持つ（読むのは getCompactions）。
 let handle = null;
 let table = null;
 let cards = null;
@@ -99,7 +100,7 @@ function open() {
 const load = async () => {
   if (!cache) {
     open();
-    cache = table.loadAll();
+    cache = table.loadAll({ without: ON_DEMAND_FIELD });
     // 記録を置き換えて、どの会話からも参照されなくなった contextSession の項目の写しを、起動のたびに片付ける
     try { table.sweepEntries(); } catch (e) { console.error("session store sweep failed:", e?.code ?? e?.message ?? e); }
   }
@@ -135,8 +136,11 @@ function save(changes) {
     throw e;
   }
   return plans.map(p => {
-    if (!p.live) return (cache[p.id] = p.merged);
-    for (const [key, value] of Object.entries(p.patch)) { if (value === undefined) delete p.live[key]; else p.live[key] = value; }
+    if (!p.live) { delete p.merged[ON_DEMAND_FIELD]; return (cache[p.id] = p.merged); }
+    for (const [key, value] of Object.entries(p.patch)) {
+      if (key === ON_DEMAND_FIELD) continue;   // DB に書いた分だけ。cache には載せない
+      if (value === undefined) delete p.live[key]; else p.live[key] = value;
+    }
     return p.live;
   });
 }
@@ -338,6 +342,12 @@ export async function getAll() {
   return { ...(await load()) };
 }
 
+/** 圧縮の記録。大きいので get・getAll の記録には載せず、その会話の分を DB から読む（無ければ []。そのつど読み直すので、書き換えてよい） */
+export async function getCompactions(sessionId) {
+  await load();
+  return table.field(sessionId, ON_DEMAND_FIELD) ?? [];
+}
+
 /** 読み込み済みの記録を同期で引く（まだ読んでいない・無ければ null。引き継ぎの判定が待たずに見る。書き換えない） */
 export function peek(sessionId) {
   return cache && Object.hasOwn(cache, sessionId) ? cache[sessionId] : null;
@@ -513,8 +523,11 @@ export async function setSessionData(sessionId, field, value, { durable = false 
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];
-    if (before && isDeepStrictEqual(before[field], value)) return before[field];
-    return saveOne(sessionId, { [field]: structuredClone(value) })[field];
+    const stored = field === ON_DEMAND_FIELD ? table.field(sessionId, field) : before?.[field];
+    if (before && isDeepStrictEqual(stored, value)) return stored;
+    const saved = structuredClone(value);
+    saveOne(sessionId, { [field]: saved });
+    return saved;
   });
 }
 

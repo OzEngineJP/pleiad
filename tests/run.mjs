@@ -692,6 +692,8 @@ const SUITES = [
   './unit/data-lock.mjs',
   // どの公開関数も、DB に書けなければ例外を返し、メモリは書く前のまま
   './unit/store-failures.mjs',
+  // 圧縮の記録（compactions）は起動の全件読みに載せず、使うときに DB から読む。読み書きは載せていた頃と同じ
+  './unit/store-compactions.mjs',
   // 保存が全部失敗しても、サーバーは落ちず、拒否を受け損ねない（[unhandledRejection] が出ない）
   './unit/server-store-failures.mjs',
   './unit/db-tables.mjs',
