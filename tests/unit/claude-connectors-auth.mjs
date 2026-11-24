@@ -265,7 +265,7 @@ export default async function (t) {
 
       // 止める条件
       const stops = [
-        ['platform', 'macOS（キーチェーンは確かめていない）', () => {}, { platform: 'darwin' }, false],
+        ['platform', 'macOS（止めたまま。対応は別の ADR で決める。ADR 0350）', () => {}, { platform: 'darwin' }, false],
         ['platform', 'Windows・Linux 以外の OS', () => {}, { platform: 'freebsd' }, false],
         ['env', 'ANTHROPIC_API_KEY', () => {}, { env: { ANTHROPIC_API_KEY: 'fake-api-key-0003' } }, false],
         ['env', 'ANTHROPIC_AUTH_TOKEN', () => {}, { env: { ANTHROPIC_AUTH_TOKEN: 'fake-auth-0004' } }, false],
@@ -967,10 +967,10 @@ export default async function (t) {
       let args, options, fileReads = 0;
       const run = async (file, argv, opts) => { args = [file, ...argv]; options = opts; return { exitCode: 0, stdout: credsJson() }; };
       const readFile = async () => { fileReads++; return credsJson(); };
-      const cred = await readMacAccessCredentials(dir, { run, readFile });
+      const cred = await readMacAccessCredentials(dir, { run, readFile, account: 'login-name-0001' });
       const hash = crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8);
       t.ok('macOS: 明示した設定フォルダーのハッシュ付き項目を読み、アクセス用の3項目だけ返す',
-        args.at(-1) === `Claude Code-credentials-${hash}` && args.includes('claude-code-user')
+        args.at(-1) === `Claude Code-credentials-${hash}` && args.includes('login-name-0001') && !args.includes('claude-code-user')
         && options.timeoutMs === 10_000 && cred.token === ACCESS && Object.keys(cred).sort().join() === 'expiresAt,scopes,token' && fileReads === 0);
       await readMacAccessCredentials(dir, { configDir: null, run, readFile });
       t.ok('macOS: 設定フォルダー無指定はハッシュなしの項目名', args.at(-1) === 'Claude Code-credentials');

@@ -58,7 +58,7 @@ const CREDENTIALS_FILE = '.credentials.json';
 const SETTINGS_FILE = 'settings.json';
 const TOKEN = /^[\x21-\x7e]{20,4096}$/;
 const SCOPE = /^[A-Za-z0-9:_.-]{1,64}$/;
-/** ファイルでログインを持つ OS。macOS のキーチェーンは項目名が設定フォルダに依存し公開されていないので、確かめた OS だけにする */
+/** ファイルでログインを持つ OS。macOS はキーチェーンに置くので、対応を別の ADR で決めるまで止めたままにする（ADR 0350・ADR 0340 段 4） */
 const FILE_PLATFORMS = ['win32', 'linux'];
 /**
  * 401 のとき、CLI が渡したトークンを捨てて、共有の .credentials.json・ホストが持つトークン・別の出どころのトークンへ
@@ -116,15 +116,21 @@ const present = (env, names) => names.filter(name => typeof env[name] === 'strin
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stripBom = text => String(text).replace(/^﻿/, '');
 
-/** macOS の準備経路。実機合格までは platform の停止を解除しない。 */
+/** Claude Code が項目に付ける account は OS のログイン名（実機 CLI 2.1.319 の既定項目・CLI 2.1.322 の明示項目で確認）。 */
+function macKeychainAccount() {
+  try { return os.userInfo().username; } catch { return process.env.USER || ''; }
+}
+
+/** macOS のキーチェーンから、設定フォルダーを明示した使用量ログインの項目を読む（実機 CLI 2.1.322 で項目名・account を確認。ADR 0340 段 4）。platform の停止は解除しないので、製品の経路では darwin はここへ届かない（ADR 0350）。 */
 export async function readMacAccessCredentials(dir, {
   configDir = dir, run = runProcess, readFile = fs.readFile, sleep = sleepFor,
+  account = macKeychainAccount(),
 } = {}) {
   // 使用量の CLI は設定フォルダーを明示する。無指定の通常 CLI とは項目名が異なる。
   const suffix = configDir === null ? '' : `-${crypto.createHash('sha256').update(configDir.normalize('NFC')).digest('hex').slice(0, 8)}`;
   let text;
   try {
-    const result = await run('/usr/bin/security', ['find-generic-password', '-a', 'claude-code-user', '-w', '-s', `Claude Code-credentials${suffix}`],
+    const result = await run('/usr/bin/security', ['find-generic-password', '-a', account, '-w', '-s', `Claude Code-credentials${suffix}`],
       { timeoutMs: 10_000, maxOutputChars: 1024 * 1024, windowsHide: true });
     if (result.exitCode !== 0 || result.timedOut || result.stopped || result.truncated) {
       throw { code: result.startCode ?? result.exitCode, killed: result.timedOut || result.stopped || result.truncated };

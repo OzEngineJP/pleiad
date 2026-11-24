@@ -80,6 +80,8 @@ function envRecord(env, norm) {
   const out = {};
   for (const k of Object.keys(env).sort()) {
     if (k.startsWith('=') || k === 'LAUNCH_RECORD_OUT') continue;
+    // macOS の sh が足す SHLVL と、OS が子へ足す __CF_USER_TEXT_ENCODING は、製品の env ではない
+    if (process.platform === 'darwin' && (k === 'SHLVL' || k === '__CF_USER_TEXT_ENCODING')) continue;
     out[k] = MACHINE.has(k.toLowerCase()) ? '<present>' : (env[k] === undefined ? '<undefined>' : norm(env[k]));
   }
   return out;
