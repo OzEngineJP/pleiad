@@ -9,6 +9,10 @@ import crypto from 'node:crypto';
 import { inspectFile, readBounded } from './file-preview.mjs';
 
 export const BLOB_DIR = 'viz-blobs';
+/** 起動の片付けを続けてしない間隔。片付けは記録のファイルを全部読むので、起動のたびにはしない（記録が増えるほど重くなる） */
+export const SWEEP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+// 片付けを終えた時刻（ミリ秒）を書く印。束の置き場に置く（名前が束でも一時ファイルでもないので、片付けは消さない）
+const SWEPT_MARK = '.swept';
 /** 束の上限（2026-11-06 の追加の決定）。どれかを超えたら HTML だけの束にする */
 export const BUNDLE_LIMITS = Object.freeze({ files: 200, bytes: 32 * 1024 * 1024, file: 8 * 1024 * 1024 });
 // 中を見るフォルダーの数の上限（ファイルの無い深いフォルダーで歩き続けないため）
@@ -195,13 +199,20 @@ async function referencedHashes(dataDir, present) {
  * 起動時の片付け。記録のどこにも名前が出ない束の中身と、書きかけの一時ファイルを消す。
  * 猶予（graceMs）より新しいものは残す（無停止の更新で前のサーバーが書いた直後のもの・前の版の記録を読んで書き直したもの）。
  * 目録の中のファイルは、目録が残れば残す。
+ * minIntervalMs（0 より大きいとき）: 前の片付けを終えてからこの間隔が経つまでは、記録を読まず何もしない（skipped: true）。
+ * 片付けを終えたら時刻を印に書く。記録が読めずにやめたときは書かない（次の起動でやり直す）。印が読めない・書けないときは、毎回片付ける。
  */
-export async function sweepVizBlobs({ dataDir, graceMs = 60 * 60 * 1000, now = Date.now, log = () => {} }) {
+export async function sweepVizBlobs({ dataDir, graceMs = 60 * 60 * 1000, now = Date.now, log = () => {}, minIntervalMs = 0 }) {
   const dir = blobDir(dataDir);
   let names;
-  try { names = await fs.readdir(dir); }
+  try { names = (await fs.readdir(dir)).filter(name => name !== SWEPT_MARK); }
   catch { return { removed: 0, kept: 0 }; }
   if (!names.length) return { removed: 0, kept: 0 };
+  if (minIntervalMs > 0) {
+    const last = Number(await fs.readFile(path.join(dir, SWEPT_MARK), 'utf8').catch(() => ''));
+    // 時計が戻って印が未来になっていたら、続きの間隔を待たずに片付ける
+    if (Number.isFinite(last) && last > 0 && now() - last >= 0 && now() - last < minIntervalMs) return { removed: 0, kept: names.length, skipped: true };
+  }
   const present = new Map(names.filter(isHash).map(name => [name, name]));
   const referenced = await referencedHashes(dataDir, present);
   if (!referenced) { log('viz-blobs: sweep skipped (records unreadable)'); return { removed: 0, kept: names.length }; }
@@ -218,5 +229,6 @@ export async function sweepVizBlobs({ dataDir, graceMs = 60 * 60 * 1000, now = D
     await fs.rm(path.join(dir, name), { force: true }).then(() => { removed++; }, () => { kept++; });
   }
   if (removed) log(`viz-blobs: removed ${removed} unreferenced`);
+  if (minIntervalMs > 0) await fs.writeFile(path.join(dir, SWEPT_MARK), String(now())).catch(() => {});
   return { removed, kept };
 }
