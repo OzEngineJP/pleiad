@@ -17,9 +17,9 @@ export const BRANCH = 'main';
 // test.yml が main の push で必ず回すジョブ（3 つの Node / OS の npm test と、safe-storage の 3 つ）。
 // 名前は GitHub が matrix の include から付けるもの。test.yml を変えたら合わせる（tests/unit/release-ci-gate.mjs が test.yml と突き合わせる）
 export const REQUIRED_JOBS = Object.freeze([
-  'test (ubuntu-latest, 22.13)',
+  'test (ubuntu-latest, 22.16)',
   'test (ubuntu-latest, 24)',
-  'test (windows-latest, 22.13)',
+  'test (windows-latest, 22.16)',
   'safe-storage (windows-dpapi)',
   'safe-storage (linux-gnome-keyring)',
   'safe-storage (linux-no-keyring)',

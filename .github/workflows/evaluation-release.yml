@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.13"
+          node-version: "22.16"
       - id: gate
         name: Check main CI result for the release commit
         env:
@@ -87,7 +87,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.13"
+          node-version: "22.16"
           cache: npm
       - run: npm ci
       # 準備スクリプトはワークフローの commit から取る。古いタグには scripts/prepare-electron.mjs が無い。配布するソースは上の checkout のまま
@@ -216,7 +216,7 @@ jobs:
       # test.yml の Windows の脚と同じ Node（CI の結果を使うとき、OS・Node・lockfile・commit が CI と同じになる）
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.13"
+          node-version: "22.16"
           cache: npm
       - name: Validate release notes
         run: |
@@ -333,7 +333,7 @@ jobs:
           if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22.13"
+          node-version: "22.16"
           cache: npm
       # 照合と公開のスクリプトが使うのは yaml だけ。Electron などの取得（install のスクリプト）は要らない
       - run: npm ci --ignore-scripts

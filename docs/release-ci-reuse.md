@@ -31,7 +31,7 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 | `reuse` と判定した直後に run を読み直すと、attempt・状態・結論が変わっていた（jobs を読んだ後に再実行が始まった） | 待つ。新しい attempt を同じ規則で見直す |
 | API の失敗（HTTP の失敗・時間切れ）が 3 回続いた | `fallback`。テストを省く方には倒さない |
 
-必須の 6 ジョブ（`REQUIRED_JOBS`）は、test.yml が main の push で回す `test (ubuntu-latest, 22.13)`・`test (ubuntu-latest, 24)`・`test (windows-latest, 22.13)` と `safe-storage (windows-dpapi)`・`safe-storage (linux-gnome-keyring)`・`safe-storage (linux-no-keyring)`。
+必須の 6 ジョブ（`REQUIRED_JOBS`）は、test.yml が main の push で回す `test (ubuntu-latest, 22.16)`・`test (ubuntu-latest, 24)`・`test (windows-latest, 22.16)` と `safe-storage (windows-dpapi)`・`safe-storage (linux-gnome-keyring)`・`safe-storage (linux-no-keyring)`。
 週次・手動だけの `safe-storage-macos` は push では `skipped` になる。`skipped` を許すのはこれだけ（`SKIPPED_ON_PUSH`）。
 test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PUSH` も合わせる。`tests/unit/release-ci-gate.mjs` が test.yml を読んで突き合わせるので、合わせ忘れるとその commit の CI が赤くなり、そのままではリリースできない。
 合わせ忘れたまま足したジョブが `success` 以外で終わっても、`reuse` にはならない（上の表）。
@@ -57,7 +57,7 @@ test.yml の matrix やジョブを変えたら `REQUIRED_JOBS`・`SKIPPED_ON_PU
 
 | 差 | 扱い |
 |---|---|
-| Node の版 | release の `setup-node` を test.yml の Windows の脚と同じ `"22.13"` にした（前は `22` で、22 系の最新が入っていた）。テストが突き合わせる。配布物の中で core を動かすのは Electron の同梱 Node（24 系）で、ビルドの Node ではない |
+| Node の版 | release の `setup-node` を test.yml の Windows の脚と同じ `"22.16"` にした（前は `22` で、22 系の最新が入っていた）。テストが突き合わせる。配布物の中で core を動かすのは Electron の同梱 Node（24 系）で、ビルドの Node ではない |
 | 依存 | 同じ lockfile から `npm ci`。release だけ、その後に koffi の arm64 の本体を `--force` で足す。`reuse` のときは足した後の `node_modules` で、`koffi`・`node-pty` を読めるかと、`computer-native`（本物の koffi の構造体の配置）・`desktop-updates`（配布の手順のスクリプト）の 2 本を回す |
 | `TEMP`・`TMP` | release はテストの一時ファイルを `RUNNER_TEMP` の下に分けている。テストの置き場の違いで、配布物には入らない。`fallback` の全部のテストと `reuse` の短い検査の両方に効く |
 | runner の image | どちらも `windows-latest`。image の版までは揃えない |
