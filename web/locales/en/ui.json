@@ -4402,7 +4402,8 @@
       "pace_unknown": "pace unknown",
       "lower_priority": "another account preferred",
       "retry_waiting": "waiting to retry after a limit",
-      "recently_limited": "limited, waiting for reset"
+      "recently_limited": "limited, waiting for reset",
+      "login_expired": "login expired"
     },
     "skipWithDetail": "{{reason}} ({{detail}})",
     "unavailable": {
@@ -4648,7 +4649,8 @@
       "quit": "Stopped on quit",
       "restart": "Stopped by restart",
       "hostAway": "Stopped on disconnect",
-      "limit": "Stopped at usage limit"
+      "limit": "Stopped at usage limit",
+      "auth": "Login expired"
     },
     "line": {
       "user": "Stopped",
@@ -4656,7 +4658,8 @@
       "quit": "Stopped because Pleiad quit",
       "restart": "Stopped because Pleiad restarted",
       "hostAway": "Stopped because the connection was lost",
-      "limit": "Stopped at the usage limit"
+      "limit": "Stopped at the usage limit",
+      "auth": "Stopped because the login expired"
     },
     "resume": "Resume",
     "unknownTime": "unknown reset time",

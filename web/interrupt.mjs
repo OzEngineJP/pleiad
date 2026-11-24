@@ -7,10 +7,11 @@ import { whenText, timeText } from "./schedule-times.mjs";
 
 // i18n-dynamic: interrupt.label.
 // i18n-dynamic: interrupt.line.
-/** 理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、restart = 落ちた・強制終了、hostAway = ホスト不在の猶予切れ */
-export const REASONS = ["user", "update", "quit", "restart", "hostAway", "limit"];
+/** 理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、restart = 落ちた・強制終了、hostAway = ホスト不在の猶予切れ、
+ * limit = 使用量の上限、auth = ログイン切れ（Issue #232。backend と auth { mode, accountId, name, email } が添えられる） */
+export const REASONS = ["user", "update", "quit", "restart", "hostAway", "limit", "auth"];
 /** 行の 2 行目に理由の字も出す理由（自分で押した中断ではないもの。モックの場面 5） */
-const META_REASONS = new Set(["update", "quit", "restart"]);
+const META_REASONS = new Set(["update", "quit", "restart", "auth"]);
 
 /** 知らない理由・欠けた理由は user と読む（サーバーの abort と同じ） */
 export const reasonOf = (interrupted) => (REASONS.includes(interrupted?.reason) ? interrupted.reason : "user");

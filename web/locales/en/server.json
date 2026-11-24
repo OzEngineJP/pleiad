@@ -190,7 +190,8 @@
       "quit": "Stopped because Pleiad was quit. Check the result of any operation that was in progress, then continue.",
       "restart": "Stopped because Pleiad restarted. Check the result of any operation that was in progress, then continue.",
       "hostAway": "Stopped because the connection was lost. Check the result of any operation that was in progress, then continue.",
-      "limit": "Work stopped at the usage limit. Continue from where it stopped."
+      "limit": "Work stopped at the usage limit. Continue from where it stopped.",
+      "auth": "Work stopped because the login expired. Continue from where it stopped. Do not repeat completed work."
     }
   },
   "scan": {

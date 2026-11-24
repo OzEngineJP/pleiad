@@ -172,10 +172,13 @@ export default async function (t) {
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_ANTHROPIC_API: api.url, CLAUDE_CONFIG_DIR: cliDir }, dataDir: path.join(scratch, 'data') });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const status = () => c.cmd('authStatus', { backend: 'fake' });
+  const ends = new Map();
   const failure = async (sessionId, prompt) => {
     const r = await c.runTurn({ sessionId, prompt });
+    ends.set(sessionId, r.events.find((e) => e.type === 'turnEnd' && e.sessionId === sessionId) ?? null);
     return r.events.find((e) => e.type === 'turnResult' && e.sessionId === sessionId);
   };
+  const loaded = async (sessionId) => (await c.cmd('loadSession', { sessionId })).interrupted ?? null;
   try {
     const before = await status();
     t.ok('設定の行に CLI の在り処と版（cliInfo を持つバックエンド）', typeof before.cliPath === 'string' && before.cliPath.endsWith('fake.mjs') && before.cliVersion === '0.0.0-fake', JSON.stringify(before));
@@ -187,10 +190,17 @@ export default async function (t) {
     const failed = await failure(sessionId, 'fail-auth');
     t.ok('401 の失敗に kind・pristine・backend・auth（mode: cli とメールアドレス）を添える', failed?.outcome === 'error' && failed.kind === 'auth' && failed.pristine === true
       && failed.backend === 'fake' && failed.auth?.mode === 'cli' && failed.auth.email === 'tester' && failed.error.includes('401'), JSON.stringify(failed));
+    // Issue #232: ほかの失敗と分けて、会話に中断（reason: auth・何が切れたか）として残す。開き直しても出る
+    const authEnd = ends.get(sessionId)?.interrupted;
+    t.ok('ログイン切れのターンは中断（reason: auth）で終わり、エージェントと auth を添える', authEnd?.reason === 'auth' && authEnd.backend === 'fake'
+      && authEnd.auth?.mode === 'cli' && authEnd.auth.email === 'tester' && Number.isFinite(authEnd.at), JSON.stringify(ends.get(sessionId)));
+    const reopened = await loaded(sessionId);
+    t.ok('開き直しても（loadSession）ログイン切れの中断が載る', reopened?.reason === 'auth' && reopened.backend === 'fake' && reopened.auth?.mode === 'cli', JSON.stringify(reopened));
     const expired = await status();
     t.ok('CLI はログイン済みのままでも、設定の行は期限切れ（expired）', expired.loggedIn === true && expired.expired === true, JSON.stringify(expired));
     const ok = await c.runTurn({ sessionId, prompt: 'echo:ok' });
     t.ok('次の CLI のログインのターンが通ると期限切れの印は消える', ok.outcome === 'ok' && !(await status()).expired);
+    t.ok('次のターンが通ると中断の印も消える', (await loaded(sessionId)) === null);
 
     const midway = await failure(sessionId, 'fail-auth tool');
     t.ok('ツールが動いた後の失敗は pristine: false', midway?.kind === 'auth' && midway.pristine === false, JSON.stringify(midway));
@@ -200,6 +210,7 @@ export default async function (t) {
 
     const plain = await failure(sessionId, 'fail');
     t.ok('ほかの失敗には auth を添えず、期限切れにもしない', plain?.outcome === 'error' && !plain.kind && !plain.auth && !(await status()).expired, JSON.stringify(plain));
+    t.ok('ほかの失敗は中断にしない（今のまま）', ends.get(sessionId)?.interrupted == null && (await loaded(sessionId)) === null, JSON.stringify(ends.get(sessionId)));
 
     // Pleiad の Claude のアカウント（トークン）を使う会話
     const saved = await c.cmd('saveClaudeAccount', { name: '仕事用', token: TOKEN });
@@ -209,6 +220,9 @@ export default async function (t) {
     t.ok('アカウントのトークンの会話は auth: { mode: token, accountId, name }', tokenFailed?.kind === 'auth' && tokenFailed.auth?.mode === 'token'
       && tokenFailed.auth.accountId === saved.id && tokenFailed.auth.name === '仕事用' && !('email' in tokenFailed.auth), JSON.stringify(tokenFailed));
     t.ok('トークンの期限切れは CLI のログインの期限切れにしない', !(await status()).expired);
+    const tokenStop = await loaded(tokenSession);
+    t.ok('アカウントの会話の中断には、アカウントの id と名前を残す（トークンは残さない）', tokenStop?.reason === 'auth' && tokenStop.auth?.mode === 'token'
+      && tokenStop.auth.accountId === saved.id && tokenStop.auth.name === '仕事用' && !JSON.stringify(tokenStop).includes(TOKEN.slice(0, 20)), JSON.stringify(tokenStop));
 
     // ログインをやめる（設定のカード・初回の案内・会話の失敗の行の［やめる］）。待っていなければ何もしない
     const idle = await c.cmd('authCancel', { backend: 'fake' });

@@ -4278,7 +4278,8 @@ function authFailureRow(node, ev) {
   authRows = authRows.filter((x) => x.node.isConnected);
   authRows.push({ backend: ev.backend, node, row });
   const st = state.auth.get(ev.backend);
-  if (auth.mode === 'cli' && st?.loggedIn && !st.expired) { state.auth.set(ev.backend, { ...st, expired: true }); renderAuth(); }
+  // 保存された中断から描いた行（stored）は、もうログインし直したかもしれないので、設定の行の期限切れには数えない
+  if (!ev.stored && auth.mode === 'cli' && st?.loggedIn && !st.expired) { state.auth.set(ev.backend, { ...st, expired: true }); renderAuth(); }
 }
 
 /** 失敗したターンの自分の発言の行（.m）。送信待ちの id の行、無ければ失敗の行より前の最後の自分の発言 */
@@ -5289,6 +5290,7 @@ function paintInterruptLine(live) {
   const lastUser = [...thread.querySelectorAll('.m.user')].at(-1);
   const line = last && (!lastUser || lastUser.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING) ? last : null;
   // ライブの行は届いた理由・時刻で描いてある。保存された方が正なので、同じ行を描き直す
+  if (reasonOf(interrupted) === 'auth') { paintAuthInterrupt(interrupted, line, lastUser, s); return; }
   const m = line ?? el('div', 'm sys interrupted');
   m.dataset.interrupted = reasonOf(interrupted);
   const at = Number(interrupted.at);
@@ -5310,6 +5312,29 @@ function paintInterruptLine(live) {
     if (Number.isFinite(at) && at > 0) m.append(el('span', null, '·'), el('span', 't', hhmm(at)));
   }
   if (!line) append(m);
+}
+
+/**
+ * ログインが切れて止まった会話の末尾（Issue #232）。「ログインが切れたため止まりました · 時刻」と、何が切れたか（アカウントの名前）・
+ * ログインし直す入口（web/auth-expired.mjs。ライブの失敗の行と同じ）。止まったばかりで同じターンのライブの行があれば、そちらに任せて足さない
+ */
+function paintAuthInterrupt(interrupted, line, lastUser, s) {
+  const after = (n) => !lastUser || (lastUser.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const liveRow = [...thread.querySelectorAll('.m.sys.auth-fail:not([data-interrupted])')].at(-1);
+  if (liveRow && after(liveRow)) { line?.remove(); return; }
+  // 描いた行は描き直さない（ログインの途中の状態を消さない）
+  if (line?.dataset.interrupted === 'auth' && line.dataset.authAt === String(interrupted.at)) return;
+  const m = el('div', 'm sys interrupted');
+  m.dataset.interrupted = 'auth';
+  m.dataset.authAt = String(interrupted.at);
+  authFailureRow(m, { backend: interrupted.backend, auth: interrupted.auth ?? { mode: 'cli' }, sessionId: s?.id ?? state.current, pristine: false, stored: true });
+  const head = m.firstElementChild;
+  const at = Number(interrupted.at);
+  if (head) {
+    head.replaceChildren(stopMark(), el('b', null, interruptLineText(interrupted)), ...[...head.childNodes].slice(1));
+    if (Number.isFinite(at) && at > 0) head.append(el('span', 'sep', ' · '), el('span', 't', hhmm(at)));
+  }
+  if (line) line.replaceWith(m); else append(m);
 }
 
 let limitClockTimer = null;

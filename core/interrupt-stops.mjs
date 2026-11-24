@@ -14,7 +14,7 @@ import { INTERRUPTION_TAG } from './system-messages.mjs';
 
 const OPEN = `<${INTERRUPTION_TAG}>`, CLOSE = `</${INTERRUPTION_TAG}>`;
 const TEXT_MAX = 200;
-const REASONS = new Set(['user', 'update', 'quit', 'hostAway', 'restart', 'settings']);
+const REASONS = new Set(['user', 'update', 'quit', 'hostAway', 'restart', 'settings', 'auth']);
 
 const oneLine = (s, max = TEXT_MAX) => redactForPeer(String(s ?? '').replace(/\s+/g, ' ').trim(), max) ?? '';
 

@@ -395,6 +395,8 @@
     "noticeLimit": "Stopped at a usage limit. The quota resets at {{time}}.",
     "noticeLimitUnknown": "Stopped at a usage limit. The reset time is unknown.",
     "noticeLimitSwitched": "Switched to {{target}} due to a usage limit and continuing there.",
+    "noticeAuthSwitched": "Switched to {{target}} because the delegate's login expired, and continuing there.",
+    "continueAfterAuth": "Continue the work interrupted because the previous agent's login expired. Review the conversation history and current workspace first, and avoid repeating completed work.\n\nOriginal request\n{{task}}\n\nInstructions for the interrupted turn\n{{prompt}}",
     "continueAfterLimit": "Continue the work interrupted by a usage limit. Review the conversation history and current workspace first, and avoid repeating completed work.\n\nOriginal request\n{{task}}\n\nInstructions for the interrupted turn\n{{prompt}}",
     "retryNoticeLimit": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a usage limit, and its delegate is waiting to retry ({{when}}).\nReason: {{message}}",
     "retryNoticeError": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a temporary failure at its delegate and is waiting to retry ({{when}}).\nReason: {{message}}\nThe child has not stopped and will continue on its own if the retry succeeds. Either keep waiting, or if you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
@@ -559,6 +561,7 @@
       "hostAway": "the user's screen stayed away until the grace period ran out",
       "restart": "Pleiad crashed or was force-quit",
       "settings": "the user changed the settings (agent, model, effort, or approval mode) mid-task, so Pleiad stopped the turn to continue with the new settings",
+      "auth": "the agent's login expired",
       "unknown": "reason unknown"
     },
     "cancelled": "Delegated tasks that were cancelled (Pleiad will not resume them, and no completion notice will arrive):\n{{items}}",

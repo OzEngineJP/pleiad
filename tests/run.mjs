@@ -337,6 +337,7 @@ const SUITES = [
   './unit/agent-tasks-silence.mjs',
   // 子の再試行の待ち（ADR 0229）: waiting と回ごとの知らせ・ply_task_wait・上限で止まった子の limit と指示の保留
   './unit/agent-tasks-retry.mjs',
+  './unit/agent-tasks-auth-switch.mjs',
   './unit/task-command-notice.mjs',
   './unit/agent-tasks-command-settle.mjs',
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）

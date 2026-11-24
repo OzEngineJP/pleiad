@@ -2911,8 +2911,12 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // ---- 中断と再開（docs/design.md「中断と再開」・ADR 0036） ----------------------------
 // 中断の理由。user = 中断ボタン、update = 更新のため、quit = 終了のため、hostAway = ホスト不在の猶予切れ、
 // restart = Pleiad が落ちた・強制終了で終わりが記録されていないターン（起動時に store.recoverInterruptedTurns が付ける）、
-// timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0112）
-const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout", "settings"]);
+// timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0112）、
+// auth = ログインが切れて（401・トークンの失効）ターンが止まった（Issue #232。どのアカウントかを auth に添える）
+const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout", "settings", "auth"]);
+/** ログイン切れの中断に添える、何が切れたか（turnResult の auth と同じ形。mode: cli | token | account | connectorsLogin） */
+const authOfInterrupt = (auth) => auth && typeof auth === "object" ? { mode: String(auth.mode ?? ""), accountId: auth.accountId ?? null,
+  name: auth.name ?? null, email: auth.email ?? null } : null;
 // abort で画面・デスクトップ・ルーティンが渡せる理由。ほかの値（不正・省略）は user として扱う
 const ABORT_REASONS = new Set(["user", "update", "quit", "timeout"]);
 const abortReason = (value) => (ABORT_REASONS.has(value) ? value : "user");
@@ -2924,7 +2928,8 @@ function interruptedOf(value) {
     ...(value.reason === 'limit' ? { resetsAt: Number.isFinite(value.resetsAt) ? value.resetsAt : null,
       window: value.window ?? null, account: value.account ?? null, backend: value.backend ?? null,
       model: value.model ?? null, endpoint: value.endpoint ?? '',
-      ...(scope ? { scope } : {}) } : {}) };
+      ...(scope ? { scope } : {}) } : {}),
+    ...(value.reason === 'auth' ? { backend: value.backend ?? null, auth: authOfInterrupt(value.auth) } : {}) };
 }
 
 /**
@@ -4003,6 +4008,8 @@ function makeEmit(turn) {
             : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
           if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
         }
+        // ログイン切れで止まった。endTurn がほかの失敗と分けて、会話に中断（reason: auth）として残す（Issue #232）
+        turn.authFailure = { backend: turn.backend.id, auth: event.auth };
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
       if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
@@ -4018,7 +4025,10 @@ function makeEmit(turn) {
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null;
         // CLI/API がモデルを断った（backend が kind: 'model' で知らせる）。pristine（ツール・返答がまだ出ていない）なら任せ直せる（ADR 0311）
-        execution.modelRejected = event.outcome === 'error' && event.kind === 'model' ? { pristine: event.pristine === true } : null; }
+        execution.modelRejected = event.outcome === 'error' && event.kind === 'model' ? { pristine: event.pristine === true } : null;
+        // ログイン切れ（Issue #232）。自動で選んだ委譲先なら、上限のときと同じく別の委譲先に切り替えて同じ会話で続ける（agentTasks の run）
+        execution.authFailed = event.outcome === 'error' && event.auth ? { backend: turn.backend.id, model: turn.info.model ?? null,
+          account: limitAccount(turn.backend, turn.info.account) || null, name: event.auth.name ?? null } : null; }
       // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
       // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
       // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない。アカウント全体の枠（scope: 'account'。Claude の 5 時間・週）は、モデルを問わず 1 つに記録する
@@ -8168,9 +8178,10 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
       backend: execution.limit.backend ?? null, model: execution.limit.model ?? null, account: execution.limit.account ?? null } : null;
   // モデルを断られた（pristine）ときは、断りの文面そのものが assistant の発言として流れていても仕事の痕跡に数えない
   const modelRejected = !signal.aborted && execution.outcome === 'error' && Boolean(execution.modelRejected);
+  const authFailed = !signal.aborted && execution.outcome === 'error' && execution.authFailed ? execution.authFailed : null;
   return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git,
     touched: modelRejected && execution.modelRejected.pristine ? false : Boolean(execution.touched),
-    ...(modelRejected ? { modelRejected: true } : {}), ...(limit ? { limit } : {}), ...extra };
+    ...(modelRejected ? { modelRejected: true } : {}), ...(limit ? { limit } : {}), ...(authFailed ? { authFailed } : {}), ...extra };
 }
 
 /**
@@ -8433,7 +8444,7 @@ agentTasks = await createAgentTasks({
     const oldSessionId = task.sessionId;
     // 失敗した候補を外す。上限で続ける場合は、同じターンで試した枠だけを再試行しない。
     const rejected = {};
-    const excluded = continuing ? failed.triedLimits.map(target => ({ target, reason: 'recently_limited' }))
+    const excluded = continuing ? failed.triedLimits.map(target => ({ target, reason: target?.auth ? 'login_expired' : 'recently_limited' }))
       : [...(prev.attempts ?? []), { target: prev.target, reason: failed?.modelRejected ? 'model_rejected' : null }];
     for (const a of excluded)
       if (a?.target?.backend && a.target.model) rejected[candidateId(a.target.backend, a.target.model, a.target.account || null)] = a.reason ?? 'rejected_before_work';
@@ -8449,8 +8460,11 @@ agentTasks = await createAgentTasks({
     const source = continuing ? getBackend(child?.backend ?? task.backend) : null;
     if (continuing && (!source || child.nextSettings)) return null;
     let ok, next, backend = null, account = '', model = null, switchMode = null;
+    // ログインが切れた委譲先（Issue #232）。同じエージェント・アカウントなら、ほかのモデルでも同じログインで断られる
+    const loggedOut = continuing ? failed.triedLimits.filter(x => x?.auth && x.backend) : [];
+    const loginBlocked = (b, a) => loggedOut.some(x => x.backend === b && (x.account || '') === (a || '')) ? { reason: 'login_expired' } : null;
     for (;;) {
-      const blocked = continuing ? (b, m, a) => slotBlocked(b, m, a)
+      const blocked = continuing ? (b, m, a) => loginBlocked(b, a) ?? slotBlocked(b, m, a)
         ?? (rejected[candidateId(b, m, a || null)] ? { reason: rejected[candidateId(b, m, a || null)] } : null) : slotBlocked;
       ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(),
         rejected: continuing ? {} : rejected, blocked }));
@@ -8488,7 +8502,8 @@ agentTasks = await createAgentTasks({
     const target = { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null };
     const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null },
       sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: continuing ? null : failed?.error ?? null,
-      ...(continuing ? { continued: true, continuedTo: target } : {}), ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}) };
+      ...(continuing ? { continued: true, continuedTo: target } : {}), ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}),
+      ...(failed?.authFailed ? { reason: 'login_expired' } : {}) };
     const routing = { ...next, target,
       ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}),
       attempts: [...(prev.attempts ?? []), attempt] };
@@ -8540,7 +8555,8 @@ agentTasks = await createAgentTasks({
       const renewed = await renewTaskWorktree(task).catch(() => null);
       if (meta.continuing) await store.setSessionData(task.sessionId, 'routing', task.routing);
       // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
-      const input = meta.continuing ? agentT(await agentLocaleFor(task.sessionId), 'delegation.continueAfterLimit', { task: task.task, prompt }) : prompt;
+      // i18n-dynamic: agent:delegation.continueAfter
+      const input = meta.continuing ? agentT(await agentLocaleFor(task.sessionId), meta.continuing === 'auth' ? 'delegation.continueAfterAuth' : 'delegation.continueAfterLimit', { task: task.task, prompt }) : prompt;
       const outcome = await runTurn({ sessionId: task.sessionId, prompt: input, ...(meta?.messageId ? { messageId: meta.messageId } : {}) }, () => {}, { signal, taskId: task.taskId,
         onAccepted: nativeId => agentTasks.promptAccepted(task.taskId, nativeId).then(async ids => {
           if (ids?.length) await recordDelivery(task.sessionId, { id: `task-send-${ids[0]}`, by: 'ai', text: input, nativeId });
@@ -8655,7 +8671,8 @@ agentTasks = await createAgentTasks({
     if (isRemoteOwner(owner)) return 'ok';
     const lng = await ensureAgentLocale(owner);
     const name = [getBackend(target.backend)?.label ?? target.backend, target.model, target.accountLabel].filter(Boolean).join(' · ');
-    const prompt = agentT(lng, 'delegation.noticeLimitSwitched', { target: name });
+    // i18n-dynamic: agent:delegation.notice
+    const prompt = agentT(lng, target.reason === 'auth' ? 'delegation.noticeAuthSwitched' : 'delegation.noticeLimitSwitched', { target: name });
     const live = await noticeTarget(owner);
     if (live) return steerNotice(live, owner, prompt, [], null, { redeliver });
     if (await noticeBlocked(owner)) return 'requeue';
@@ -10195,8 +10212,13 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // 作業中の設定の変更のために止めた（settings）ターンは中断として残さない。すぐ新しい設定で続きのターンが始まり、
   // 利用者には「変えました」の跡の行だけを見せる（docs/design-system.md「作業中の設定の変更」・ADR 0341）
   const settingsStop = stopped && !limited && turn.abortReason === 'settings';
+  // ログインが切れて（401・トークンの失効）止まったターン（Issue #232）。会話を開き直しても「ログイン切れ（どのアカウント）」と
+  // ログインし直す入口が出るように、中断（reason: auth）として残す。止めたもの（承認待ち・裏の作業）も記録する
+  const authStop = !requeued && !stopped && turn.outcome === 'error' && Boolean(turn.authFailure);
   const interrupted = limited ? { at: completedAt, reason: 'limit', ...turn.limit, resetsAt: limitResetsAt(turn.limit?.resetsAt, completedAt) }
-    : stopped && !settingsStop ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
+    : stopped && !settingsStop ? { at: completedAt, reason: turn.abortReason ?? "user" }
+    : authStop ? { at: completedAt, reason: 'auth', backend: turn.authFailure.backend, auth: authOfInterrupt(turn.authFailure.auth) } : null;
+  if (authStop && !turn.stops) turn.stops = captureStops(turn);
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
   if (turn.backend.traits?.failureDiagnostics && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
@@ -10239,7 +10261,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
-    if (stopped && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted?.reason ?? turn.abortReason ?? 'user' }).catch(err => {
+    if ((stopped || authStop) && turn.stops) await store.addStops(turn.info.sessionId, { ...turn.stops, reason: interrupted?.reason ?? turn.abortReason ?? 'user' }).catch(err => {
       console.error("  中断で止めたものの記録に失敗:", String(err?.message ?? err));
     });
   }
@@ -10288,7 +10310,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid });
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
-  if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted, requeued });
+  // ログイン切れ（auth）は bot・ルーティンには今までどおりの失敗として渡す（止めた・中断ではない）
+  if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted: interrupted?.reason === 'auth' ? null : interrupted, requeued });
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {

@@ -4291,7 +4291,8 @@
       "pace_unknown": "ペースが分からない",
       "lower_priority": "ほかの認証を優先した",
       "retry_waiting": "上限で再試行を待っている",
-      "recently_limited": "上限に当たって解除を待っている"
+      "recently_limited": "上限に当たって解除を待っている",
+      "login_expired": "ログインが切れた"
     },
     "skipWithDetail": "{{reason}}（{{detail}}）",
     "unavailable": {
@@ -4533,7 +4534,8 @@
       "quit": "終了のため中断",
       "restart": "再起動で中断",
         "hostAway": "接続が切れて中断",
-        "limit": "上限のため中断"
+        "limit": "上限のため中断",
+        "auth": "ログイン切れ"
     },
     "line": {
       "user": "中断しました",
@@ -4541,7 +4543,8 @@
       "quit": "Pleiad の終了のため中断しました",
       "restart": "Pleiad が再起動したため中断しました",
         "hostAway": "接続が切れたため中断しました",
-        "limit": "使用量の上限に達したため中断しました"
+        "limit": "使用量の上限に達したため中断しました",
+        "auth": "ログインが切れたため止まりました"
     },
       "resume": "再開",
       "unknownTime": "解除時刻が不明",

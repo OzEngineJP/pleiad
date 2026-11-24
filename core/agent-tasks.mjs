@@ -566,21 +566,29 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         let result = finish ? await finish(structuredClone(r), controller.signal)
           : await execute(structuredClone(r), prompt, controller.signal, { ...input, continuing });
         if (halted()) return;
-        // 上限は同じ会話で続ける。仕事前のエラーだけ従来どおり新しい会話で試す（ADR 0302）。
+        // 上限とログイン切れは同じ会話で続ける。仕事前のエラーだけ従来どおり新しい会話で試す（ADR 0302）。
+        // ログイン切れ（authFailed。Issue #232）は、同じエージェント・アカウントの枠をモデルを問わず外して選び直す
         for (let reroutes = 0; !r.host && autoTarget(r) && !controller.signal.aborted && !halted();) {
           const limited = result?.outcome === 'limited';
-          if (!limited && (continuing || finish || instructionIds.length || result?.outcome !== 'error' || result.touched !== false
+          const loggedOut = !limited && result?.outcome === 'error' && Boolean(result.authFailed);
+          const switching = limited || loggedOut;
+          if (!switching && (continuing || finish || instructionIds.length || result?.outcome !== 'error' || result.touched !== false
             || reroutes >= (result.modelRejected ? MODEL_REROUTE_MAX : REROUTE_MAX))) break;
           if (limited) {
             triedLimits.push(r.routing.target);
             if (result.limit?.backend && result.limit.model) triedLimits.push(result.limit);
           }
+          if (loggedOut) {
+            const { backend, model, account } = result.authFailed;
+            triedLimits.push({ ...r.routing.target, auth: true }, { backend, model, account, auth: true });
+          }
           const next = await reroute(structuredClone(r), { outcome: result.outcome, error: result.error ?? null,
-            ...(limited ? { triedLimits, signal: controller.signal } : {}), ...(result.modelRejected ? { modelRejected: true } : {}) }).catch(() => null);
+            ...(switching ? { triedLimits, signal: controller.signal } : {}), ...(result.modelRejected ? { modelRejected: true } : {}),
+            ...(loggedOut ? { authFailed: true } : {}) }).catch(() => null);
           // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ文面で失敗にする（ADR 0311）
           if (next?.exhausted) { result = { ...result, error: next.exhausted }; break; }
           if (!next?.sessionId) break;
-          if (limited) {
+          if (switching) {
             try { await commit(r.taskId, row => {
               if (controller.signal.aborted || halted() || row.status !== 'running' || !autoTarget(row)) throw new Error('Task changed');
               row.backend = next.backend; row.model = next.model; row.effort = next.effort; row.mode = next.mode; row.routing = next.routing;
@@ -588,8 +596,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
               endTurnCommands(row); settleCommands(row);
             }, 'run.limitSwitch'); }
             catch { await next.rollback?.().catch(() => {}); break; }
-            queueLimitSwitch(r.taskId, next.routing.target);
-            continuing = true;
+            queueLimitSwitch(r.taskId, loggedOut ? { ...next.routing.target, reason: 'auth' } : next.routing.target);
+            continuing = loggedOut ? 'auth' : true;
             const rejections = result.rejections ?? [];
             result = await execute(structuredClone(r), prompt || r.task, controller.signal, { ...input, continuing });
             result = { ...result, rejections: [...rejections, ...(result?.rejections ?? [])] };
