@@ -358,6 +358,9 @@ export const EVENTS = new Set([
   // { id, allow, reason? } その承認が片付いた（permission の id ごとに 1 つ。祖先の会話への中継の複製も別の id で 1 つずつ）。
   // 答えた画面を含む全部の接続へ流す。答えを送っている最中のカードは応答で畳むので、画面はそれ以外の写しをここで「別の場所で処理された」に畳む。reason はエージェントへ返した理由の印（aborted など）
   "permissionSettled",
+  // { sessionId, items: [{ id, at, reason, toolName, toolUseID, questions }] } 人の回答以外（中断・再起動・ターンの終わり・失敗）で閉じた質問。
+  // 会話に残し（loadSession の closedQuestions）、画面は「答えられずに閉じた質問」として答えを送る・もう一度聞く入口を出す（Issue #231）
+  "questionsClosed",
   // { id, browserHandoff } 決着していない承認の中身（payload の browserHandoff）が差し替わった。カードの id は替えない。祖先の複製の id ごとに 1 つ（ADR 0168）
   "permissionUpdate",
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す

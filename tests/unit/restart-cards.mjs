@@ -2,7 +2,8 @@
 // サーバーを普通に止めて起こし直す。新しい起動は保持役の子の札と記録からターンを拾う（restoreTurn → adoptTurn）。
 //
 //   1. 保持役に載ったターンの承認待ち: 同じ id のカードが出直し、答えるとターンが続く（答えは保持役の子の控えへ届く）
-//   2. 保持役に載らないターンの承認待ち: カードは出直さないが、黙って消えず「止めたもの」（stops の approvals）として会話に届く
+//   2. 保持役に載らないターンの承認待ち: カードは出直さないが、黙って消えず「止めたもの」（stops の approvals）として会話に届く。
+//      同じく載らないターンの質問は、閉じた理由（restart）と中身が会話の closedQuestions に残る（Issue #231）
 //   3. ターンの外の待ち（outlivesTurn。Chrome の接続・ログインの代わりに fake_handoff）: 取り下げが stops の waits として会話に届く
 //   4. 設定の変更の承認（detached）: カードの行は消え、台帳（setting-approvals）の「取り下げ（再起動）」が会話に届く
 import assert from 'node:assert/strict';
@@ -95,9 +96,19 @@ export default async function (t) {
       await c.cmd('sendMessage', { sessionId, messageId: 'restart-cards-ask-0001', prompt: 'ask' });
       const card = await c.waitFor(event => event.type === 'permission' && event.sessionId === sessionId && event.toolName === 'fake_write', { from, ms: WAIT_MS });
       await until(() => cardRows().some(row => row.id === card.id), 10_000, 'カードの行');
+      // 別の会話で質問を出したまま、同じ再起動を迎える
+      const askedId = await seed();
+      const qFrom = c.mark();
+      await c.cmd('sendMessage', { sessionId: askedId, messageId: 'restart-cards-question-0001', prompt: 'question' });
+      const question = await c.waitFor(event => event.type === 'permission' && event.sessionId === askedId && event.kind === 'question', { from: qFrom, ms: WAIT_MS });
+      await until(() => cardRows().some(row => row.id === question.id), 10_000, '質問のカードの行');
       server = await controller.restart();
       assert.equal(controller.restarts, 2);
       await until(() => !cardRows().some(row => row.id === card.id), 10_000, '取り下げた行が消える');
+      const closedQuestions = await until(() => readSessions(dataDir)[askedId]?.closedQuestions, 10_000, '閉じた質問の記録');
+      t.ok('再起動で閉じた質問は、理由 restart と質問の中身が会話の closedQuestions に残る（#231）',
+        closedQuestions.length === 1 && closedQuestions[0].id === question.id && closedQuestions[0].reason === 'restart'
+        && closedQuestions[0].questions?.[0]?.question === 'どれにする？', JSON.stringify(closedQuestions));
       const stops = readSessions(dataDir)[sessionId]?.stops;
       t.ok('載らないターンのカードは、黙って消えず stops の approvals に残る',
         stops?.approvals?.some(item => item.key === `ap:${card.id}` && item.tool === 'fake_write' && item.target === 'a.txt'), JSON.stringify(stops));

@@ -2127,6 +2127,30 @@
       "sending": "Sending your answer…",
       "sendFailedInline": "Couldn't send your answer · {{error}}"
     },
+    "closedQuestion": {
+      "heading": "{{mark}}",
+      "headingMark": "Question closed before you answered",
+      "send": "Send this answer",
+      "askAgain": "Ask me again",
+      "answerText": "Here is my answer to your earlier question (it closed before I could answer):\n{{answers}}",
+      "askAgainText": "Your earlier question closed before I could answer. Please ask it again.\n{{questions}}",
+      "filled": "Added after your draft in the message box",
+      "sent": "Sent",
+      "reason": {
+        "user": "Closed because the turn was stopped",
+        "update": "Closed for an update",
+        "quit": "Closed because Pleiad quit",
+        "hostAway": "Closed because the PC became unreachable",
+        "restart": "Closed by a restart",
+        "limit": "Closed because a usage limit was reached",
+        "auth": "Closed because the login expired",
+        "settings": "Closed because the settings changed",
+        "timeout": "Closed because it timed out",
+        "error": "Closed because the agent failed",
+        "turnEnded": "Closed because the turn ended before you answered",
+        "stopped": "Closed before you answered"
+      }
+    },
     "approval": {
       "heading": "{{mark}}",
       "headingMark": "Waiting for approval",
@@ -3516,6 +3540,7 @@
     "forked": "Conversation created by a fork",
     "waiting": "Waiting for approval",
     "waitingChrome": "Waiting for Chrome",
+    "waitingAnswer": "Waiting for your answer",
     "waitingCount_one": "{{count}} waiting for approval",
     "waitingCount_other": "{{count}} waiting for approval",
     "unsent": "Unsent",

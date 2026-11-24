@@ -493,7 +493,8 @@ const state = {
   stopping: new Set(),     // 中断を頼んだが、まだ止まり終えていないセッション（押した瞬間と、サーバの running の stopping）
   bgWaiting: new Map(),    // 裏を待っているセッション -> 待っている本数（running のターン行の phase と background が正）
   waitingIds: new Set(),   // 承認・回答を待っているセッション
-  chromeWaitIds: new Set(),   // waitingIds のうち、待っているものが Chrome の操作だけのセッション（一覧は「Chrome の操作待ち」と言う）
+  chromeWaitIds: new Set(),
+  answerWaitIds: new Set(),   // waitingIds のうち、待っているものが質問への回答だけのセッション（一覧は「回答待ち」と言う。Issue #231）   // waitingIds のうち、待っているものが Chrome の操作だけのセッション（一覧は「Chrome の操作待ち」と言う）
   // 未解決の承認: id -> permission イベントの中身。会話を開き直すたびに描き直す材料。
   // running が載せるのは id と道具名だけなので、カードを組み立てられるのはこちらだけ
   pendingPerms: new Map(),
@@ -512,6 +513,7 @@ const state = {
   busy: false,             // 枝の動きの最中。重ねて動かさない
   compactions: [],
   rebuilds: [],            // 記録からの組み立て直しの区切り（contextRebuild イベント・loadSession の rebuilds。ADR 0287）
+  closedQuestions: [],     // 人の回答以外（中断・再起動・失敗）で閉じた質問（questionsClosed イベント・loadSession の closedQuestions。Issue #231）
   schedules: [],
   hostTimeZone: null,
   contextWindow: null,
@@ -871,7 +873,7 @@ function paintCompactions() {
   // 手前の発言をまだ描いていないとき（窓の手前を読んでいない・手前を足している最中）、描いた最初の発言より前の区切りは描かない
   // （最初の発言の上に出ると、手前の発言が無いのに区切りだけが見える）
   const floor = paintedFloor();
-  const messages = [...thread.querySelectorAll('.mw:not([data-compaction-id])')];
+  const messages = [...thread.querySelectorAll('.mw:not([data-compaction-id]):not([data-closed-question])')];
   const byId = new Map();
   for (const message of messages) {
     const uuid = message.querySelector('.m[data-uuid]')?.dataset.uuid;
@@ -913,6 +915,77 @@ function paintCompactions() {
       after.querySelector(':scope .m.ai.cont')?.classList.remove('cont');
     }
   }
+  paintClosedQuestions();
+}
+
+// ---------------------------------------------------------------- 答えられずに閉じた質問（Issue #231）
+// 中断・再起動・失敗などで、人が答える前に閉じた質問。閉じた理由と時刻を添えて、閉じた時刻の位置に同じ選択肢で出し直す。
+// 「答えを送る」は選んだ答えを発言として送り（入力欄に書きかけがあれば足すだけ）、「もう一度聞く」は同じ質問を出し直すよう頼む。
+// 後に人の発言がある（もう続けた）なら、ボタンは出さない
+const CLOSED_QUESTION_REASONS = new Set(['user', 'update', 'quit', 'hostAway', 'restart', 'limit', 'auth', 'settings', 'timeout', 'error', 'turnEnded', 'stopped']);
+function closedQuestionReason(reason) {
+  // i18n-dynamic: chat.closedQuestion.reason
+  return t(`chat.closedQuestion.reason.${CLOSED_QUESTION_REASONS.has(reason) ? reason : 'stopped'}`);
+}
+function acceptClosedQuestions(event) {
+  if (event.sessionId !== state.current || !Array.isArray(event.items)) return;
+  const ids = new Set(event.items.map(item => item.id));
+  state.closedQuestions = [...(state.closedQuestions ?? []).filter(item => !ids.has(item.id)), ...event.items];
+  paintClosedQuestions();
+}
+function paintClosedQuestions() {
+  const items = state.closedQuestions ?? [];
+  const keep = new Set(items.map(item => item.id));
+  for (const row of thread.querySelectorAll('.mw[data-closed-question]')) if (!keep.has(row.dataset.closedQuestion)) row.remove();
+  const floor = paintedFloor();
+  const userAts = [...thread.querySelectorAll('.m.user[data-at]')].map(node => Date.parse(node.dataset.at)).filter(Number.isFinite);
+  for (const item of items) {
+    const at = Number(item.at);
+    let row = thread.querySelector(`.mw[data-closed-question="${CSS.escape(String(item.id))}"]`);
+    if (!row) {
+      // 手前の発言をまだ描いていない範囲の質問は描かない（区切りと同じ）
+      if (floor && Number.isFinite(floor.at) && !(at > floor.at)) continue;
+      const m = questionCard({ id: item.id, questions: item.questions }, null, item);
+      if (!m) continue;
+      // 中断で「別の場所で処理された」に畳まれた元のカードは、閉じた質問のカードに置き換える
+      thread.querySelector(`.mw[data-key="perm:${CSS.escape(String(item.id))}"]`)?.remove();
+      row = append(m, `closed-question:${item.id}`);
+      row.dataset.closedQuestion = item.id;
+      const after = [...thread.querySelectorAll('.mw:not([data-compaction-id]):not([data-closed-question])')].find(message => {
+        const when = Date.parse(message.querySelector('.m[data-at]')?.dataset.at ?? '');
+        return Number.isFinite(when) && when > at;
+      });
+      after?.before(row);
+    }
+    if (userAts.some(when => when > at)) closeQuestionActions(row.querySelector('.m.card'), null);
+  }
+}
+/** 閉じた質問のカードのボタンを下げる（答えを送った・後に発言がある）。note があれば代わりに出す */
+function closeQuestionActions(m, note) {
+  if (!m || m.dataset.replied) return;
+  m.dataset.replied = '1';
+  m.closest('.mw')?.classList.add('done');
+  m.classList.add('done');
+  const card = m.querySelector('.card');
+  card?.classList.add('done');
+  for (const input of card?.querySelectorAll('button, input') ?? []) input.disabled = true;
+  card?.querySelector('.card-actions')?.replaceChildren(...(note ? [el('span', 'res', note)] : []));
+}
+/** 閉じた質問への答え・聞き直しの頼みを送る。入力欄に書きかけがあれば、消さずに後ろへ足して欄へ戻す */
+async function replyToClosedQuestion(m, text) {
+  const prompt = $('prompt');
+  if (String(prompt.value ?? '').trim()) {
+    prompt.value = `${String(prompt.value).replace(/\s+$/, '')}\n\n${text}`;
+    fitPrompt();
+    prompt.focus();
+    const res = m.querySelector('.card-actions .res');
+    if (res) res.textContent = t('chat.closedQuestion.filled');
+    return;
+  }
+  prompt.value = text;
+  fitPrompt();
+  closeQuestionActions(m, t('chat.closedQuestion.sent'));
+  await submit();
 }
 function acceptCompaction(event) {
   if (event.phase === 'start') state.compactionPhase = event;
@@ -2386,16 +2459,25 @@ function placeCard(m, ev, into) {
   m.scrollIntoView({ block: "nearest" });   // あなたを待っている。見えていないと止まったまま
 }
 
-function questionCard(ev, into = null) {
+/**
+ * 質問のカード。closed（会話に残った閉じた質問 { id, at, reason, questions }。Issue #231）を渡すと、答えを待たずに閉じた質問として
+ * 閉じた理由・時刻と同じ選択肢を出し、「答えを送る」「もう一度聞く」を付ける（答えは承認の経路ではなく発言で送る）
+ */
+function questionCard(ev, into = null, closed = null) {
   const qs = Array.isArray(ev.questions) ? ev.questions : [];
   if (!qs.length) return null;
 
-  const m = el("div", "m card");
+  const m = el("div", closed ? "m card closed-question" : "m card");
   const card = el("div", "card");
   m.append(card);
   const head = el("div", "card-head");
-  head.append(...markedHead(t("chat.ask.heading", { mark: MARK }), t("chat.ask.headingMark")));
-  head.append(el("span", "desc", ev.title ?? ""));
+  if (closed) {
+    head.append(...markedHead(t("chat.closedQuestion.heading", { mark: MARK }), t("chat.closedQuestion.headingMark")));
+    head.append(el("span", "desc", [closedQuestionReason(closed.reason), hhmm(Number(closed.at))].filter(Boolean).join(" · ")));
+  } else {
+    head.append(...markedHead(t("chat.ask.heading", { mark: MARK }), t("chat.ask.headingMark")));
+    head.append(el("span", "desc", ev.title ?? ""));
+  }
   // ホストの子の質問の中継（端末の会話のカード。⇄ ホスト名。オフラインの間は答えを止める）
   if (ev.remote) head.append(el("span", "relay-host", t("chat.approval.relay.host", { host: ev.remote.hostName })));
   card.append(head);
@@ -2458,9 +2540,9 @@ function questionCard(ev, into = null) {
   }
 
   const actions = el("div", "card-actions");
-  const skip = el("button", "btn", t("chat.ask.skip"));
+  const skip = el("button", "btn", closed ? t("chat.closedQuestion.askAgain") : t("chat.ask.skip"));
   skip.type = "button";
-  const send = el("button", "btn btn-primary", t("chat.ask.answer"));
+  const send = el("button", "btn btn-primary", closed ? t("chat.closedQuestion.send") : t("chat.ask.answer"));
   send.type = "button";
   send.disabled = true;
   actions.append(skip, send);
@@ -2487,6 +2569,17 @@ function questionCard(ev, into = null) {
   // 承認カードと同じく、サーバーが受け取るまで「◯◯を送っています…」、受け取ってから決着。失敗したら戻して理由をカードの中に
   const res = el("span", "res");
   actions.prepend(res);
+  /** 答えを選択肢のラベルで読める形にする（value で集めた答えをラベルへ戻す） */
+  const shownOf = (q, raw) => {
+    const byKey = new Map((q.options ?? []).map((o) => [String(o.value ?? o.label ?? ""), o.label ?? ""]));
+    return (Array.isArray(raw) ? raw : String(raw ?? "").split(", ")).map((v) => byKey.get(v) ?? v).join(", ");
+  };
+  if (closed) {
+    send.onclick = () => replyToClosedQuestion(m, t("chat.closedQuestion.answerText", {
+      answers: qs.map((q) => `- ${q.question}: ${shownOf(q, answersNow()[q.question])}`).join("\n") }));
+    skip.onclick = () => replyToClosedQuestion(m, t("chat.closedQuestion.askAgainText", { questions: qs.map((q) => `- ${q.question}`).join("\n") }));
+    return m;
+  }
   async function settle(answers) {
     if (card.dataset.sending) return;
     card.dataset.sending = "1";
@@ -2517,12 +2610,7 @@ function questionCard(ev, into = null) {
     for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
     head.querySelector(".card-kind").textContent = t("chat.ask.done");
     const summary = answers
-      ? qs.map((q) => {
-          const byKey = new Map((q.options ?? []).map((o) => [String(o.value ?? o.label ?? ""), o.label ?? ""]));
-          const raw = answers[q.question];
-          const shown = (Array.isArray(raw) ? raw : String(raw ?? "").split(", ")).map((v) => byKey.get(v) ?? v).join(", ");
-          return `${q.header || q.question}: ${shown}`;
-        }).join(" / ")
+      ? qs.map((q) => `${q.header || q.question}: ${shownOf(q, answers[q.question])}`).join(" / ")
       : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
     activity.afterPermission();
@@ -3445,6 +3533,7 @@ function onEvent(ev, replay = false) {
     case 'contextWindow': state.contextWindow = ev; paintContextStrip(); return;
     case 'compaction': acceptCompaction(ev); return;
     case 'contextRebuild': acceptRebuild(ev); return;
+    case 'questionsClosed': acceptClosedQuestions(ev); return;
     // 本文を描く出来事（送った発言の行・進行中のターン・稼働表示・結果・提示）は本文の面が描く。画面全体の仕事は hooks
     case 'taskInstruction':
     case 'userMessage':
@@ -3471,7 +3560,7 @@ function onEvent(ev, replay = false) {
         // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
         state.current = null; clearThread(); loadDraft();
         state.messages = []; state.base = 0; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
-        state.rebuilds = []; state.rebuildPhase = null;
+        state.rebuilds = []; state.rebuildPhase = null; state.closedQuestions = [];
         paintContextStrip();
         refreshContextInfo().catch(() => {});
       }
@@ -3617,6 +3706,8 @@ function applyRunning(work) {
   // 消えた分を覚えたままにすると、次にその会話を開いたとき解決済みのカードが出る
   const unresolved = new Set((state.work.permissions ?? []).map((p) => p.id));
   const chromeOnly = new Set([...waiting].filter((id) => (state.work.permissions ?? []).filter((p) => p.sessionId === id).every((p) => p.chromeWait)));
+  // 質問（question）への回答だけを待っている会話。一覧の行は「承認待ち」ではなく「回答待ち」と言う（Issue #231）
+  const answerOnly = new Set([...waiting].filter((id) => (state.work.permissions ?? []).filter((p) => p.sessionId === id).every((p) => p.question)));
   let settledPerm = false;
   for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) { state.pendingPerms.delete(id); settledPerm = true; }
   // 依頼待ちの印（頭の行のボタンと Chrome のタブ）は、承認が片付いたらすぐ消す
@@ -3641,11 +3732,12 @@ function applyRunning(work) {
   for (const s of state.sessions) if (s.interrupted && running.has(s.id)) { s.interrupted = null; resumed = true; }
   for (const id of running) if (resumeSettled(id)) resumed = true;
   // 4 秒ごとの放送で印が変わっていなければ一覧を描き直さない
-  const changed = resumed || !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds) || !sameSet(chromeOnly, state.chromeWaitIds)
+  const changed = resumed || !sameSet(running, state.runningIds) || !sameSet(waiting, state.waitingIds) || !sameSet(chromeOnly, state.chromeWaitIds) || !sameSet(answerOnly, state.answerWaitIds)
     || behind.size !== state.bgWaiting.size || [...behind].some(([id, n]) => state.bgWaiting.get(id) !== n);
   state.runningIds = running;
   state.waitingIds = waiting;
   state.chromeWaitIds = chromeOnly;
+  state.answerWaitIds = answerOnly;
   // 中断中の印はサーバの turn.info.stopping が正。走り終えた会話の分は外す
   for (const t of state.work.turns ?? []) if (t.stopping && t.sessionId) state.stopping.add(t.sessionId);
   for (const id of [...state.stopping]) if (!running.has(id)) state.stopping.delete(id);
@@ -5187,6 +5279,7 @@ function renderSessions() {
     runningIds,
     waitingIds,
     chromeWaitIds: state.chromeWaitIds,
+    answerWaitIds: state.answerWaitIds,
     threads: threadRows,
     bgWaiting: state.bgWaiting,
     unreadIds,
@@ -9922,7 +10015,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     state.current = id;
     if (fresh) adoptUploads(id);
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
-    state.rebuilds = []; state.rebuildPhase = null;
+    state.rebuilds = []; state.rebuildPhase = null; state.closedQuestions = [];
     paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
     if (channelsUi.tab !== 'channels') viewAddress.note({ sessionId: id });
@@ -10210,6 +10303,7 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.compactions = data?.compactions ?? [];
   state.rebuildPhase = null;
   state.rebuilds = data?.rebuilds ?? [];
+  state.closedQuestions = data?.closedQuestions ?? [];
   restoreSwitched(id, data?.messages);
   paintContextStrip();
   restorePastSubagents(id);

@@ -89,7 +89,7 @@ export default async function (t) {
   const state = { compactions: [], busy: false, current: 's' };
   const context = vm.createContext({
     state, thread, el, userMsg, t: k => k, noop, liveUserWord: () => null, log: { scrollTop: 0, scrollHeight: 0, clientHeight: 0 },
-    atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop,
+    atBottom: () => false, relayoutBranches: noop, canCompactHere: () => false, compactNumber: String, paintContextStrip: noop, paintClosedQuestions: noop,
     historyPane: { painting: false, paintBefore: null }, replaying: false, isBusy: () => state.busy, paintedFloor: () => 0, provisionalByMessage: new Map(),
     // 本文の面（view）の中の名前と、その面が呼ぶ hooks
     here: () => state.current, hooks: { userMsg, userRaw: (m) => m.querySelector('.body')?.textContent ?? '', paintUser: noop, hhmm: x => x, markSentLate: noop, markSentBy: noop, paintCompactions: () => context.paintCompactions(), outbox: () => [] },

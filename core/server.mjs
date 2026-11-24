@@ -3451,7 +3451,7 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "permissionSettled", "permissionUpdate", "outbox", "mcpAuth", "claudeLogin", "computer.state",
+  "userMessage.delivered", "running", "permission", "permissionSettled", "questionsClosed", "permissionUpdate", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval", "modelSwitch",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
@@ -4499,7 +4499,7 @@ async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunn
     // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
     if (Number.isFinite(since)) {
       const time = at => (typeof at === 'number' ? at : Date.parse(at ?? ''));
-      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['rebuilds', entry.rebuilds, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)]]) {
+      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['rebuilds', entry.rebuilds, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)], ['closedQuestions', entry.closedQuestions, q => Number(q.at)]]) {
         if (list?.some(x => at(x) >= since)) await store.setSessionData(sessionId, field, list.filter(x => !(at(x) >= since)));
       }
     }
@@ -7222,6 +7222,8 @@ async function runningWork() {
     ...(w.outlivesTurn ? { outlivesTurn: true } : {}),   // ターンが終わっても残る待ち（ADR 0168）
     // Chrome の準備・許可・操作を待っている承認。一覧の行は「承認待ち」ではなく「Chrome の操作待ち」と言う
     ...(w.payload.browserHandoff || w.payload.chromeWait ? { chromeWait: true } : {}),
+    // 質問（AskUserQuestion など）の待ち。一覧の行と会話は「承認待ち」ではなく「回答待ち」と言う（Issue #231）
+    ...(w.payload.kind === 'question' ? { question: true } : {}),
     blocking: blocksTurn(w),   // 今ターンを止めているか（実行中の数に入るか）
   }));
 
@@ -7381,6 +7383,56 @@ const liveTurn = sessionId => Boolean(sessionId) && runtime.turns.has(sessionId)
 const blocksTurn = w => w.outlivesTurn ? liveTurn(w.origin) : !w.detached;
 /** ターンを止めている承認待ち */
 const blockingWaits = () => [...runtime.waiting.values()].filter(blocksTurn);
+
+// ---- 人の回答以外で閉じた質問（Issue #231）
+// 中断・ホスト不在・ターンの終わり（失敗・保持役が落ちた）・再起動で答えを待たずに閉じた質問を、閉じた理由と中身ごと会話に残す。
+// 画面はそれを「答えられずに閉じた質問」として出し、答えを送る・もう一度聞く入口を付ける。答えた・人が断った質問は残さない
+const CLOSED_QUESTION_KEYS = new Set(['aborted', 'turnEnded', 'hostAway']);
+const CLOSED_QUESTIONS_MAX = 20;
+/** 記録した（記録を予約した）質問の id。同じ質問を二度残さない */
+const closedQuestionIds = new Set();
+const clipText = (value, max) => typeof value === 'string' ? value.slice(0, max) : value == null ? undefined : String(value).slice(0, max);
+/** 会話に残す質問の中身（大きな preview は落とす） */
+function closedQuestionsOf(questions) {
+  if (!Array.isArray(questions)) return [];
+  return questions.slice(0, 4).filter(q => q && typeof q === 'object').map(q => ({
+    question: clipText(q.question, 1000) ?? '', ...(q.header ? { header: clipText(q.header, 60) } : {}), multiSelect: q.multiSelect === true,
+    ...(q.custom === false ? { custom: false } : {}),
+    options: (Array.isArray(q.options) ? q.options : []).slice(0, 12).filter(o => o && typeof o === 'object').map(o => ({
+      label: clipText(o.label, 200) ?? '', ...(o.value != null && o.value !== o.label ? { value: clipText(o.value, 200) } : {}),
+      ...(o.description ? { description: clipText(o.description, 400) } : {}) })),
+  })).filter(q => q.question || q.options.length);
+}
+const liveTurnOf = (sessionId) => sessionId ? [...runtime.turns.values()].find(t => t.info.sessionId === sessionId) ?? null : null;
+/** 閉じた質問の 1 件。questions が無い（切り詰められた）カードは残さない */
+function closedQuestionEntry(id, payload) {
+  const questions = closedQuestionsOf(payload?.questions);
+  if (!questions.length || !payload?.sessionId) return null;
+  return { id, at: Date.now(), toolName: payload.toolName ?? null, toolUseID: payload.toolUseID ?? null, questions };
+}
+/** 会話に残して画面へ知らせる。理由は items ごとに付ける */
+async function recordClosedQuestions(sessionId, items) {
+  if (!sessionId || !items.length) return;
+  try {
+    const previous = (await store.get(sessionId).catch(() => null))?.closedQuestions ?? [];
+    const ids = new Set(items.map(item => item.id));
+    await store.setSessionData(sessionId, 'closedQuestions', [...previous.filter(item => !ids.has(item.id)), ...items].slice(-CLOSED_QUESTIONS_MAX));
+    emitGlobal({ type: 'questionsClosed', sessionId, items });
+  } catch (error) { console.error(`  閉じた質問を会話に残せませんでした（${sessionId}）:`, String(error?.message ?? error)); }
+}
+/**
+ * 答えを待たずに閉じた質問を控える（askPermission の settle から）。ターンが走っていれば、そのターンの終わり（endTurn）が
+ * 中断の理由と一緒にまとめて残す。走っていなければ（ターンの外の質問）すぐ残す
+ */
+function noteClosedQuestion(id, payload, messageKey) {
+  if (payload?.kind !== 'question' || !CLOSED_QUESTION_KEYS.has(messageKey) || closedQuestionIds.has(id)) return;
+  const entry = closedQuestionEntry(id, payload);
+  if (!entry) return;
+  closedQuestionIds.add(id);
+  const turn = liveTurnOf(payload.sessionId);
+  if (turn && !turn.closedFlushed) { (turn.closedQuestions ??= []).push(entry); return; }
+  void recordClosedQuestions(payload.sessionId, [{ ...entry, reason: messageKey === 'hostAway' ? 'hostAway' : 'stopped' }]);
+}
 
 /**
  * 承認待ちを片付ける。どのセッションの分かは呼び出し側が必ず指定する。
@@ -7609,6 +7661,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       pushNotifier.approvalResolved({ id: cards[0].id, sessionId: payload.sessionId });
       // 通知の一覧のあなた待ちを決着させる（承認済み・回答済み・却下・取り消し。ADR 0149）
       void inboxSources.permissionSettled({ id: cards[0].id, answer, kind: payload.kind });
+      // 人の回答以外（中断・ターンの終わり・ホスト不在）で閉じた質問は、理由と中身を会話に残す（Issue #231）
+      if (answer?.allow !== true) noteClosedQuestion(cards[0].id, payload, answer?.messageKey);
       botHost?.onPermission({ id: cards[0].id, ...payload }, 'settled');
       signal?.removeEventListener?.("abort", onAbort);
       const { messageKey, messageParams, ...rest } = localize(answer);
@@ -10148,7 +10202,7 @@ const cardsFinalized = new Set();
 /** カード 1 枚を取り下げる（DB の行を消し、stops と画面の決着を残す） */
 async function withdrawCards(rows) {
   if (!rows.length) return;
-  const stops = new Map();
+  const stops = new Map(), closed = new Map();
   for (const row of rows) {
     const sessionId = row.origin ?? row.sessionId;
     if (!row.detached && sessionId) {
@@ -10160,6 +10214,15 @@ async function withdrawCards(rows) {
       const entry = stops.get(sessionId) ?? { approvals: [], waits: [] };
       entry[list].push(item);
       stops.set(sessionId, entry);
+    }
+    // 再起動で閉じた質問は、理由（restart）と中身を会話に残す（Issue #231。中身が切り詰められたカードは残せない）
+    if (row.payload?.kind === 'question' && !closedQuestionIds.has(row.id)) {
+      const key = row.payload.sessionId ?? row.sessionId;
+      const entry = closedQuestionEntry(row.id, { ...row.payload, sessionId: key });
+      if (entry) {
+        closedQuestionIds.add(row.id);
+        closed.set(key, [...(closed.get(key) ?? []), { ...entry, reason: 'restart' }]);
+      }
     }
     // 開いている画面のカードを畳み、スマホの通知と通知の一覧のあなた待ちを決着させる
     emitGlobal({ type: 'permissionSettled', id: row.id, sessionId: row.sessionId ?? null, allow: false, reason: 'restart' });
@@ -10173,6 +10236,7 @@ async function withdrawCards(rows) {
       console.error(`  取り下げた承認・待ちを会話に残せませんでした（${sessionId}）:`, String(error?.message ?? error));
     });
   }
+  for (const [sessionId, items] of closed) await recordClosedQuestions(sessionId, items);
   waitingCards.remove(rows.map(row => row.id));
   console.log(`  前の起動が残した承認・質問のカード ${rows.length} 件を取り下げた（会話へ届ける）`);
 }
@@ -10270,6 +10334,22 @@ async function endTurn(turn, emit, { record = true } = {}) {
   const delegated = Boolean(endMeta?.delegation);
   // bot の会話の種類（thread・dm・routine・learner・pulse）。完了の知らせの出し分けに使う（ADR 0127）
   const botKind = endMeta?.bot?.kind ?? null;
+  // 答えを待たずに閉じた質問（Issue #231）。中断などで先に閉じた分と、この後の settleAll('turnEnded') が閉じる分を、
+  // 閉じた理由（中断の理由・失敗・答える前にターンが終わった）と一緒に、turnEnd より前に会話へ残す
+  if (turn.info.sessionId && !requeued) {
+    const closing = [];
+    for (const [id, w] of runtime.waiting) {
+      if (w.payload.sessionId !== turn.info.sessionId || w.relay || w.detached || w.outlivesTurn || w.payload.kind !== 'question' || closedQuestionIds.has(id)) continue;
+      const entry = closedQuestionEntry(id, w.payload);
+      if (entry) { closedQuestionIds.add(id); closing.push(entry); }
+    }
+    turn.closedFlushed = true;
+    // 止めた後にエージェントが ok で返したターン（中断として残らない）も、止めた理由で閉じたとする
+    const reason = interrupted?.reason ?? (turn.ac.signal.aborted ? turn.abortReason ?? 'user' : turn.outcome === 'error' ? 'error' : 'turnEnded');
+    const items = [...(turn.closedQuestions ?? []), ...closing].map(item => ({ ...item, reason }));
+    turn.closedQuestions = [];
+    await recordClosedQuestions(turn.info.sessionId, items);
+  }
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
@@ -11718,7 +11798,7 @@ wss.on("connection", (ws, req) => {
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { deletedBot: sidecar.deletedBot ?? null, compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff),
-              rebuilds: sidecar.rebuilds ?? [] };
+              rebuilds: sidecar.rebuilds ?? [], closedQuestions: sidecar.closedQuestions ?? [] };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
             // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0257）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える

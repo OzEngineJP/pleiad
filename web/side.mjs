@@ -172,7 +172,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const chCollapsed = prefs.chCollapsed;        // 畳んだ置き場所（"home" かチャンネルの id）
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [] };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), answerWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [] };
   // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
   let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
   let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
@@ -445,12 +445,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   // Bots は木の外の帯（#botStrip）。ADR 0288
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
-  const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : t("sidebar.waiting");
+  // 質問への回答だけを待っている会話は「回答待ち」（Issue #231。通知の一覧の「あなた待ち」の質問と同じ見分け）
+  const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : last.answerWaitIds.has(id) ? t("sidebar.waitingAnswer") : t("sidebar.waiting");
 
   /** チャンネルのスレッドの 1 行: 印（弧・◆・青い丸）・題・時刻 */
   function oneRow(s, level) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -918,7 +919,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    */
   function row(s, level) {
     const key = `session:${level}:${s.id ?? ''}`;
-    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
+    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.bgWaiting.get(s.id), last.unreadIds.has(s.id), last.interrupted.get(s.id), last.schedules.get(s.id),
       last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000),
       s.bot ? [directory.bots.get(s.bot.botId), s.bot.channelId ? directory.channels.get(s.bot.channelId) : null] : null]);
@@ -1655,6 +1656,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
      * @param {Set<string>} o.runningIds
      * @param {Set<string>} o.waitingIds
      * @param {Set<string>} [o.chromeWaitIds]  waitingIds のうち、待っているものが Chrome の操作だけの会話（「Chrome の操作待ち」と言う）
+     * @param {Set<string>} [o.answerWaitIds]  waitingIds のうち、待っているものが質問への回答だけの会話（「回答待ち」と言う）
      * @param {Map<string,number>} o.bgWaiting  main は返答済みで裏を待っているセッション -> 待っている本数
      * @param {Set<string>} o.unreadIds
      * @param {Map<string,{at:number,reason:string,unread:boolean}>} [o.interrupted]  中断した会話（web/interrupt.mjs）
@@ -1669,6 +1671,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         runningIds: o.runningIds ?? new Set(),
         waitingIds: o.waitingIds ?? new Set(),
         chromeWaitIds: o.chromeWaitIds ?? new Set(),
+        answerWaitIds: o.answerWaitIds ?? new Set(),
         bgWaiting: o.bgWaiting ?? new Map(),
         unreadIds: o.unreadIds ?? new Set(),
         interrupted: o.interrupted ?? new Map(),

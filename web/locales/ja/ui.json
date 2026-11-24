@@ -2080,6 +2080,30 @@
       "sending": "回答を送っています…",
       "sendFailedInline": "回答を送れませんでした · {{error}}"
     },
+    "closedQuestion": {
+      "heading": "{{mark}}",
+      "headingMark": "答えられずに閉じた質問",
+      "send": "この答えを送る",
+      "askAgain": "もう一度聞いてもらう",
+      "answerText": "前の質問（答える前に閉じたもの）への答えです。\n{{answers}}",
+      "askAgainText": "前の質問が答える前に閉じました。同じ質問をもう一度してください。\n{{questions}}",
+      "filled": "入力欄の書きかけの後ろに足しました",
+      "sent": "送りました",
+      "reason": {
+        "user": "中断したため閉じました",
+        "update": "更新のため閉じました",
+        "quit": "Pleiad を終了したため閉じました",
+        "hostAway": "PC につながらなくなったため閉じました",
+        "restart": "再起動のため閉じました",
+        "limit": "使用量の上限で止まったため閉じました",
+        "auth": "ログインが切れたため閉じました",
+        "settings": "設定を変えて止めたため閉じました",
+        "timeout": "時間切れで止まったため閉じました",
+        "error": "エージェントが失敗で止まったため閉じました",
+        "turnEnded": "答える前にターンが終わったため閉じました",
+        "stopped": "答える前に止まったため閉じました"
+      }
+    },
     "approval": {
       "heading": "{{mark}}",
       "headingMark": "承認を待っている",
@@ -3427,6 +3451,7 @@
     "forked": "fork で生まれた会話",
     "waiting": "承認待ち",
     "waitingChrome": "Chrome の操作待ち",
+    "waitingAnswer": "回答待ち",
     "waitingCount_other": "承認待ち {{count}} 件",
     "unsent": "未送信",
     "unsentDraft": "未送信 · 下書きあり",
