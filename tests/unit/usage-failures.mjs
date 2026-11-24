@@ -72,7 +72,10 @@ async function japaneseCases(t, tmp) {
     assert.equal(await missing({ env: { CLAUDE_CONFIG_DIR: registered.ok } }), false, 'CLAUDE_CONFIG_DIR の先を読む');
     assert.equal(await missing({ home: path.join(tmp, 'nobody') }), false, 'ログイン中のアカウントのファイルが無いのは API の接続でもあるので手がかりにしない');
     assert.equal(await missing({ env: { ANTHROPIC_API_KEY: 'x' } }), false, 'API キーで動くときは手がかりにしない');
-    assert.equal(await missing({ configDir: registered.noItem, platform: 'darwin' }), false, 'macOS はキーチェーンに置く');
+    // macOS はファイルを見ずキーチェーンの項目の有無で決める（ADR 0351）。実機の security に触れないよう present を差し替える
+    assert.equal(await missing({ configDir: registered.noItem, platform: 'darwin', present: async () => 'present' }), false, 'macOS: 項目があればファイルが空でも「有る」');
+    assert.equal(await missing({ configDir: registered.ok, platform: 'darwin', present: async () => 'missing' }), true, 'macOS: 項目が無ければファイルにトークンがあっても「無い」');
+    assert.equal(await missing({ platform: 'darwin', present: async () => 'missing' }), false, 'macOS: ログイン中のアカウントは手がかりにしない');
     assert.ok(loginDir);
   });
 
