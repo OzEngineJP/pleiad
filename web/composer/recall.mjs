@@ -7,7 +7,8 @@
 // - 一番古いものでさらに ↑ を押したら、数が小さく跳ねる（これ以上は無い合図）
 // - タッチの画面（↑ のキーが無い）: 欄が空で候補も無いとき、欄の右に履歴のボタン。行の右端は Esc の印の代わりに「前へ」「次へ」「閉じる」
 // - 順と中身は呼び出し側（load）が決める（この会話 → ほかの会話の新しい順。`!` の形では `!` で送ったコマンドだけ）
-// - 並びは欄にフォーカスが来た・会話を替えたときに先に読む（prefetch）。読み終わる前の ↑ は、150ms 過ぎたら行に「読み込み中…」を出して待つ。
+// - 並びは欄にフォーカスが来た・会話を替えたときに先に読む（prefetch）。送ったときは読み直さず、送った文を手元の並びの先頭に足す（sent）。
+//   読み終わる前の ↑ は、150ms 過ぎたら行に「読み込み中…」を出して待つ。
 //   待つ間の ↑ は重ねない。待つ間に字を打った・会話を替えたら、読み終えても欄に入れない
 // 欄に字を入れる・添付を戻すのも呼び出し側（put）。ここは位置と行と、キーを取るかの判断だけを持つ。
 import { el, icon } from '../dom.mjs';
@@ -229,7 +230,7 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
     row.classList.add('on', 'loading');
   }
 
-  /** 並びを先に読んでおく（欄にフォーカスが来た・会話を替えた・送った）。続けて呼ばれたら最後の 1 回だけ */
+  /** 並びを先に読んでおく（欄にフォーカスが来た・会話を替えた。送ったときは読み直さず sent で足す）。続けて呼ばれたら最後の 1 回だけ */
   function prefetch() {
     clearTimeout(prefetchTimer);
     prefetchTimer = setTimeout(() => {
@@ -293,11 +294,23 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
       draft = null; shown = null;
       paintRow();
     },
-    /** 会話を替えた・送った。並びは読み直す（書きかけは戻さない。替えた先の書きかけが入る）。読んでいる途中の古い並びも使わない */
+    /** 会話を替えた。並びは読み直す（書きかけは戻さない。替えた先の書きかけが入る）。読んでいる途中の古い並びも使わない */
     reset() {
       idx = -1; draft = null; shown = null; items = null; loadedFor = null; loading = null; loadingKey = null;
       paintRow();
       if (prompt.contains?.(globalThis.document?.activeElement)) prefetch();
+    },
+    /**
+     * 送った。並びは読み直さない（読み直しは重く、送信の準備と取り合って送信を遅らせる）。
+     * 読み込み済みなら、送った文を先頭に足す（同じ文は新しい 1 つだけ。読み込み中・未読なら、次の読み込みが手元の送信を足す）
+     */
+    sent(item) {
+      idx = -1; draft = null; shown = null;
+      if (item && ready() && Boolean(item.shell) === shell()) {
+        const text = String(item.text).trim();
+        items = [item, ...items.filter((r) => String(r.text).trim() !== text)];
+      }
+      paintRow();
     },
   };
 }

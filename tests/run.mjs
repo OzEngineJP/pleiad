@@ -614,6 +614,8 @@ const SUITES = [
   './unit/work-controls.mjs',
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   './unit/composer-wait.mjs',
+  // 入力欄の ↑ の呼び出し（web/composer/recall.mjs）: 送ったときは並びを読み直さず（送信の準備と取り合う）、送った文を先頭に足す・同じ文は 1 つ
+  './unit/composer-recall.mjs',
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉
   './unit/approval-card.mjs',
   // コンピューターの操作の表示: 行（題・動詞・サムネイル・止めた理由）・終わった塊の 3 行と「ほか N 件」・承認の中身・通知の見出し

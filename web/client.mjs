@@ -352,9 +352,11 @@ const chatEdit = chatComposer.useEdit({
 const recentSent = [];
 const RECENT_SENT_MAX = 50;
 function noteSent(sessionId, text, shell = false) {
-  if (!sessionId || !String(text ?? '').trim()) return;
-  recentSent.unshift({ sessionId, title: '', uuid: '', at: new Date().toISOString(), text: String(text), shell });
+  if (!sessionId || !String(text ?? '').trim()) return null;
+  const item = { sessionId, title: '', uuid: '', at: new Date().toISOString(), text: String(text), shell };
+  recentSent.unshift(item);
   recentSent.length = Math.min(recentSent.length, RECENT_SENT_MAX);
+  return item;
 }
 async function loadSentMessages(shell) {
   const { items = [] } = await cmd('invoke', { op: 'sessions.sentMessages', args: { ...(state.current ? { sessionId: state.current } : {}), ...(shell ? { shell: true } : {}) } });
@@ -1924,8 +1926,7 @@ async function runShellFromComposer() {
   }
   const sessionId = state.current;
   const runId = randomId();
-  noteSent(sessionId, command, true);
-  chatRecall.reset();
+  chatRecall.sent(noteSent(sessionId, command, true));
   $('prompt').value = '';
   shellComposer.exit();
   fitPrompt();
@@ -10617,12 +10618,12 @@ function clearSentDraft(id, text, attachments, revision) {
     if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
   }
   const cleared = randomId();
+  const sent = noteSent(id, draft?.text ?? text);
   if (state.current === id) {
     $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt();
     draftRevision = cleared;
-    chatRecall.reset();
+    chatRecall.sent(sent);
   }
-  noteSent(id, draft?.text ?? text);
   dropSuggestion(id);
   persistDraft(id, { text: '', attached: [], revision: cleared, dirty: true }).catch(() => {});
 }
