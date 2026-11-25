@@ -1,9 +1,9 @@
 // 委譲した子の回が終わったら（完了・失敗・止められた）、終了通知を 1 つ作る（ADR 0355）。委譲の管理（core/agent-tasks.mjs）だけで確かめる。
 //   - ply_task_cancel は止める合図を送るだけ。止まったことは同じ終了通知で届く（終わり方は依頼元が取り消した）
 //   - もう終わっていて通知が届いていなければ、その通知をそのまま届ける（戻り値で結果を渡さず、既読にしない）
-//   - 人が子を直接止めた: 依頼元が止められていなければすぐ届ける（終わり方は人が止めた・結果は止めた時点までの返答）
+//   - 人が子を直接止めた: 依頼元を人が止めていなければすぐ届ける（終わり方は人が止めた・結果は止めた時点までの返答）
 //   - 子を取り消すと孫も止まる。孫の終了通知で子（取り消している途中の会話）を起こさず、子の次のターンの始めに渡す（takeHeld）
-//   - 依頼元が止められている間に、人が子だけを起こして子が終わった: 依頼元を起こさず、次のターンの始めに渡す
+//   - 依頼元を人が止めている間に、人が子だけを起こして子が終わった: 依頼元を起こさず、次のターンの始めに渡す（上限で止まった依頼元は server-interrupt-stops で見る）
 //   - 止める合図を受けた回には、外から起きたターンを合流させない。回が締まってから次の回として走らせる
 //   - 出来事（回の終わり・人の直接の指示）は起きた順に貯め、届けるときにまだ届けていない分を全部 1 通に載せ、今の子の状態を添える
 //   - 人の指示は伏せて 300 字に切る。人の指示だけでは依頼元を起こさない。届けていない出来事は再起動の後も残って届く
@@ -15,7 +15,7 @@ import { hookedTaskStorage } from '../lib/task-storage.mjs';
 import { noticeResultParts } from '../../core/task-notice-events.mjs';
 
 export const name = 'agent-tasks-end-notice';
-export const title = '子の回の終了通知: ply_task_cancel・人の止め・依頼元が止められている間・止めた直後の外からのターン・取り直し';
+export const title = '子の回の終了通知: ply_task_cancel・人の止め・依頼元を人が止めている間・止めた直後の外からのターン・取り直し';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await sleep(15); } throw new Error('timeout'); }
 
@@ -96,7 +96,7 @@ export default async function(t) {
       JSON.stringify(of(held.taskId)));
     t.ok('止めた側（stoppedBy）は ply_task_status に出さない', !('stoppedBy' in manager.get(held.taskId)) && !('ownerStop' in manager.get(held.taskId)));
 
-    // ---- 人が子を直接止めた: 依頼元が止められていなければ、すぐ届ける
+    // ---- 人が子を直接止めた: 依頼元を人が止めていなければ、すぐ届ける
     const human = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'hold-b' });
     await until(() => manager.get(human.taskId).status === 'running');
     await manager.cancel(human.taskId, { by: 'human' });
@@ -150,7 +150,7 @@ export default async function(t) {
     await takenGrand?.settle('ok');
     t.ok('渡ったら sent になり、もう一度は渡さない', manager.get(grand.taskId).notification === 'sent' && (await manager.takeHeld(childSession)) === null);
 
-    // ---- 依頼元が止められている間に、人が子だけを起こして子が終わった: 依頼元を起こさず、次のターンの始めに渡す
+    // ---- 依頼元を人が止めている間に、人が子だけを起こして子が終わった: 依頼元を起こさず、次のターンの始めに渡す
     const done = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'quick-2' });
     await until(() => manager.get(done.taskId).notification === 'sent');
     stoppedOwners.add('parent');
@@ -158,7 +158,7 @@ export default async function(t) {
     const turned = await manager.external(doneSession, 'human', async hooks => { if (hooks) await hooks.began(); return hooks ? 'linked' : 'plain'; });
     await until(() => manager.get(done.taskId).status === 'completed' && manager.get(done.taskId).notification === 'pending');
     await sleep(1200);
-    t.ok('止められている依頼元を、人が起こした子の終了通知で起こさない', turned === 'linked' && of(done.taskId).length === 1
+    t.ok('人が止めている依頼元を、人が起こした子の終了通知で起こさない', turned === 'linked' && of(done.taskId).length === 1
       && manager.get(done.taskId).notification === 'pending', JSON.stringify({ turned, delivered: of(done.taskId), notification: manager.get(done.taskId).notification }));
     stoppedOwners.delete('parent');
     const takenDone = await manager.takeHeld('parent', { stopped: true });

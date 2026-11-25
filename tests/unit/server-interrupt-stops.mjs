@@ -8,6 +8,7 @@
 //   - 止めたものが無ければ今の文のまま（何も添えない）
 //   - 届いていなかった結果は ply_task_status で読める
 //   - 再起動で止まった委譲タスクも、依頼元の会話の stops に残って伝わる
+//   - 上限で止まった依頼元は子が終われば起こす。起こしたターンも上限で断られても、終了通知は履歴に残る（ADR 0355 §7）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,7 +52,7 @@ export default async function (t) {
   const history = async sessionId => (await c.cmd('loadSession', { sessionId })).messages;
   try {
     // ================= 委譲タスク: 取り消したもの・終わっていたのに届いていなかったもの（resume の text で伝える）
-    // 人が会話を止めても子の終了通知は止めない。止められている間は依頼元を起こさず、次のターンの始めに渡す（ADR 0355）
+    // 人が会話を止めても子の終了通知は止めない。人が止めている間は依頼元を起こさず、次のターンの始めに渡す（ADR 0355。上限で止まったときは起こす。下の節）
     const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'ask', title: 'Early' }) })).sessionId;
     await c.runTurn({ sessionId: parent, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow', title: 'Long' }) });
     const tasks = await until(async () => { const rows = await tasksOf(parent); return rows.length === 2 && rows.every(r => r.sessionId) ? rows : null; });
@@ -108,6 +109,42 @@ export default async function (t) {
     const read = await c.runTurn({ sessionId: parent, prompt: ply('ply_task_status', { taskId: early.taskId }) });
     const status = JSON.parse(read.events.find(e => e.type === 'tool.result')?.text ?? '{}');
     t.ok('届いていなかった結果は ply_task_status で読める', status.status === 'completed' && typeof status.result === 'string' && status.result.length > 0, JSON.stringify({ status: status.status, result: status.result }));
+
+    // ================= 上限で止まった依頼元は、子が終われば起こす（貯めるのは人が止めたときだけ。ADR 0355 §7）
+    const FAR = Date.now() + 3 * 60 * 60 * 1000;
+    const limitParent = async (task, title) => {
+      const owner = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task, title }) })).sessionId;
+      const row = await until(async () => (await tasksOf(owner)).find(r => r.sessionId));
+      const ask = await until(async () => (await c.cmd('running')).permissions.find(p => p.sessionId === row?.sessionId));
+      const limited = (await c.runTurn({ sessionId: owner, prompt: `limit ${FAR}` })).events.find(e => e.type === 'turnEnd' && e.sessionId === owner);
+      return { owner, row, ask, limited };
+    };
+    const woke = await limitParent('ask', 'LimitWake');
+    t.ok('上限の依頼元: 子の承認待ちが出て、依頼元は上限で止まる', Boolean(woke.ask) && woke.limited?.interrupted?.reason === 'limit', JSON.stringify(woke.limited?.interrupted));
+    from = c.mark();
+    await c.cmd('resolvePermission', { id: woke.ask.id, allow: true });
+    end = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === woke.owner, { from, ms: 20000 });
+    t.ok('上限で止まった依頼元は、子が終わると終了通知のターンで起こす', c.since(from).some(e => e.type === 'taskNotice' && e.sessionId === woke.owner && String(e.text).includes(woke.row.taskId))
+      && !end.interrupted, JSON.stringify(end.interrupted));
+    t.ok('起こしたターンで終了通知は届いた（sent）', (await until(async () => (await tasksOf(woke.owner)).find(r => r.taskId === woke.row.taskId && r.notification === 'sent'))) != null);
+
+    // 起こしたターンも上限で断られたとき: 知らせは発言として渡った後に断られるので失われず、履歴に残って次のターンで読める
+    const reject = await limitParent('steps:' + JSON.stringify({ steps: [{ tool: 'Grep', input: {}, result: 'r', ask: true }, { text: `done LIMIT_TURN:${FAR}` }] }), 'LimitReject');
+    t.ok('断られる側: 子の承認待ちが出て、依頼元は上限で止まる', Boolean(reject.ask) && reject.limited?.interrupted?.reason === 'limit', JSON.stringify(reject.limited?.interrupted));
+    from = c.mark();
+    await c.cmd('resolvePermission', { id: reject.ask.id, allow: true });
+    end = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === reject.owner, { from, ms: 20000 });
+    t.ok('起こしたターンは上限で断られる', end.interrupted?.reason === 'limit', JSON.stringify(end.interrupted));
+    const rejectedRow = await until(async () => (await tasksOf(reject.owner)).find(r => r.taskId === reject.row.taskId && r.notification === 'sent'));
+    t.ok('断られても、発言として渡った終了通知は届いた扱い（sent）', Boolean(rejectedRow), JSON.stringify((await tasksOf(reject.owner)).map(r => [r.title, r.status, r.notification])));
+    const noticeAt = async () => (await history(reject.owner)).findIndex(m => m.role === 'user' && String(m.text).includes(reject.row.taskId));
+    t.ok('断られたターンの終了通知は依頼元の履歴に残る', (await noticeAt()) >= 0);
+    await sleep(1500);
+    t.ok('断られた後に同じ通知でターンを繰り返さない', c.since(from).filter(e => e.type === 'turnEnd' && e.sessionId === reject.owner).length === 1);
+    await c.runTurn({ sessionId: reject.owner, prompt: 'echo:after-limit' });
+    rows = await history(reject.owner);
+    const afterAt = rows.findIndex(m => m.role === 'user' && m.text === 'echo:after-limit');
+    t.ok('次のターンの履歴に、断られたターンの終了通知が前に残っている', (await noticeAt()) >= 0 && (await noticeAt()) < afterAt, JSON.stringify({ notice: await noticeAt(), after: afterAt }));
 
     // ================= 承認待ち（新しい送信で伝える）
     const asker = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'echo:first' })).sessionId;

@@ -8662,9 +8662,10 @@ agentTasks = await createAgentTasks({
       return await finishChild(task, signal, execution, outcome, renewed);
     } finally { release(); }
   },
-  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0355）。
-  // 止められている間は、終了通知でその会話のターンを始めない（次のターンの始めに beginTurn が takeHeld で渡す）
-  ownerStopped: owner => !isRemoteOwner(owner) && !runtime.turns.has(owner) && Boolean(interruptedOf(store.peek(owner)?.interrupted)),
+  // 依頼元の会話を人が止めたままか（直前のターンが人の中断で終わり、その後ターンが始まっていない。ADR 0355）。
+  // その間は、終了通知でその会話のターンを始めない（次のターンの始めに beginTurn が takeHeld で渡す）。
+  // 上限・ログイン切れ・再起動など人の中断でない止まり方は数えない（子が終われば起こす。ADR 0355 §7・0161）
+  ownerStopped: owner => !isRemoteOwner(owner) && !runtime.turns.has(owner) && interruptedOf(store.peek(owner)?.interrupted)?.reason === 'user',
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
   // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
@@ -9404,10 +9405,10 @@ async function beginTurn(ctx) {
     permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
     resolvedContext, shellHandoff } = ctx;
 
-  // 依頼元が止められている間に終わった子の終了通知（ADR 0355）は、ターンを始めずに貯めてある。このターンの始めに渡す。
-  // 止められていたか（中断の印）は、印を消す前に読む。圧縮のターンでは渡さない（次の普通のターンで渡す）
+  // 依頼元を人が止めている間に終わった子の終了通知（ADR 0355）は、ターンを始めずに貯めてある。このターンの始めに渡す。
+  // 人が止めていたか（中断の印。理由が user）は、印を消す前に読む（ownerStopped と同じ）。圧縮のターンでは渡さない（次の普通のターンで渡す）
   if (sessionId && !hooks.compact && agentTasks) {
-    const stopped = Boolean(interruptedOf(store.peek(sessionId)?.interrupted));
+    const stopped = interruptedOf(store.peek(sessionId)?.interrupted)?.reason === 'user';
     ctx.heldNotice = await agentTasks.takeHeld(sessionId, { stopped }).catch(err => {
       console.error("  止められている間の終了通知を渡せませんでした:", String(err?.message ?? err)); return null;
     });

@@ -142,8 +142,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 無ければ null。長い・上限による待ちは status: waiting にし（ply_task_wait を待たずに返す）、待ちの回ごとに 1 回 deliverRetry で依頼元へ知らせる
   retrying = () => null, deliverRetry = async () => 'ok',
   deliverLimitSwitch = async () => 'ok',
-  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0355）。
-  // 止められている間は、その会話への終了通知でターンを始めない（次のターンの始めに takeHeld で渡す）
+  // 依頼元の会話を人が止めたままか（直前のターンが人の中断で終わり、その後ターンが始まっていない。ADR 0355）。
+  // その間は、その会話への終了通知でターンを始めない（次のターンの始めに takeHeld で渡す）。上限などで止まった会話は数えない
   ownerStopped = () => false,
   canStart = () => true, resumeQueued = false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
@@ -180,9 +180,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const retryOf = r => !r.host && r.status === 'running' && r.sessionId ? retrying(r.sessionId) ?? null : null;
   const longRetry = rt => Boolean(rt) && (rt.limit || !Number.isFinite(rt.next) || rt.next - (rt.seenAt ?? rt.since ?? now()) >= RETRY_WAIT_MS);
   const retryWaitOf = r => { const rt = retryOf(r); return longRetry(rt) ? rt : null; };
-  // 依頼元が止められている間の終了通知（ADR 0355）は送らず、依頼元の次のターンの始めに渡す（takeHeld）。
+  // 依頼元を人が止めている間の終了通知（ADR 0355）は送らず、依頼元の次のターンの始めに渡す（takeHeld）。
   // 依頼元の会話ごと止めた・取り消した子孫の行（ownerStop。依頼元のターンが始まったら ownerResumed が外す）と、
-  // 依頼元の会話が中断のままの行（ownerStopped）。ホストに任せた子は決まりの外（今までどおり）
+  // 依頼元の会話を人が止めたままの行（ownerStopped）。上限で止まった依頼元は起こす。ホストに任せた子は決まりの外（今までどおり）
   const heldNotice = r => !r.host && Boolean(r.parentSessionId) && (r.ownerStop === true || ownerStopped(r.parentSessionId) === true);
   // 再試行を待っている子（retryWaitOf）も待っているものに数える（人の承認ではないが、待つ相手が子の外にある。ADR 0229）
   const waitingOf = r => r.host ? r.hostWaiting === true || remoteWaiting(r) : waiting(r.sessionId) || Boolean(retryWaitOf(r));
