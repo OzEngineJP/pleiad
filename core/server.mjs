@@ -91,9 +91,9 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR } from './claude-own-dir.mjs';
+import { logoutClaudeOwnDir, macKeychainAuthFailure, sweepClaudeOwnDirArchives } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
-import { guardUsageDir, refreshUsageDir, shouldMarkUsageExpired } from './backends/claude-usage.mjs';
+import { shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, attachDocPolicy, followSettings, managed, nativeContextReport, nativeEquivalentTurn, pinChanges, pinnedChanges, resolveRuntime, unstoppedMcp } from './context-runtime.mjs';
@@ -574,20 +574,16 @@ const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: c
   onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }),
   // macOS だけ、アカウントを消す前に同じ CLAUDE_CONFIG_DIR で claude auth logout を呼ぶ（ADR 0351。ほかの OS は何もしない）
   logout: dir => logoutClaudeOwnDir(dir, { command: claudeCliCommand }) });
-// claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340）。設定がオン（試験と手元の確かめだけ）のアカウントの会話だけが認証側を通る。
-// 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。更新は CLI に任せ（使用量の読み取りを 1 回流す）、Pleiad は更新用トークンを持ち出さない
-// 使用量の読み取りの印（guard）はオンの間だけ効き、オフにすると次の読み取りで外れる。更新（refresh）は印を付ける前から走っていた読み取りも待つ
+// claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340・0350）。設定がオンのアカウントの会話だけが認証側を通る（専用フォルダ方式だけ）。
+// 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。トークンは持ち出さず、更新は CLI が自分で行う
 const claudeAccountConnectors = createClaudeConnectorsWiring({
   dataDir: store.dataDir,
-  probe: probeClaudeConnectors,
   accounts: claudeAccounts,
   versions: async () => {
     let exe = null;
     try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
     return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
   },
-  usage: { guard: guardUsageDir, refresh: refreshUsageDir },
-  onLoginExpired: markConnectorsLoginExpired,
 });
 const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
 async function markConnectorsLoginExpired(accountId, reason) {
@@ -650,7 +646,7 @@ async function accountRows(backend) {
   if (kind === 'token') {
     const { accounts } = await claudeAccounts.list();
     return Promise.all(accounts.map(async a => ({
-      id: a.id, name: a.name, ready: Boolean(a.hasToken) || (await claudeAccountConnectors.settings.read(a.id)).mode === OWN_DIR,
+      id: a.id, name: a.name, ready: Boolean(a.hasToken) || (await claudeAccountConnectors.settings.read(a.id)).enabled,
     })));
   }
   if (kind === 'agent') return (await agentAccounts.list(backend.id)).map(a => ({ id: a.id, name: a.name, ready: a.hasCredential }));
@@ -2349,17 +2345,22 @@ function controlRuntimeFor(turn) {
 }
 
 // ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0227 §1）。承認は会話の承認モードで Pleiad が決める。
-// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）。
+// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブ（待ちを過ぎて裏へ移った run を含む）が終わったら会話へ知らせる（エージェントが自分で止めたものを除く）。
+// 少し待っている run も、裏の一覧に出して人が 1 本だけ止められる（止めた結果は、待っているエージェントへ run の戻りとして返る。ターンは続く）。
 // 保持役があればジョブは保持役の子に載り、サーバーを入れ替えても続く（ADR 0270 段 2a。core/ply-shell-held.mjs）
 const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellBridge = createShellBridge({
   withSessionWrite: withWritableSession,
   askPermission: request => askPermission(request),
+  isAlwaysAllowed: async sessionId => Boolean((await store.get(sessionId)).shellAlwaysAllow),
+  rememberAlwaysAllow: async sessionId => store.setSessionData(sessionId, 'shellAlwaysAllow', true),
   holder: shellJobHolder,
   onJobStart: (sessionId, job) => {
     sessionCommands?.track(sessionId, { id: job.jobId, command: job.command, cwd: job.cwd, startedAt: job.startedAt });
     shellJobsChanged(sessionId);
   },
+  // 待っている run が裏の一覧に出始めた・run が待ちを過ぎて裏へ移った
+  onJobChange: (sessionId) => shellJobsChanged(sessionId),
   onJobEnd: (sessionId, job, tail) => {
     sessionCommands?.untrack(sessionId, job.jobId);
     shellJobsChanged(sessionId);
@@ -2398,8 +2399,8 @@ async function shellRuntimeFor(turn) {
 function plyShellOffered(sessionId) {
   return [...agentConnections.values()].some(e => e.sessionId === sessionId && e.shell);
 }
-/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held */
-const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.kind === 'start')
+/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held。listed: start・裏へ移った run・少し待っている run */
+const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.listed)
   .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell', ...(j.held ? { held: true } : {}) }));
 /** 裏の一覧の止める・読む口（findBackgroundTask が返す backend の形） */
 const SHELL_JOBS_HOST = {
@@ -2407,7 +2408,7 @@ const SHELL_JOBS_HOST = {
   stopBackground: async (sessionId, taskId) => ({ stopped: await shellBridge.stop(sessionId, taskId) }),
   getBackgroundTask: async (sessionId, taskId) => {
     const job = shellBridge.job(sessionId, taskId);
-    return job?.kind === 'start' ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output, command: job.command, cwd: job.cwd, startedAtMs: job.startedAt, exitCode: job.exitCode, stopped: Boolean(job.stopped), endedAt: job.endedAt } : null;
+    return job?.listed ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output, command: job.command, cwd: job.cwd, startedAtMs: job.startedAt, exitCode: job.exitCode, stopped: Boolean(job.stopped), endedAt: job.endedAt } : null;
   },
 };
 function shellJobsChanged(sessionId) {
@@ -2418,7 +2419,11 @@ function shellJobsChanged(sessionId) {
 /** start のジョブの終わりを会話へ知らせる。走っているターンへは途中送信、空いていれば新しいターン。渡せなければ少し待ってやり直す（30 分まで） */
 async function deliverJobEnd(sessionId, job, tail) {
   const lng = await ensureAgentLocale(sessionId).catch(() => currentLocale());
-  const status = job.timedOut ? agentT(lng, 'shell.statusTimedOut') : job.stopped ? agentT(lng, 'shell.statusStopped') : agentT(lng, 'shell.statusExit', { code: job.exitCode ?? '?' });
+  // キーは i18n の lint が見つけられるよう、リテラルで書く（三項で選ばない）
+  const status = job.timedOut ? agentT(lng, 'shell.statusTimedOut')
+    : job.stopped && job.stoppedBy === 'human' ? agentT(lng, 'shell.statusStoppedByHuman')
+    : job.stopped ? agentT(lng, 'shell.statusStopped')
+    : agentT(lng, 'shell.statusExit', { code: job.exitCode ?? '?' });
   const prompt = agentT(lng, 'shell.jobDone', { jobId: job.jobId, command: redactForPeer(job.command, 200), status, tail: redactForPeer(String(tail ?? '').slice(-2000), 2000) || agentT(lng, 'shell.noOutput') });
   const until = Date.now() + 30 * 60_000;
   while (Date.now() < until) {
@@ -6069,26 +6074,67 @@ function pruneDocPlace(cfg, { kind, entries, legacyConfig, matrixCwd, home, devi
 const accountConnectorProbes = new Map(); // accountId -> Promise<void>
 const accountConnectorFailed = new Set();
 
-function probeAccountConnectors(acct, { identityHash, mode, deny = [] }) {
+// 専用フォルダの準備（共有へのリンク・名前の重なりの退避。ADR 0350）の結果。更新のあとの起動（prepareAllAccountConnectors）と、入口をオンにしたときに作る。
+// failure: リンクを作れなかった理由（inspect の失敗の形）。方式 b1 へは戻さず、止めて理由を画面に出す（直せば、見るたびにやり直して消える）。
+// moves: 共有へ移した・退避した項目（この起動の間だけ覚え、一覧の moved で画面に出す）
+const accountConnectorPrepared = new Map(); // accountId -> { failure: object | null, moves: object[] }
+const LINK_FAILURES = new Set(['ownDirLinks', 'ownDirLinksWindows']);
+const movedSummary = moves => ({
+  shared: [...new Set(moves.filter(m => m.action === 'shared').map(m => m.entry))],
+  archived: [...new Set(moves.filter(m => m.action === 'archived').map(m => m.entry))],
+});
+
+async function prepareAccountConnectors(acct, { cwd = null } = {}) {
+  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd, prepare: true });
+  const moves = [...(accountConnectorPrepared.get(acct.id)?.moves ?? []), ...(inspected.moves ?? [])];
+  // ログイン切れ・版・設定の衝突は準備の失敗ではない（ふだんの検査がそのまま理由を出す）。リンクを作れなかったときだけ覚える
+  const failure = !inspected.ok && LINK_FAILURES.has(inspected.kind) ? inspected : null;
+  if (failure || moves.length) accountConnectorPrepared.set(acct.id, { failure, moves });
+  else accountConnectorPrepared.delete(acct.id);
+  return inspected;
+}
+
+/** 画面用の検査。準備に失敗したままのアカウントは、直したかもしれないので見るたびに準備をやり直す（直るまで止めて理由を出す） */
+async function inspectAccountConnectors(acct, { cwd = null } = {}) {
+  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd });
+  if (!inspected.ok || !accountConnectorPrepared.get(acct.id)?.failure) return inspected;
+  const retried = await prepareAccountConnectors(acct, { cwd });
+  return retried.ok ? inspected : retried;
+}
+
+/** 更新のあとの起動で、入口がオンの既存のアカウントの専用フォルダを準備する（リンク・退避）。1 件の失敗が残りを止めない */
+async function prepareAllAccountConnectors() {
+  const [{ accounts }, enabledMap] = await Promise.all([claudeAccounts.list(), claudeAccountConnectors.settings.list()]);
+  let changed = false;
+  for (const acct of accounts) {
+    if (!enabledMap[acct.id]) continue;
+    const had = accountConnectorPrepared.has(acct.id);
+    await prepareAccountConnectors(acct).catch(() => {});
+    changed ||= had || accountConnectorPrepared.has(acct.id);
+  }
+  if (changed) emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
+}
+
+/** 退避から 30 日を過ぎた項目を消す（claude-usage の直下。ADR 0350）。起動時と、そのあとは 1 日ごと */
+const sweepClaudeUsageArchives = () => sweepClaudeOwnDirArchives(path.join(store.dataDir, 'claude-usage')).catch(() => 0);
+
+function probeAccountConnectors(acct, { identityHash, deny = [] }) {
   const existing = accountConnectorProbes.get(acct.id);
   if (existing) return existing;
-  const isCurrentMode = async () => {
-    const config = await claudeAccountConnectors.settings.read(acct.id);
-    return config.enabled && config.mode === mode;
-  };
+  const isEnabled = async () => (await claudeAccountConnectors.settings.read(acct.id)).enabled;
   const run = (async () => {
     try {
       const account = await accountResolve(tokenAccountBackend(), acct.id);
-      if (!account?.connectors || (account.connectors.identity === OWN_DIR) !== (mode === OWN_DIR)) return;
+      if (!account?.connectors) return;
       const raw = await probeClaudeConnectors({ deny, token: account?.token ?? null, connectors: account?.connectors ?? null });
-      if (!await isCurrentMode()) return;
+      if (!await isEnabled()) return;
       const list = Array.isArray(raw) ? raw.map(x => (typeof x === 'string' ? { name: x, status: null } : x)).filter(x => typeof x?.name === 'string') : [];
       const connectors = [...new Set(list.map(x => x.name))].sort();
       const needsAuth = connectors.filter(n => list.some(x => x.name === n && x.status === 'needs-auth'));
       accountConnectorFailed.delete(acct.id);
       await claudeConnectorsCache.set(acct.id, { identityHash, connectors, needsAuth });
     } catch (err) {
-      if (!await isCurrentMode()) return;
+      if (!await isEnabled()) return;
       accountConnectorFailed.add(acct.id);
       if (err?.cliAuthFailed === true) await markConnectorsLoginExpired(acct.id, 'no-login');
     } finally {
@@ -6119,31 +6165,30 @@ async function accountConnectorsList({ cwd = null, refresh = false, wait = false
   for (const acct of accounts) {
     if (targetId && acct.id !== targetId) continue;
     const enabled = Boolean(enabledMap[acct.id]);
-    const { mode } = enabled ? await claudeAccountConnectors.settings.read(acct.id) : {};
-    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd, mode });
+    const inspected = await inspectAccountConnectors(acct, { cwd });
     let cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
     if (enabled && inspected.ok && (!cached || force || (refresh && cached.stale))) {
-      const p = probeAccountConnectors(acct, { identityHash: inspected.identityHash, mode, deny: await getDeny() });
+      const p = probeAccountConnectors(acct, { identityHash: inspected.identityHash, deny: await getDeny() });
       if (wait || force) waiting.push({ acct, inspected, p });
     }
-    rows.push({ acct, enabled, mode, inspected, cached });
+    rows.push({ acct, enabled, inspected, cached });
   }
   if (waiting.length) {
     await Promise.allSettled(waiting.map(w => w.p));
     for (const w of waiting) {
       const idx = rows.findIndex(r => r.acct.id === w.acct.id);
       if (idx >= 0) {
-        const reInspected = await claudeAccountConnectors.inspect({ id: w.acct.id, name: w.acct.name }, { cwd, mode: rows[idx].mode });
+        const reInspected = await inspectAccountConnectors(w.acct, { cwd });
         rows[idx].inspected = reInspected;
         rows[idx].cached = reInspected.ok ? await claudeConnectorsCache.get(w.acct.id, { identityHash: reInspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
       }
     }
   }
-  return rows.map(({ acct, enabled, mode, inspected, cached }) => ({
+  return rows.map(({ acct, enabled, inspected, cached }) => ({
     id: acct.id,
     name: acct.name,
     enabled,
-    ...(mode === OWN_DIR ? { mode } : {}),
+    ...(enabled && accountConnectorPrepared.get(acct.id)?.moves.length ? { moved: movedSummary(accountConnectorPrepared.get(acct.id).moves) } : {}),
     usageLogin: Boolean(acct.usageLogin),
     usageExpired: Boolean(acct.usageExpired),
     status: inspected.ok ? 'ok' : 'blocked',
@@ -6178,7 +6223,6 @@ async function enrichClaudeAccountsList(result) {
         ...a,
         connectors: {
           enabled: r.enabled,
-          ...(r.mode === OWN_DIR ? { mode: r.mode } : {}),
           status: r.status,
           blockKind: r.blockKind,
           blockScope: r.blockScope,
@@ -6195,25 +6239,23 @@ async function enrichClaudeAccountsList(result) {
   };
 }
 
-async function setClaudeAccountConnectors(id, enabled, { cwd = null, mode } = {}) {
+async function setClaudeAccountConnectors(id, enabled, { cwd = null } = {}) {
   const { accounts } = await claudeAccounts.list();
   const acct = accounts.find(a => a.id === id);
   if (!acct) throw new Error(t('accounts.deleted'));
-  const previous = await claudeAccountConnectors.settings.read(id);
-  if (mode && (!previous.enabled || !enabled)) throw new OpError('INVALID', t('claude.connectors.ownDirEnableFirst'));
-  let moves;
   if (enabled) {
-    const nextMode = mode ?? previous.mode;
-    const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd, mode: nextMode, prepare: nextMode === OWN_DIR });
+    // オンにする前に専用フォルダを準備する（リンク・退避）。準備できなければオンにしない（理由を返す）
+    const inspected = await prepareAccountConnectors(acct, { cwd });
     if (!inspected.ok) throw new OpError('INVALID', inspected.message);
-    moves = inspected.moves;
+  } else {
+    accountConnectorPrepared.delete(id);
   }
-  await claudeAccountConnectors.settings.setEnabled(id, Boolean(enabled), mode);
+  await claudeAccountConnectors.settings.setEnabled(id, Boolean(enabled));
   tokenAccountBackend()?.invalidateModels?.(id);
   emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   if (enabled) void accountConnectorsList({ cwd, targetId: id, refresh: true }).catch(() => {});
   const [row] = await accountConnectorsList({ cwd, targetId: id });
-  return moves?.length ? { ...row, moves } : row;
+  return row;
 }
 
 async function refreshClaudeAccountConnectors(id, { cwd = null } = {}) {
@@ -6238,8 +6280,7 @@ async function sessionConnectorsInfo(sessionId) {
   if (!enabled) {
     return { accountId: acct.id, accountName: acct.name, enabled: false, status: 'off', connectors: null, needsAuth: [], blockKind: null, blockMessage: null, reauth: false, needsOwnerCheck: false };
   }
-  const { mode } = await claudeAccountConnectors.settings.read(acct.id);
-  const inspected = await claudeAccountConnectors.inspect({ id: acct.id, name: acct.name }, { cwd: meta.cwd ?? null, mode });
+  const inspected = await inspectAccountConnectors(acct, { cwd: meta.cwd ?? null });
   const cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
   return {
     accountId: acct.id,
@@ -7070,7 +7111,7 @@ function opsDeps(lng = currentLocale()) {
     agents: opsAgents,
     accounts: {
       ...accountManager,
-      setConnectors: ({ id, enabled, cwd, mode }) => setClaudeAccountConnectors(id, enabled, { cwd, mode }),
+      setConnectors: ({ id, enabled, cwd }) => setClaudeAccountConnectors(id, enabled, { cwd }),
       refreshConnectors: ({ id, cwd }) => refreshClaudeAccountConnectors(id, { cwd }),
     },
     prefs: () => store.getPrefs(),
@@ -7308,7 +7349,7 @@ async function runningWork() {
   // ply_shell の裏のジョブ（ADR 0227）。保持役の子なら held（引き継ぎで止まらない。ADR 0270 段 2a）
   for (const sessionId of shellBridge.sessionsWithJobs()) {
     const tasks = shellBackground(sessionId);
-    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString(), ...(tasks.every(t => t.held) ? { held: true } : {}) });
+    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running && j.listed).map(j => j.startedAt))).toISOString(), ...(tasks.every(t => t.held) ? { held: true } : {}) });
   }
 
   const dueRows = schedule.list();
@@ -9974,21 +10015,6 @@ function heldTurn(turn) {
  * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
  * bot の会話・圧縮のターン・タスクの id が分からない委譲の子。委譲の子は 2b-7 から付け直す）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
  */
-/**
- * 方式 b1 のアカウントのトークンを、呼ばれたときに取り直す口（core/claude-connectors-auth.mjs の connectors と同じ形）。
- * 付け直したターン（restoreTurn）が 401 に当たったときに core/backends/claude.mjs の recoverAuth が呼ぶ（#229）
- */
-function lazyClaudeConnectors(backend, accountId) {
-  return {
-    identity: 'b1',
-    async fresh(options) {
-      const account = await accountResolve(backend, accountId);
-      if (typeof account?.connectors?.fresh !== 'function') throw new Error('authentication_failed');
-      return account.connectors.fresh(options);
-    },
-  };
-}
-
 async function restoreTurn(card, source) {
   if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');
   const fields = restoreFields(card);
@@ -10002,7 +10028,6 @@ async function restoreTurn(card, source) {
   // main がつながる前に復号を待たない（秘密の復号は main に頼むが、main とのパイプはこの付け直しの後に立つ。待つと起動が上限まで止まる）。
   // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。トークンのアカウントは、名前とコネクターの入口の設定だけを読む
   let restoredAccount = null;
-  let restoredConnectors = null;
   if (!fields.endpointId && fields.accountId) {
     if (accountKind(backend) === 'agent') {
       restoredAccount = await agentAccounts.get(fields.accountId);
@@ -10012,9 +10037,6 @@ async function restoreTurn(card, source) {
       const entry = await claudeAccounts.get(fields.accountId);
       const config = entry ? await claudeAccountConnectors.settings.read(entry.id) : null;
       if (entry) restoredAccount = { ...entry, connectors: config.enabled === true };
-      // 方式 b1 のアカウントは、付け直したターンが 401 に当たったときに新しいトークンを取り直す口を渡す（#229）。
-      // 付け直しの時点では取りに行かない（取ると CLI が持つ今のトークンが取り消される）。呼ばれたときにアカウントを引き直す
-      if (entry && config.enabled === true && config.mode !== OWN_DIR) restoredConnectors = lazyClaudeConnectors(backend, entry.id);
     }
   }
   const meta = await store.get(sessionId);
@@ -10132,7 +10154,7 @@ async function restoreTurn(card, source) {
     backend,
     cwd,
     account: restoredAccount,
-    connectors: restoredConnectors,
+    connectors: null,
     accountId: fields.accountId,
     endpoint: null,
     endpointId: fields.endpointId,
@@ -11649,6 +11671,7 @@ wss.on("connection", (ws, req) => {
           claudeLogin.cancelAccount(accountId);
           await claudeAccounts.remove(accountId);
           await claudeAccountConnectors.settings.remove(accountId).catch(() => {});
+          accountConnectorPrepared.delete(accountId);
           await claudeConnectorsCache.remove(accountId).catch(() => {});
           refreshClaudeAccountCatalog(accountId);
           await dropAccountCandidates(accountId);
@@ -12682,6 +12705,11 @@ async function announce() {
   if (adopting.length) console.log(`  起動で拾ったターン ${adopting.length} 件（付け直しは待ち受けの後）`);
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
+  // 更新のあとの最初の起動で、入口がオンの既存のアカウントの専用フォルダを準備する（共有へのリンク・退避。作れなければ理由を画面に出す）。
+  // 退避から 30 日を過ぎた項目は、起動時とそのあと 1 日ごとに消す（ADR 0350）
+  void prepareAllAccountConnectors().catch(() => {});
+  void sweepClaudeUsageArchives();
+  setInterval(() => { void sweepClaudeUsageArchives(); }, 24 * 60 * 60 * 1000).unref();
   // Pleiad Plus: ログインの読み込みと中継の接続のあとで、登録とつながりの条件を最初に見直す
   void syncPlusLink();
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();

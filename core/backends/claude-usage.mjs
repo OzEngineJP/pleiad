@@ -27,63 +27,8 @@ export function usageEnv(base = process.env, { token, configDir } = {}) {
 
 // A control-only query: no prompt is yielded and no inference request is made.
 // Keep stdin open until get_usage completes, then close the owned process.
-export function readClaudeUsage(options = {}) {
-  return usageReads.read(options);
-}
-
-// 同じ使用量の設定フォルダを同時に 2 つの CLI で読まない。CLI は読むときにアクセス用トークンの期限が近ければ更新用トークンで更新するので、
-// 重なると更新が競合しうる（更新用トークンは使い捨て）。コネクターの入口がオンのアカウント（core/claude-connectors-auth.mjs。ADR 0340 段 2）の
-// 設定フォルダだけを guardUsageDir で登録し、そのフォルダの読み取りを順に流す。会話の前の更新（refreshUsageDir）は印の有無にかかわらず順番の口を通り、
-// 印を付ける前から走っていた読み取りの終わりも待つ。登録の無いフォルダ・ログイン中のアカウントの読み取りは今までと同じ道（待たない。走っている間だけ覚える）。
-// 印は active() が false を返したら（入口をオフにした）、次の読み取りで外す（以後は今までと同じ道）
-export const guardUsageDir = (dir, active) => usageReads.guard(dir, active);
-export const refreshUsageDir = dir => usageReads.refresh(dir);
-export const withUsageLock = (dir, fn) => usageReads.lock(dir, fn);
-/** 試験用: 読み取りの順番の口を、偽物の読み取りで作る */
-export const createUsageReadsForTest = readNow => createUsageReads(readNow);
-
-function createUsageReads(readNow) {
-  const guarded = new Map();    // 設定フォルダ → active()
-  const locks = new Map();      // 設定フォルダ → 順番の最後（終われば消える）
-  const inflight = new Map();   // 設定フォルダ → 順番の外で走っている読み取り（終われば消える）
-  const keyOf = dir => path.resolve(dir);
-  const track = (key, run) => {
-    const settled = run.then(() => {}, () => {});
-    let set = inflight.get(key);
-    if (!set) inflight.set(key, set = new Set());
-    set.add(settled);
-    settled.then(() => { set.delete(settled); if (!set.size && inflight.get(key) === set) inflight.delete(key); });
-    return run;
-  };
-  const lock = (dir, fn) => {
-    const key = keyOf(dir);
-    const before = [locks.get(key), ...(inflight.get(key) ?? [])].filter(Boolean);
-    const run = Promise.all(before).then(() => fn());
-    const tail = run.then(() => {}, () => {});
-    locks.set(key, tail);
-    tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
-    return run;
-  };
-  async function readGuarded(key, active, options) {
-    let on = true;
-    try { on = (await active()) !== false; } catch { /* 設定を読めなければ印のまま（順に流す） */ }
-    if (!on && guarded.get(key) === active) guarded.delete(key);
-    return on || locks.has(key) ? lock(options.configDir, () => readNow(options)) : track(key, readNow(options));
-  }
-  return {
-    read(options = {}) {
-      if (!options?.configDir) return readNow(options);
-      const key = keyOf(options.configDir);
-      const active = guarded.get(key);
-      return active ? readGuarded(key, active, options) : track(key, readNow(options));
-    },
-    guard(dir, active = () => true) { guarded.set(keyOf(dir), active); },
-    refresh: dir => lock(dir, () => readNow({ configDir: dir })),
-    lock,
-    isGuarded: dir => guarded.has(keyOf(dir)),
-  };
-}
-const usageReads = createUsageReads(options => readClaudeUsageNow(options));
+// 同じ設定フォルダの更新の直列化は CLI の .oauth_refresh.lock に任せる（ADR 0350。Pleiad 側の順番の口は持たない）
+export const readClaudeUsage = (options = {}) => readClaudeUsageNow(options);
 
 async function readClaudeUsageNow({ token, configDir } = {}) {
   let release;

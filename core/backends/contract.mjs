@@ -213,7 +213,7 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke', 'restoredSteers',
   'signal', 'control', 'locale', 'delegatedChild', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
-  // connectors: 方式 b1 のトークンの取り直し（core/claude-connectors-auth.mjs）。付け直したターンが 401 に当たったときに使う（#229）
+  // connectors: 専用フォルダ方式の起動の直前の準備（prepare）と認証失敗の判定（core/claude-connectors-auth.mjs）。ターンが 401 に当たったときに使う
   'connectors',
   // onContextRebuild: 記録からの組み立て直し（ADR 0287）の区切りを会話へ記録する受け口。conversations.mjs の引き継ぎの包みが呼ぶ
   'onContextRebuild',

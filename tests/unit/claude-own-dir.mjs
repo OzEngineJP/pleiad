@@ -10,8 +10,8 @@ import * as connectorsAuth from '../../core/claude-connectors-auth.mjs';
 import { claudeOwnDirEnv, createClaudeConnectorsWiring, VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
 import { createClaudeLogin } from '../../core/claude-login.mjs';
 import {
-  claudeKeychainService, claudeLoginPresent, ensureClaudeOwnDirLinks, KEYCHAIN_TIMEOUT_MS, logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR, sshSession,
-  withClaudeUsageDir,
+  ARCHIVE_KEEP_MS, claudeKeychainService, claudeLoginPresent, ensureClaudeOwnDirLinks, KEYCHAIN_TIMEOUT_MS, logoutClaudeOwnDir, macKeychainAuthFailure, OWN_DIR, sshSession,
+  sweepClaudeOwnDirArchives, withClaudeUsageDir,
 } from '../../core/claude-own-dir.mjs';
 import { recordPlatform } from '../lib/claude-launch-record.mjs';
 
@@ -119,13 +119,12 @@ async function macKeychain(t, root) {
   const own = accounts.usageDir(id);
   await fs.mkdir(own, { recursive: true });
   await put(own, 'ply-usage-login.json', '{}');
-  const unexpected = () => assert.fail('own-dir entered the b1 authentication path');
   const CODES = { present: 0, missing: 44, keychain: 36, platform: 50 };
   let answer = 'present';
   const seenDirs = [];
   const wiringFor = (platform, extraEnv = {}) => createClaudeConnectorsWiring({
     dataDir, accounts, env: { CLAUDE_CONFIG_DIR: path.join(root, 'mac-shared'), ...extraEnv }, home: root, managedFiles: [], platform,
-    versions: async () => VERIFIED_VERSIONS[0], usage: { refresh: unexpected, guard: unexpected }, probe: unexpected,
+    versions: async () => VERIFIED_VERSIONS[0],
     loginPresent: async (d, o) => {
       seenDirs.push(d);
       const sec = fakeSecurity({ exitCode: CODES[answer] });
@@ -134,12 +133,12 @@ async function macKeychain(t, root) {
       return got;
     },
   });
-  await wiringFor('darwin').settings.setEnabled(id, true, OWN_DIR);
+  await wiringFor('darwin').settings.setEnabled(id, true);
   const lifted = wiringFor('darwin');
   const kinds = {};
   for (const a of Object.keys(CODES)) {
     answer = a;
-    const r = await lifted.inspect(account, { mode: OWN_DIR });
+    const r = await lifted.inspect(account);
     kinds[a] = `${r.kind}:${r.reauth ?? ''}`;
   }
   t.ok('macOS（既定で使える。ADR 0351）: 0 → 使える・44 → ownDirLogin（ログインし直す）・36 → keychain（ログインし直しは出さない）・50 → platform',
@@ -147,7 +146,7 @@ async function macKeychain(t, root) {
   answer = 'keychain';
   await assert.rejects(lifted.resolve(id), e => e.code === 'connectors-keychain' && e.connectorsError?.reauth === false);
   answer = 'present';
-  const oldMarker = await wiringFor('darwin', { AGENT_HOST_MACOS_OWN_DIR: '0' }).inspect(account, { mode: OWN_DIR });
+  const oldMarker = await wiringFor('darwin', { AGENT_HOST_MACOS_OWN_DIR: '0' }).inspect(account);
   t.ok('macOS: 前の試験用の目印（AGENT_HOST_MACOS_OWN_DIR）は見ない', oldMarker.kind === 'ok', JSON.stringify(oldMarker));
 
   // 6. 4 つの経路（ログイン・会話・使用量・有無の判定）と削除の logout が同じ文字列を使う
@@ -261,28 +260,27 @@ async function macAuthFailures(t, root) {
   const own = accounts.usageDir(id);
   await fs.mkdir(own, { recursive: true });
   await put(own, 'ply-usage-login.json', '{}');
-  const unexpected = () => assert.fail('own-dir entered the b1 authentication path');
   const CODES = { present: 0, missing: 44, keychain: 36 };
   let answer = 'present';
   let checks = 0;
   const wiringFor = (platform, extraEnv = {}) => createClaudeConnectorsWiring({
     dataDir, accounts, env: { CLAUDE_CONFIG_DIR: path.join(root, 'mac-auth-shared'), ...extraEnv }, home: root, managedFiles: [], platform,
-    versions: async () => VERIFIED_VERSIONS[0], usage: { refresh: unexpected, guard: unexpected }, probe: unexpected,
+    versions: async () => VERIFIED_VERSIONS[0],
     loginPresent: (d, o) => { checks++; return presentWith({ exitCode: CODES[answer] })(d, o); },
   });
-  await wiringFor('darwin').settings.setEnabled(id, true, OWN_DIR);
+  await wiringFor('darwin').settings.setEnabled(id, true);
   const lifted = {};
   const sshKinds = {};
   for (const name of ['SSH_CONNECTION', 'SSH_TTY', 'SSH_CLIENT']) {
-    const r = await wiringFor('darwin', { ...lifted, [name]: 'example' }).inspect(account, { mode: OWN_DIR });
+    const r = await wiringFor('darwin', { ...lifted, [name]: 'example' }).inspect(account);
     sshKinds[name] = `${r.kind}:${r.reauth}`;
   }
   t.ok('M8（macOS）: ssh で起動したら ssh で止め（OS の止めとは別の理由）、「ログインし直す」を出さず、鍵束も見ない',
     Object.values(sshKinds).every(v => v === 'ssh:false') && checks === 0, JSON.stringify(sshKinds));
   await assert.rejects(wiringFor('darwin', { ...lifted, SSH_TTY: '/dev/ttys001' }).resolve(id), e => e.code === 'connectors-ssh' && /ssh/.test(e.message) && !/darwin/.test(e.message));
-  const emptySsh = await wiringFor('darwin', { ...lifted, SSH_TTY: '' }).inspect(account, { mode: OWN_DIR });
+  const emptySsh = await wiringFor('darwin', { ...lifted, SSH_TTY: '' }).inspect(account);
   await put(own, '.credentials.json', '{}');
-  const linuxSsh = await wiringFor('linux', { SSH_CONNECTION: 'example' }).inspect(account, { mode: OWN_DIR });
+  const linuxSsh = await wiringFor('linux', { SSH_CONNECTION: 'example' }).inspect(account);
   await fs.unlink(path.join(own, '.credentials.json'));
   t.ok('M8: 空の値では止めない。Linux（と Windows）は ssh でも今までどおり',
     emptySsh.kind === 'ok' && linuxSsh.kind === 'ok', JSON.stringify({ emptySsh, linuxSsh }));
@@ -381,9 +379,45 @@ async function macAuthFailures(t, root) {
     recordPlatform('darwin') === 'linux' && recordPlatform('linux') === 'linux' && recordPlatform('win32') === 'win32');
 }
 
+/**
+ * 退避した項目（<claude-usage>/<名前>.pleiad-moved-<日時>-<uuid>）は 30 日後に消す（ADR 0350）。
+ * 名前の形が合うものだけを、日時が 30 日より前のときだけ消す。ほかのアカウントのフォルダ・日時が読めないもの・新しいものは残す
+ */
+async function archiveSweep(t, root) {
+  const base = path.join(root, 'sweep', 'claude-usage');
+  await fs.mkdir(path.join(base, 'acct-abcdef012345'), { recursive: true });
+  const now = Date.parse('2026-12-25T00:00:00Z');
+  const stamp = ms => new Date(ms).toISOString().replace(/[:.]/g, '-');
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const day = 24 * 60 * 60 * 1000;
+  const name = (basename, ms) => `${basename}.pleiad-moved-${stamp(ms)}-${uuid}`;
+  const old = [name('skills', now - 31 * day), name('projects', now - 400 * day)];
+  const keep = [
+    name('skills', now - 29 * day),            // 30 日に届かない
+    name('plugins', now),                      // 今
+    `skills.pleiad-moved-not-a-date-${uuid}`,  // 日時が読めない
+    `skills.pleiad-moved-${stamp(now - 40 * day)}`,   // uuid が無い（別の物）
+    `skills.pleiad-moved-${stamp(now - 40 * day)}-${uuid}.bak`,   // 末尾が違う
+    'acct-abcdef012345',                        // アカウントのフォルダ
+    'unrelated.txt',
+  ];
+  for (const n of old) { await fs.mkdir(path.join(base, n), { recursive: true }); await put(path.join(base, n), 'data', 'archived'); }
+  for (const n of keep) {
+    if (n === 'acct-abcdef012345') continue;
+    if (n.endsWith('.txt') || n.endsWith('.bak')) await put(base, n, 'x'); else await fs.mkdir(path.join(base, n), { recursive: true });
+  }
+  const removed = await sweepClaudeOwnDirArchives(base, { now });
+  const left = (await fs.readdir(base)).sort();
+  t.ok('退避した項目の掃除: 30 日より前の 2 件だけを（中身ごと）消し、新しいもの・日時が読めないもの・別の名前・アカウントのフォルダは残す',
+    removed === 2 && JSON.stringify(left) === JSON.stringify([...keep].sort()), JSON.stringify({ removed, left }));
+  t.ok('退避した項目の掃除: 2 回目は何も消さない・無いフォルダでも落ちない（0 件）',
+    await sweepClaudeOwnDirArchives(base, { now }) === 0 && await sweepClaudeOwnDirArchives(path.join(root, 'sweep', 'nothing'), { now }) === 0);
+  t.ok('退避した項目の掃除: 保存期間は 30 日', ARCHIVE_KEEP_MS === 30 * day);
+}
+
 export default async function (t) {
   const macRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-own-dir-mac-'));
-  try { await macKeychain(t, macRoot); await macAuthFailures(t, macRoot); }
+  try { await macKeychain(t, macRoot); await macAuthFailures(t, macRoot); await archiveSweep(t, macRoot); }
   finally { await fs.rm(macRoot, { recursive: true, force: true }); }
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-own-dir-'));
@@ -401,30 +435,32 @@ export default async function (t) {
     const secrets = { get: async () => { secretReads++; return null; }, delete: async () => {} };
     const accounts = createClaudeAccounts({ dataDir, secrets, cliConfig: path.join(root, '.claude.json') });
     let versions = VERIFIED_VERSIONS[0];
-    const unexpected = () => assert.fail('own-dir entered the b1 authentication path');
     const wiring = createClaudeConnectorsWiring({
       // ファイルでログインを見る OS として動かす（macOS の止めと有無の判定は macKeychain で確かめる）
       dataDir, accounts, env, home: root, managedFiles: [], versions: async () => versions,
       platform: process.platform === 'darwin' ? 'linux' : process.platform,
-      usage: { refresh: unexpected, guard: unexpected }, probe: unexpected,
     });
     const own = accounts.usageDir(id);
     await fs.mkdir(own, { recursive: true });
 
     await assert.rejects(wiring.resolve(id), { code: 'missing-token' });
-    await wiring.settings.setEnabled(id, true, 'b1');
-    await assert.rejects(wiring.resolve(id), { code: 'missing-token' });
-    await wiring.settings.setEnabled(id, true, OWN_DIR);
-    assert.deepEqual(await wiring.settings.read(id), { enabled: true, mode: OWN_DIR });
+    const readsBeforeEnable = secretReads;
+    await wiring.settings.setEnabled(id, true);
+    // 入口の設定は enabled だけ。b1 の時代の mode が書かれていても読まない・書き直すと消える（ADR 0350）
+    assert.deepEqual(await wiring.settings.read(id), { enabled: true });
+    await fs.writeFile(path.join(dataDir, 'claude-account-connectors.json'), JSON.stringify({ version: 1, accounts: { [id]: { enabled: true, mode: 'b1' } } }));
+    assert.deepEqual(await wiring.settings.read(id), { enabled: true });
+    await wiring.settings.setEnabled(id, true);
+    assert.deepEqual(JSON.parse(await read(dataDir, 'claude-account-connectors.json')).accounts[id], { enabled: true });
     await assert.rejects(wiring.resolve(id), { code: 'connectors-ownDirLogin' });
     await put(own, 'ply-usage-login.json', '{}');
-    assert.equal((await wiring.inspect(account, { mode: OWN_DIR })).kind, 'ownDirLogin');
+    assert.equal((await wiring.inspect(account)).kind, 'ownDirLogin');
     await put(own, '.credentials.json', '{"claudeAiOauth":{"expiresAt":1,"refreshTokenExpiresAt":1}}');
     versions = { cli: '0.0.1', sdk: '0.0.1' };
-    assert.equal((await wiring.inspect(account, { mode: OWN_DIR })).kind, 'version');
+    assert.equal((await wiring.inspect(account)).kind, 'version');
     versions = VERIFIED_VERSIONS[0];
     const runtime = await wiring.resolve(id);
-    assert.equal(secretReads, 2);
+    assert.equal(secretReads, readsBeforeEnable);   // オンの間は会話用トークンを読まない
     assert.equal(runtime.token, undefined);
     assert.equal(runtime.connectors.fresh, undefined);
     await assert.rejects(runtime.resolveCatalogAccount(), { code: 'missing-token' });
@@ -434,7 +470,7 @@ export default async function (t) {
 
     // A wrong entry stops preparation before starting a CLI or overwriting the entry.
     await put(own, 'projects', 'keep');
-    const blocked = await wiring.inspect(account, { mode: OWN_DIR, prepare: true });
+    const blocked = await wiring.inspect(account, { prepare: true });
     assert.equal(blocked.kind, 'ownDirLinks');
     assert.equal(await read(own, 'projects'), 'keep');
     await fs.unlink(path.join(own, 'projects'));
@@ -459,7 +495,7 @@ export default async function (t) {
     await put(shared, '.claude.json', JSON.stringify({
       oauthAccount: { emailAddress: 'shared@example.invalid' }, mcpServers: { example: { command: 'fake' } },
     }));
-    const prepared = await wiring.inspect(account, { mode: OWN_DIR, prepare: true });
+    const prepared = await wiring.inspect(account, { prepare: true });
     assert.equal(prepared.ok, true);
     assert.equal(prepared.moves.find(m => m.action === 'shared')?.entry, 'skills');
     const archive = prepared.moves.find(m => m.action === 'archived').name;
@@ -496,7 +532,6 @@ export default async function (t) {
       },
     });
     try {
-      connectors.fresh = unexpected;
       assert.equal((await backend.forAccount(runtime).internalTurn({ prompt: 'OK', cwd: root })).text, 'OK');
       assert.deepEqual(await probeClaudeConnectors({ connectors }), [{ name: 'Example', status: 'connected' }]);
       for (const child of seen) {

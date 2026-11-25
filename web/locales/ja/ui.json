@@ -1792,8 +1792,8 @@
       "reload": "読み直す",
       "reloadAria": "「{{name}}」の claude.ai のコネクターを読み直す",
       "switchAria": "「{{name}}」で claude.ai のコネクターを使う",
-      "ownDir": "専用フォルダ方式（ベータ）",
-      "ownDirAria": "「{{name}}」で専用フォルダ方式（ベータ）を使う",
+      "movedShared": "専用フォルダーの {{entries}} を、共有の ~/.claude へ移してリンクにしました",
+      "movedArchived": "名前が重なった {{entries}} の古い分は、Pleiad のデータ置き場の claude-usage に退避しました（30 日後に自動で消えます）",
       "peekAria": "「{{name}}」の claude.ai のコネクター",
       "item": {
         "connected": "接続済み",

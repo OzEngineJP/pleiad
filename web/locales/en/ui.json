@@ -1835,8 +1835,8 @@
       "reload": "Reload",
       "reloadAria": "Reload claude.ai connectors for \"{{name}}\"",
       "switchAria": "Use claude.ai connectors with \"{{name}}\"",
-      "ownDir": "Dedicated config folder (beta)",
-      "ownDirAria": "Use the dedicated config folder (beta) for “{{name}}”",
+      "movedShared": "Moved {{entries}} from the dedicated folder to the shared ~/.claude and replaced them with links",
+      "movedArchived": "Older copies of {{entries}} with clashing names were set aside in claude-usage in Pleiad's data folder (deleted automatically after 30 days)",
       "peekAria": "claude.ai connectors for \"{{name}}\"",
       "item": {
         "connected": "Connected",

@@ -1,20 +1,16 @@
-// 登録した Claude アカウントで claude.ai のコネクターを使うときの認証（ADR 0340。段 2: 方式 (b1)）。
+// 登録した Claude アカウントで claude.ai のコネクターを使うときの認証（ADR 0340・ADR 0345・ADR 0350。専用フォルダ方式だけ）。
 //
 // 入口（core/claude-connectors.mjs）がオンのアカウントだけがここへ来る。オフ・未設定・別アカウント・ログイン中・互換接続はここを呼ばない。
-// (b1) は、会話の CLI の env にだけ次の 3 つを足す（process.env は触らない）。
-//   CLAUDE_CONFIG_DIR           共有の設定フォルダ（既定は ~/.claude。履歴・設定・Skills・プラグインを今までと同じ場所で共用する）
-//   CLAUDE_CODE_OAUTH_TOKEN     使用量の認可（claude-usage/<id>）のアクセス用トークン（会話用に登録したトークンではない）
-//   CLAUDE_CODE_OAUTH_SCOPES    そのログインに記録された権限の並び（空白区切り・順序そのまま。足すとコネクターが通常のログインと一致する）
-// 更新用トークンは取り出さない・渡さない・写さない（更新用トークンは期限だけを読む）。
-// アクセス用トークンの更新は CLI だけが行う（Pleiad は私的な更新の口を呼ばない）。期限が近ければ使用量の読み取りを 1 回流して CLI に更新させ、
-// 読み直す。オンのアカウントの設定フォルダは使用量の読み取りを順に流す（claude-usage.mjs の guardUsageDir・refreshUsageDir）ので、
-// 同じ設定フォルダを同時に 2 つの CLI が更新しにいかない（印を付ける前から走っていた読み取りも待つ）。
+// 会話の CLI は、そのアカウントの専用フォルダ（claude-usage/<id>。使用量の認可のログインを置く場所）を CLAUDE_CONFIG_DIR にして起動する。
+// トークンは env で渡さない。更新は CLI が自分で行う（同じフォルダの CLI どうしは .oauth_refresh.lock で直列になり、失効を検知したら
+// ディスクから読み直す）ので、Pleiad は期限を見ず、更新もしない。専用フォルダの projects・skills・plugins・settings.json は
+// 共有の ~/.claude へのリンクにする（core/claude-own-dir.mjs の ensureClaudeOwnDirLinks。名前が重なった項目は退避する）。
 // 会話・内部呼出し（core/backends/claude.mjs の withConnectorsAuth）と、設定 › 外部 MCP のコネクターの一覧（connectorListProbe）は、
-// どちらも connectors.fresh() の組み立て（期限の確かめ直し・設定の反映・3 つの env）を通る。
+// どちらも connectors.prepare()（リンクの準備・設定の反映）を通り、{ env: { CLAUDE_CONFIG_DIR } } を受け取る。
 //
 // 止める条件（黙って会話用トークンへ戻さない。投げるのは ConnectorsAuthError。server の scopedOrUnavailable がそのアカウントの会話を
-// 「引けなかった理由」で断る）: ログインが無い・読めない・期限切れ / 持ち主の不一致・未確認 / 確かめていない CLI・SDK の版 /
-// 対応していない OS / 別の認証が環境・共有の settings.json にある / 履歴の場所を保てない / 設定の反映に失敗。
+// 「引けなかった理由」で断る）: ログインが無い・読めない / 確かめていない CLI・SDK の版 / 対応していない OS・ssh 経由の macOS /
+// 共有の settings.json に別の認証がある / 履歴の場所を保てない / リンクの準備・設定の反映に失敗。
 // トークン・メールアドレス・組織の id はメッセージ・ログに出さない。
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -26,7 +22,6 @@ import { AccountError, cliConfigFile } from './claude-accounts.mjs';
 import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
-import { claudeUsageAuthFailure } from './backends/claude-usage.mjs';
 import { claudeLoginPresent, ensureClaudeOwnDirLinks, macKeychainAuthFailure, OWN_DIR, sshSession, withClaudeUsageDir } from './claude-own-dir.mjs';
 
 /** CLI の下限と完全一致を要求する SDK の組（ADR 0340）。 */
@@ -46,19 +41,10 @@ export function supportedConnectorVersions(found, verified = VERIFIED_VERSIONS) 
     return true;
   });
 }
-/** キャッシュのキーに足す識別子（core/claude-connectors.mjs の identitySuffix）。b1 の認証元を別のキャッシュにする */
-export const IDENTITY = 'b1';
-// CLI がアクセス用トークンを更新する窓。動作確認では残り 4 分 59 秒で更新された（ADR 0340）。
-export const REFRESH_WINDOW_MS = 5 * 60_000;
-/** 資格情報の読み取り（CLI が書き換え中に壊れて見えることがある）の回数と間 */
+/** 設定の読み取り（CLI が書き換え中に壊れて見えることがある）の回数と間 */
 export const READ_ATTEMPTS = 3;
 const READ_RETRY_MS = 100;
-const CREDENTIALS_FILE = '.credentials.json';
 const SETTINGS_FILE = 'settings.json';
-const TOKEN = /^[\x21-\x7e]{20,4096}$/;
-const SCOPE = /^[A-Za-z0-9:_.-]{1,64}$/;
-/** ファイルでログインを持つ OS。macOS はキーチェーンに置くので、対応を別の ADR で決めるまで止めたままにする（ADR 0350・ADR 0340 段 4） */
-const FILE_PLATFORMS = ['win32', 'linux'];
 /**
  * 専用フォルダ方式を使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351。2026-11-24 の実機の確かめで通した）。
  * macOS でも ssh からの起動は止める（ssh。画面が無いと CLI が鍵束を開けない）
@@ -119,33 +105,6 @@ const sleepFor = ms => new Promise(resolve => setTimeout(resolve, ms));
 const present = (env, names) => names.filter(name => typeof env[name] === 'string' && env[name] !== '');
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stripBom = text => String(text).replace(/^﻿/, '');
-
-/**
- * 使用量の認可のログインから、アクセス用トークン・期限・権限を読む。更新用トークンは返さない。
- * 無い → null。形が違う → { malformed: true }
- */
-export async function readAccessCredentials(dir, { readFile = fs.readFile, sleep = sleepFor } = {}) {
-  const file = path.join(dir, CREDENTIALS_FILE);
-  for (let attempt = 0; attempt < READ_ATTEMPTS; attempt++) {
-    let text;
-    try { text = await readFile(file, 'utf8'); }
-    catch (error) {
-      if (error?.code === 'ENOENT') return null;
-      if (attempt === READ_ATTEMPTS - 1) return null;
-      await sleep(READ_RETRY_MS * (attempt + 1));
-      continue;
-    }
-    let oauth;
-    try { oauth = JSON.parse(stripBom(text))?.claudeAiOauth; }
-    catch { if (attempt === READ_ATTEMPTS - 1) return { malformed: true }; await sleep(READ_RETRY_MS * (attempt + 1)); continue; }
-    const token = oauth?.accessToken, expiresAt = oauth?.expiresAt, scopes = oauth?.scopes;
-    if (typeof token !== 'string' || !TOKEN.test(token) || !Number.isFinite(expiresAt)
-      || !Array.isArray(scopes) || !scopes.length || !scopes.every(s => typeof s === 'string' && SCOPE.test(s))) return { malformed: true };
-    const refreshTokenExpiresAt = oauth?.refreshTokenExpiresAt;
-    return { token, expiresAt, scopes: [...scopes], ...(Number.isFinite(refreshTokenExpiresAt) ? { refreshTokenExpiresAt } : {}) };
-  }
-  return null;
-}
 
 /**
  * 指定の settings.json 1 ファイルのうち、認証・置き場を変える指定の名前。env と apiKeyHelper を見る。値は返さない。
@@ -473,15 +432,13 @@ async function projectProfileNow({ source, target, cwd, platform = process.platf
 
 /**
  * @param {object} o
- * @param {{ usageDir: (id: string) => string, ownerStatus: (id: string) => Promise<'ok'|'mismatch'|'unknown'> }} o.accounts  core/claude-accounts.mjs
+ * @param {{ usageDir: (id: string) => string, hasUsageLogin: (id: string) => Promise<boolean> }} o.accounts  core/claude-accounts.mjs
  * @param {() => Promise<{ cli: string|null, sdk: string|null }>} o.versions  使っている CLI と SDK の版
- * @param {(dir: string) => Promise<unknown>} o.refresh  CLI にその設定フォルダのログインを更新させる（使用量の読み取り。claude-usage.mjs の refreshUsageDir）
- * @param {(dir: string, account: object) => void} o.guard  その設定フォルダの使用量の読み取りを順に流す印を付ける（claude-usage.mjs の guardUsageDir）。refresh と使用量の読み取りが重ならないために、refresh の前に付ける
  * @returns {(account: { id: string, name: string }) => Promise<{ account: object }>}  入口の resolveAuth
  */
-export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard = () => {}, env = process.env, home = os.homedir(), platform = process.platform,
-  now = Date.now, readFile = fs.readFile, sleep = sleepFor, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
-  onLoginExpired = async () => {}, verify = null, loginPresent = claudeLoginPresent } = {}) {
+export function createClaudeConnectorsAuth({ accounts, versions, env = process.env, home = os.homedir(), platform = process.platform,
+  readFile = fs.readFile, project = projectProfile, verified = VERIFIED_VERSIONS, managedFiles = null,
+  loginPresent = claudeLoginPresent } = {}) {
   const sharedDir = () => env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
 
   async function checkSettingsFile(name, file) {
@@ -505,30 +462,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
     return found;
   }
 
-  async function checks(account, { cwd = null } = {}) {
-    const name = account.name ?? account.id;
-    if (!FILE_PLATFORMS.includes(platform)) throw new ConnectorsAuthError('platform', { name, platform });
-    const mixed = present(env, MIXED_AUTH_ENV);
-    if (mixed.length) throw new ConnectorsAuthError('env', { name, names: mixed.join(', ') }, 'env', { scope: 'env' });
-    const moved = present(env, HISTORY_ENV);
-    if (moved.length) throw new ConnectorsAuthError('history', { name, names: moved.join(', ') }, 'history', { scope: 'env' });
-    await settingsCheck(name, cwd);
-    const found = await versionCheck(name);
-    // 読めない（例外）も確かめられない扱いで止める（一覧の読み取りがログイン中のアカウントへ落ちないように）
-    const owner = await Promise.resolve().then(() => accounts.ownerStatus(account.id)).catch(() => 'unknown');
-    if (owner !== 'ok') throw new ConnectorsAuthError('owner', { name });
-    return found;
-  }
-
-  async function credentials(account, dir, { skipSleep = false } = {}) {
-    const cred = await readAccessCredentials(dir, { readFile, sleep: skipSleep ? async () => {} : sleep });
-    if (!cred) throw new ConnectorsAuthError('login', { name: account.name ?? account.id });
-    if (cred.malformed) throw new ConnectorsAuthError('format', { name: account.name ?? account.id });
-    return cred;
-  }
-
-  const refreshExpired = cred => cred.refreshTokenExpiresAt <= now();
-
+  /** 本人照合に使う、専用フォルダのログインの持ち主（組織・メールのハッシュ。ADR 0350 で残した） */
   async function usageAccountDigest(dir) {
     try {
       const parsed = JSON.parse(stripBom(await readFile(path.join(dir, '.claude.json'), 'utf8')));
@@ -542,37 +476,20 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
    * login に揃えて投げる（呼び手の一覧の読み取りは ConnectorsAuthError 以外をオフと同じ「ログイン中のアカウントで読む」に回すため。
    * 元の文面は出さない）
    */
-  async function resolveAuth(account, { mode } = {}) {
-    try { return await (mode === OWN_DIR ? resolveOwnDir(account) : resolveOn(account)); }
+  async function resolveAuth(account) {
+    try { return await resolveOwnDir(account); }
     catch (error) {
       if (error instanceof ConnectorsAuthError) throw attachConnectorsError(error, account);
       throw attachConnectorsError(new ConnectorsAuthError('login', { name: account?.name ?? account?.id }), account);
     }
   }
 
-  /** 画面・一覧用の検査。切り替え時の prepare だけはリンクを準備する。CLI は起こさない。 */
-  resolveAuth.inspect = async function inspectAuth(account, { cwd = null, mode, prepare = false } = {}) {
+  /** 画面・一覧用の検査。prepare のときだけリンクを準備する（結果の moves は共有へ移した・退避した項目）。CLI は起こさない。 */
+  resolveAuth.inspect = async function inspectAuth(account, { cwd = null, prepare = false } = {}) {
     try {
-      if (mode === OWN_DIR) {
-        const { dir, ver } = await ownDirChecks(account, cwd);
-        const moves = prepare ? await prepareOwnDir(account, dir, cwd, false) : [];
-        return { ok: true, kind: 'ok', identityHash: hashConnectorIdentity([OWN_DIR, account.id, dir, ver, await usageAccountDigest(dir)]), moves };
-      }
-      const ver = await checks(account, { cwd });
-      const dir = accounts.usageDir(account.id);
-      const cred = await credentials(account, dir, { skipSleep: true });
-      if (refreshExpired(cred)) throw new ConnectorsAuthError('expired', { name: account.name ?? account.id });
-      const identityHash = hashConnectorIdentity({
-        id: account.id,
-        identity: IDENTITY,
-        cli: ver?.cli ?? null,
-        sdk: ver?.sdk ?? null,
-        dir,
-        tokenOrg: account.tokenOrg ?? null,
-        scopes: cred.scopes,
-        usageDigest: await usageAccountDigest(dir),
-      });
-      return { ok: true, kind: 'ok', identityHash };
+      const { dir, ver } = await ownDirChecks(account, cwd);
+      const moves = prepare ? await prepareOwnDir(account, dir, cwd, false) : [];
+      return { ok: true, kind: 'ok', identityHash: hashConnectorIdentity([OWN_DIR, account.id, dir, ver, await usageAccountDigest(dir)]), moves };
     } catch (error) {
       const err = error instanceof ConnectorsAuthError
         ? attachConnectorsError(error, account)
@@ -672,156 +589,32 @@ export function createClaudeConnectorsAuth({ accounts, versions, refresh, guard 
       },
     } } };
   }
-
-  async function resolveOn(account) {
-    const ver = await checks(account);
-    const dir = accounts.usageDir(account.id);
-    guard(dir, account);
-    const first = await credentials(account, dir);
-    const expectedIdentity = await usageAccountDigest(dir);
-    const shared = sharedDir();
-    const name = account.name ?? account.id;
-    return {
-      account: {
-        ...account,
-        // gate の時点の値。会話の起動・一覧の取得は connectors.fresh() で期限を確かめ直した値を使う（会話用に登録したトークンへは戻さない）
-        token: first.token,
-        connectors: {
-          identity: IDENTITY,
-          expiredError() { return attachConnectorsError(new ConnectorsAuthError('expired', { name }), account); },
-          /**
-           * 会話の起動の直前に呼ぶ。期限が近ければ CLI に更新させ、設定を反映して、{ token, env, expiresAt } を返す。失敗は投げる（旧いトークンへ戻さない）。
-           * stale は会話の CLI が断られた（401）トークン（#229。core/backends/claude.mjs の recoverAuth）。設定フォルダのトークンがまだそれなら、
-           * 期限が先でも CLI に更新させ、それでも同じなら取り直せなかった（expired）として投げる
-           */
-          async fresh({ cwd, stale = null } = {}) {
-            try {
-              await settingsCheck(name, cwd);
-              let cred = await credentials(account, dir);
-              const rejected = Boolean(stale) && cred.token === stale;
-              let loginFailure = refreshExpired(cred) ? 'refresh-token-expired' : null;
-              if (!loginFailure && (rejected || cred.expiresAt - now() <= REFRESH_WINDOW_MS)) {
-                const authFailed = await Promise.resolve().then(() => refresh(dir)).then(() => false, claudeUsageAuthFailure);
-                if (authFailed) await Promise.resolve().then(() => onLoginExpired(account.id, 'no-login')).catch(() => {});
-                cred = await credentials(account, dir);
-                if (refreshExpired(cred)) loginFailure = 'refresh-token-expired';
-              }
-              if (loginFailure) await Promise.resolve().then(() => onLoginExpired(account.id, loginFailure)).catch(() => {});
-              if (loginFailure || cred.expiresAt <= now() || (rejected && cred.token === stale)) throw new ConnectorsAuthError('expired', { name });
-              try { await project({ source: cliConfigFile(env, home), target: path.join(shared, '.claude.json'), cwd }); }
-              catch { throw new ConnectorsAuthError('profile', { name }); }
-              const auth = { token: cred.token, env: { CLAUDE_CONFIG_DIR: shared, CLAUDE_CODE_OAUTH_SCOPES: cred.scopes.join(' ') }, expiresAt: cred.expiresAt };
-              if (verify) await verify({ account, ver, auth, dir, shared, home, expectedIdentity }).catch(async error => {
-                if (error?.cliAuthFailed === true) {
-                  await Promise.resolve().then(() => onLoginExpired(account.id, 'no-login')).catch(() => {});
-                  throw new ConnectorsAuthError('expired', { name });
-                }
-                throw error;
-              });
-              if (auth.expiresAt <= now()) throw new ConnectorsAuthError('expired', { name });
-              return auth;
-            } catch (error) {
-              throw attachConnectorsError(error, account);
-            }
-          },
-        },
-      },
-    };
-  }
 }
 
 /**
- * server の組み立て: 入口の設定・認証・使用量の読み取りの印を 1 つにつなぐ。戻りは入口（{ settings, gate, inspect }）。
- * 印はオンの間だけ効く（使用量の読み取りのたびに入口の設定を見て、オフなら外す。core/backends/claude-usage.mjs）
- * @param {{ guard: (dir: string, active: () => Promise<boolean>) => void, refresh: (dir: string) => Promise<unknown> }} o.usage
+ * server の組み立て: 入口の設定・認証を 1 つにつなぐ。戻りは入口（{ settings, gate, resolve, inspect }）。
+ * 方式は専用フォルダ方式だけ（ADR 0350）。入口がオンなら、モデル一覧の取得（forModels）にはトークン付きの登録（accounts.resolve）を渡す
+ * （長期トークンの無いアカウントの probeCatalog が使う。#195 で決めるまでそのまま）
  */
-export function createClaudeConnectorsWiring({ dataDir, accounts, versions, usage, probe = null, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
-  const resolveAuth = createClaudeConnectorsAuth({
-    accounts, versions, refresh: usage.refresh,
-    verify: probe ? createConnectorVerification({ dataDir, probe }) : null,
-    guard: (dir, account) => usage.guard(dir, async () => {
-      const config = await settings.read(account.id);
-      return config.enabled === true && config.mode !== OWN_DIR;
-    }),
-    ...options,
-  });
+export function createClaudeConnectorsWiring({ dataDir, accounts, versions, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
+  const resolveAuth = createClaudeConnectorsAuth({ accounts, versions, ...options });
   const gate = createClaudeConnectorsGate({ dataDir, resolveAuth, settings });
   return {
     ...gate,
     async resolve(id, { forModels = false } = {}) {
       const config = await settings.read(id);
-      const own = config.mode === OWN_DIR;
-      if (own && forModels) return accounts.resolve(id);
-      const account = await accounts.resolve(id, { requireToken: !own });
-      if (own) account.resolveCatalogAccount = () => accounts.resolve(id);
+      if (config.enabled && forModels) return accounts.resolve(id);
+      const account = await accounts.resolve(id, { requireToken: !config.enabled });
+      if (config.enabled) account.resolveCatalogAccount = () => accounts.resolve(id);
       return gate.gate(account, config);
     },
     inspect: resolveAuth.inspect,
   };
 }
 
-const verificationFlights = new Map();
-/** 初回だけ、同じ資格情報を使った専用設定先と共有設定先の本人・一覧を比較する。秘密は保存しない。 */
-export function createConnectorVerification({ dataDir, probe, timeoutMs = 30_000 }) {
-  const read = async file => fs.readFile(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-  return async ({ account, ver, auth, dir, shared, home, expectedIdentity }) => {
-    let expected;
-    try {
-      const oa = JSON.parse(await fs.readFile(path.join(dir, '.claude.json'), 'utf8')).oauthAccount;
-      if (!oa?.organizationUuid || !oa?.emailAddress) throw new Error();
-      expected = hashConnectorIdentity([oa.organizationUuid, oa.emailAddress]);
-    } catch { throw new ConnectorsAuthError('owner', { name: account.name }); }
-    if (!expectedIdentity || expected !== expectedIdentity) throw new ConnectorsAuthError('owner', { name: account.name });
-    const key = hashConnectorIdentity([account.id, ver.cli, ver.sdk, expected]);
-    const file = path.join(dataDir, 'claude-connectors-verification', `${key}.json`);
-    const flightKey = path.resolve(file);
-    if (verificationFlights.has(flightKey)) return verificationFlights.get(flightKey);
-    const run = (async () => {
-      const cached = await read(file);
-      if (cached?.toString() === JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key })) return;
-      const snapshot = async () => {
-        try {
-          const oa = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8')).oauthAccount;
-          return hashConnectorIdentity([oa?.organizationUuid ?? null, oa?.emailAddress ?? null]);
-        } catch (error) { return error?.code === 'ENOENT' ? 'missing' : 'unreadable'; }
-      };
-      const before = await snapshot();
-      const ac = new AbortController();
-      let timer;
-      const check = async () => {
-        const results = [];
-        for (const config of [dir, shared]) {
-          if (ac.signal.aborted) throw new ConnectorsAuthError('verificationTimeout', { name: account.name });
-          const result = await probe({ token: auth.token, verification: true, connectors: { fresh: async () => ({ ...auth, env: { ...auth.env, CLAUDE_CONFIG_DIR: config } }) }, signal: ac.signal });
-          const info = result?.account;
-          if (config === shared ? (info?.tokenSource !== 'CLAUDE_CODE_OAUTH_TOKEN' || info?.apiProvider !== 'firstParty') : ((info?.email != null || info?.organization != null) && (!info.email || !info.organization || hashConnectorIdentity([info.organization, info.email]) !== expected))) throw new ConnectorsAuthError('owner', { name: account.name });
-          if (!Array.isArray(result.connectors)) throw new ConnectorsAuthError('verificationList', { name: account.name });
-          results.push(JSON.stringify(result.connectors.map(c => typeof c === 'string' ? c : c.name).sort()));
-        }
-        if (results[0] !== results[1]) throw new ConnectorsAuthError('verificationList', { name: account.name });
-        if (before !== await snapshot()) throw new ConnectorsAuthError('verificationWrites', { name: account.name });
-      };
-      try {
-        await Promise.race([check(), new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new ConnectorsAuthError('verificationTimeout', { name: account.name })); }, timeoutMs); })]);
-        await fs.mkdir(path.dirname(file), { recursive: true });
-        const tmp = `${file}.${crypto.randomUUID()}.tmp`;
-        try {
-          await fs.writeFile(tmp, JSON.stringify({ version: 1, cli: ver.cli, sdk: ver.sdk, key }), { mode: 0o600 });
-          await renameWithRetry(tmp, file, fs, sleepFor);
-        } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
-      } catch (error) {
-        if (error instanceof ConnectorsAuthError || error?.cliAuthFailed === true) throw error;
-        throw new ConnectorsAuthError('verificationList', { name: account.name });
-      } finally { clearTimeout(timer); }
-    })();
-    verificationFlights.set(flightKey, run);
-    try { await run; } finally { if (verificationFlights.get(flightKey) === run) verificationFlights.delete(flightKey); }
-  };
-}
-
 /**
  * 設定 › 外部 MCP のコネクターの一覧の読み取り（core/context-claude-extras.mjs の createConnectorReader の probe）。
- * 新しい会話の既定のアカウントで読む。入口がオンのアカウントは会話と同じ組み立て（connectors.fresh()）を通し、
+ * 新しい会話の既定のアカウントで読む。入口がオンのアカウントは会話と同じ組み立て（connectors.prepare()）を通し、
  * 止める条件（ConnectorsAuthError）はそのまま投げる（ログイン中のアカウントで読み直さない。読めなかった扱いで、覚えの一覧は書かない）。
  * オンの解決は想定外の例外も ConnectorsAuthError にして投げる（createClaudeConnectorsAuth）ので、ここへ来るそれ以外の失敗は
  * 入口の手前（アカウントを消した・トークンが無いなど。オフと同じ）だけで、今までどおりログイン中のアカウントで読む

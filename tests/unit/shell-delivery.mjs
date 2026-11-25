@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { readSessions } from '../lib/data-store.mjs';
 import { sessionPermission } from '../../core/backends/opencode.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 
@@ -46,12 +47,15 @@ export default async function (t) {
     try {
       const shellRuntime = { url: 'http://127.0.0.1:1/mcp/shell', headers: { Authorization: 'Bearer x' }, nativeOff: true, instructions: 'use ply_shell' };
       await claude.runTurn({ prompt: 'hello', sessionId: null, cwd: scratch, mode: 'default', emit() {}, signal: new AbortController(), shellRuntime });
-      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run より長い）', mcpConf.ply_shell?.url === shellRuntime.url && mcpConf.ply_shell.timeout > 600_000 && !options?.mcpServers?.ply_shell);
+      const nativeOffConf = mcpConf;
+      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run の最長の待ち・承認待ちより長い）', mcpConf.ply_shell?.url === shellRuntime.url && mcpConf.ply_shell.timeout > 600_000 && !options?.mcpServers?.ply_shell);
       t.ok('Claude: 切る会話は Bash・PowerShell を外し、使い方の指示を足す', ['Bash', 'PowerShell'].every((n) => options?.disallowedTools?.includes(n)) && options?.systemPrompt?.append?.includes('use ply_shell'));
       const decided = await options.canUseTool('mcp__ply_shell__run', { command: 'echo' }, { signal: new AbortController().signal, suggestions: [] });
       t.ok('Claude: ply_shell は聞かない（承認は橋）', decided?.behavior === 'allow', JSON.stringify(decided));
       await claude.runTurn({ prompt: 'hello', sessionId: null, cwd: scratch, mode: 'default', emit() {}, signal: new AbortController(), shellRuntime: { ...shellRuntime, nativeOff: false, instructions: null } });
       t.ok('Claude: 切らない会話は Bash を残す', !(options?.disallowedTools ?? []).includes('Bash'));
+      // ply_shell が唯一のシェルになる会話は、ツール検索の後ろに回さず最初から読み込む（スキーマを読む前の呼び出しは 1 回失敗する）。切らない会話は今までどおり
+      t.ok('Claude: 切る会話の ply_shell は alwaysLoad で最初から読み込む。切らない会話は付けない', nativeOffConf?.ply_shell?.alwaysLoad === true && mcpConf.ply_shell?.alwaysLoad === undefined, JSON.stringify({ nativeOffConf, mcpConf }));
     } finally { restore(); await fs.rm(scratch, { recursive: true, force: true, maxRetries: 5 }); }
   }
 
@@ -112,5 +116,112 @@ export default async function (t) {
     c.close();
     await server.stop();
     await fs.rm(scratch, { recursive: true, force: true, maxRetries: 5 });
+  }
+
+  // ---- 「常に許可」（実サーバー・DB 往復・再起動・他会話・分岐・委譲の子・読むだけモード）
+  const permScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-shell-always-'));
+  const permData = path.join(permScratch, 'data');
+  const startPermServer = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: permData, timeoutMs: 60_000 });
+  const bootClient = async (srv, resolve) => {
+    const seen = [];
+    const client = await open({
+      port: srv.port, token: srv.token,
+      onEvent: async (ev, api) => {
+        if (ev.type !== 'permission') return;
+        if (seen.some((x) => x.id === ev.id)) return;
+        seen.push(ev);
+        const a = resolve(ev);
+        if (a) await api.cmd('resolvePermission', { id: ev.id, ...a }).catch(() => {});
+      },
+    });
+    return { client, seen };
+  };
+  let srv1 = await startPermServer();
+  let nextAnswer = () => ({ allow: true, always: false });
+  let { client: c1, seen: cards1 } = await bootClient(srv1, (ev) => nextAnswer(ev));
+  const askShell = async (client, sessionId, args, id) => {
+    const from = client.mark();
+    await client.cmd('sendMessage', { sessionId, messageId: id, prompt: shell(args) });
+    await client.waitFor((e) => e.type === 'turnEnd' && e.sessionId === sessionId, { from, ms: 30_000 });
+    return client.since(from).filter((e) => e.type === 'text.delta' && e.sessionId === sessionId).map((e) => e.text).join('');
+  };
+  try {
+    const { sessionId: s1 } = await c1.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    // 1. 一度だけの許可（once）では印を残さない
+    let out = await askShell(c1, s1, { name: 'run', arguments: { command: 'echo once-1' } }, 'sa-once-1');
+    const cardOnce = cards1.filter((x) => x.toolName === 'ply_shell' && x.sessionId === s1);
+    t.ok('サーバー越し: ply_shell の承認カードは canAlways: true で出て、once で通る',
+      cardOnce.length === 1 && cardOnce[0].canAlways === true && out.includes('once-1') && !readSessions(permData)[s1]?.shellAlwaysAllow, out);
+
+    // 2. 「常に許可」で許可すると DB に残り、以後はカードを出さない
+    nextAnswer = () => ({ allow: true, always: true });
+    out = await askShell(c1, s1, { name: 'run', arguments: { command: 'echo always-1' } }, 'sa-always-1');
+    t.ok('サーバー越し: 「常に許可」を選んだら会話のデータ shellAlwaysAllow に残る',
+      cards1.filter((x) => x.toolName === 'ply_shell' && x.sessionId === s1).length === 2 && out.includes('always-1') && readSessions(permData)[s1]?.shellAlwaysAllow === true);
+
+    const beforeNoCard = cards1.length;
+    out = await askShell(c1, s1, { name: 'run', arguments: { command: 'echo always-2' } }, 'sa-always-2');
+    t.ok('サーバー越し: 常に許可の後の run はカードを出さずに通る', out.includes('always-2') && cards1.length === beforeNoCard);
+    out = await askShell(c1, s1, { name: 'start', arguments: { command: 'echo always-start' } }, 'sa-always-start');
+    const startJobId = /ジョブ (sh-[a-f0-9]+)/.exec(out)?.[1];
+    t.ok('サーバー越し: 常に許可の後の start もカードを出さずに通る', Boolean(startJobId) && cards1.length === beforeNoCard);
+    if (startJobId) await c1.cmd('stopBackground', { sessionId: s1, taskId: startJobId }).catch(() => {});
+
+    // 3. ほかの会話・分岐・委譲の子には引き継がない
+    nextAnswer = () => ({ allow: true, always: false });
+    const { sessionId: s2 } = await c1.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    out = await askShell(c1, s2, { name: 'run', arguments: { command: 'echo other-conv' } }, 'sa-other-1');
+    t.ok('サーバー越し: ほかの会話ではカードが出る', out.includes('other-conv') && cards1.some((x) => x.toolName === 'ply_shell' && x.sessionId === s2));
+
+    const forked = await c1.cmd('fork', { sessionId: s1 });
+    // fork 直後の最初のターンは引き継ぎ文が先頭に付くため、1 ターン済ませてから shell: 台本を走らせる
+    {
+      const fFrom = c1.mark();
+      await c1.cmd('sendMessage', { sessionId: forked.sessionId, messageId: 'sa-fork-init', prompt: 'hello' });
+      await c1.waitFor((e) => e.type === 'turnEnd' && e.sessionId === forked.sessionId, { from: fFrom, ms: 30_000 });
+    }
+    out = await askShell(c1, forked.sessionId, { name: 'run', arguments: { command: 'echo forked-conv' } }, 'sa-fork-1');
+    t.ok('サーバー越し: 分岐（fork）した会話には引き継がず、カードが出る',
+      out.includes('forked-conv') && cards1.some((x) => x.toolName === 'ply_shell' && x.sessionId === forked.sessionId) && !readSessions(permData)[forked.sessionId]?.shellAlwaysAllow, out);
+
+    // 4. 読むだけのモードに変わったら、印があっても断る
+    await c1.cmd('setMode', { sessionId: s1, mode: 'plan' });
+    const beforePlan = cards1.length;
+    out = await askShell(c1, s1, { name: 'run', arguments: { command: 'echo plan-blocked' } }, 'sa-plan-1');
+    t.ok('サーバー越し: 承認モードが読むだけに変わったら、印があってもカードを出さず断る',
+      out.includes('読み取りだけ') && cards1.length === beforePlan, out);
+    await c1.cmd('setMode', { sessionId: s1, mode: 'default' });
+
+    // 5. サーバーを再起動しても会話のデータの印が残り、カードを出さない
+    c1.close();
+    await srv1.stop();
+    srv1 = null;
+    srv1 = await startPermServer();
+    const restarted = await bootClient(srv1, () => ({ allow: true, always: false }));
+    c1 = restarted.client;
+    cards1 = restarted.seen;
+    out = await askShell(c1, s1, { name: 'run', arguments: { command: 'echo after-server-restart' } }, 'sa-restart-1');
+    t.ok('サーバー越し: 再起動後も shellAlwaysAllow が残り、カードを出さずに通る',
+      out.includes('after-server-restart') && cards1.length === 0, `${out} cards=${cards1.length}`);
+
+    // 6. 委譲の子にも引き継がない（子の承認カードは canAlways: true、親への中継カードは canAlways: false）
+    const childPrompt = 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'fake', task: shell({ name: 'run', arguments: { command: 'echo child-run' } }) } });
+    const delFrom = c1.mark();
+    await c1.cmd('sendMessage', { sessionId: s1, messageId: 'sa-del-1', prompt: childPrompt });
+    await c1.waitFor((e) => e.type === 'turnEnd' && e.sessionId === s1, { from: delFrom, ms: 30_000 });
+    const task = await until(async () => {
+      const rows = (await c1.cmd('agentTasks')).filter((r) => r.parentSessionId === s1);
+      return rows[0]?.status === 'completed' ? rows[0] : null;
+    });
+    const childCard = cards1.find((x) => x.toolName === 'ply_shell' && x.sessionId === task?.sessionId);
+    const relayCard = cards1.find((x) => x.toolName === 'ply_shell' && x.sessionId === s1 && x.targetSessionId === task?.sessionId);
+    t.ok('サーバー越し: 委譲の子には引き継がず子の会話でカード（canAlways: true）が出、親への中継は canAlways: false',
+      Boolean(task) && Boolean(childCard) && childCard.canAlways === true && Boolean(relayCard) && relayCard.canAlways === false && !readSessions(permData)[task.sessionId]?.shellAlwaysAllow);
+    // 親へのタスク完了通知のターンが走り切るのを待ってからサーバーを止める
+    await until(async () => (await c1.cmd('running')).turns.length === 0, 10_000);
+  } finally {
+    c1?.close();
+    if (srv1) await srv1.stop();
+    await fs.rm(permScratch, { recursive: true, force: true, maxRetries: 5 });
   }
 }
