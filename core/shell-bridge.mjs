@@ -3,6 +3,8 @@
 // ツール: run（少し待つ。終わらなければ止めずに裏のジョブへ移して戻る）・start（裏で始めてすぐ戻る）・output（ジョブの出力の続き）・stop（ジョブを止める）・list（この会話のジョブ）。
 // - run の待ちは既定 RUN_WAIT_MS（timeoutMs で RUN_WAIT_MAX_MS まで）。過ぎたら kind を start に変え（promote）、ジョブ id・今までの出力・「まだ走っている」を返す。
 //   以後は start のジョブと同じ（output・stop・裏の一覧・終わりの知らせ）。timeoutMs は「止める上限」ではなく「裏へ移すまでの待ち」
+// - output の waitMs（任意。RUN_WAIT_MAX_MS まで）: 走っているジョブが終わるか waitMs が過ぎるまで待ってから返す（新しい出力だけでは戻らない）。
+//   人が止めたら止まり終わった時点で戻る。ターンが止まった・呼び出した側が切れたら待つのをやめるだけで、ジョブは止めない
 // - 走らせる口は core/host-shell.mjs。シェルが終わったら、パイプを握ったプロセスが残っていても少し待って戻る（leftover）
 // - 承認: 読み取りだけのモードでは断る。確認なし（autonomy: never）のモードのほかは、走らせる前に会話へ承認のカードを出す
 //   （エージェントのサンドボックスの外になるので、エージェント側の承認とは別に Pleiad が決める。エージェント側では ply_shell を自動で通す）
@@ -57,7 +59,7 @@ export function shellTools(locale) {
   return [
     { name: 'run', description: d('run'), inputSchema: { type: 'object', properties: { command, cwd, shell, timeoutMs: { type: 'integer', description: d('timeoutArg') } }, required: ['command'], additionalProperties: false } },
     { name: 'start', description: d('start'), inputSchema: { type: 'object', properties: { command, cwd, shell }, required: ['command'], additionalProperties: false } },
-    { name: 'output', description: d('output'), inputSchema: { type: 'object', properties: { jobId, since: { type: 'integer', minimum: 0, description: d('sinceArg') } }, required: ['jobId'], additionalProperties: false } },
+    { name: 'output', description: d('output'), inputSchema: { type: 'object', properties: { jobId, since: { type: 'integer', minimum: 0, description: d('sinceArg') }, waitMs: { type: 'integer', description: d('waitArg') } }, required: ['jobId'], additionalProperties: false } },
     { name: 'stop', description: d('stop'), inputSchema: { type: 'object', properties: { jobId }, required: ['jobId'], additionalProperties: false } },
     { name: 'list', description: d('list'), inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   ];
@@ -204,6 +206,20 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobC
     return lines.join('\n');
   }
 
+  /** ジョブが終わる・waitMs が過ぎる・待っている側（呼び出しの接続・ターン）が切れる、のどれかまで待つ。ジョブは止めない（裏のジョブなので）。
+   * 人がジョブを止めたときも、止まり終わって job.done が解けた時点で戻る（呼び出し側が resultText で「人が止めた」と書く） */
+  function waitForJob(job, waitMs, signals) {
+    return new Promise((resolve) => {
+      const live = signals.filter(Boolean);
+      let timer = null;
+      const finish = () => { clearTimeout(timer); for (const s of live) s.removeEventListener?.('abort', finish); resolve(); };
+      if (live.some((s) => s.aborted)) return resolve();
+      timer = setTimeout(finish, waitMs);
+      for (const s of live) s.addEventListener?.('abort', finish, { once: true });
+      job.done.then(finish, finish);
+    });
+  }
+
   async function call(binding, name, args, { locale, signal }) {
     const owner = await binding.owner();
     const invoke = () => callOwned(owner, name, args, { locale, signal });
@@ -243,6 +259,10 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobC
     if (name === 'output') {
       const job = map.get(String(args.jobId ?? ''));
       if (!job) throw new Error(agentT(lng, 'shell.noJob', { jobId: String(args.jobId ?? '') }));
+      // waitMs: 走っていれば、終わるか waitMs が過ぎるまで待ってから since からの出力を返す（新しい出力が出ただけでは戻らない）。
+      // 省いたら（数でなければ）今までどおりすぐ戻る。範囲の外は丸める（スキーマでは弾かない）
+      const waitMs = Number.isFinite(args.waitMs) ? Math.min(RUN_WAIT_MAX_MS, Math.max(0, args.waitMs)) : 0;
+      if (waitMs > 0 && job.endedAt == null) await waitForJob(job, waitMs, [signal, owner.signal]);
       return resultText(job, lng, { from: Number.isInteger(args.since) && args.since >= 0 ? args.since : 0 });
     }
     if (name === 'stop') {

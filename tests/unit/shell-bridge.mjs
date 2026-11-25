@@ -4,6 +4,8 @@
 //     timeoutMs は「移すまでの待ち」（上限を超えた値も弾かず丸める）。output・stop・終わりの知らせ・裏の一覧が start と同じ。
 //     待っている run を人が止めたら、run の戻りで返る（ターンは続く）。ターンが止まったら、待っている run は止め、裏へ移したものは止めない
 //   - 保持役に載ったジョブも、裏へ移したら同じ扱い（札を置き直す。保持役には 24 時間の上限で頼み、待ちでは止めない）
+//   - output の waitMs: 走っていれば、終わるか waitMs が過ぎるまで待つ（新しい出力だけでは戻らない・省けばすぐ戻る・範囲は丸める）。
+//     待っている間に人が止めたらすぐ戻って「人が止めた」と返す。ターンが止まった・呼び出した側が切れたら、待つのをやめるだけでジョブは止めない
 //   - start → output → stop: すぐ戻る・出力の続きを since で読む・子ごと止める・終わりを onJobEnd で知らせる
 //   - 同時のジョブの本数は限らない（1 つの会話で 9 本以上の start が通る）
 //   - 承認: 読み取りだけのモードは断る。確認なしのモードは聞かない。ほかは聞き、断られたら走らせない
@@ -12,9 +14,10 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { createShellBridge, shellTools, SHELL_TOOL_NAMES, RUN_WAIT_MS, RUN_WAIT_MAX_MS, JOB_TIMEOUT_MS } from '../../core/shell-bridge.mjs';
+import { agentT } from '../../core/i18n.mjs';
 
 export const name = 'shell-bridge';
-export const title = 'ply_shell: run・start・output・stop・承認の関門・裏に残ったプロセスを待たない・run は待ちを過ぎたら裏へ移す';
+export const title = 'ply_shell: run・start・output・stop・承認の関門・裏に残ったプロセスを待たない・run は待ちを過ぎたら裏へ移す・output は waitMs で待てる';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const node = JSON.stringify(process.execPath.replace(/\\/g, '/'));
@@ -51,14 +54,15 @@ export default async function (t) {
   let turnSignal = null;
   const port = bridge.open({ origin, locale: 'ja', owner: async () => ({ sessionId: 's1', cwd: dir, mode, signal: turnSignal, env: { PLY_SHELL_PROBE: 'probe-value' } }) });
   let seq = 0;
-  const call = async (name, args = {}) => {
-    const res = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' },
+  const call = async (name, args = {}, signal) => {
+    const res = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ jsonrpc: '2.0', id: ++seq, method: 'tools/call', params: { name, arguments: args } }) });
     const body = await res.json();
     return { text: body.result?.content?.[0]?.text ?? '', isError: Boolean(body.result?.isError) };
   };
   const until = async (fn, ms = 10_000) => { for (let i = 0; i < ms / 50; i++) { if (fn()) return true; await sleep(50); } return false; };
   const jobOf = (id) => bridge.jobs('s1').find((j) => j.jobId === id);
+  const timed = async (fn) => { const from = Date.now(); const value = await fn(); return { value, ms: Date.now() - from }; };
   try {
     t.ok('ツールは run・start・output・stop・list', shellTools('ja').map((x) => x.name).join() === SHELL_TOOL_NAMES.join() && shellTools('en').every((x) => x.description && x.inputSchema));
 
@@ -91,6 +95,7 @@ export default async function (t) {
     const movedId = jobIdIn(r.text);
     t.ok('run: 待ちを過ぎたら止めずに裏へ移し、ジョブ id と「まだ走っている」を返す（エラーにしない・止めたとは書かない）',
       Boolean(movedId) && !r.isError && r.text.includes('まだ走っています') && r.text.includes('止めずに裏のジョブに移しました') && !r.text.includes('止めました'), r.text);
+    t.ok('… 戻りに、output の waitMs で終わるまで待てること・sleep を挟んで何度も呼ばなくてよいことを書く', r.text.includes('waitMs') && r.text.includes('sleep'), r.text);
     const moved = jobOf(movedId);
     t.ok('裏へ移ったジョブは start と同じ扱い（kind: start・走っている・裏の一覧に出る・会話の裏のジョブに数える・変わったと知らせる）',
       moved?.kind === 'start' && moved.running && moved.listed && bridge.sessionsWithJobs().includes('s1') && changed.some((x) => x.job.jobId === movedId && x.job.kind === 'start'));
@@ -147,6 +152,91 @@ export default async function (t) {
     await bridge.stop('s1', keptId);
     turnSignal = null;
 
+    // ---- output の waitMs: 走っているジョブを、終わるか waitMs が過ぎるまで待ってから返す（ADR 0227 の 2026-11-25 の追記）
+    const startJob = async (command) => /ジョブ (sh-[a-f0-9]+)/.exec((await call('start', { command })).text)?.[1];
+    const waitArgOf = (tools) => tools.find((x) => x.name === 'output').inputSchema.properties.waitMs.description;
+    const waitSchema = shellTools('ja').find((x) => x.name === 'output').inputSchema.properties.waitMs;
+    t.ok('waitMs はスキーマで範囲を弾かない（run の timeoutMs と同じ。範囲は丸める）', waitSchema?.type === 'integer' && waitSchema.maximum === undefined && waitSchema.minimum === undefined && Boolean(waitSchema.description), JSON.stringify(waitSchema));
+    for (const lng of ['ja', 'en']) {
+      const tools = shellTools(lng);
+      const x = { output: tools.find((y) => y.name === 'output').description, run: tools.find((y) => y.name === 'run').description, arg: waitArgOf(tools),
+        instructions: agentT(lng, 'shell.instructions'), promoted: agentT(lng, 'shell.promoted', { seconds: 30, jobId: 'sh-x', since: 0 }), stillRunning: agentT(lng, 'shell.stillRunning', { jobId: 'sh-x', since: 0 }) };
+      t.ok(`説明（${lng}）: output・run・使い方の指示・「まだ走っています」の文に、waitMs で待てることと、sleep を挟んで何度も呼ばなくてよいことがある。引数の説明に上限がある`,
+        [x.output, x.run, x.instructions, x.promoted, x.stillRunning].every((s) => s.includes('waitMs')) && [x.output, x.instructions, x.promoted, x.stillRunning].every((s) => s.includes('sleep')) && x.arg.includes(String(RUN_WAIT_MAX_MS)), JSON.stringify(x));
+    }
+
+    // 待っている間に終われば、終わった時点で戻る（出力と終了コード）
+    const soonId = await startJob(`${node} -e "console.log('soon-1'); setTimeout(() => console.log('soon-2'), 1500)"`);
+    const soon = await timed(() => call('output', { jobId: soonId, waitMs: 60_000 }));
+    t.ok('output + waitMs: 待っている間にジョブが終われば、終わった時点で戻る（60 秒は待たない・出力と終了コード・「まだ走っています」とは書かない）',
+      soon.ms >= 1000 && soon.ms < 20_000 && soon.value.text.includes('soon-2') && /終了コード 0/.test(soon.value.text) && !soon.value.text.includes('まだ走っています') && !soon.value.isError, `${soon.ms}ms ${soon.value.text}`);
+
+    // 新しい出力が出ただけでは戻らない。waitMs が過ぎたら、ここまでの出力と続きの位置を返す（ジョブは止めない）
+    const chattyId = await startJob(`${node} -e "let i = 0; setInterval(() => console.log('chat ' + (++i)), 100); setTimeout(() => {}, 30000)"`);
+    const chatty = await timed(() => call('output', { jobId: chattyId, waitMs: 3000 }));
+    t.ok('出力が出続けても、新しい出力だけでは戻らない。waitMs が過ぎたら、ここまでの出力と続きの位置・「まだ走っています」を返す（ジョブは止めない）',
+      chatty.ms >= 2800 && chatty.ms < 15_000 && chatty.value.text.includes('chat 1') && chatty.value.text.includes('まだ走っています') && /since=\d+/.test(chatty.value.text) && jobOf(chattyId)?.running === true && !jobOf(chattyId)?.stoppedBy, `${chatty.ms}ms ${chatty.value.text.slice(-300)}`);
+
+    // 省く・数でない・0 以下は今までどおりすぐ戻る
+    for (const waitMs of [undefined, 0, -5, '30000']) {
+      const quick = await timed(() => call('output', waitMs === undefined ? { jobId: chattyId } : { jobId: chattyId, waitMs }));
+      t.ok(`waitMs が ${waitMs === undefined ? '無い' : JSON.stringify(waitMs)} なら、待たずにすぐ戻る`, quick.ms < 2000 && !quick.value.isError && quick.value.text.includes('まだ走っています'), `${quick.ms}ms ${quick.value.text.slice(-200)}`);
+    }
+
+    // 上限を超えた waitMs は断らず、RUN_WAIT_MAX_MS に丸めて待つ（待ちの timer の時間を見る）
+    const clampId = await startJob(`${node} -e "setTimeout(() => {}, 1200)"`);
+    const delays = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms, ...rest) => { delays.push(ms); return realSetTimeout(fn, ms, ...rest); };
+    let big;
+    try { big = await call('output', { jobId: clampId, waitMs: 99_999_999 }); } finally { globalThis.setTimeout = realSetTimeout; }
+    t.ok('waitMs が上限を超えても断らず、RUN_WAIT_MAX_MS（240 秒）に丸めて待つ', !big.isError && /終了コード 0/.test(big.text) && delays.includes(RUN_WAIT_MAX_MS) && !delays.includes(99_999_999), `${big.text} ${delays.filter((ms) => ms > 100_000)}`);
+
+    // 待っている間に人がそのジョブを止めたら、すぐ戻って「人が止めた」と返す
+    const humanId = await startJob(longNode);
+    let humanReturned = false;
+    const humanWait = timed(() => call('output', { jobId: humanId, waitMs: 60_000 })).then((x) => { humanReturned = true; return x; });
+    await sleep(500);
+    const returnedBeforeStop = humanReturned;
+    await bridge.stop('s1', humanId);
+    const human = await humanWait;
+    t.ok('待っている間に人がそのジョブを止めたら、止めるまで戻らず、止めたらすぐ戻って「人が止めた」と返す（60 秒は待たない）',
+      !returnedBeforeStop && human.ms < 20_000 && human.value.text.includes('人がこのコマンドだけを止めました') && !human.value.text.includes('まだ走っています'), `${human.ms}ms ${human.value.text}`);
+
+    // ターンが止まった・呼び出した側が切れたら、待つのをやめるだけ。ジョブは止めない（裏のジョブなので）
+    const keepId = await startJob(longNode);
+    const turn3 = new AbortController();
+    turnSignal = turn3.signal;
+    let turnReturned = false;
+    const turnWait = timed(() => call('output', { jobId: keepId, waitMs: 60_000 })).then((x) => { turnReturned = true; return x; });
+    await sleep(500);
+    const returnedBeforeAbort = turnReturned;
+    turn3.abort();
+    const turnOut = await turnWait;
+    turnSignal = null;
+    t.ok('ターンが止まったら、待つのをやめて戻る。ジョブは止めない（走り続ける・止めた人も付かない）',
+      !returnedBeforeAbort && turnOut.ms < 20_000 && turnOut.value.text.includes('まだ走っています') && jobOf(keepId)?.running === true && !jobOf(keepId)?.stoppedBy && !ended.some((x) => x.job.jobId === keepId), `${turnOut.ms}ms ${turnOut.value.text}`);
+    const gone = new AbortController();
+    const goneCall = call('output', { jobId: keepId, waitMs: 60_000 }, gone.signal).catch(() => null);
+    await sleep(500);
+    gone.abort();
+    await goneCall;
+    await sleep(300);
+    t.ok('呼び出した側が切れても、待つのをやめるだけでジョブは止めない', jobOf(keepId)?.running === true && !jobOf(keepId)?.stoppedBy && !ended.some((x) => x.job.jobId === keepId));
+    // 切れた後でも、同じジョブを waitMs でもう一度待てる（待ちの後始末が残らない）
+    const resumed = call('output', { jobId: keepId, waitMs: 60_000 });
+    await sleep(300);
+    await bridge.stop('s1', keepId);
+    t.ok('… 待ち直せる（あとから止めれば、その待ちも戻る）', (await resumed).text.length > 0);
+
+    // 終わったジョブ・知らないジョブは waitMs があっても今までどおり
+    const finished = await timed(() => call('output', { jobId: soonId, waitMs: 60_000 }));
+    t.ok('終わったジョブは、waitMs があってもすぐ返る（出力と終了コード）', finished.ms < 2000 && finished.value.text.includes('soon-2') && /終了コード 0/.test(finished.value.text), `${finished.ms}ms`);
+    const missingWait = await timed(() => call('output', { jobId: 'sh-missing', waitMs: 60_000 }));
+    t.ok('知らないジョブは、waitMs があっても待たずに断る', missingWait.ms < 2000 && missingWait.value.isError && missingWait.value.text.includes('sh-missing'), `${missingWait.ms}ms ${missingWait.value.text}`);
+    await bridge.stop('s1', chattyId);
+    t.ok('waitMs の試験で起こしたジョブは残っていない', !bridge.running('s1'));
+
     // 保持役に載ったジョブも同じ扱い（保持役には待ちではなく 24 時間の上限で頼み、待ちでは止めない。裏へ移したら札を置き直す）
     useHolder = true;
     r = await call('run', { command: 'held-command-not-run', timeoutMs: 1000 });
@@ -155,7 +245,12 @@ export default async function (t) {
     t.ok('保持役: 待ちを過ぎたら裏へ移す。保持役には 24 時間の上限で頼む（待ちの時間では止めない）',
       Boolean(heldId) && r.text.includes('held-out') && r.text.includes('止めずに裏のジョブに移しました') && heldStarts.length === 1 && heldStarts[0].kind === 'run' && heldStarts[0].timeoutMs === JOB_TIMEOUT_MS, `${JSON.stringify(heldStarts)} ${r.text}`);
     t.ok('保持役: 札の種類を start に置き直す', heldLabels.includes('start') && jobOf(heldId)?.held === true && jobOf(heldId)?.kind === 'start');
+    // 保持役のジョブでも waitMs で待てる（終わった時点で戻る）
+    const heldWait = timed(() => call('output', { jobId: heldId, waitMs: 60_000 }));
+    await sleep(300);
     heldEnd();
+    const heldOut = await heldWait;
+    t.ok('保持役: output + waitMs は、ジョブが終わった時点で戻る', heldOut.ms < 20_000 && /終了コード 0/.test(heldOut.value.text) && !heldOut.value.text.includes('まだ走っています'), `${heldOut.ms}ms ${heldOut.value.text}`);
     t.ok('保持役: 自分で終わると、start と同じく終わりを知らせる', await until(() => ended.some((x) => x.job.jobId === heldId)) && ended.find((x) => x.job.jobId === heldId).job.kind === 'start');
 
     // 起動で復元する run のジョブ: 待っていた接続は無いので、終わりを知らせる start として扱う
