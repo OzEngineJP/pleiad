@@ -1,6 +1,6 @@
 # 0350 Claude アカウントのコネクターを専用フォルダ方式だけにし、方式 b1 を削除する（ADR 0345 の段 2）
 
-- 状態: 承認（2026-11-24）。2026-11-25 に、段 2a と 2b を 1 回のリリースにまとめ、b1 へ戻すスイッチを持たないと改めた（梅澤さんの決定: 古い方式は beta で出すので捨ててよい）
+- 状態: 承認（2026-11-24）。2026-11-25 に、段 2a と 2b を 1 回のリリースにまとめ、b1 へ戻すスイッチを持たないと改めた（決定: 古い方式は beta で出すので捨ててよい）
 - 関係: [ADR 0345](0345-claude-account-own-config-dir.md)（段 1。段 2 の承認をこの ADR で取る）・[ADR 0340](0340-claude-connectors-per-account.md)（方式 b1。この ADR で置き換える）・[ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0351](0351-claude-own-config-dir-macos-keychain.md)（macOS）
 
 ## 状況
