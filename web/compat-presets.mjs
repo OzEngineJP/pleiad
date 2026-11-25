@@ -10,8 +10,8 @@
 import { t } from './i18n.mjs';
 
 // 互換の接続先を選べるエージェント（能力の印 compatEndpoints が対応のもの）。画面は core を読めないので並べて持ち、
-// 印との一致は agent-lists の試験が確かめる（tests/lint-agent-lists.mjs の ALLOWED の compatEndpoints）
-export const COMPAT_AGENTS = ['claude', 'codex', 'grok']; // backend-allow: 印 compatEndpoints と同じ組（agent-lists が突き合わせる）
+// 印との一致は agents-lint の試験が確かめる（tests/lint-agents.mjs の ALLOWED の compatEndpoints）
+export const COMPAT_AGENTS = ['claude', 'codex', 'grok']; // backend-allow: 印 compatEndpoints と同じ組（agents-lint が突き合わせる）
 
 export const KIND = { claude: 'anthropic-messages', codex: 'openai-responses', grok: 'openai-chat-completions' };
 export const KIND_LABEL = { 'anthropic-messages': t('compat.kind.anthropic'), 'openai-responses': t('compat.kind.responses'), 'openai-chat-completions': 'OpenAI Chat Completions' };

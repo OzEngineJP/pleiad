@@ -289,9 +289,8 @@ const SUITES = [
   // Devin・Grok のモデルの一覧の置き場（models() の TTL キャッシュ）: 取りかけの分け合い・失敗は覚えない・強制の取り直し
   './unit/backend-model-cache.mjs',
   './unit/backend-common.mjs',
-  './unit/backends-lint.mjs',
-  // エージェントを足したときの一覧への入れ忘れ（core/backends/ の外）: 一覧の走査の lint と README・AGENTS.md の一致
-  './unit/agent-lists.mjs',
+  // エージェントの種類の漏れの lint（tests/lint-agents.mjs。core/backends/ の外）: id の直書きのラチェット・backend-allow の印の数と死んだ印・一覧への入れ忘れ・README・AGENTS.md の一致
+  './unit/agents-lint.mjs',
   // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
   './unit/child-process-lint.mjs',
   // Windows の標準の道具（whoami・icacls・taskkill・tasklist・powershell・cmd）は System32 の絶対パスで呼ぶ（core/win-system.mjs）: システムのフォルダーの決め方・PATH の先頭の同名の道具に当たらない・core/ に名前だけの呼び出しを残さない

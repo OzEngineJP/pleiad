@@ -24,7 +24,6 @@ import { devinTurnConfig } from '../../core/backends/devin-config.mjs';
 export const name = 'hooks-main-pinned';
 export const title = 'Hooks: 更新しただけの人のターンを main の値で固定して比べる（移行の前と直後・Devin は main の実際の動き）';
 
-// backend-allow: エージェントごとの起動に効く形を、試験の期待値として並べる
 const AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const OFF_ENV = { GROK_CLAUDE_HOOKS_ENABLED: 'false', GROK_CURSOR_HOOKS_ENABLED: 'false', GROK_CODEX_HOOKS_ENABLED: 'false' };
 const CODEX_OFF = ['<tmp>/home/.codex/hooks.json:stop:0:0', '<tmp>/repo/.codex/hooks.json:stop:0:0'];
