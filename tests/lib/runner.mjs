@@ -24,7 +24,7 @@ import os from "node:os";
 import path from "node:path";
 import { fork, spawnSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { Suite, runCase, summarize, pick } from "./harness.mjs";
+import { Suite, runCase, summarize, pick, errorText } from "./harness.mjs";
 import { installRestartFromEnv, uninstallRestartMode } from "./restart.mjs";
 import { waitForTestHolders } from "./server.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
@@ -81,7 +81,7 @@ export function createGuardedRunner({ root, parallel = false, globals = createGl
 }
 
 /** worker から親へ渡す形 */
-export const serializeSuite = (s) => ({ name: s.name, title: s.title, results: s.results, error: s.error == null ? null : String(s.error?.stack ?? s.error), skipped: s.skipped, ms: s.ms ?? 0 });
+export const serializeSuite = (s) => ({ name: s.name, title: s.title, results: s.results, error: s.error == null ? null : errorText(s.error), skipped: s.skipped, ms: s.ms ?? 0 });
 
 /** 親で Suite に戻す */
 export function reviveSuite(d) {
@@ -122,7 +122,7 @@ async function runInProcess({ entries, root, progressMs }) {
       suite = new Suite(entry.name, entry.title ?? entry.name);
       console.log(`\n── ${suite.name}  ${suite.title}`);
       suite.error = error;
-      console.log(`  NG  読み込みで例外 — ${error?.stack ?? error}`);
+      console.log(`  NG  読み込みで例外 — ${errorText(error)}`);
       suite.ms = 0;
     } else {
       suite = await guard.run(mod, entry.name);

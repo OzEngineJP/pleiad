@@ -230,6 +230,7 @@ export default async function (t) {
       const st = Object.fromEntries(CT.suites.map((s) => [s.name, s.status]));
       t.ok("worker が途中で死んでも（exit・kill）、その suite だけが crash の失敗になり、ほかは最後まで走る", c.code === 1 && st["fx-exit"] === "crash" && st["fx-kill"] === "crash" && st["fx-pass-a"] === "pass" && st["fx-pass-b"] === "pass", JSON.stringify(st));
       t.ok("suite の例外・読み込めない・default が関数でない・登録と実際の name の不一致は、その suite の失敗（error / fail）", st["fx-throw"] === "error" && st["fx-nodefault"] === "error" && Object.values(st).includes("fail") && c.stdout.includes("FX-THROW-BOOM") && c.stdout.includes("登録した名前と export const name が一致する"), JSON.stringify(st));
+      t.ok("例外に cause があれば、そのコードとメッセージが 1 行で出る（fetch failed の原因が読める。worker 経由でも）", c.stdout.includes("原因(cause): FX_CAUSE_CODE FX-CAUSE-MESSAGE"));
       t.ok("死んだ worker の失敗には、終了コードと直近の出力（遺言）が残る", c.stdout.includes("exit 7") && c.stdout.includes("FX-EXIT-LAST-WORDS") && c.stdout.includes("worker が最後まで走り切る"));
       t.ok("登録した 7 本が欠けも重複もなく 1 回ずつ記録される・実行の整合の問題は無い（worker の死は suite の失敗として数える）", CT.suites.length === C.length && new Set(CT.suites.map((s) => s.name)).size === C.length && CT.problems.length === 0, JSON.stringify(CT.problems));
       t.ok("死んだ worker の置き場も後始末される・生きている worker は残らない", CT.workers.length >= 3 && CT.workers.every((w) => w.dataDirRemoved === true && w.pid > 0 && !alive(w.pid)), JSON.stringify(CT.workers.map((w) => [w.id, w.pid, w.dataDirRemoved])));
@@ -240,6 +241,7 @@ export default async function (t) {
       const DT = read(path.join(tmp, "d.json"));
       const ds = Object.fromEntries(DT.suites.map((s) => [s.name, s.status]));
       t.ok("--jobs 1 でも、例外・default が関数でない・name の不一致は失敗になり、残りは走る", d.code === 1 && ds["fx-pass-a"] === "pass" && ds["fx-throw"] === "error" && ds["fx-nodefault"] === "error" && Object.values(ds).includes("fail"), JSON.stringify(ds));
+      t.ok("--jobs 1 でも cause の 1 行が、その場の出力と末尾の失敗の一覧の両方に出る・timings の error は 1 行目のまま", d.stdout.split("原因(cause): FX_CAUSE_CODE FX-CAUSE-MESSAGE").length - 1 === 2 && DT.suites.find((s) => s.name === "fx-throw").error === "Error: FX-THROW-BOOM", JSON.stringify(DT.suites.find((s) => s.name === "fx-throw")));
     }
 
     // ---- 回収の判定（合成データ。pid の使い回し・止める直前の再確認・読めないときの扱い）-----------------------------------------------

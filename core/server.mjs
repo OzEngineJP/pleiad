@@ -916,6 +916,10 @@ const remoteAgentPort = createAgentPort({
   },
   log: line => console.log(`  ${line}`),
 });
+// remote の状態の便りを送ってよいか。立ち上げの途中（announce() の前）は、emitGlobal が読む定義（LIST_NEUTRAL_EVENTS など）が
+// まだ初期化されていない。remote.setPlusProvider() が積んだ状態の便りが、モジュールの評価の途中で動いて
+// 「remote status: Cannot access 'LIST_NEUTRAL_EVENTS' before initialization」で落ちていた。announce() で立ててから remote.start() する
+let remoteEmitReady = false;
 const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
   reviewPlusUid: () => reviewPlusLogin?.uid() ?? null,
   agent: {
@@ -927,6 +931,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
   },
   target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
   emit: event => {
+    if (!remoteEmitReady) return;
     if (event.type === 'remotePairing') devicePairingNotice(event);
     if (event.type !== 'remoteStatus') return emitGlobal({ ...event, sessionId: null });
     const status = withResident(event.status);
@@ -12503,6 +12508,7 @@ async function announce() {
     adopted: adopting.length };
   if (adopting.length) console.log(`  起動で拾ったターン ${adopting.length} 件（付け直しは待ち受けの後）`);
   mainPort.postMessage(readyMessage);
+  remoteEmitReady = true;
   remote.start().catch(() => {});
   // 更新のあとの最初の起動で、既存のアカウントの専用フォルダを準備する（共有へのリンク・退避。作れなければ理由を画面に出す。前の版のトークンも消す）。
   // 退避から 30 日を過ぎた項目は、起動時とそのあと 1 日ごとに消す（ADR 0350）

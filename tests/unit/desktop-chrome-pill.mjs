@@ -133,14 +133,53 @@ export default async function (t) {
   t.ok('main の更新後に ref が戻るまで状態を取り直す', posted.some(message => message.type === 'chrome-pill-snapshot'));
   state('pending', 'idle');
   // ---- 窓が閉じたあと ref が戻らない会話の状態の取り直しは、上限で諦める
-  state('gone', 'paused', 'pc', []);
-  await new Promise(resolve => setTimeout(resolve, 450));
-  const asked = posted.filter(message => message.type === 'chrome-pill-snapshot').length;
-  await new Promise(resolve => setTimeout(resolve, 100));
-  t.ok('ref が戻らないまま取り直し続けない（上限で止める）', posted.filter(message => message.type === 'chrome-pill-snapshot').length === asked);
-  state('gone', 'idle');
-  worker.emit('exit');
-  t.ok('サーバーが終わると隠す', !w.visible && pill.snapshot().sessions === 0);
-  pill.close();
-  t.ok('終了時に窓と IPC を片付ける', w.destroyed && ipcMain.listenerCount('ply:chrome-pill-resume') === 0);
+  // 実時間で待たない。Windows の setInterval(10) は 15.6ms 刻みで、30 回の取り直しは 457〜469ms かかり、固定の待ちを超えて落ちていた。
+  // setInterval を偽の時計に差し替え（製品は呼ぶ時にグローバルを読む）、時計を進めて「上限で止まる」を数で確かめる
+  const clock = fakeIntervals();
+  try {
+    state('gone', 'paused', 'pc', []);
+    const snapshots = () => posted.filter(message => message.type === 'chrome-pill-snapshot').length;
+    const before = snapshots();
+    clock.advance(1000);   // 10ms 刻みで 100 回。上限（30 回）を十分に超える
+    const asked = snapshots();
+    t.ok('ref が戻らない会話は、状態を取り直して聞く', asked > before, `${before} -> ${asked}`);
+    clock.advance(1000);
+    t.ok('ref が戻らないまま取り直し続けない（上限で止める）', snapshots() === asked, `${asked} -> ${snapshots()}`);
+    state('gone', 'idle');
+    worker.emit('exit');
+    t.ok('サーバーが終わると隠す', !w.visible && pill.snapshot().sessions === 0);
+    pill.close();
+    t.ok('終了時に窓と IPC を片付ける', w.destroyed && ipcMain.listenerCount('ply:chrome-pill-resume') === 0);
+  } finally {
+    clock.restore();
+  }
+}
+
+/**
+ * setInterval / clearInterval だけを偽の時計に差し替える（setTimeout は実物のまま）。advance(ms) で時計を進め、期限の来た順に発火する。
+ * 偽の時計の timer でないもの（差し替える前に作った本物）の clearInterval は本物に渡す
+ */
+function fakeIntervals() {
+  const real = { set: globalThis.setInterval, clear: globalThis.clearInterval };
+  const timers = [];
+  let now = 0;
+  globalThis.setInterval = (fn, ms) => {
+    const timer = { fn, ms, next: now + ms, active: true, unref: () => timer, ref: () => timer };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.clearInterval = timer => { if (timers.includes(timer)) timer.active = false; else real.clear(timer); };
+  return {
+    advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        const due = timers.filter(timer => timer.active && timer.next <= end).sort((a, b) => a.next - b.next)[0];
+        if (!due) break;
+        now = due.next; due.next += due.ms;
+        due.fn();
+      }
+      now = end;
+    },
+    restore() { globalThis.setInterval = real.set; globalThis.clearInterval = real.clear; },
+  };
 }

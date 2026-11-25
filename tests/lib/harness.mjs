@@ -44,6 +44,25 @@ export class Suite {
   get failed() { return this.failures.length > 0 || this.error != null; }
 }
 
+/**
+ * 例外の表示用の文字列（stack）。cause があれば、スタックの手前に 1 行（コードとメッセージ。鎖は ← で）を足す。
+ * Error の stack は cause を含まない。fetch の「TypeError: fetch failed」は原因（ECONNRESET など）が cause にだけあり、
+ * 足さないと CI の失敗の表示から原因が読めない。cause が無い例外・文字列は今まで通り（stack ?? 自身）
+ */
+export function errorText(err) {
+  const text = String(err?.stack ?? err);
+  const causes = [];
+  for (let c = err?.cause, depth = 0; c != null && depth < 3; c = c?.cause, depth++) {
+    const message = c instanceof Error ? c.message : String(c);
+    causes.push([c?.code, message].filter(Boolean).join(" ") || String(c?.name ?? c));
+  }
+  if (!causes.length) return text;
+  const lines = text.split("\n");
+  const at = lines.findIndex((line) => /^\s+at /.test(line));
+  lines.splice(at < 0 ? lines.length : at, 0, `  原因(cause): ${causes.join(" ← ")}`);
+  return lines.join("\n");
+}
+
 /** テストを1本走らせる。中で例外が出ても他は止めない。 */
 export async function runCase(mod, ctx) {
   const t = new Suite(mod.name, mod.title);
@@ -53,7 +72,7 @@ export async function runCase(mod, ctx) {
     await mod.default(t, ctx);
   } catch (err) {
     t.error = err;
-    console.log(`  NG  例外で中断 — ${err?.stack ?? err}`);
+    console.log(`  NG  例外で中断 — ${errorText(err)}`);
   }
   t.ms = Date.now() - t0;
   return t;
@@ -81,7 +100,7 @@ export function summarize(suites) {
   for (const s of broken) {
     console.log(`\n  [${s.name}] ${s.title}`);
     for (const f of s.failures) console.log(`    NG  ${f.label}${f.detail ? "  — " + shown(f.detail) : ""}`);
-    if (s.error) console.log(`    例外  ${String(s.error?.stack ?? s.error).split("\n").slice(0, 6).join("\n          ")}`);
+    if (s.error) console.log(`    例外  ${errorText(s.error).split("\n").slice(0, 6).join("\n          ")}`);
   }
   return 1;
 }
