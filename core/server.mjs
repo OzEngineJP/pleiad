@@ -2334,7 +2334,15 @@ const shellBridge = createShellBridge({
   onJobEnd: (sessionId, job, tail) => {
     sessionCommands?.untrack(sessionId, job.jobId);
     shellJobsChanged(sessionId);
-    if (job.kind === 'start' && !['agent', 'session', 'turn'].includes(job.stoppedBy)) void deliverJobEnd(sessionId, job, tail);
+    if (job.kind !== 'start' || ['agent', 'session', 'turn'].includes(job.stoppedBy)) return;
+    // output(waitMs) を待っている呼び出しは、ジョブの終わりで先に戻る。1 回分のイベントループを置いて、
+    // 終了コードを受け取った呼び出しに「終わりの知らせ」を重ねない（受け取り済みなら deliverJobEnd もすぐ返る）
+    addShellEndPending(sessionId, job.jobId);
+    const timer = setTimeout(() => {
+      if (shellBridge.job(sessionId, job.jobId)?.endReceived) { dropShellEndPending(sessionId, job.jobId); return; }
+      void deliverJobEnd(sessionId, job, tail).finally(() => dropShellEndPending(sessionId, job.jobId));
+    }, 25);
+    timer.unref?.();
   },
 });
 /** ply_shell の口を開く。token があれば、その値で開き直す（restoreConnection） */
@@ -2372,6 +2380,19 @@ function plyShellOffered(sessionId) {
 /** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held。listed: start・裏へ移った run・少し待っている run */
 const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.listed)
   .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell', ...(j.held ? { held: true } : {}) }));
+/** 終わりの知らせを子（または会話）へ届けている最中のジョブ。委譲の結果を、届け終わる前に確定しないための印 */
+const shellEndPending = new Map();   // sessionId -> Set<jobId>
+const shellEndWaiting = sessionId => Boolean(shellEndPending.get(sessionId)?.size);
+function addShellEndPending(sessionId, jobId) {
+  if (!shellEndPending.has(sessionId)) shellEndPending.set(sessionId, new Set());
+  shellEndPending.get(sessionId).add(jobId);
+}
+function dropShellEndPending(sessionId, jobId) {
+  const set = shellEndPending.get(sessionId);
+  if (!set) return;
+  set.delete(jobId);
+  if (!set.size) shellEndPending.delete(sessionId);
+}
 /** 裏の一覧の止める・読む口（findBackgroundTask が返す backend の形） */
 const SHELL_JOBS_HOST = {
   id: 'ply_shell',
@@ -2397,6 +2418,8 @@ async function deliverJobEnd(sessionId, job, tail) {
   const prompt = agentT(lng, 'shell.jobDone', { jobId: job.jobId, command: redactForPeer(job.command, 200), status, tail: redactForPeer(String(tail ?? '').slice(-2000), 2000) || agentT(lng, 'shell.noOutput') });
   const until = Date.now() + 30 * 60_000;
   while (Date.now() < until) {
+    // output / stop の戻りで終わりを受け取ったジョブには、同じ終わりをもう一度届けない
+    if (shellBridge.job(sessionId, job.jobId)?.endReceived) return;
     const live = await noticeTarget(sessionId).catch(() => null);
     if (live && (await steerNotice(live, sessionId, prompt, [])) === 'ok') return;
     if (!live && !(await noticeBlocked(sessionId).catch(() => true))) {
@@ -8206,6 +8229,8 @@ function trackChild(task, signal, execution) {
     taskStopReasons.delete(task.sessionId);
     if (child && why) child.abortReason ??= why;
     child?.ac.abort();
+    // 委譲を取り消したら、子が残した ply_shell のジョブも止める（完了を待つ逃げ道。dev サーバーなどを残さない）
+    void shellBridge.stopSession(task.sessionId).catch(() => {});
     // タスクの記録の backend は、依頼元が替えた次のターンの値のことがある（ADR 0134）。止めるのは今の会話のエージェント
     resolveBackendForSession(task.sessionId).then(b => b?.stopSession?.(task.sessionId)).catch(() => {});
   };
@@ -8224,12 +8249,14 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
   // 外から起きたターン（人の送信・Chrome を戻した続きなど）が合流している間・送信待ちが次のターンを始めようとしている間も待つ。
   // 待ち終えたら closeRun で回を締める（この後に来たターンは次の回として走り、もう 1 回知らせる。ADR 0355）
+  // ply_shell のジョブは start / 裏へ移った run のどちらでも待つ。終わりの知らせで子がもう一度動き、ジョブを止めるか結果を受け取って返答を終えるまで完了にしない（ADR 0227）
   const free = () => !sessionBusy(task.sessionId) && !agentTasks.joining(task.taskId) && !outbox.busySessions().includes(task.sessionId);
+  const shellBusy = () => shellBridge.running(task.sessionId) || shellEndWaiting(task.sessionId);
   for (;;) {
-    while (!signal.aborted && (!free() || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+    while (!signal.aborted && (!free() || awaitedBackground(task.sessionId) || shellBusy() || childrenBusy())) await waitFree(task.sessionId, 250);
     if (signal.aborted) break;
     await new Promise(resolve => setImmediate(resolve));
-    if (!free()) continue;
+    if (!free() || shellBusy()) continue;
     if (agentTasks.closeRun(task.taskId)) break;
   }
   // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
@@ -8806,9 +8833,15 @@ agentTasks = await createAgentTasks({
   backgroundWaiting: sessionId => {
     const execution = taskExecutions.get(sessionId);
     const turn = runtime.turns.get(sessionId);
-    if (!execution?.waitingSince || turn?.info.phase !== 'waiting') return null;
-    const tasks = (turn.info.background ?? []).map(waitingBackground);
-    return tasks.length ? { since: execution.waitingSince, tasks } : null;
+    if (!execution || (turn && turn.info.phase !== 'waiting')) return null;
+    const native = turn?.info.phase === 'waiting' ? (turn.info.background ?? []).map(waitingBackground) : [];
+    // ply_shell のジョブはターンが終わった後も残る。finishChild が結果を確定せずに待っている間だけ、ネイティブの裏の作業と同じ形で親へ見せる
+    const shell = shellBackground(sessionId).map(waitingBackground);
+    if (!turn && shell.length) execution.shellWaitingSince ??= Date.now();
+    else if (!shell.length) execution.shellWaitingSince = null;
+    const since = turn?.info.phase === 'waiting' ? execution.waitingSince : execution.shellWaitingSince;
+    const tasks = [...native, ...shell];
+    return since && tasks.length ? { since, tasks } : null;
   },
   deliverBackground: async (task, notice, { accepted } = {}) => {
     const owner = task.parentSessionId;

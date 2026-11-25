@@ -122,6 +122,23 @@ ${server.tail(40)}`);
         && !(await c.cmd('running')).turns?.some(r => r.sessionId === task.sessionId)));
     }
 
+    // ---- 1c. ply_shell のジョブを残してターンを終えた子。完了にせず、終わりの知らせで子をもう一度動かす
+    {
+      const node = JSON.stringify(process.execPath.replace(/\\/g, '/'));
+      const command = `${node} -e "setTimeout(() => {}, 900)"`;
+      const script = `shell:${JSON.stringify({ name: 'start', arguments: { command } })}`;
+      const { parent, task } = await delegate(script);
+      const waiting = await until(async () => { const r = await taskOf(task.taskId); return r?.backgroundWaiting?.tasks?.some((x) => x.kind === 'shell') ? r : null; });
+      t.ok('ply_shell のジョブが走っている間は completed にせず、状態に裏のジョブを出す',
+        waiting?.status === 'running' && waiting.backgroundWaiting.tasks[0].label.includes('setTimeout'), JSON.stringify({ status: waiting?.status, backgroundWaiting: waiting?.backgroundWaiting }));
+      const done = await until(async () => { const r = await taskOf(task.taskId); return r?.notification === 'sent' ? r : null; });
+      t.ok('ジョブの終わりを子へ届け、子が返答を終えてから completed になる', done?.status === 'completed' && !done.backgroundWaiting,
+        JSON.stringify({ status: done?.status, notification: done?.notification }));
+      const child = await c.cmd('loadSession', { sessionId: task.sessionId });
+      t.ok('子の会話にはジョブの終わりの知らせが残る', child.messages.some((m) => String(m.text ?? '').includes('Pleiad シェルのジョブの終わり')));
+      t.ok('完了通知は一度だけ届く', (await notices(parent)).filter((m) => m.text.includes('Pleiad タスク完了通知')).length === 1);
+    }
+
     // main がまだコマンドの結果を待っている子。background でも報告前なら裏待ちの通知は送らず、止めない。
     {
       const { parent, task, from } = await delegate('active-shell');

@@ -29,7 +29,8 @@ export const plyShellHolderEnabled = (env = process.env) => String(bootEnv('AGEN
 
 /** 走っているジョブの札 */
 export const plyShellCard = job => ({ kind: PLY_SHELL_CARD_KIND, v: PLY_SHELL_CARD_VERSION, sessionId: job.sessionId, jobId: job.id, jobKind: job.kind,
-  command: job.command, cwd: job.cwd, shell: job.shell, startedAt: job.startedAt, ...(job.stoppedBy ? { stoppedBy: job.stoppedBy } : {}) });
+  command: job.command, cwd: job.cwd, shell: job.shell, startedAt: job.startedAt, ...(job.stoppedBy ? { stoppedBy: job.stoppedBy } : {}),
+  ...(job.endReceived ? { endReceived: true } : {}) });
 
 /** 札からジョブの形を戻す。形が合わなければ null */
 export function readPlyShellCard(card) {
@@ -39,7 +40,7 @@ export function readPlyShellCard(card) {
   if (jobKind !== 'run' && jobKind !== 'start') return null;
   if (!Number.isFinite(startedAt)) return null;
   return { sessionId, jobId, jobKind, command, cwd: typeof card.cwd === 'string' ? card.cwd : null, shell: typeof card.shell === 'string' ? card.shell : null,
-    startedAt, ...(typeof card.stoppedBy === 'string' ? { stoppedBy: card.stoppedBy } : {}) };
+    startedAt, ...(typeof card.stoppedBy === 'string' ? { stoppedBy: card.stoppedBy } : {}), ...(card.endReceived === true ? { endReceived: true } : {}) };
 }
 
 /**
