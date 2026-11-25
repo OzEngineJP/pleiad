@@ -83,7 +83,7 @@ function fakeDeps() {
     git: {
       status: async (a) => { calls.push(['git.status', a]); return { git: { branch: 'main' } }; },
       panel: async (a, o) => { calls.push(['git.panel', a, o]); return { git: { branch: 'main' }, timeline: Array.from({ length: 30 }, (_, i) => ({ n: i })),
-        changes: { range: 'uncommitted', hasSession: false, total: { files: 45, add: 1, del: 0 }, files: Array.from({ length: 45 }, (_, i) => ({ path: `f${i}`, add: 1, del: 0 })) }, worktrees: { current: null, leftovers: [] }, at: 1 }; },
+        changes: { range: 'uncommitted', total: { files: 45, add: 1, del: 0 }, files: Array.from({ length: 45 }, (_, i) => ({ path: `f${i}`, add: 1, del: 0 })) }, worktrees: { current: null, leftovers: [] }, at: 1 }; },
       diff: async (a) => ({ diff: a.path ? { range: 'uncommitted', path: a.path, hunks: [{ header: '@@ -1 +1 @@', lines: [{ t: '-', s: 'old' }, { t: '+', s: `new --token ${MARKER}` }] }], binary: false, truncated: false } : null }),
     },
     notify: { status: async () => ({ pc: { done: true, reply: false, failed: true }, relayConnected: true, devices: [{ id: 'dev-secret-id', platform: 'ios', notify: { muted: true } }, { id: 'dev-2', platform: 'android', notify: {} }] }) },

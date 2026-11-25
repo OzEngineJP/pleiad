@@ -54,31 +54,30 @@ async () => {
     check(Boolean(term.querySelector('.tc-term-cursor')), 'Running terminal shows cursor');
     updateTerminal(term, { command: '<script>bad</script>', output: lines, exitCode: 0 });
     check(!term.querySelector('script') && !term.querySelector('.tc-term-cursor') && term.textContent.endsWith('exit 0'), 'Completed terminal escapes command, removes cursor, shows exit 0');
-    // Exercise the card decorator with a controlled git response, independent of
+    // The "変更: N ファイル" row of a delegation card (ADR 0085 decision 6) was removed (ADR 0354): the card never asks git for it.
+    // Only a worktree child keeps its workspace row (branch). Exercise the card decorator with a controlled task, independent of
     // whether a backend can create isolated children on the verification host.
     const source = await (await fetch('/client.mjs')).text();
-    const start = source.indexOf('async function paintDelegateGit(');
+    check(!source.includes('paintDelegateGit') && !source.includes('renderDelegateGit'), 'The client no longer has the delegation changes row');
+    const start = source.indexOf('function paintDelegateWorkspace(');
     const code = source.slice(start, source.indexOf('\n}', start) + 2);
-    const { renderDelegateGit } = await import('/git-view.mjs');
-    const task = { taskId: 'browser-git-fixture', sessionId: 'child' };
-    let calls = 0;
-    const paintGit = Function('taskById', 'cmd', 'renderDelegateGit', code + ';return paintDelegateGit;')(
-      () => task,
-      async () => { calls++; return { git: { branch: 'work', linked: true, session: { files: 1, add: 2, del: 1 } } }; },
-      renderDelegateGit,
+    const task = { taskId: 'browser-workspace-fixture', sessionId: 'child' };
+    const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+    const paintWorkspace = Function('taskById', 'el', 't', 'branchIcon', code + ';return paintDelegateWorkspace;')(
+      () => task, el, (key) => key, '<svg></svg>',
     );
     const child = renderToolCall('mcp__ply_agents__ply_delegate', { task: 'Inspect pricing' });
     child.dataset.taskId = task.taskId;
     const where = document.createElement('div'); where.className = 'rt-where';
     child.querySelector('.tc-pane-main').append(where); host.append(child);
-    await paintGit(child);
-    check(calls === 0 && !child.querySelector('.git-delegate'), 'Shared child has no changes row or git request');
+    paintWorkspace(child);
+    check(!child.querySelector('.wt-delegate') && !child.querySelector('.git-delegate'), 'Shared child has no workspace row and no changes row');
     task.worktree = { path: '/fixture/work', branch: 'work' };
-    await paintGit(child);
-    check(calls === 1 && child.querySelector('.git-delegate')?.textContent.includes('変更'), 'Worktree child retains changes row');
+    paintWorkspace(child);
+    check(child.querySelector('.wt-delegate code')?.textContent === 'work' && !child.querySelector('.git-delegate'), 'Worktree child shows its branch, with no changes row');
     delete task.worktree;
-    await paintGit(child);
-    check(!child.querySelector('.git-delegate') && calls === 1, 'Shared child removes any stale changes row');
+    paintWorkspace(child);
+    check(!child.querySelector('.wt-delegate'), 'Shared child removes any stale workspace row');
     return { passed: checks.length, checks };
   } finally { host.remove(); }
 }

@@ -10,8 +10,6 @@ import { isPleiadBranch, worktreeList } from './git-worktree.mjs';
 
 export const HISTORY_DEFAULT = 50;
 export const HISTORY_MAX = 200;
-/** 会話の始まりのコミットを探す・「始まりまで読む」で読む上限（履歴の先頭から数えた件数） */
-export const START_SEARCH_MAX = 2000;
 const HASH_RX = /^[0-9a-f]{7,64}$/;
 export const isHash = (v) => typeof v === 'string' && HASH_RX.test(v);
 
@@ -69,21 +67,6 @@ export async function readHistory(root, { limit = HISTORY_DEFAULT, skip = 0, max
   const commits = parseLog(r.stdout);
   const more = commits.length > take;
   return { commits: commits.slice(0, take), next: more ? from + take : null, head };
-}
-
-/**
- * コミットの履歴（readHistory と同じ並び）の先頭から数えて何番目か（0 始まり）。1 回の rev-list で、先頭から max 件までを見る。
- * 見つからない（max 件より後・履歴に無い）・読めなかったときは pos: null
- * @returns {Promise<{ pos: number|null, scanned: number }>}
- */
-export async function startPosition(root, hash, { max = START_SEARCH_MAX } = {}) {
-  if (!isHash(hash)) return { pos: null, scanned: 0 };
-  const head = await git.headCommit(root);
-  const r = await git.readGit(root, ['rev-list', '--topo-order', `--max-count=${max}`, '--branches', '--tags', '--remotes', ...(head ? ['HEAD'] : []), '--'], { timeout: 8_000 });
-  if (!r.ok) return { pos: null, scanned: 0 };
-  const lines = r.stdout.split('\n').filter(Boolean);
-  const at = lines.indexOf(hash);
-  return { pos: at < 0 ? null : at, scanned: lines.length };
 }
 
 /** コミット 1 つの情報（本文を含む）。コミットでなければ null */

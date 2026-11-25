@@ -16,7 +16,7 @@ import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
-import { run, KEEP_MS } from '../process.mjs';
+import { runBackground, KEEP_MS } from '../process.mjs';
 import { unwrapCommandShim } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
@@ -100,8 +100,8 @@ export function cliVersion(exe, { run = askVersion } = {}) {
 async function askVersion(exe) {
   const target = commandOf(exe);
   if (!target) return null;
-  // 完了を待つ短命の子（ADR 0270 の規則 ①。core/process.mjs の run）
-  const result = await run(target.command, [...target.args, '--version'], { timeoutMs: 10_000, killTree: true }).catch(() => null);
+  // 完了を待つ短命の子（ADR 0270 の規則 ①。core/process.mjs の runBackground。ターンの前の確認で、止めても終わらない子は待たずに戻る。ADR 0354）
+  const result = await runBackground(target.command, [...target.args, '--version'], { timeoutMs: 10_000 }).catch(() => null);
   return result && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
 }
 

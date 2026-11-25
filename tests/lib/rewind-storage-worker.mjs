@@ -14,7 +14,8 @@ const store = await import("../../core/store.mjs");
 
 const iso = n => new Date(Date.UTC(2026, 9, 3, 10, 0, n)).toISOString();
 const msg = (role, uuid, n, extra = {}) => ({ role, uuid, text: `${role}:${uuid}`, at: iso(n), ...extra });
-const git = (id, n) => recordPresent(id, { kind: "git", at: iso(n), git: { n }, by: "ai" });
+// 時刻（at）を渡せる提示の種類（worktree の印の行）。kind: "git" は ADR 0354 で記録をやめたので使わない
+const git = (id, n) => recordPresent(id, { kind: "worktree", at: iso(n), worktree: { n }, by: "ai" });
 let seq = 0;
 
 /** Claude と同じ形の身代わり: 次のターンが resumeSessionAt / resumeDropsTurn で葉を付け替える */
@@ -98,7 +99,7 @@ const emit = () => {};
   assert.equal(texts(await backend.getMessages(id)), "u1,a1", "次のターンまでは履歴を見かけ上切って返す");
   assert.equal(native.sessions.get(id).chain.length, 6, "JSONL（ネイティブ）はまだ動かない");
   assert.equal(await conversation(id), null, "ネイティブだけの会話に記録は作らない");
-  assert.deepEqual((await readPresents(id)).map(p => p.git.n), [0], "切り口（a1）より後に並ぶ提示を捨てる（「ここから分岐」と同じ選び方）");
+  assert.deepEqual((await readPresents(id)).map(p => p.worktree.n), [0], "切り口（a1）より後に並ぶ提示を捨てる（「ここから分岐」と同じ選び方）");
 
   await backend.runTurn({ sessionId: id, prompt: "新しい u2", emit });
   assert.deepEqual(native.calls.at(-1).rewind, { at: "a1", drops: "u2" }, "次のターンが resumeSessionAt と resumeDropsTurn を渡す");

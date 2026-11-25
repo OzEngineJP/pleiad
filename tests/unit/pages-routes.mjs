@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { createPagesRoutes } from '../../core/pages-routes.mjs';
 import { resolveReference, PreviewError } from '../../core/file-preview.mjs';
 import { createPageWatch } from '../../core/page-watch.mjs';
+import { registry as opsRegistry } from '../../core/ops/index.mjs';
 
 export const name = 'pages-routes';
 export const title = 'Pleiad のページ: 会話の範囲・読み取り API・CSP・上限・共通の資材';
@@ -66,9 +67,13 @@ export async function createFixture() {
     vizEntry:async (id, hash, entry) => { vizCalls.push([id, hash, entry]); return id === 'alpha' && hash === 'a'.repeat(64) && entry === 'index.html' ? '<h1>saved viz</h1>' : null; },
     ops:async (actor, id, input) => {
       calls.push({ actor, id, input });
+      // The app sends this through the real ops registry, whose input is strict (core/ops/registry.mjs): a key the schema does not know is INVALID.
+      // Check the input against the real schema here too, so a key the page route adds but the op no longer takes fails these tests (it once went unseen).
+      const real = opsRegistry.get(id), parsed = real?.input.safeParse(input ?? {});
+      if (!parsed?.success) return { ok:false, code:real ? 'INVALID' : 'NOT_FOUND', error:parsed?.error?.message ?? `unknown op: ${id}` };
       let result;
       if (id === 'git.status') result = { git:{ root:cwd, branch:'feat/browser-unify' } };
-      else if (id === 'git.changes') result = { git:{ root:cwd, branch:'feat/browser-unify', head:'a'.repeat(40) }, changes:{ hasSession:true, files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
+      else if (id === 'git.changes') result = { git:{ root:cwd, branch:'feat/browser-unify', head:'a'.repeat(40) }, changes:{ range:'uncommitted', files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
       else if (id === 'git.history') result = { history:{ root:cwd, head:'a'.repeat(40), next:null, session:null, commits:[{ hash:'a'.repeat(40), short:'aaaaaaa', parents:[], author:'Pleiad', at:Date.now(), refs:[{ kind:'head', name:'feat/browser-unify' }], subject:'ファイルをページで開く' }] } };
       else if (id === 'git.commit') result = { commit:{ commit:{ hash:input.hash, short:input.hash.slice(0, 7), subject:'ファイルをページで開く', author:'Pleiad', at:Date.now(), parents:[] }, files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
       else if (id === 'git.worktrees') result = { worktrees:{ total:2, partial:input.only === 'list', base:{ path:input.sessionId === 'review' ? dataDir : cwd, branch:'main' }, rows:[{ path:cwd, branch:'feat/browser-unify', exists:true, kind:'here', main:true, dirty:1 }, { path:path.join(cwd, 'notes'), branch:'feat/notes', exists:true, kind:'left', leftover:{ id:'notes', mergeSessionId:'alpha' } }] } };
@@ -206,8 +211,21 @@ export default async function (t) {
     t.ok('Worktree の基準の場所も閉じ込めの範囲外なら隠す', confinedWorktrees.body.worktrees.base === null);
     await get('api/git', { kind:'changes', only:'light' });
     t.ok('git の初回表示から暗黙の Worktree 整理を起こさない', f.calls.at(-1).input.only === 'changes');
-    const history = await get('api/git', { kind:'history', through:'true', cursor:'cursor' });
-    t.ok('既存グラフの履歴の追加読み込み引数を渡す', history.status === 200 && f.calls.at(-1).input.through === true && f.calls.at(-1).input.cursor === 'cursor');
+    const history = await get('api/git', { kind:'history', cursor:'cursor' });
+    t.ok('既存グラフの履歴の追加読み込み引数（cursor）を渡す', history.status === 200 && f.calls.at(-1).input.cursor === 'cursor' && f.calls.at(-1).input.limit === 50);
+    // 本物の登録簿（strict）の検査に通る形で呼ぶ。以前は range・through を足して、変更・差分・履歴がいつも INVALID（502）になっていた
+    const strictRange = await get('api/git', { kind:'changes', range:'session' });
+    const strictDiff = await get('api/git', { kind:'diff', path:'app.mjs', range:'session', stage:'work' });
+    const strictHistory = await get('api/git', { kind:'history', through:'true', cursor:'cursor' });
+    const strictCalls = f.calls.filter(c => ['git.changes', 'git.diff', 'git.history'].includes(c.id)).slice(-3);
+    t.ok('変更・差分・履歴は本物の操作の入力の検査（strict）を通って 200 を返す（range・through が付いても読める）',
+      strictRange.status === 200 && strictRange.body.changes.files.length === 1 && strictDiff.status === 200 && strictDiff.body.diff.hunks.length > 0 && strictHistory.status === 200 && strictHistory.body.history.commits.length === 1, JSON.stringify([strictRange.status, strictDiff.status, strictHistory.status]));
+    t.ok('操作へ渡す入力に range・through を足さない（操作の入力に無い鍵は INVALID になる）',
+      strictCalls.length === 3 && strictCalls.every(c => !Object.hasOwn(c.input, 'range') && !Object.hasOwn(c.input, 'through')), JSON.stringify(strictCalls.map(c => c.input)));
+    const realInvalid = await opsRegistry.invoke({ by:'human', via:'ui' }, 'git.changes', { sessionId:'alpha', range:'uncommitted' });
+    t.ok('前提の確認: 本物の登録簿は、操作の入力に無い鍵（range）を INVALID にする', realInvalid.ok === false && realInvalid.code === 'INVALID', JSON.stringify(realInvalid));
+    const pageKinds = await Promise.all(['changes', 'history', 'worktrees', 'prs'].map(kind => get('api/git', { kind })));
+    t.ok('ページから使う git の読み取り（変更・履歴・Worktree 一覧・PR）はすべて本物の検査を通る', pageKinds.every(r => r.status === 200), JSON.stringify(pageKinds.map(r => r.status)));
     const plugins = await get('api/plugins');
     t.ok('プラグインの一覧は保護されたパス・設定・注入した本文を返さない', plugins.body.report.entries.length === 3 && !JSON.stringify(plugins.body).includes('SECRET') && !JSON.stringify(plugins.body).includes('private injected'));
     const recent = await get('api/recent');

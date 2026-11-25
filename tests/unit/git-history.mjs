@@ -43,10 +43,10 @@ export default async function (t) {
     sh(repo, 'merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
     sh(repo, 'tag', 'v1');
     const activity = createGitActivity();
-    // ターンの撮影（refs/pleiad/turn/…）が履歴に混ざらない
-    const turn = await activity.begin({ cwd: repo });
-    await activity.attach(turn, 'session-hist-1');
-    t.ok('撮影の ref ができている', (await git.listTurnRefs(repo, 'session-hist-1')).length === 1);
+    // 前の版が残した撮影（refs/pleiad/turn/…。ADR 0354 で撮影はやめたが、片付けるまで残っている）が履歴に混ざらない
+    const snap = sh(repo, 'commit-tree', sh(repo, 'rev-parse', 'HEAD^{tree}'), '-p', 'HEAD', '-m', 'pleiad turn snapshot');
+    sh(repo, 'update-ref', 'refs/pleiad/turn/session-hist-1/1-start', snap);
+    t.ok('撮影の ref が残っている', sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/pleiad/turn/') === 'refs/pleiad/turn/session-hist-1/1-start');
 
     const page = await history.readHistory(repo, { limit: 3 });
     t.ok('履歴: 新しい順・親が先に来ない並び（トポロジー順）', page.commits.length === 3 && page.commits[0].subject === 'merge feature' && page.next === 3, JSON.stringify(page.commits.map((c) => c.subject)));
@@ -55,9 +55,7 @@ export default async function (t) {
     t.ok('履歴: 次のページで続きが読め、最後は next なし', rest.commits.length === 1 && rest.next === null && rest.commits[0].subject === 'first' && rest.commits[0].parents.length === 0);
     const everything = await history.readHistory(repo, { limit: 50 });
     t.ok('履歴: refs/pleiad/ の撮影のコミットは混ざらない', everything.commits.length === 4 && !everything.commits.some((c) => c.subject === 'pleiad turn snapshot'), JSON.stringify(everything.commits.map((c) => c.subject)));
-    const start = await activity.sessionStart(repo, 'session-hist-1');
-    t.ok('会話の始まり: 最初の撮影の親（そのときの HEAD）', start?.head === sh(repo, 'rev-parse', 'HEAD') && start.n === 1);
-    t.ok('会話の始まり: 撮影が無い会話は null', (await activity.sessionStart(repo, 'nope')) === null);
+    t.ok('履歴を読んでも、残っている ref には触れない（片付けは gitActivity.tidy だけ）', sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/pleiad/turn/') === 'refs/pleiad/turn/session-hist-1/1-start');
 
     // コミット 1 つ
     const merge = await history.commitFiles(repo, everything.commits[0].hash);
@@ -74,18 +72,18 @@ export default async function (t) {
     const groups = await history.uncommittedGroups(repo);
     t.ok('ステージ済み: s.txt（A）と m.txt（M）だけ', groups.staged.map((f) => `${f.state}:${f.path}`).join() === 'M:m.txt,A:s.txt', JSON.stringify(groups.staged));
     t.ok('変更: a.txt（M）・m.txt（M）・u.txt は未追跡の U', groups.work.map((f) => `${f.state}:${f.path}`).join() === 'M:a.txt,M:m.txt,U:u.txt', JSON.stringify(groups.work));
-    const changes = await activity.changes(repo, null, 'uncommitted');
+    const changes = await activity.changes(repo, null);
     const mrow = changes.files.find((f) => f.path === 'm.txt');
     t.ok('changes: 一部ステージのファイルは staged と unstaged の両方', mrow.staged === true && mrow.unstaged === true && changes.files.find((f) => f.path === 's.txt').staged === true && !changes.files.find((f) => f.path === 's.txt').unstaged);
-    const dStaged = await activity.diff(repo, null, 'uncommitted', 'm.txt', { stage: 'staged' });
-    const dWork = await activity.diff(repo, null, 'uncommitted', 'm.txt', { stage: 'work' });
+    const dStaged = await activity.diff(repo, null, 'm.txt', { stage: 'staged' });
+    const dWork = await activity.diff(repo, null, 'm.txt', { stage: 'work' });
     t.ok('差分: ステージ済みは more まで、変更は evenmore だけ', dStaged.diff === undefined && dStaged.hunks[0].lines.some((l) => l.s === 'more') && !dStaged.hunks[0].lines.some((l) => l.s === 'evenmore') && dWork.hunks[0].lines.filter((l) => l.t === '+').map((l) => l.s).join() === 'evenmore');
     // 行番号と畳みの展開
-    const dA = await activity.diff(repo, null, 'uncommitted', 'a.txt', { after: true, context: 3 });
+    const dA = await activity.diff(repo, null, 'a.txt', { after: true, context: 3 });
     const h0 = dA.hunks[0];
     t.ok('差分: ハンクの行番号（旧 18 から 7 行・新も 18 から）', h0.oldStart === 18 && h0.newStart === 18 && h0.oldCount === 7 && h0.newCount === 7, h0.header);
     t.ok('差分: 後ろ側の全行（畳みを開く元）', dA.after.length === 40 && dA.after[20] === 'TWENTY-ONE');
-    const dCommit = await activity.diff(repo, null, 'uncommitted', 'f.txt', { commit: everything.commits[1].hash });
+    const dCommit = await activity.diff(repo, null, 'f.txt', { commit: everything.commits[1].hash });
     t.ok('差分: コミットを指すと親との比較', dCommit.range === 'commit' && dCommit.hunks[0].lines[0].s === 'f' || dCommit.hunks.length === 0, JSON.stringify(dCommit).slice(0, 200));
 
     // 作業場所

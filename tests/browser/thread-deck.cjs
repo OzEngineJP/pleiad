@@ -2,7 +2,7 @@
 // スレッドと空間モデル（docs/design-system.md「スレッドの空間モデル」、ADR 0111）: 3 つの幅・右パネルの開閉・✕・動き（と動きを減らす設定）・
 // スクロール位置と下書きの保持・ほかのスレッドへの切り替え・承認のカード・［止める］と書き足し・道具の行・可視化のインライン・見出しの出し分け。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7436, token thread-deck-test):
-//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_FAKE_SLOW_STEER=1 AGENT_HOST_GIT_SNAPSHOTS=off AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-deck-test AGENT_HOST_PORT=7436 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
+//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_FAKE_SLOW_STEER=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-deck-test AGENT_HOST_PORT=7436 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // Never run against live data. bot・チャンネル・スレッドは本物の操作（bots.create・channels.post ほか）で作り、fake の bot が本当に走る。
 // bot の途中の様子（本文の差し替え・提示）だけは、サーバーから届く形の出来事（channelPost）をページの WebSocket へ流して確かめる。
 async page => {

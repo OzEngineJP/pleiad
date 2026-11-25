@@ -49,28 +49,15 @@ export function layoutGraph(commits, { withWorktree = false, headHash = null } =
 /**
  * 範囲に入るコミット（行の添字の Set）と、比べる起点の行。
  *  - uncommitted: 作業ツリーの行だけ。起点は HEAD
- *  - session: 会話の始まりの HEAD から今までに増えたコミット（git log 始まり..HEAD）と作業ツリー。起点は会話の始まりの HEAD。
- *    始まりが読み込んだ分に無ければ null（呼び出し側が先を読む）
  *  - commit: 押したコミットだけ。起点は null
+ * （「この会話の間」の範囲は ADR 0354 でやめた）
  */
-export function rangeNodes(layout, commits, { kind, hash = null, head = null, start = null }) {
+export function rangeNodes(layout, commits, { kind, hash = null, head = null }) {
   const offset = layout.rows[0]?.wt ? 1 : 0;
   const index = new Map(commits.map((c, i) => [c.hash, i + offset]));
-  const byHash = new Map(commits.map((c) => [c.hash, c]));
-  const parentsOf = (h) => byHash.get(h)?.parents ?? [];
-  const reach = (from) => {
-    const seen = new Set(), stack = from ? [from] : [];
-    while (stack.length) { const h = stack.pop(); if (seen.has(h) || !index.has(h)) continue; seen.add(h); stack.push(...parentsOf(h)); }
-    return seen;
-  };
   const hasWt = layout.rows[0]?.wt === true;
-  if (kind === 'uncommitted') return { nodes: new Set(hasWt ? [0] : []), base: head && index.has(head) ? index.get(head) : null };
   if (kind === 'commit') return { nodes: new Set(index.has(hash) ? [index.get(hash)] : []), base: null };
-  if (!start || !index.has(start)) return { nodes: new Set(hasWt ? [0] : []), base: null, unknownStart: true };
-  const excluded = reach(start);
-  const nodes = new Set(hasWt ? [0] : []);
-  for (const h of reach(head)) if (!excluded.has(h)) nodes.add(index.get(h));
-  return { nodes, base: index.get(start) };
+  return { nodes: new Set(hasWt ? [0] : []), base: head && index.has(head) ? index.get(head) : null };
 }
 
 /** 辺が行 r の中で描く線（無ければ null）。y は 0〜ROW_H */
@@ -117,9 +104,4 @@ export function lanesBelow(layout, r) {
     seen.add(key); out.push({ x: laneX(e.mid), lane: e.mid, dash: e.dash, edge: i });
   });
   return out;
-}
-
-/** 「さらに N 件」の行の頭に付ける、下へ切れる線 */
-export function tailSvg(lane = 0) {
-  return `<svg class="g" viewBox="0 0 44 28" aria-hidden="true"><path class="tail" d="M${laneX(lane)} 0V12"/></svg>`;
 }

@@ -148,7 +148,7 @@ import { createSessionTodo } from './session-todo.mjs';
 import { openExternalLink } from './link-open.mjs';
 import { createThreadNav } from './thread-nav.mjs';
 import { setupGitPanel } from './git-panel.mjs';
-import { renderDelegateGit, branchLabel } from './git-view.mjs';
+import { branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { setSettingsTraceLabels } from './settings-trace.mjs';
@@ -7330,7 +7330,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const refs = presents.map(p => p.reference);
   // 追加指示の行は、受け付けた位置（出来事・錨・受付時刻）に置く。配送中・待機・届かなかった分も同じ行で状態だけ変わる
   for (const it of buildItems(messages, presents)) {
-    // git の要約の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
+    // worktree の印の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
+    // （古い保存分の kind: 'git' は buildItems が既に省く。ADR 0354）
     if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     if (it.m?.role === 'instruction') {
@@ -7487,7 +7488,7 @@ function linkDelegateCard(card, input = null, result = null, ctx = null) {
     if (!id) { decorateFailedDelegate(card, result); return; }
     if (card.dataset.taskId && card.dataset.taskId !== id) {
       // 結果を読み直したら、前のタスクの内訳や操作を残さない。
-      for (const node of card.querySelectorAll('.rt-target-logo, .host-mark, .rt-request, .rt-where, .rt-detail, .git-delegate, .wt-delegate')) node.remove();
+      for (const node of card.querySelectorAll('.rt-target-logo, .host-mark, .rt-request, .rt-where, .rt-detail, .wt-delegate')) node.remove();
       for (const key of ['routed', 'routeSig', 'hostId', 'dstate']) delete card.dataset[key];
       cardRouting.delete(card);
       const res = card.querySelector('.tc-res');
@@ -7635,13 +7636,13 @@ function decorateDelegateCard(card) {
   (card.querySelector('.tc-pane-main') ?? card.querySelector('.tc-details-body'))?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
-  // 開いたとき、子の作業場所の git の要約を「変更」の行として出す（開かれるまでは引かない。ADR 0085）
+  // 開いたとき、子の作業場所（worktree のブランチ）の行を出す。「変更」の行（ADR 0085 の決定 6）は ADR 0354 でやめた
   const shell = card.querySelector('.tc-details');
   if (shell && !shell.dataset.gitHook) {
     shell.dataset.gitHook = '1';
-    shell.addEventListener('toggle', () => { if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); } });
-    if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
-  } else if (shell?.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
+    shell.addEventListener('toggle', () => { if (shell.open) paintDelegateWorkspace(card); });
+    if (shell.open) paintDelegateWorkspace(card);
+  } else if (shell?.open) paintDelegateWorkspace(card);
 }
 /** 委譲カードの「作業場所」の行（worktree のとき。ブランチと「worktree」。ADR 0089）。開いたときに出す */
 function paintDelegateWorkspace(card) {
@@ -7656,17 +7657,6 @@ function paintDelegateWorkspace(card) {
   value.title = task.worktree.path;
   row.append(el('div', 'wt-delegate-label', t('routing.detail.cwd')), value);
   card.querySelector('.rt-where')?.after(row);
-}
-/** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
-async function paintDelegateGit(card) {
-  const task = taskById(card.dataset.taskId);
-  card.querySelector('.git-delegate')?.remove();
-  if (!task?.sessionId || !task.worktree) return;
-  const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
-  if (!card.isConnected || card.dataset.taskId !== task.taskId) return;
-  card.querySelector('.git-delegate')?.remove();
-  const row = renderDelegateGit(res?.git, { sessionId: task.sessionId });
-  if (row) card.querySelector('.rt-where')?.after(row);
 }
 /**
  * 自動の振り分けで使える委譲先が無かったカード（タスクはできていない）。見出しを成功と同じ「委譲 · 自動 · 種類・難しさ →」にして
@@ -11292,12 +11282,6 @@ tabHolderStore.onChange((id) => { if (id === state.current) browserEntry?.paint(
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 // 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 一時停止の帯とプロフィールをその会話に合わせる
 chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });
-document.addEventListener('ply-git-open', (event) => {
-  const sessionId = event.detail?.sessionId ?? null;
-  if (!sessionId && !state.current) return;
-  // 返答の下の 1 行（detail.turn）と委譲カードから開いたら「この会話の間」、近道からは「コミットしていない分」
-  gitPanel.open(event.target.closest?.('button') ?? null, { sessionId, range: 'session' });
-});
 document.addEventListener('keydown', event => {
   const mac = /Mac/.test(navigator.platform);
   if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f' || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
