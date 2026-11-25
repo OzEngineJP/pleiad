@@ -922,7 +922,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (result !== 'requeue') await releaseFollowers(sessionId).catch((e) => log('could not deliver a heard post:', errText(e)));
   }
 
-  const systemPost = (channelId, threadId, text) => channels.post({ channelId, threadId, text }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
+  const systemPost = (channelId, threadId, text, state) => channels.post({ channelId, threadId, text, ...(state ? { state } : {}) }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
 
   // ------------------------------------------------------------ 休憩中（使用量の上限。ADR 0119）
 
@@ -1538,7 +1538,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const hasBody = Boolean(text || (bodyByBot && current.text !== PLACEHOLDER && current.text.trim()));
     if (!text && state === 'failed' && !bodyByBot) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
     // 使用量の上限で終わったターンは、bot の発言に「止めました」も上限の文も書かない（知らせは Pleiad の投稿。ADR 0119）。bot が書いた分は残す
-    if (!text && state === 'stopped' && !bodyByBot && !rec.presents.length && !limited) text = agentT(lng, 'channel.turn.stopped');
     // 何も言わずに終わった（文章を書かずにリアクションだけ・黙ってやめる。ADR 0119）・上限で何も書けなかった: 投稿は残さない
     if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
@@ -1547,7 +1546,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     else if (state === 'failed') edit.failure = oneLine(rec.error ?? '', 300);
     // bot がこのターンの投稿に付けた「要確認」（channels.post の state: 'checking'。ルーティンの実行の状態になる）は、終わりで done に戻さない
     if (state === 'done' && current.state === 'checking') edit.state = 'checking';
-    if (text) edit.text = text; else if (!bodyByBot && current.text === PLACEHOLDER) edit.text = '';
+    // 文章が無く提示だけで終わったら、待ちの印「…」を空にする（提示があれば本文は空でよい）。何も書けずに止めた投稿は「…」のまま残し、画面が「■ 中断しました」を出す（空の本文は channels.edit が断る）
+    if (text) edit.text = text; else if (!bodyByBot && current.text === PLACEHOLDER && rec.presents.length) edit.text = '';
     if (rec.presents.length) edit.presents = rec.presents;
     const saved = await channels.edit(edit, botAuthor(rec.botId));
     const deliver = (ok || state === 'failed') && !rec.stopped && !limited && hasBody;
@@ -1578,10 +1578,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 元のスレッドの stopped は channels の service が先に残している。派生のスレッドは、ここで同じ印を残してから止める
     const derived = await derivedThreads(channelId, threadId);
     for (const id of derived) await channels.threads.update(channelId, id, { stopped: { by: author, at: now() } }).catch((e) => log('could not mark a derived thread stopped:', errText(e)));
-    for (const id of [threadId, ...derived]) await stopOne(channelId, id, author);
+    for (const id of [threadId, ...derived]) await stopOne(channelId, id);
   }
 
-  async function stopOne(channelId, threadId, author) {
+  async function stopOne(channelId, threadId) {
     const key = threadKeyOf(channelId, threadId);
     stoppedKeys.add(key);
     const lng = locale();
@@ -1596,8 +1596,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       const th = await channels.threads.get(channelId, threadId).catch(() => null);
       const sessionIds = new Set([...running.map((rec) => rec.sessionId), ...Object.values(th?.sessions ?? {}).filter((id) => typeof id === 'string')]);
       await Promise.all([...sessionIds].map((sessionId) => host.abortSessions?.({ sessionId, reason: 'user' })));
-      const botList = await bots.list();
-      await systemPost(channelId, threadId, agentT(lng, 'channel.stopped', { who: await nameOf(author, botList, lng) }));
+      // 画面は「■ 中断しました · 時刻」を返事の場所に出す（誰が止めたかは ThreadState.stopped.by）。state の stopped が、その行の印
+      await systemPost(channelId, threadId, agentT(lng, 'channel.stopped'), 'stopped');
     } finally { await refreshThread(channelId, threadId); }
   }
 

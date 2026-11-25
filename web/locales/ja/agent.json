@@ -2094,7 +2094,7 @@
   },
   "channel": {
     "envelope": { "from": { "you": "あなた", "bot": "{{icon}} {{name}} (bot)", "agent": "Chats の会話の AI", "routine": "ルーティン", "system": "Pleiad" }, "reaction": "あなたの投稿に {{emoji}} が付きました。投稿の書き出し: {{text}}" },
-    "stopped": "{{who}} が止めました",
+    "stopped": "中断しました",
     "heldWake": "{{bot}} は {{mode}} で動くので、{{from}} の返事からは起こしていません。人が @ すると起きます。",
     "resting": {
       "limited": "{{bot}} は使用量の上限に達したので、{{time}} ごろまで休みます。それまでの @ には答えられません。",
@@ -2107,7 +2107,7 @@
       "cleared": "このチャンネルの「ここでの決まり」は空になった。前に渡した決まりはもう適用しない。"
     },
     "personaUpdated": "あなたの人格の指示が更新されました。この会話の始めに渡した人格・使い方の指示に代わって、これ以降は次の指示に従う:\n{{persona}}",
-    "turn": { "failed": "失敗しました: {{error}}", "stopped": "止めました" }
+    "turn": { "failed": "失敗しました: {{error}}" }
   },
   "brain": {
     "kind": { "think": "メモ", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },

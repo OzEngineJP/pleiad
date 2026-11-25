@@ -90,7 +90,7 @@ export default async function (t) {
           dir: path.join(tmp, `stub-${steerKind}-${++worlds}`),
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
-          post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
+          post: async (a, by) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
           edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }, typeof a.failure === 'string' && { failure: a.failure }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
@@ -510,7 +510,7 @@ export default async function (t) {
         const abortedIds = x.aborted.map((a) => a.sessionId).sort().join();
         t.ok('S-3(b): ［止める］は元のスレッドと、origin で結ばれた派生のスレッド（孫も）の走っているターンを止める。無関係のスレッドは止めない', abortedIds === 's1,s2,s3', abortedIds);
         t.ok('S-3(b): 派生のスレッドにも止めた主体の印（stopped）が残り、人が書くまで起こさない。無関係のスレッドには付かない', x.threads['c_1/p_t2'].stopped?.by.kind === 'human' && x.threads['c_1/p_t3'].stopped?.by.kind === 'human' && x.threads['c_1/p_other'].stopped === null);
-        t.ok('S-3(b): 派生のスレッドにも「止めました」の投稿が残る', ['p_t2', 'p_t3'].every((id) => x.posts.some((p) => p.threadId === id && /止めました|が止めました/.test(p.text))));
+        t.ok('S-3(b): 派生のスレッドにも「中断しました」の投稿（state: stopped）が残る', ['p_t2', 'p_t3'].every((id) => x.posts.some((p) => p.threadId === id && p.author.kind === 'system' && p.state === 'stopped' && p.text === '中断しました')));
       }
 
       // F-1: 始められなかったターンの後に、その間にたまった出来事（途中送信できず pending のまま）を取り残さない
@@ -958,7 +958,7 @@ export default async function (t) {
         await w.d.onTurnEnd(w.turn, { outcome: 'limited', interrupted: { reason: 'limit', resetsAt } });
         await tick();
         const notes = w.posts.filter((p) => String(p.text).includes('使用量の上限'));
-        t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「止めました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|止めました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
+        t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「中断しました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|中断しました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
         t.ok('上限: 同じスレッドに Pleiad のお知らせを 1 回出す（解除の時刻つき）', notes.length === 1 && notes[0].threadId === 'p_root' && notes[0].text.includes('休みます'), JSON.stringify(notes));
         const owl = await w.d.bots.get({ botId: 'b_1' });
         t.ok('上限: その bot は解除の時刻まで休憩中（bots.overview の restingUntil の元）', w.d.restingUntil(owl) === resetsAt);
@@ -1108,7 +1108,7 @@ export default async function (t) {
     }, { label: 'Lynx が止まる' });
     t.ok('走っていた Lynx のターンが止まり、投稿は stopped・スレッドは idle', turnEnds(thB.sessions[lynx.id], mStop).length === 1 && botPost(bStopped, lynx)[0].state === 'stopped' && bStopped.threads[0].stopped.by.kind === 'human');
     const sys = bStopped.posts.find((p) => p.author.kind === 'system');
-    t.ok('システムの投稿「<誰>が止めました」がスレッドに残る', sys?.text === 'あなた が止めました' && sys.threadId === rootB.id, JSON.stringify(sys));
+    t.ok('システムの投稿「中断しました」（state: stopped）がスレッドに残り、誰が止めたかは ThreadState.stopped.by が持つ', sys?.text === '中断しました' && sys.state === 'stopped' && sys.threadId === rootB.id, JSON.stringify(sys));
     t.ok('止めた後は、bot の投稿の @ で起こさない（止めたスレッドは人が次に書くまで新しく起こさない）', await (async () => {
       await sleep(300);
       return botPost(await read(dev.id, rootB.id), owl).length === 1 && botPost(await read(dev.id, rootB.id), lynx).length === 1;
@@ -1447,7 +1447,7 @@ export default async function (t) {
       await call('channels.stopThread', { channelId: dev.id, threadId: rootL.id });
       const l2 = await until(async () => { const rr = await read(dev.id, l1.spawned.id); const l = botPost(rr, lynx)[0]; return l?.state === 'stopped' && rr.threads[0].state === 'idle' ? rr : null; }, { label: 'L 派生のスレッドが止まる' });
       t.ok('S-3(b): 元のスレッドの［止める］が、起こして新しくできたスレッドの Lynx も止める（止めた印と止めた主体）', l2.threads[0].stopped?.by.kind === 'human' && turnEnds(l2.threads[0].sessions[lynx.id], mL).length === 1
-        && l2.posts.some((p) => p.author.kind === 'system' && p.text === 'あなた が止めました'), JSON.stringify(l2.threads[0]));
+        && l2.posts.some((p) => p.author.kind === 'system' && p.text === '中断しました' && p.state === 'stopped'), JSON.stringify(l2.threads[0]));
       await settled(rootL);
 
       // S-2: 動くモードが自分より強い bot を channels.post で @ すると、投稿は残るが起こさず、承認カード（起こしますか）。許可したら起こす

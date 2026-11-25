@@ -2095,7 +2095,7 @@
   },
   "channel": {
     "envelope": { "from": { "you": "You", "bot": "{{icon}} {{name}} (bot)", "agent": "An AI in a Chats conversation", "routine": "Routine", "system": "Pleiad" }, "reaction": "{{emoji}} was put on your post. Start of the post: {{text}}" },
-    "stopped": "{{who}} stopped it",
+    "stopped": "Stopped",
     "heldWake": "{{bot}} runs in {{mode}}, so {{from}}'s reply did not wake it. It wakes when a person @-mentions it.",
     "resting": {
       "limited": "{{bot}} hit its usage limit and is resting until about {{time}}. It cannot answer @-mentions until then.",
@@ -2108,7 +2108,7 @@
       "cleared": "The house rules of this channel are now empty. Stop applying the rules given earlier."
     },
     "personaUpdated": "Your persona instructions have been updated. From now on, follow the instructions below in place of the persona and usage instructions given at the start of this conversation:\n{{persona}}",
-    "turn": { "failed": "Failed: {{error}}", "stopped": "Stopped" }
+    "turn": { "failed": "Failed: {{error}}" }
   },
   "brain": {
     "kind": { "think": "Note", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
