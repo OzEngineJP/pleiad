@@ -259,6 +259,10 @@ export default async function (t) {
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   try {
+    // 起動のログに、remote の状態の便りの例外が出ない（立ち上げの途中で emitGlobal が LIST_NEUTRAL_EVENTS を初期化前に読んで
+    // 「remote status: Cannot access 'LIST_NEUTRAL_EVENTS' before initialization」が出ていた。core/server.mjs の remoteEmitReady）
+    const bootLog = server.tail(200).split('\n').filter(line => /before initialization|remote status:/.test(line));
+    t.ok('起動のログに remote の状態の例外（初期化前の参照）が出ない', bootLog.length === 0, bootLog.join('\n'));
     const s0 = await c.cmd('remoteStatus');
     t.ok('RemoteStatus に常駐の設定が載る（npm start のホストでは使わない）', s0.resident?.available === false && s0.resident.keepRunning === true && s0.resident.sleep === 'working', JSON.stringify(s0.resident));
     const from = c.mark();

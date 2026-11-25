@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { installDomStub } from "./dom-stub.mjs";
 import { killOwnTree } from "./process-reap.mjs";
 import { createGuardedRunner, serializeSuite } from "./runner.mjs";
+import { errorText } from "./harness.mjs";
 import { installRestartFromEnv } from "./restart.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -67,8 +68,8 @@ process.on("message", async (msg) => {
     } catch (error) {
       // 読み込みの失敗。この suite だけの失敗にして、worker は続ける
       console.log(`\n── ${msg.name}`);
-      console.log(`  NG  読み込みで例外 — ${error?.stack ?? error}`);
-      return { name: msg.name, title: msg.name, results: [], error: String(error?.stack ?? error), skipped: null, ms: 0 };
+      console.log(`  NG  読み込みで例外 — ${errorText(error)}`);
+      return { name: msg.name, title: msg.name, results: [], error: errorText(error), skipped: null, ms: 0 };
     }
   });
   send({ type: "result", requested: msg.name, suite: serializeSuite(suite) });

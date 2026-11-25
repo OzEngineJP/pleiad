@@ -95,6 +95,10 @@ export async function createFixture() {
 }
 
 export default async function (t) {
+  // 接続を使い回さない。global の fetch（undici）は keep-alive の接続をプールし、その接続がサーバー側で閉じられていると
+  // 「TypeError: fetch failed」（cause は ECONNRESET など）になる。61 本が並列に走った CI で一度だけ出た。毎回 connection: close で張る
+  const realFetch = globalThis.fetch;
+  const fetch = (input, init = {}) => realFetch(input, { ...init, headers: { ...init.headers, connection: 'close' } });
   const f = await createFixture();
   const get = async (route, params, id, headers) => { const r = await fetch(f.url(route, params, id), { headers }); return { status:r.status, body:await r.json(), headers:r.headers }; };
   try {
@@ -116,7 +120,7 @@ export default async function (t) {
     const oldLocation = globalThis.location, oldFetch = globalThis.fetch, oldWindow = globalThis.window, oldMatchMedia = globalThis.matchMedia;
     try {
       globalThis.location = new URL(f.url('file', { path:path.join(f.cwd, 'README.md'), watchOwner:'screen:1/page:real' }));
-      globalThis.fetch = (input, init) => oldFetch(new URL(input, f.origin), init);
+      globalThis.fetch = (input, init) => fetch(new URL(input, f.origin), init);
       globalThis.window = { addEventListener() {} };
       globalThis.matchMedia = () => ({ matches:false, addEventListener() {} });
       const bridgeUrl = new URL('../../web/pages/bridge.mjs', import.meta.url); bridgeUrl.searchParams.set('test', String(Date.now()));
