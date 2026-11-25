@@ -8,7 +8,9 @@
 // （sessions.roots）、要約の行は返信の数・作業中・あなた待ち。押すと会話を開く（host.openHomeThread）。入力欄に書くと新しい会話（host.newHomeThread）。
 // 合成の投稿には、会話に記録の無い操作（リアクション・編集・削除）を出さない。
 // スレッドを開く空間（W3）はここに無い。要約の行・「スレッドで返信」は host.openThread(channelId, threadId) を呼ぶだけ。
+// DM の頭には ToDo の入口を置く（Chats と同じ部品 web/session-todo.mjs。DM の会話 = Bot.dmSessionId のもの。会話ができるまでは隠す）。
 import { el, svgEl } from '../dom.mjs';
+import { TODO_ICON } from '../session-todo.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
@@ -118,6 +120,27 @@ export function createFeed(host) {
   }
 
   // ---------------------------------------------------------------- 見出し
+  // DM の ToDo の入口（頭を描き直すたびに付け直すので、ボタンは 1 つだけ作る）。会話が無い間は部品が隠す
+  const todoEntry = el('button', 'btn btn-icon ch-todo');
+  todoEntry.type = 'button';
+  todoEntry.hidden = true;
+  todoEntry.setAttribute('aria-expanded', 'false');
+  todoEntry.innerHTML = TODO_ICON;
+  todoEntry.append(el('span', 'entry-dot'));
+  todoEntry.querySelector('.entry-dot').hidden = true;
+  const todo = host.todo?.({
+    host: document.getElementById('channelsView'), header: top, entry: todoEntry, narrow: window.matchMedia('(max-width: 700px)'),
+    // ToDo に結んだ作業は、DM の会話の作業として開く（スレッドの「作業」の入口と同じ範囲の指定）
+    openTask: (taskId) => {
+      const bot = S.bots.get(S.channel?.botId), sid = bot?.dmSessionId;
+      todo.close();
+      if (!sid) return;
+      host.background?.open({ sessions: () => [sid], group: () => ({ name: bot.name, icon: () => botIcon(bot, 'th-band-icon') }) }, `t:${taskId}`);
+    },
+  });
+  /** DM を見ている間だけ、その bot の DM の会話の ToDo を出す。ほかの面・チャンネルでは持たない */
+  const syncTodo = () => todo?.load(S.channel?.kind === 'dm' && !root.hidden ? S.bots.get(S.channel.botId)?.dmSessionId ?? null : null);
+
   function paintPlaceholder() {
     const ch = S.channel;
     if (!ch) return;
@@ -134,6 +157,7 @@ export function createFeed(host) {
     const ch = S.channel;
     top.classList.toggle('ch-top', Boolean(ch));
     for (const n of top.querySelectorAll('.ch-head-x')) n.remove();
+    syncTodo();
     if (!ch) return;
     title.removeAttribute('data-i18n');
     const dmBot = ch.kind === 'dm' ? S.bots.get(ch.botId) : null;
@@ -150,6 +174,7 @@ export function createFeed(host) {
     members.append(el('span', 'ch-av you', youInitial()), ...memberBots().map((b) => botIcon(b, 'ch-av')));
     x(members);
     if (!ch.archivedAt) x(headingButton(host, ch));   // ［ルーティン n］（W5）
+    if (dmBot) x(todoEntry);
     const more = el('button', 'btn btn-icon ch-more');
     more.type = 'button';
     more.title = t('channels:feed.settings.open');
@@ -166,6 +191,7 @@ export function createFeed(host) {
   function clearHead() {
     top.classList.remove('ch-top');
     for (const n of top.querySelectorAll('.ch-head-x')) n.remove();
+    todo?.load(null);
     if (titleI18n) { title.setAttribute('data-i18n', titleI18n); title.textContent = t(titleI18n); title.removeAttribute('title'); }
   }
 
@@ -532,6 +558,7 @@ export function createFeed(host) {
       repaintAll();
       composer.refresh();
     },
+    todosChanged: (ev) => todo?.onEvent(ev),
   };
 
   // 一時チャットの読み直し: 状態（作業中・あなた待ち）だけなら描き直し、根が増えたら読み直す
@@ -584,6 +611,8 @@ export function createFeed(host) {
     },
     onEvent(ev) { events[ev?.type]?.(ev); },
     sideTabChanged(tab) { if (tab === 'channels' && S.ready) markRead(); },
+    /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
+    reconnected() { todo?.reconnected(); },
     /** 会話が増えた・動いた（会話の一覧を描くたび）。一時チャットを見ているなら読み直す（まとめて 1 回） */
     homeChanged() {
       if (S.id !== HOME || !S.ready || root.hidden) return;

@@ -161,7 +161,7 @@ export function createThread(host) {
   voiceView = host.voice?.mount({
     id: 'thread',
     canStart: () => Boolean(S.threadId && !S.channel?.archivedAt && (!threadReadOnly() || composer.dest?.bot)),
-    header: head.el.querySelector('.th-entries'), headerBefore: head.tocButton,
+    header: head.el.querySelector('.th-entries'), headerBefore: head.todoButton,
     composer: composer.voiceSlot(),
     main: root, log, overlay: root, replyScope: () => log,
     tail: {
@@ -227,6 +227,12 @@ export function createThread(host) {
       return out;
     },
   });
+  // ToDo: Chats と同じ部品（web/session-todo.mjs）。スレッドの bot の会話（activeSession）のものを出す。client.mjs が host.todo で組み立てる
+  const todo = host.todo?.({
+    host: root, header: head.el, entry: head.todoButton, narrow,
+    openTask: (taskId) => { todo.close(); host.background?.open(scope, `t:${taskId}`); },
+  });
+  const syncTodo = () => todo?.load(S.threadId && S.ready ? activeSession() : null);
 
   // 既読: スレッドを見ていて末尾にいる間は、返信までチャンネルの既読を進める（流れの既読は流れの投稿だけを見るので、スレッドの返信が未読のまま残らないように）
   let readTimer = null, readSent = 0;
@@ -373,6 +379,7 @@ export function createThread(host) {
     // 人が付けた題（channels.setThreadTitle）があればそれ、無ければ根の投稿の最初の行
     head.setTitle({ channel: S.channel?.home ? t('channels:side.home') : S.channel?.name ?? '', home: Boolean(S.channel?.home), title: S.thread?.title || titleOf(S.posts[0]) });
     head.setSession(activeSession());
+    syncTodo();
   }
 
   // 送信の横の ■: bot が作業中（承認待ちを含む）の間だけ出す。押すとこのスレッドの bot の会話をすべて止める（channels.stopThread）
@@ -535,6 +542,7 @@ export function createThread(host) {
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
     stopBusy = false; composer.setStop();
     nav.reset(); toc.reset();
+    todo?.load(null);
     readSent = 0;
     host.background?.watch([]);
     paintSubs();
@@ -938,6 +946,7 @@ export function createThread(host) {
     composer.syncEdit();
     toc.refresh(); nav.refresh(); nav.syncRunning();
     head.setSession(activeSession());
+    syncTodo();
     syncSubs();
   }
 
@@ -1006,9 +1015,11 @@ export function createThread(host) {
       if (retitled) paintHead();
       paintStop();
       paintPlaceholder();
+      syncTodo();
       syncSubs();
       paintPendingPerms();
     },
+    todosChanged: (ev) => todo?.onEvent(ev),
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
@@ -1072,6 +1083,7 @@ export function createThread(host) {
     host.noteView?.({ kind: 'channel', id: S.channelId });
     composer.setDraftKey(null);   // 書きかけは持ち主の下書きへ残して、入力欄を空に戻す
     toc.close();
+    todo?.load(null);
     S.seq++;
     S.threadId = null;
     host.background?.watch([]);
@@ -1092,6 +1104,8 @@ export function createThread(host) {
     onEvent(ev) { events[ev?.type]?.(ev); },
     /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
     schedulesChanged() { composer.paintSchedules(); },
+    /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
+    reconnected() { todo?.reconnected(); },
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };

@@ -1,12 +1,13 @@
 // スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に入口（目次・右の欄）と閉じる ✕。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
-// 入口は右パネルの道具: 目次は会話と同じ目次と検索（web/conversation-toc.mjs）、右の欄は Chats の頭と同じ開け閉め（ADR 0294）。
-// どちらも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
+// 入口は ToDo（Chats と同じ部品。web/session-todo.mjs）・目次と検索（web/conversation-toc.mjs）・右の欄（Chats の頭と同じ開け閉め。ADR 0294）。
+// どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { shortcutLabel } from '../keyboard.mjs';
 import { closeIcon } from '../icons.mjs';
 import { browserIcon } from '../tab-strip.mjs';
+import { TODO_ICON } from '../session-todo.mjs';
 
 const TOC_PATH = 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1';
 const GLOBE_PATHS = ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z'];
@@ -101,6 +102,15 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
     }
   }
 
+  // ToDo の入口（Chats の #todoEntry と同じ形。開け閉め・点・件数の読み上げは createSessionTodo が持つ。会話が無い間は隠す）
+  const todo = el('button', 'btn btn-icon th-todo');
+  todo.type = 'button';
+  todo.hidden = true;
+  todo.setAttribute('aria-expanded', 'false');
+  todo.innerHTML = TODO_ICON;
+  todo.append(el('span', 'entry-dot'));
+  todo.querySelector('.entry-dot').hidden = true;
+
   const toc = svgButton('th-toc', t('channels:thread.entry.toc'), [TOC_PATH]);
   toc.setAttribute('aria-expanded', 'false');
   toc.onclick = () => onToc(toc);
@@ -131,7 +141,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   close.onclick = onClose;
 
   const entries = el('div', 'th-entries');
-  entries.append(toc, browser);
+  entries.append(todo, toc, browser);
   head.append(side, crumb, entries, close);
 
   // 右パネルの開閉に合わせて、押されている印を合わせる
@@ -142,6 +152,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   return {
     el: head,
     tocButton: toc,
+    todoButton: todo,
     setTitle({ channel, home = false, title: text }) {
       // 一時チャットの頭は # を付けない（チャンネルの名前ではなく置き場の名前）
       chan.replaceChildren(...(home ? [] : [el('span', 'th-hash', '#')]), document.createTextNode(channel ?? ''));
