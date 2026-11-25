@@ -18,9 +18,28 @@ const KILLED_CLOSE_GRACE_MS = 1000;
 /** 自分で終わったシェルの後、出力のパイプが閉じるのを待つ上限（過ぎたら、パイプを握ったまま残ったプロセスがあるとみなして締める） */
 export const EXIT_CLOSE_GRACE_MS = 2000;
 
+// PowerShell は出力を、コンソールの文字コード（日本語の Windows は cp932）で書く。Pleiad は子の出力を UTF-8 で読むので、日本語が化ける
+// （ply_shell の記録で、powershell の run 162 本のうち 23 本。コマンドレットの出力も、エラーの文面も）。
+// 先に出力の文字コードを UTF-8（BOM なし）にする。入力側（`$OutputEncoding`。パイプで native に渡す文字）も揃える。
+// 利用者のコマンドは、構文エラーの文面も UTF-8 で読めるよう、その設定の後で組み立てて走らせる（`&&` のように PowerShell 5.1 で通らない書き方の
+// エラーは、設定より前の構文解析で出て化ける。化けた 25 本のうち 7 本）。同じスコープで走らせるので変数・関数は今までどおり。
+// 終了コードは今までどおり、最後の文の成否（`$?`。失敗なら 1）で返す。コマンドラインの上限（32767 字）に近いときは包まず、先頭の設定だけ付ける
+const PS_UTF8 = 'try{[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$OutputEncoding=[Console]::OutputEncoding}catch{}';
+export const powershellCommand = (command) => {
+  const b64 = Buffer.from(command, 'utf8').toString('base64');
+  const wrapped = [
+    PS_UTF8,
+    `$__plyCommand=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}'))`,
+    // 行末のバッククォート（次の行へ続く）で終わるコマンドでも、控えの文が前の文の引数にならないよう、改行を 2 つ挟む
+    '. ([scriptblock]::Create($__plyCommand+"`n`n"+\'$global:__plyOk=$?\'))',
+    'if($global:__plyOk -eq $false){exit 1}',
+  ].join('\n');
+  return wrapped.length <= 30_000 ? wrapped : `${PS_UTF8};${command}`;
+};
+
 const argsFor = (file, command) => {
   const base = path.basename(file).toLowerCase().replace(/\.exe$/, '');
-  if (base === 'powershell' || base === 'pwsh') return ['-NoProfile', '-NonInteractive', '-Command', command];
+  if (base === 'powershell' || base === 'pwsh') return ['-NoProfile', '-NonInteractive', '-Command', powershellCommand(command)];
   if (base === 'cmd') return ['/d', '/s', '/c', command];
   return ['-c', command];
 };

@@ -2345,7 +2345,8 @@ function controlRuntimeFor(turn) {
 }
 
 // ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0227 §1）。承認は会話の承認モードで Pleiad が決める。
-// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）。
+// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブ（待ちを過ぎて裏へ移った run を含む）が終わったら会話へ知らせる（エージェントが自分で止めたものを除く）。
+// 少し待っている run も、裏の一覧に出して人が 1 本だけ止められる（止めた結果は、待っているエージェントへ run の戻りとして返る。ターンは続く）。
 // 保持役があればジョブは保持役の子に載り、サーバーを入れ替えても続く（ADR 0270 段 2a。core/ply-shell-held.mjs）
 const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellBridge = createShellBridge({
@@ -2356,6 +2357,8 @@ const shellBridge = createShellBridge({
     sessionCommands?.track(sessionId, { id: job.jobId, command: job.command, cwd: job.cwd, startedAt: job.startedAt });
     shellJobsChanged(sessionId);
   },
+  // 待っている run が裏の一覧に出始めた・run が待ちを過ぎて裏へ移った
+  onJobChange: (sessionId) => shellJobsChanged(sessionId),
   onJobEnd: (sessionId, job, tail) => {
     sessionCommands?.untrack(sessionId, job.jobId);
     shellJobsChanged(sessionId);
@@ -2394,8 +2397,8 @@ async function shellRuntimeFor(turn) {
 function plyShellOffered(sessionId) {
   return [...agentConnections.values()].some(e => e.sessionId === sessionId && e.shell);
 }
-/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held */
-const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.kind === 'start')
+/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held。listed: start・裏へ移った run・少し待っている run */
+const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.listed)
   .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell', ...(j.held ? { held: true } : {}) }));
 /** 裏の一覧の止める・読む口（findBackgroundTask が返す backend の形） */
 const SHELL_JOBS_HOST = {
@@ -2403,7 +2406,7 @@ const SHELL_JOBS_HOST = {
   stopBackground: async (sessionId, taskId) => ({ stopped: await shellBridge.stop(sessionId, taskId) }),
   getBackgroundTask: async (sessionId, taskId) => {
     const job = shellBridge.job(sessionId, taskId);
-    return job?.kind === 'start' ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output, command: job.command, cwd: job.cwd, startedAtMs: job.startedAt, exitCode: job.exitCode, stopped: Boolean(job.stopped), endedAt: job.endedAt } : null;
+    return job?.listed ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output, command: job.command, cwd: job.cwd, startedAtMs: job.startedAt, exitCode: job.exitCode, stopped: Boolean(job.stopped), endedAt: job.endedAt } : null;
   },
 };
 function shellJobsChanged(sessionId) {
@@ -2414,7 +2417,11 @@ function shellJobsChanged(sessionId) {
 /** start のジョブの終わりを会話へ知らせる。走っているターンへは途中送信、空いていれば新しいターン。渡せなければ少し待ってやり直す（30 分まで） */
 async function deliverJobEnd(sessionId, job, tail) {
   const lng = await ensureAgentLocale(sessionId).catch(() => currentLocale());
-  const status = job.timedOut ? agentT(lng, 'shell.statusTimedOut') : job.stopped ? agentT(lng, 'shell.statusStopped') : agentT(lng, 'shell.statusExit', { code: job.exitCode ?? '?' });
+  // キーは i18n の lint が見つけられるよう、リテラルで書く（三項で選ばない）
+  const status = job.timedOut ? agentT(lng, 'shell.statusTimedOut')
+    : job.stopped && job.stoppedBy === 'human' ? agentT(lng, 'shell.statusStoppedByHuman')
+    : job.stopped ? agentT(lng, 'shell.statusStopped')
+    : agentT(lng, 'shell.statusExit', { code: job.exitCode ?? '?' });
   const prompt = agentT(lng, 'shell.jobDone', { jobId: job.jobId, command: redactForPeer(job.command, 200), status, tail: redactForPeer(String(tail ?? '').slice(-2000), 2000) || agentT(lng, 'shell.noOutput') });
   const until = Date.now() + 30 * 60_000;
   while (Date.now() < until) {
@@ -7326,7 +7333,7 @@ async function runningWork() {
   // ply_shell の裏のジョブ（ADR 0227）。保持役の子なら held（引き継ぎで止まらない。ADR 0270 段 2a）
   for (const sessionId of shellBridge.sessionsWithJobs()) {
     const tasks = shellBackground(sessionId);
-    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString(), ...(tasks.every(t => t.held) ? { held: true } : {}) });
+    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running && j.listed).map(j => j.startedAt))).toISOString(), ...(tasks.every(t => t.held) ? { held: true } : {}) });
   }
 
   const dueRows = schedule.list();
