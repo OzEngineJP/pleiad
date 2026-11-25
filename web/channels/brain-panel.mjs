@@ -36,11 +36,7 @@ export function createBrainPanel(host, { update }) {
   const root = el('div', 'brain-wrap');
   const S = { bot: null, view: null, seq: 0, error: '', busy: false };
 
-  const head = el('h4', null, t('channels:bot.brain.title'));
-  head.append(el('span', 'r', t('channels:bot.brain.record')));
-  const note = el('p', 'bp-nt brain-note', t('channels:bot.brain.note'));
-
-  // 心拍の入り切りと間隔
+  // 心拍の入り切りと間隔（行の右に「モデルの出力の記録」。題と説明は畳んだ行 bot-page.mjs の側が持つ。ADR 0358）
   const sw = el('button', 'bp-sw');
   sw.type = 'button';
   sw.id = 'botPulseSwitch';
@@ -51,8 +47,7 @@ export function createBrainPanel(host, { update }) {
   every.setAttribute('aria-label', t('channels:bot.brain.pulse.every'));
   for (const n of EVERY) { const o = el('option', null, t('channels:bot.brain.pulse.minutes', { n })); o.value = String(n); every.append(o); }
   const pulseRow = el('div', 'bp-kvr brain-pulse');
-  pulseRow.append(el('span', 'k', t('channels:bot.brain.pulse.label')), sw, every);
-  const hint = el('p', 'bp-nt', t('channels:bot.brain.pulse.hint'));
+  pulseRow.append(el('span', 'k', t('channels:bot.brain.pulse.label')), sw, every, el('span', 'brain-record', t('channels:bot.brain.record')));
 
   // 状態・操作
   const status = el('p', 'brain-status');
@@ -81,10 +76,10 @@ export function createBrainPanel(host, { update }) {
   const streamMeta = el('span');
   streamHead.append(streamMeta);
   const streamBox = el('div', 'brain-stream');
-  root.append(pulseRow, hint, status, actions, err, drives, loopsHead, loopsBox, streamHead, streamBox);
+  root.append(pulseRow, status, actions, err, drives, loopsHead, loopsBox, streamHead, streamBox);
 
   const wrap = el('div', 'bp-brain');
-  wrap.append(head, note, root);
+  wrap.append(root);
 
   const setError = (text) => { S.error = text; err.textContent = text; err.hidden = !text; };
 

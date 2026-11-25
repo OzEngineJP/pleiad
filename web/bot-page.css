@@ -66,8 +66,7 @@
 /* ---- 動かし方: チップ・承認モードの注記・フォルダー・スイッチ */
 .bp-kvr{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;min-width:0;flex-wrap:wrap}
 .bp-kvr>.k{width:6.5em;flex:none;color:var(--ink-weak);font-size:var(--fs-s)}
-.bp-kvr .bp-nt,.bot-page .bp-nt{font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;margin:0}
-.bp-kvr .bp-nt{flex-basis:100%;padding-left:calc(6.5em + 8px)}
+.bot-page .bp-nt{font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;margin:0}
 .bp-chips{gap:4px;padding:0}
 .chip.fieldish{background:var(--surface-paper)}
 .chip.fieldish:hover,.chip.fieldish[aria-expanded=true]{background:var(--surface-sel)}
@@ -89,8 +88,8 @@
 .bp-folder-note{display:flex;padding:2px 4px 6px}
 .bp-folder-note[hidden]{display:none}
 .bp-addfolder{margin-top:2px}
-.bp-send{margin-top:6px}
-.bp-send-targets{margin-top:12px;min-width:0}
+.bp-send>.k{width:auto}
+.bp-send-targets{margin-top:8px;min-width:0}
 .bp-send-title{font-size:var(--fs-s);font-weight:600;margin:0 0 6px}
 .bp-send-target{display:flex;align-items:center;gap:12px;padding:6px 0;min-width:0}
 .bp-send-info{display:flex;flex:1;flex-direction:column;min-width:0;gap:2px}
@@ -156,20 +155,39 @@
   .mem{flex-wrap:wrap}
   .mem .acts2{width:100%;justify-content:flex-end;margin-top:-4px}
   .mem .forget{opacity:1}
-  .bp-kvr .bp-nt{padding-left:0}
 }
 @media (pointer:coarse){
   .mem .forget{opacity:1}
+  .bp-frow>summary{min-height:44px}
 }
 @media (prefers-reduced-motion:reduce){
-  .mem,.bp-sw,.bp-sw::after,.bp-av,.bp-fold-acc{transition:none}
+  .mem,.bp-sw,.bp-sw::after,.bp-av,.bp-fold-acc,.bp-frow-cv{transition:none}
+  .bp-frow[open]>.bp-frow-body{animation:none}
 }
 .bp-name:focus-visible{outline:none}
 
+/* ---- 畳んだ行（他の会話に送る・ルーティン・活動メモ。web/channels/fold-row.mjs。ADR 0358）。1 つのカードに 3 行、右に今の値だけ */
+.bp-folds{padding:6px 12px}
+.bp-frow-slot{display:contents}
+.bp-frow{border-radius:var(--r-s)}
+.bp-frow[hidden]{display:none}
+.bp-frow>summary{list-style:none;display:flex;gap:10px;align-items:center;min-height:36px;padding:6px 4px;border-radius:var(--r-s);cursor:pointer;
+  font-size:13px;font-weight:700;color:var(--ink);transition:background-color var(--dur-fast) var(--ease-out)}
+.bp-frow>summary::-webkit-details-marker{display:none}
+.bp-frow>summary:hover{background:var(--surface-hover)}
+.bp-frow>summary:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.bp-frow-t{min-width:0;overflow-wrap:anywhere}
+.bp-frow-v{margin-left:auto;padding-left:8px;font-weight:400;font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap}
+.bp-frow-cv{width:14px;height:14px;flex:none;color:var(--ink-weak);transition:transform var(--dur-fast) var(--ease-out)}
+.bp-frow[open]>summary .bp-frow-cv{transform:rotate(90deg)}
+.bp-frow-body{padding:2px 4px 10px;min-width:0}
+.bp-frow[open]>.bp-frow-body{animation:bp-frow-in var(--dur) var(--ease-out)}
+@keyframes bp-frow-in{from{opacity:0;transform:translateY(-4px)}}
+
 /* ---- 思考の流れ（モデルの出力の記録。ADR 0126）。欲求は数値で見せる */
-.bp-brain h4{margin-bottom:6px}
-.brain-note{margin:0 0 8px;padding:0}
 .brain-pulse{align-items:center;gap:10px}
+.brain-pulse>.k{width:auto}
+.brain-record{margin-left:auto;font-size:var(--fs-xs);color:var(--ink-weak)}
 .brain-every{background:var(--surface-paper);color:var(--ink);border-radius:var(--r-s);padding:3px 8px;font:400 13px/1.4 var(--font)}
 .brain-every:disabled{opacity:.45}
 .brain-status{margin:6px 0 0;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}

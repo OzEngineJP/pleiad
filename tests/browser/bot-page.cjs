@@ -5,6 +5,8 @@
 //   作成（名前が空なら作らない・承認モードも選べる）・設定の変更（名前・アイコン・人格・モデル・エフォート・承認モード・フォルダー・他の会話に送る）、
 //   Antigravity（承認モードは全部自動だけ）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。
+//   作ると、その bot の DM が開いて入力欄に焦点がある（ADR 0358）。DM の見出しの名前から bot のページへ行ける。
+//   畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて、右に今の値だけを出し、長い説明文と「今週」は無い。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する（フォルダーを足す確認に使う）
   const ROOT = 'C:/path/to/ply';
@@ -32,7 +34,7 @@ async page => {
   }), { op, args });
   const open = detail => page.evaluate(d => document.dispatchEvent(new CustomEvent('channels:show', { detail: d })), detail);
   const botPage = async id => { await open({ kind: 'bot', id }); await page.waitForSelector('#botView:not([hidden]) #botName'); await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent && !document.querySelector('#botModelChip .v').textContent.includes('…')); };
-  const pickChip = async (chip, key) => { await page.locator(chip).click(); await page.locator(`[data-key="${key}"]`).click(); };
+  const pickChip = async (chip, key) => { await page.locator(chip).click(); if (key.startsWith('backend:')) await page.locator('#botModelPop [data-key="nav:agent"]').click(); await page.locator(`[data-key="${key}"]`).click(); };
   const botOf = async name => (await call('bots.list')).bots.find(b => b.name === name);
   const waitBot = async (name, pred, label) => {
     for (let i = 0; i < 40; i++) { const b = await botOf(name); if (b && pred(b)) return b; await page.waitForTimeout(100); }
@@ -44,9 +46,9 @@ async page => {
   await open({ kind: 'channel', id: 'none' });   // 先に別の面（チャンネル）を開いていても、bot のページに替わる
   await botPage('new');
   check(await page.locator('#botView.is-new').count() === 1, '作る画面は作る形（記憶・フォルダー・使用量を出さない）');
-  check(await page.locator('#botView .bp-folders').isHidden() && await page.locator('#botView .bp-memory').isHidden(), '作る画面にフォルダーと記憶は無い');
+  check(await page.locator('#botView .bp-folders').isHidden() && await page.locator('#botView .bp-memory').isHidden() && await page.locator('#botView .bp-folds').isHidden(), '作る画面にフォルダー・畳んだ行・記憶は無い');
   await page.locator('#botView .bp-create').click();
-  check(await page.locator('#botView .bp-err').isVisible(), '名前が空なら作らず、理由を出す');
+  check(await page.locator('#botView .bp-err:not(.bp-acct-warn)').isVisible(), '名前が空なら作らず、理由を出す');
   check(await page.evaluate(() => { const h = document.getElementById('channelsPageTitle').getBoundingClientRect(); return h.width <= 1 && h.height <= 1; }), 'bot のページの上に、汎用の「Channels」の見出しは出さない');
   await shot('01-new');
   await page.locator('#botName').fill('Owl');
@@ -54,13 +56,25 @@ async page => {
   await pickChip('#botModeChip', 'mode:auto');
   check(await page.locator('#botModeChip').getAttribute('data-value') === 'auto', '作る前に承認モードを選べる');
   await page.locator('#botView .bp-create').click();
-  await page.waitForSelector('#botView:not(.is-new) .bp-dm:not([hidden])');
+  // 作ると、その bot の DM が開いて入力欄に焦点がある（bot のページには留まらない）
+  await page.waitForFunction(() => Boolean(document.activeElement?.closest('#chFeed .ch-input')));
   const owl = await waitBot('Owl', b => b.mode === 'auto', '作った bot が承認モード auto で保存される');
   check(owl.persona === '落ち着いた口調で、結論から短く。' && owl.dmChannelId, '作ると人格が保存され、DM のチャンネルができる');
+  check(await page.locator('#botView').isHidden() && await page.locator('#channelsPageTitle .ch-nm').count() === 1 && (await page.locator('#channelsPageTitle .ch-nm').textContent()).includes('Owl'), '作ると、その bot の DM が開き、見出しに bot の名前が出る');
+  check(await page.locator('#chFeed .ch-input').evaluate(n => n === document.activeElement), '作った直後の DM は入力欄に焦点がある');
+  await shot('01b-dm');
+  // 見出しの名前を押すと bot のページ（作った後の形）へ行く
+  await page.locator('#channelsPageTitle .ch-nm').click();
+  await page.waitForSelector('#botView:not([hidden]):not(.is-new) #botName');
   check(owl.icon === '' && await page.locator('#botView .bp-av').textContent() === 'O', '新規アイコンは未設定で、名前の先頭文字が出る');
   check(await page.locator('#botView .bp-av .bp-av-edit[aria-hidden="true"]').count() === 1 && await page.locator('#botView .bp-av button').count() === 0, '鉛筆は常時表示する飾りで、アバターが単一のボタン');
-  check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), '作った後は、その bot のページ（フォルダーと記憶がある）');
+  check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), 'DM の見出しから開く bot のページには、フォルダーと記憶がある');
   check(await page.locator('#botView .bp-usage').count() === 0 && !(await page.locator('#botView').innerText()).includes('今週'), 'bot 専用の使用量（今週）は出さない（ADR 0357）');
+  // 畳んだ 3 行: 閉じていて、右に今の値。長い説明文は無い
+  const frows = await page.locator('#botView .bp-folds details.bp-frow').evaluateAll(n => n.map(d => ({ id: d.id, open: d.open, title: d.querySelector('.bp-frow-t').textContent, value: d.querySelector('.bp-frow-v').textContent })));
+  check(frows.map(r => r.id).join() === 'botSendFold,botRoutines,botBrainFold' && frows.every(r => !r.open && r.value), `畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて右に値がある (${JSON.stringify(frows)})`);
+  check(frows[0].value === 'オン' && /^(なし|\d+ 件)$/.test(frows[1].value) && frows[2].value.includes('心拍'), `右の値は今の状態だけ (${frows.map(r => r.value).join(' / ')})`);
+  check(await page.locator('#botView .bp-folds').evaluate(n => n.querySelectorAll('details:not([open]) .bp-frow-body').length === 3 && [...n.querySelectorAll('.bp-frow-body')].every(b => !b.checkVisibility())), '畳んだ行の中身（説明文を含む）は閉じている間は見えない');
   await shot('02-created');
 
   // ---- 設定の変更: 名前・人格・アイコン・モデル・エフォート・他の会話に送る
@@ -99,12 +113,20 @@ async page => {
   await waitBot('Owl2', b => b.effort === level, 'エフォートを選ぶと保存される');
   // 保存の後に面が描き直されて、棒のフォーカスが外れていることがある。面の中の棒へ押して確かに Esc を届ける（1 段目の Esc で閉じる）
   await page.locator('#botModelPop [data-key="effort"]').press('Escape');
+  // 他の会話に送るは畳んだ行の中。行を開くと入り切りが出て、右の値は今の状態に追従する
+  const sendFold = page.locator('#botSendFold');
+  check(await page.locator('#botSendSwitch').isHidden(), '他の会話に送るの入り切りは、行を開くまで見えない');
+  await sendFold.locator('summary').click();
   const sw = page.locator('#botSendSwitch');
-  check(await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
+  check(await sw.isVisible() && await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
   await sw.click();
   await waitBot('Owl2', b => b.sendToOthers === false, '他の会話に送るを切ると保存される');
+  await page.waitForFunction(() => document.querySelector('#botSendFold .bp-frow-v')?.textContent === 'オフ');
+  check(true, '切ると行の右の値が「オフ」に替わる');
   await sw.click();
   await waitBot('Owl2', b => b.sendToOthers === true, '入れ直すと戻る');
+  await page.waitForFunction(() => document.querySelector('#botSendFold .bp-frow-v')?.textContent === 'オン');
+  await sendFold.locator('summary').click();
 
   // ---- フォルダー: 足す・読み取りにする・外す
   await page.locator('#botAddFolder').click();
@@ -144,7 +166,7 @@ async page => {
   await call('memory.write', { layer: 'user', text: 'です・ます調で短く' });
   await page.waitForSelector('#botView .memcore[data-layer="own"] .mem');
   await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');
-  const headsText = await page.locator('#botView .memh').allInnerTexts();
+  const headsText = await page.locator('#botView .bp-memory .memh').allInnerTexts();
   check(headsText[0].includes('あなたについて') && headsText[0].includes('全 bot 共通 · 1 件') && headsText[1].includes('Owl2 だけ'), '記憶は 2 層（あなたについて・この bot だけ）で、件数が出る');
   const own = page.locator('#botView .memcore[data-layer="own"] .mem');
   check((await own.locator('.src').innerText()).includes('Owl2') && (await own.locator('.src').innerText()).includes('今日'), '出どころを出す（DM・日付）');
@@ -197,8 +219,9 @@ async page => {
   check(await page.locator('#botModePop [role=option]').count() === 1, '承認モードの面に選べるのは全部自動の 1 つ');
   await page.keyboard.press('Escape');
   await page.locator('#botView .bp-create').click();
-  await page.waitForSelector('#botView:not(.is-new) .bp-dm:not([hidden])');
+  await page.waitForFunction(() => Boolean(document.activeElement?.closest('#chFeed .ch-input')));
   const kit = await waitBot('Kit', b => b.backend === 'antigravity', 'Antigravity の bot を作れる');
+  await botPage(kit.id);
   check(kit.mode === 'yolo', 'Antigravity の bot の承認モードは yolo');
   check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Antigravity の bot は「すべてのフォルダー」で非活性');
   await shot('06-antigravity');
@@ -209,8 +232,9 @@ async page => {
   await pickChip('#botModelChip', 'backend:codex');
   await page.waitForFunction(() => document.querySelector('#botModelChip').dataset.backend === 'codex');
   await page.locator('#botView .bp-create').click();
-  await page.waitForSelector('#botView:not(.is-new) .bp-dm:not([hidden])');
-  await waitBot('Lynx', b => b.backend === 'codex', 'Codex の bot を作れる');
+  await page.waitForFunction(() => Boolean(document.activeElement?.closest('#chFeed .ch-input')));
+  const lynx = await waitBot('Lynx', b => b.backend === 'codex', 'Codex の bot を作れる');
+  await botPage(lynx.id);
   await pickChip('#botModeChip', 'mode:full');
   await waitBot('Lynx', b => b.mode === 'full', 'Codex の全部自動にする');
   check(await page.locator('#botView .bp-fold.allf').count() === 0 && await page.locator('#botAddFolder').isEnabled(), 'Codex の全部自動はフォルダーを限れるので、活性のまま');
@@ -222,6 +246,9 @@ async page => {
   // ---- 見た目: 360 幅で横にはみ出さない・ダーク
   await botPage((await botOf('Owl2')).id);
   await page.setViewportSize({ width: 360, height: 800 });
+  await page.waitForTimeout(200);
+  await shot('07a-360-folded');
+  await page.evaluate(() => { for (const d of document.querySelectorAll('#botView details.bp-frow')) d.open = true; });
   await page.waitForTimeout(200);
   const over = await page.evaluate(() => { const r = document.getElementById('botView'); return { sw: r.scrollWidth, cw: r.clientWidth, doc: document.documentElement.scrollWidth, vw: innerWidth }; });
   check(over.sw <= over.cw + 1 && over.doc <= over.vw + 1, `360 幅で横にはみ出さない (${JSON.stringify(over)})`);

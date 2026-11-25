@@ -26,6 +26,7 @@ import { createMemoryList } from './memory-list.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { sendAttachment } from '../attach-upload.mjs';
 import { createBrainPanel } from './brain-panel.mjs';
+import { foldRow } from './fold-row.mjs';
 import * as M from './bot-model.mjs';
 
 // 線画（composer-controls.mjs のチップと同じ。あちらは内部の定数）
@@ -215,21 +216,21 @@ export function createBotPage(host) {
   const folderNote = el('p', 'bp-locknote bp-folder-note');
   folderNote.hidden = true;
 
-  // 他の会話に送る
+  // 他の会話に送る（畳んだ行の中身。題は行の見出し。ADR 0358）
   const sw = el('button', 'bp-sw');
   sw.type = 'button';
   sw.id = 'botSendSwitch';
   sw.setAttribute('role', 'switch');
   sw.setAttribute('aria-label', t('channels:bot.send.label'));
   const sendRow = el('div', 'bp-kvr bp-send');
-  sendRow.append(el('span', 'k', t('channels:bot.send.label')), sw, el('p', 'bp-nt', t('channels:bot.send.hint')));
+  sendRow.append(el('span', 'k', t('channels:bot.send.label')), sw);
 
   const runBlk = el('div', 'bp-blk');
   const runHead = el('h4', null, t('channels:bot.run.title'));
   let removingTarget = false;
   const sendTargets = el('div', 'bp-send-targets');
   sendTargets.setAttribute('aria-label', t('channels:bot.send.targets'));
-  runBlk.append(runHead, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn, sendRow, sendTargets);
+  runBlk.append(runHead, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn);
 
   // 記憶・使用量
   const memory = createMemoryList(host, {
@@ -241,8 +242,16 @@ export function createBotPage(host) {
   });
   // 思考の流れ（モデルの出力の記録）。心拍の ON・間隔は bots.update の pulse なので、ここの保存の列に乗せる
   const brain = createBrainPanel(host, { update: (patch) => update(patch) });
-  const brainBlk = el('div', 'bp-blk bp-brain-blk');
-  brainBlk.append(brain.el);
+  // 触る頻度の低い 3 つ（他の会話に送る・ルーティン・活動メモ）は 1 つのカードの畳んだ 3 行にする。右に今の値だけを出し、説明文は置かない（ADR 0358）。
+  // ルーティンの行は routine-sheet.mjs が #botRoutinesSlot へ差し込む（2 番目）
+  const foldSend = foldRow({ id: 'botSendFold', title: t('channels:bot.send.label') });
+  foldSend.body.append(sendRow, sendTargets);
+  const routinesSlot = el('div', 'bp-frow-slot');
+  routinesSlot.id = 'botRoutinesSlot';
+  const foldBrain = foldRow({ id: 'botBrainFold', title: t('channels:bot.brain.title') });
+  foldBrain.body.append(brain.el);
+  const foldBlk = el('div', 'bp-blk bp-folds');
+  foldBlk.append(foldSend.el, routinesSlot, foldBrain.el);
   const memHead = el('h4', null, t('channels:bot.memory.title'));
   memHead.append(memory.route);   // 「自動整理: …」= 設定 › 記憶 への導線（memory-list.mjs が短い状態を出す）
   const memBlk = el('div', 'bp-blk bp-memory');
@@ -251,7 +260,7 @@ export function createBotPage(host) {
   const left = el('div', 'bp-col');
   left.append(personaBlk, runBlk);
   const right = el('div', 'bp-col');
-  right.append(brainBlk, memBlk);
+  right.append(foldBlk, memBlk);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
   root.append(head, err, accountWarn, notice, grid, modelPop, modePop, addPop);
@@ -512,6 +521,9 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur || S.draft) return;
     sw.setAttribute('aria-checked', String(cur.sendToOthers !== false));
+    foldSend.setValue(cur.sendToOthers !== false ? t('channels:bot.fold.on') : t('channels:bot.fold.off'));
+    const pulse = cur.pulse;
+    foldBrain.setValue(pulse?.on ? t('channels:bot.fold.pulseOn', { n: pulse.everyMin ?? 10 }) : t('channels:bot.fold.pulseOff'));
     sendTargets.replaceChildren(el('h3', 'bp-send-title', t('channels:bot.send.targets')));
     const details = new Map((cur.sendTargetDetails ?? []).map((row) => [row.sessionId, row]));
     if (!cur.sendTargets?.length) sendTargets.append(el('p', 'bp-nt', t('channels:bot.send.empty')));
@@ -559,10 +571,8 @@ export function createBotPage(host) {
     show(folderTitle, !creating);
     show(folderBox, !creating);
     show(addBtn, !creating);
-    show(sendRow, !creating);
-    show(sendTargets, !creating);
+    show(foldBlk, !creating);
     show(memBlk, !creating);
-    show(brainBlk, !creating);
     show(notice, S.gone);
     show(grid, !S.gone);
     show(head, !S.gone);
@@ -875,6 +885,7 @@ export function createBotPage(host) {
 
   async function open(id) {
     closePanels();
+    for (const d of root.querySelectorAll('details.bp-frow')) d.open = false;   // 畳んだ行は開き直すたびに閉じる
     S.id = id;
     S.gone = false;
     S.v = null;

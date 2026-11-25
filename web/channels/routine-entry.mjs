@@ -1,9 +1,10 @@
-// ルーティンの入口の部品: 見出しの［ルーティン n］・bot のページの「ルーティン」の節・時刻と状態の言い回し。
+// ルーティンの入口の部品: 見出しの［ルーティン n］・bot のページの畳んだ行「ルーティン」・時刻と状態の言い回し。
 // シートそのものは routine-sheet.mjs（document の channels:routine で開く）。一覧は routine-store.mjs。
 // 入口はどれもこのファイルの openRoutine を呼ぶだけで、シートの有無は知らない（シートが無ければ何も起きない）。
 import { el, svgEl } from '../dom.mjs';
 import { t, fmt } from '../i18n.mjs';
 import { getRoutineStore } from './routine-store.mjs';
+import { foldRow } from './fold-row.mjs';
 import { dayKind, triggerText, lastFailed, sortForSide } from './routine-model.mjs';
 
 export const CLOCK = 'M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17zM12 7.5V12l3 2';
@@ -71,25 +72,26 @@ export function headingButton(host, channel) {
   return b;
 }
 
-// ---------------------------------------------------------------- bot のページの「ルーティン」の節
+// ---------------------------------------------------------------- bot のページの畳んだ行「ルーティン」
 
 /**
- * bot のページ（bot-page.mjs が持つ #botView）の左の列の末尾に置く節。その bot のルーティンの行（名前・読み・次の時刻）と［ルーティンを作る］。
- * bot-page.mjs は触らず、routine-sheet.mjs の show(view) が #botView の中へ差し込む
+ * bot のページ（bot-page.mjs が持つ #botView）の畳んだ行の 1 つ「ルーティン」。右に「なし」「n 件」、開くとその bot のルーティンの行（名前・読み・次の時刻）と［ルーティンを作る］。
+ * 置き場は bot-page.mjs が用意した #botRoutinesSlot（畳んだ行の並びの 2 番目）。routine-sheet.mjs の show(view) が差し込む（ADR 0358）
  */
 export function botBlock(host) {
   const store = getRoutineStore(host);
-  const root = el('div', 'bp-blk bp-routines');
-  root.id = 'botRoutines';
-  const title = el('h4', null, t('channels:routines.title'));
+  const fold = foldRow({ id: 'botRoutines', title: t('channels:routines.title') });
+  const root = fold.el;
+  root.classList.add('bp-routines');
   const list = el('div', 'bp-rt-list');
   const add = el('button', 'btn bp-rt-add');
   add.type = 'button';
   add.append(glyph(PLUS), t('channels:routines.new'));
-  root.append(title, list, add);
+  fold.body.append(list, add);
   let botId = null, channels = new Map();
   const paint = () => {
     const mine = botId ? sortForSide(store.forBot(botId)) : [];
+    fold.setValue(mine.length ? t('channels:bot.fold.count', { n: mine.length }) : t('channels:bot.fold.none'));
     const rows = mine.map((r) => {
       const row = el('button', `bp-rt${r.paused ? ' paused' : ''}`);
       row.type = 'button';
@@ -103,13 +105,13 @@ export function botBlock(host) {
       row.onclick = () => openRoutine({ routineId: r.id });
       return row;
     });
-    list.replaceChildren(...(rows.length ? rows : [el('p', 'bp-empty', t('channels:routines.botEmpty'))]));
+    list.replaceChildren(...rows);
   };
   store.subscribe(() => { if (root.isConnected) paint(); });
   add.onclick = () => openRoutine({ botId });
   return {
     el: root,
     /** bot が替わった（null なら畳む）。channels は id → Channel（名前の字に使う） */
-    setBot(id, byId) { botId = id; channels = byId ?? channels; root.hidden = !id; paint(); },
+    setBot(id, byId) { botId = id; channels = byId ?? channels; root.hidden = !id; if (!id) root.open = false; paint(); },
   };
 }

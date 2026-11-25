@@ -238,8 +238,15 @@
       "created": "Created by this bot",
       "manual": "Added in settings",
       "remove": "Remove",
-      "removeLabel": "Remove {{title}} from send targets",
-      "hint": "This bot can send instructions to other chats. It can only send to chats you pointed it to and chats it made itself."
+      "removeLabel": "Remove {{title}} from send targets"
+    },
+    "fold": {
+      "on": "On",
+      "off": "Off",
+      "none": "None",
+      "count": "{{n}}",
+      "pulseOff": "Heartbeat off",
+      "pulseOn": "Heartbeat {{n}} min"
     },
     "memory": {
       "title": "Memory"
@@ -247,13 +254,11 @@
     "brain": {
       "title": "Activity notes",
       "record": "a record of model output",
-      "note": "A record of observed events, actions performed and pending tasks. Older records remain available to view and delete. Activity notes do not become memories; only facts grounded in human messages do.",
       "pulse": {
         "label": "Heartbeat",
         "every": "Heartbeat interval",
         "minutes": "{{n}} min",
-        "off": "Off (the bot only runs when called)",
-        "hint": "When on, this bot wakes up briefly at a steady interval, does nothing most of the time, and thinks with a cheap model only when needed. To speak, it wakes again with its smart model."
+        "off": "Off (the bot only runs when called)"
       },
       "status": {
         "next": "Next around {{time}}",
@@ -384,7 +389,6 @@
     "new": "New routine",
     "edit": "Edit",
     "openChannel": "Open channel",
-    "botEmpty": "This bot has no routines yet",
     "cancel": "Cancel",
     "create": "Create",
     "save": "Save",
