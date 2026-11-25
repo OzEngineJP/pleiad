@@ -77,7 +77,7 @@ export const CAPABILITIES = {
   // MCP のツールの承認。host は、エージェント自身が聞かないので、確認なしの承認モード（autonomy: full）のほかは Pleiad が聞く（Codex）
   mcpApproval: { valid: oneOf('agent', 'host'), hint: "'agent' or 'host'" },
   login: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['auth'] : []) },
-  // 会話ごとにアカウントを選べる（ADR 0222）。token: Pleiad がトークンを持ち、server は oauthToken を渡す（Claude の setup-token）。
+  // 会話ごとにアカウントを選べる（ADR 0222）。token: Pleiad が台帳を持ち、server は account を渡す（Claude。値の名前は歴史的。専用フォルダのログイン。ADR 0352）。
   // agent: アカウントごとの置き場でエージェント自身がログインし、server は account（core/agent-accounts.mjs の resolve）を渡す
   accounts: { valid: oneOf('token', 'agent'), absent: false, hint: "'token' or 'agent'", requires: (v) => (v === 'agent' ? ['accountLogin', 'accountStatus', 'forAccount'] : []) },
   compatEndpoints: { valid: yes, absent: false, hint: 'true' },

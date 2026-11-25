@@ -3,11 +3,11 @@
 //   2. 設定の反映（projectProfile）: 許可した項目だけ・既存の値を上書きしない・冪等（変わらなければ書かない）・元の ~/.claude.json を変えない・認証や組織の情報を写さない
 //   3. 認証の解決: 成功の形（トークンを渡さない・CLAUDE_CONFIG_DIR だけ）・止める条件ごとの失敗（OS・ssh・別の認証の環境変数・履歴の場所・版・ログイン・準備）・
 //      止めた理由に秘密が出ない・process.env を変えない・親の認証の環境変数は子へ渡さない（claudeOwnDirEnv）
-//   4. 起動の記録（オン）: オフの記録との差が「認証に要る環境変数」だけ（argv・cwd・ほかの env・SDK の options・保持役への変換は同じ）。互換接続は同じ
-//   5. オフ・未設定・別アカウント・壊れた設定: 認証側のどの関数（版・準備・設定の反映・時計・待ち）も 0 回・ファイルの作成 0・タイマー 0
-//   6. server の配線（入口の設定・モデル一覧のためのトークン付きの登録）・認証側はネットワークも更新用トークンも使わない
-//   7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe）: オンは会話と同じ組み立て・止める条件はログイン中へ戻らない・オフは今までの呼び方
-//   8. 付け直し（adoptTurn）も認証を通る・一覧の覚えは入口オンのキーも一緒に消える
+//   4. 起動の記録（オン・オフ）: どちらも専用フォルダ（トークンなし）。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS=false だけ。互換接続は同じ（ADR 0352）
+//   5. 入口の設定: 未設定・オフ・別アカウント・壊れた設定はオフとして読み、書かない・保存済みの mode は読まない・キャッシュのキー
+//   6. server の配線（オン・オフとも専用フォルダの認証を付ける）・認証側はネットワークも更新用トークンも使わない
+//   7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe）: 会話と同じ組み立て・止める条件はログイン中へ戻らない
+//   8. 付け直し（adoptTurn）も認証を通る・一覧の覚えはアカウントを消すと消える
 //   9. 作業場所のキー（CLI 2.1.322 の作り方: worktree は本体・Windows は / ・ドライブ文字はそのまま）
 //  10. 設定の反映の書き方（足す物が無ければ書かない・壊れた反映先で止める・直前の別の書き込みを残す・付け替えの一時的な失敗の繰り返し・状態が同じなら読まない）
 //  11. 共有の settings.json の別の認証（env・apiKeyHelper・読めない・壊れている）で止める
@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { recordAll, ACCOUNT_ID, FAKE } from '../lib/claude-launch-record.mjs';
-import { createClaudeConnectorsGate, CONNECTORS_FILE, identitySuffix } from '../../core/claude-connectors.mjs';
+import { createClaudeConnectorSettings, CONNECTORS_FILE } from '../../core/claude-connectors.mjs';
 import { OWN_DIR } from '../../core/claude-own-dir.mjs';
 import {
   createClaudeConnectorsAuth, projectProfile, ConnectorsAuthError, VERIFIED_VERSIONS, claudeOwnDirEnv,
@@ -142,19 +142,21 @@ export default async function (t) {
         managedFiles: [], env: {}, home, platform: 'linux', ...over,
       });
       const reset = () => { for (const k of Object.keys(calls)) calls[k] = 0; projectArgs.length = 0; versions = { cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }; projectThrows = false; login = 'present'; usageLogin = true; };
-      const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
+      const account = { id: ACCOUNT_ID, name: 'fake-account' };
 
       reset();
       const resolved = (await make()(account)).account;
-      t.ok('認証: 成功 — 識別子は own-dir・会話用に登録したトークンは account に残るだけで、起動には渡さない（prepare の env に入らない）',
-        resolved.token === FAKE.registered && resolved.id === ACCOUNT_ID && resolved.name === 'fake-account' && resolved.connectors.identity === OWN_DIR && OWN_DIR === 'own-dir'
-        && Object.keys(resolved).sort().join() === 'connectors,id,name,token' && Object.keys(resolved.connectors).sort().join() === 'authFailure,identity,prepare');
+      t.ok('認証: 成功 — 全アカウントが専用フォルダ（ownDir・識別子 own-dir）。コネクターがオフなら connectors は置かない（ADR 0352）',
+        resolved.id === ACCOUNT_ID && resolved.name === 'fake-account' && resolved.ownDir.identity === OWN_DIR && OWN_DIR === 'own-dir' && resolved.ownDir.enabled === false
+        && Object.keys(resolved).sort().join() === 'id,name,ownDir' && Object.keys(resolved.ownDir).sort().join() === 'authFailure,enabled,identity,prepare');
       t.ok('認証: 解決のときは準備（リンク・設定の反映）をしない（project 0 回）・版とログインの有無は見る', calls.project === 0 && calls.versions === 1 && calls.login === 1, JSON.stringify(calls));
+      const resolvedOn = (await make()(account, { enabled: true })).account;
+      t.ok('認証: コネクターがオンなら connectors に同じ認証を置く', resolvedOn.connectors === resolvedOn.ownDir && resolvedOn.ownDir.enabled === true);
 
       if (canLink) {
         reset();
         const home1 = path.join(tmp, 'auth-home-1');
-        const ok = (await make({ home: home1 })(account)).account;
+        const ok = (await make({ home: home1 })(account, { enabled: true })).account;
         const auth = await ok.connectors.prepare({ cwd: work });
         t.ok('認証: prepare の戻りは { env: { CLAUDE_CONFIG_DIR: 専用フォルダ } } だけ（トークン・権限の並びを含まない）',
           JSON.stringify(auth) === JSON.stringify({ env: { CLAUDE_CONFIG_DIR: dir } }) && leaked(JSON.stringify(auth)).length === 0, JSON.stringify(auth));
@@ -170,12 +172,14 @@ export default async function (t) {
         await fs.mkdir(path.join(viaRoot, ACCOUNT_ID), { recursive: true });
         await fs.mkdir(path.join(tmp, 'parent-config'), { recursive: true });
         const viaEnv = (await make({ accounts: { usageDir: id => path.join(viaRoot, id), hasUsageLogin: async () => true }, env: { CLAUDE_CONFIG_DIR: path.join(tmp, 'parent-config') } })(account)).account;
-        await viaEnv.connectors.prepare({ cwd: work });
+        const offAuth = await viaEnv.ownDir.prepare({ cwd: work });
         t.ok('認証: 親に CLAUDE_CONFIG_DIR があればそれを共有の設定フォルダとする（反映元はその中の .claude.json）',
           projectArgs[0]?.source === path.join(tmp, 'parent-config', '.claude.json'), JSON.stringify(projectArgs));
+        t.ok('認証: コネクターがオフのアカウントは専用フォルダに加えて claude.ai のコネクターを出さない（ENABLE_CLAUDEAI_MCP_SERVERS=false）',
+          JSON.stringify(offAuth) === JSON.stringify({ env: { CLAUDE_CONFIG_DIR: path.join(viaRoot, ACCOUNT_ID), ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } }), JSON.stringify(offAuth));
       } else t.skip('認証: prepare の成功の形・リンク・共有の設定フォルダの決め方（Windows でファイルのシンボリックリンクを作る権限が無い）');
 
-      // 止める条件。どれも ConnectorsAuthError（connectors-<種類>）・会話用トークンへ戻さない・設定の反映は呼ばない・メッセージに秘密なし
+      // 止める条件。どれも ConnectorsAuthError（connectors-<種類>）・設定の反映は呼ばない・メッセージに秘密なし
       const stops = [
         ['platform', 'Windows・Linux・macOS 以外の OS', () => {}, { platform: 'freebsd' }],
         ['ssh', 'macOS を ssh 経由で起動した（SSH_CONNECTION）', () => {}, { platform: 'darwin', env: { SSH_CONNECTION: '1.2.3.4 1 5.6.7.8 22' } }],
@@ -219,7 +223,7 @@ export default async function (t) {
       login = 'missing';
       const inspected = await make().inspect(account);
       t.ok('検査: 止める条件は ok:false と種類・再ログインの要否で返す（ownDirLogin は再ログインを促す）・秘密なし',
-        inspected.ok === false && inspected.kind === 'ownDirLogin' && inspected.reauth === true && inspected.needsOwnerCheck === false && leaked(JSON.stringify(inspected)).length === 0, JSON.stringify(inspected));
+        inspected.ok === false && inspected.kind === 'ownDirLogin' && inspected.reauth === true && leaked(JSON.stringify(inspected)).length === 0, JSON.stringify(inspected));
       reset();
       const okInspect = await make().inspect(account);
       t.ok('検査: 準備なしの成功は moves が空・識別のハッシュを返す（準備はしない）', okInspect.ok === true && okInspect.moves.length === 0 && typeof okInspect.identityHash === 'string' && okInspect.identityHash.length > 0 && calls.project === 0, JSON.stringify(okInspect));
@@ -247,14 +251,14 @@ export default async function (t) {
         const accountsP = await ownIn('p');
         const prof = (await make({ accounts: accountsP, home: path.join(tmp, 'auth-home-p') })(account)).account;
         projectThrows = true;
-        const profileError = await prof.connectors.prepare({ cwd: work }).then(() => null, e => e);
+        const profileError = await prof.ownDir.prepare({ cwd: work }).then(() => null, e => e);
         t.ok('prepare: 設定の反映が失敗すれば止める（ownDirProfile）・失敗の文面（トークンを含む）を利用者へ出さない',
           profileError instanceof ConnectorsAuthError && profileError.code === 'connectors-ownDirProfile' && leaked(profileError.message).length === 0 && !String(profileError.stack).includes(ACCESS), `${profileError?.code}`);
         // 準備の間にログインが消えたら止める（解決のときの値へ戻らない）
         reset();
         const later = (await make({ accounts: accountsP, home: path.join(tmp, 'auth-home-p') })(account)).account;
         login = 'missing';
-        const gone = await later.connectors.prepare({ cwd: work }).then(() => null, e => e);
+        const gone = await later.ownDir.prepare({ cwd: work }).then(() => null, e => e);
         t.ok('prepare: 起動の前にログインが消えていれば止める（ownDirLogin）・設定の反映は呼ばない', gone?.code === 'connectors-ownDirLogin' && calls.project === 0, `${gone?.code} ${JSON.stringify(calls)}`);
         // 共有の settings.json の別の認証は、起動の前の準備でも止める（解決のあとに書かれた場合）
         reset();
@@ -262,45 +266,44 @@ export default async function (t) {
         const later2 = (await make({ accounts: await ownIn('s'), home: sharedHome })(account)).account;
         await fs.mkdir(path.join(sharedHome, '.claude'), { recursive: true });
         await fs.writeFile(path.join(sharedHome, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_API_KEY: 'fake' } }));
-        const late = await later2.connectors.prepare({ cwd: work }).then(() => null, e => e);
+        const late = await later2.ownDir.prepare({ cwd: work }).then(() => null, e => e);
         t.ok('prepare: 解決のあとに共有の settings.json へ別の認証が書かれても、起動の前の準備で止める（env）', late?.code === 'connectors-env' && calls.project === 0, `${late?.code} ${JSON.stringify(calls)}`);
       }
       // 会話の CLI が専用フォルダのログインで断られたとき（authFailure）: macOS で鍵束の項目が有るなら keychainAuth、それ以外は null（期限切れ扱い）
       reset();
       const darwin = (await make({ platform: 'darwin', loginPresent: async () => 'present' })(account)).account;
-      const darwinFail = await darwin.connectors.authFailure();
+      const darwinFail = await darwin.ownDir.authFailure();
       const darwinCode = darwinFail?.code ?? null;
       reset();
       const linux = (await make()(account)).account;
       t.ok('authFailure: macOS で項目が有れば keychainAuth（再ログインを促す）・Linux・Windows は null（期限切れとして扱う）',
-        darwinCode === 'connectors-keychainAuth' && darwinFail?.connectorsError?.reauth === true && (await linux.connectors.authFailure()) === null, String(darwinCode));
+        darwinCode === 'connectors-keychainAuth' && darwinFail?.connectorsError?.reauth === true && (await linux.ownDir.authFailure()) === null, String(darwinCode));
       restoreConsole();
       t.ok('認証: process.env は変えない・コンソールに何も出さない（秘密を含めて）',
         JSON.stringify(process.env) === savedProcessEnv && leaked(consoleLines.join('\n')).length === 0 && consoleLines.length === 0, consoleLines.slice(0, 2).join(' | ').slice(0, 120));
     }
 
-    // ---------------------------------------------------------------- 4. 起動の記録（オン）— オフの記録との差は認証に要る環境変数だけ
-    if (!canLink) t.skip('オンの起動の記録（Windows でファイルのシンボリックリンクを作る権限が無い。専用フォルダの準備に要る）');
+    // ---------------------------------------------------------------- 4. 起動の記録（オン・オフ）— どちらも専用フォルダ。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS だけ（ADR 0352）
+    if (!canLink) t.skip('登録したアカウントの起動の記録（Windows でファイルのシンボリックリンクを作る権限が無い。専用フォルダの準備に要る）');
     else {
       const labels = ['plain/registered/none', 'parentOauth/registered/none', 'configDir/registered/none', 'emptyOauth/registered/none', 'undefinedOauth/registered/none', 'plain/registered/compat'];
-      const enabled = JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: true } } });
-      const off = await recordAll({ root: REPO, only: labels, dumpName: 'auth-off' });
-      const log = [];
-      const on = await recordAll({
-        root: REPO, only: labels, dumpName: 'auth-on',
+      const log = { on: [], off: [] };
+      const wired = which => ({
         onSetup: async ({ data }) => {
-          await fs.writeFile(path.join(data, CONNECTORS_FILE), enabled);
+          await fs.writeFile(path.join(data, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: which === 'on' } } }));
           await fs.mkdir(path.join(data, 'claude-usage', ACCOUNT_ID), { recursive: true });
         },
         accountFor: async (accounts, id, { data, platform }) => createClaudeConnectorsWiring({
           dataDir: data,
           accounts: { usageDir: i => path.join(data, 'claude-usage', i), hasUsageLogin: async () => true, resolve: (i, o) => accounts.resolve(i, o) },
           versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
-          project: async () => { log.push('project'); return { changed: false }; },
+          project: async () => { log[which].push('project'); return { changed: false }; },
           loginPresent: async () => 'present', managedFiles: [], env: {}, home: path.join(data, 'home'), platform,
         }).resolve(id),
       });
-      const ALLOWED = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR'];
+      const off = await recordAll({ root: REPO, only: labels, dumpName: 'auth-off', ...wired('off') });
+      const on = await recordAll({ root: REPO, only: labels, dumpName: 'auth-on', ...wired('on') });
+      const ALLOWED = ['ENABLE_CLAUDEAI_MCP_SERVERS'];
       const stripEnv = (rec, keys) => rec && { ...rec, env: Object.fromEntries(Object.entries(rec.env).filter(([k]) => !keys.includes(k))) };
       const diffKeys = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k])).sort();
       const problems = [];
@@ -309,8 +312,8 @@ export default async function (t) {
         for (const route of ['runTurn', 'internalTurn', 'suggestTitle', 'modelList', 'connectorList', 'usage', 'heldSpawn']) {
           const a = off[label]?.[route], b = on[label]?.[route];
           if (!a || !b) { if (JSON.stringify(a) !== JSON.stringify(b)) problems.push(`${label} ${route}: 記録の有無が違う`); continue; }
-          // 保持役への変換・使用量・互換接続・モデルの一覧（長期トークン付きの登録で引く。ADR 0350）はオフと完全に同じ
-          if (route === 'heldSpawn' || route === 'usage' || route === 'modelList' || compat) { if (JSON.stringify(a) !== JSON.stringify(b)) problems.push(`${label} ${route}: オフと違う`); continue; }
+          // 保持役への変換・使用量・互換接続はオフと完全に同じ
+          if (route === 'heldSpawn' || route === 'usage' || compat) { if (JSON.stringify(a) !== JSON.stringify(b)) problems.push(`${label} ${route}: オフと違う`); continue; }
           if (!a.proc || !b.proc) { problems.push(`${label} ${route}: 起動されなかった`); continue; }
           if (JSON.stringify(a.proc.argv) !== JSON.stringify(b.proc.argv)) problems.push(`${label} ${route}: argv が違う`);
           if (a.proc.cwd !== b.proc.cwd || JSON.stringify(a.proc.files) !== JSON.stringify(b.proc.files)) problems.push(`${label} ${route}: cwd か files が違う`);
@@ -322,21 +325,23 @@ export default async function (t) {
             const sd = diffKeys(a.sdk[i].env ?? {}, b.sdk[i].env ?? {});
             if (sd.some(k => !ALLOWED.includes(k))) problems.push(`${label} ${route}: SDK の env の想定外の差 ${sd.filter(k => !ALLOWED.includes(k)).join(',')}`);
           }
-          // 会話もコネクターの一覧も同じ組み立て（connectors.prepare()）: トークンは渡さず、専用フォルダだけを渡す
-          const env = b.proc.env;
-          if (Object.keys(env).some(k => /^CLAUDE_CODE_OAUTH_(TOKEN|SCOPES|REFRESH_TOKEN)$/i.test(k)) || env.CLAUDE_CONFIG_DIR !== `<tmp>/data/claude-usage/${ACCOUNT_ID}`) {
-            problems.push(`${label} ${route}: 認証の値が想定と違う（oauth=${Object.keys(env).filter(k => /OAUTH/i.test(k)).join('+') || 'なし'} config=${env.CLAUDE_CONFIG_DIR}）`);
+          // 会話・モデルの一覧・コネクターの一覧は同じ組み立て（ownDir.prepare()）: オン・オフとも、トークンは渡さず専用フォルダだけを渡す
+          for (const [which, env] of [['off', a.proc.env], ['on', b.proc.env]]) {
+            if (Object.keys(env).some(k => /^CLAUDE_CODE_OAUTH_(TOKEN|SCOPES|REFRESH_TOKEN)$/i.test(k)) || env.CLAUDE_CONFIG_DIR !== `<tmp>/data/claude-usage/${ACCOUNT_ID}`) {
+              problems.push(`${label} ${route} ${which}: 認証の値が想定と違う（oauth=${Object.keys(env).filter(k => /OAUTH/i.test(k)).join('+') || 'なし'} config=${env.CLAUDE_CONFIG_DIR}）`);
+            }
           }
-          if (JSON.stringify(stripEnv(a.proc, ALLOWED).env) !== JSON.stringify(stripEnv(b.proc, ALLOWED).env)) problems.push(`${label} ${route}: 認証 2 つ以外の env が違う`);
+          if (a.proc.env.ENABLE_CLAUDEAI_MCP_SERVERS !== 'false' || 'ENABLE_CLAUDEAI_MCP_SERVERS' in b.proc.env) problems.push(`${label} ${route}: オフだけ ENABLE_CLAUDEAI_MCP_SERVERS=false になっていない`);
+          if (JSON.stringify(stripEnv(a.proc, ALLOWED).env) !== JSON.stringify(stripEnv(b.proc, ALLOWED).env)) problems.push(`${label} ${route}: ENABLE_CLAUDEAI_MCP_SERVERS 以外の env が違う`);
         }
       }
-      t.ok(`オンの起動の記録: ${labels.length} 組み合わせ × 経路で、オフとの差は認証の環境変数（トークン・専用フォルダ）だけ。argv・cwd・ほかの env・SDK の options・保持役への変換・使用量・モデルの一覧・互換接続は同じ`,
+      t.ok(`登録したアカウントの起動の記録: ${labels.length} 組み合わせ × 経路で、オン・オフとも専用フォルダ（トークンなし）。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS=false だけで、argv・cwd・ほかの env・SDK の options・保持役への変換・使用量・互換接続は同じ`,
         problems.length === 0, problems.slice(0, 6).join(' | '));
-      const noCompat = Object.fromEntries(Object.entries(on).filter(([l]) => !l.endsWith('/compat')).map(([l, r]) => [l, { runTurn: r.runTurn, internalTurn: r.internalTurn, suggestTitle: r.suggestTitle, connectorList: r.connectorList }]));
-      t.ok('オンの会話・内部の会話・題・コネクターの一覧の記録に、会話用に登録したトークンも親のトークンも残らない（更新用トークン・メール・組織も出ない）',
+      const noCompat = Object.fromEntries([...Object.entries(on), ...Object.entries(off)].filter(([l]) => !l.endsWith('/compat')).map(([l, r]) => [l, { runTurn: r.runTurn, internalTurn: r.internalTurn, suggestTitle: r.suggestTitle, modelList: r.modelList, connectorList: r.connectorList }]));
+      t.ok('登録したアカウントの会話・内部の会話・題・モデルの一覧・コネクターの一覧の記録に、親のトークンが残らない（更新用トークン・メール・組織も出ない）',
         !JSON.stringify(noCompat).includes(FAKE.registered) && !JSON.stringify(noCompat).includes(FAKE.parentOauth) && leaked(JSON.stringify(noCompat)).length === 0, leaked(JSON.stringify(noCompat)).join(','));
-      t.ok('オン: 設定の反映は 会話・内部の会話・題・コネクターの一覧の 4 経路 × 互換でない 5 組み合わせで 1 回ずつ（モデルの一覧・互換接続は準備しない）',
-        log.filter(l => l === 'project').length === 4 * 5, `x${log.length}`);
+      t.ok('設定の反映は 会話・内部の会話・題・モデルの一覧・コネクターの一覧の 5 経路 × 互換でない 5 組み合わせで 1 回ずつ（互換接続は準備しない）。オン・オフ同じ',
+        log.on.length === 5 * 5 && log.off.length === 5 * 5, `on=${log.on.length} off=${log.off.length}`);
     }
 
     // ---------------------------------------------------------------- 4b. 起動の直前に認証が使えなくなったら、起動しない（会話用に登録したトークンへ戻らない）
@@ -373,47 +378,33 @@ export default async function (t) {
       }
     }
 
-    // ---------------------------------------------------------------- 5. オフは認証側の何も呼ばない
+    // ---------------------------------------------------------------- 5. 入口の設定（オン・オフの読み方）とキャッシュのキー
     {
       const text = { unset: null, off: JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: false } } }), other: JSON.stringify({ version: 1, accounts: { 'acct-other000001': { enabled: true } } }), broken: '{ "accounts": ',
+        unknownVersion: JSON.stringify({ version: 2, accounts: { [ACCOUNT_ID]: { enabled: true } } }), unknownValue: JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: 'true' } } }),
+        unknownShape: JSON.stringify({ version: 1, accounts: [{ id: ACCOUNT_ID, enabled: true }] }),
         // b1 の時代の mode だけが残った設定（enabled が無い）もオフ。mode: b1 でも enabled: false ならオフ
         legacy: JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: false, mode: 'b1' } } }) };
+      const wrong = [];
       for (const [variant, body] of Object.entries(text)) {
         const data = path.join(tmp, `off-${variant}`); await fs.mkdir(data, { recursive: true });
         if (body !== null) await fs.writeFile(path.join(data, CONNECTORS_FILE), body);
         const before = (await fs.readdir(data)).sort().join();
-        let touched = 0, timers = 0;
-        const boom = what => async () => { touched++; throw new Error(`呼ばれた: ${what}`); };
-        const resolveAuth = createClaudeConnectorsAuth({
-          accounts: { usageDir: () => { touched++; throw new Error('usageDir'); }, hasUsageLogin: boom('hasUsageLogin') }, versions: boom('versions'), project: boom('project'), readFile: boom('readFile'),
-          loginPresent: boom('loginPresent'), managedFiles: [], env: new Proxy({}, { get: () => { touched++; return undefined; }, ownKeys: () => { touched++; return []; } }),
-        });
-        const { gate } = createClaudeConnectorsGate({ dataDir: data, resolveAuth });
-        const origSet = globalThis.setTimeout, origInt = globalThis.setInterval;
-        globalThis.setTimeout = (...a) => { timers++; return origSet(...a); }; globalThis.setInterval = (...a) => { timers++; return origInt(...a); };
-        let same, noId;
-        try {
-          const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
-          const shape = JSON.stringify(account);
-          same = (await gate(account)) === account && JSON.stringify(account) === shape;
-          noId = (await gate({ name: 'x' })) !== null && (await gate(null)) === null;
-        } finally { globalThis.setTimeout = origSet; globalThis.setInterval = origInt; }
-        t.ok(`オフ（${variant}）: 同じ account をそのまま返し、認証側の版・ログインの有無・準備・設定の反映・環境の読み取りは 0 回・ファイルの作成 0・タイマー 0`,
-          same && noId && touched === 0 && timers === 0 && before === (await fs.readdir(data)).sort().join(), `touched=${touched} timers=${timers}`);
+        const read = await createClaudeConnectorSettings({ dataDir: data }).read(ACCOUNT_ID);
+        if (JSON.stringify(read) !== '{"enabled":false}' || before !== (await fs.readdir(data)).sort().join()) wrong.push(`${variant}=${JSON.stringify(read)}`);
       }
-      // 保存済みの mode（b1 の時代の印）は読まない: enabled: true なら mode が何でも専用フォルダ方式
+      t.ok('入口の設定: 未設定・オフ・別アカウントだけオン・壊れた設定・知らない版・知らない値・知らない形・b1 の印だけ残ったものはオフと読み、ファイルを作らない・書かない', wrong.length === 0, wrong.join(' | '));
+      // 保存済みの mode（b1 の時代の印）は読まない: enabled: true なら mode が何でもオン
       const modeData = path.join(tmp, 'off-mode'); await fs.mkdir(modeData, { recursive: true });
       await fs.writeFile(path.join(modeData, CONNECTORS_FILE), JSON.stringify({ version: 1, accounts: { [ACCOUNT_ID]: { enabled: true, mode: 'b1' } } }));
-      const seenAuth = [];
-      const { gate: modeGate, settings: modeSettings } = createClaudeConnectorsGate({ dataDir: modeData, resolveAuth: async account => { seenAuth.push(account.id); return null; } });
+      const modeSettings = createClaudeConnectorSettings({ dataDir: modeData });
       const read = await modeSettings.read(ACCOUNT_ID);
-      await modeGate({ id: ACCOUNT_ID, name: 'fake-account' });
       await modeSettings.setEnabled(ACCOUNT_ID, true);
       const written = JSON.parse(await fs.readFile(path.join(modeData, CONNECTORS_FILE), 'utf8'));
-      t.ok('入口の設定: 保存済みの mode は読まない（enabled だけで専用フォルダ方式）・書き直すときに mode を捨てる',
-        JSON.stringify(read) === '{"enabled":true}' && seenAuth.length === 1 && JSON.stringify(written.accounts[ACCOUNT_ID]) === '{"enabled":true}', JSON.stringify({ read, written }));
-      t.ok('キャッシュのキー: オンの識別子 own-dir のときだけ接尾辞。オフ（識別子なし）は今までの文字列',
-        accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: OWN_DIR } }) === `account:${ACCOUNT_ID}:cn:own-dir` && identitySuffix(OWN_DIR) === ':cn:own-dir'
+      t.ok('入口の設定: 保存済みの mode は読まない（enabled だけでオン）・書き直すときに mode を捨てる',
+        JSON.stringify(read) === '{"enabled":true}' && JSON.stringify(written.accounts[ACCOUNT_ID]) === '{"enabled":true}', JSON.stringify({ read, written }));
+      t.ok('キャッシュのキー: コネクターのオン・オフで変わらない（account:<id>。一覧は同じ専用フォルダのログインで引く。ADR 0352）',
+        accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: OWN_DIR } }) === `account:${ACCOUNT_ID}`
         && accountScopeKeyForTest({ id: ACCOUNT_ID }) === `account:${ACCOUNT_ID}` && accountScopeKeyForTest(null) === 'login');
     }
 
@@ -423,7 +414,7 @@ export default async function (t) {
       const resolves = [];
       const accounts = {
         usageDir: i => path.join(data, 'claude-usage', i), hasUsageLogin: async () => true,
-        resolve: async (id, options = {}) => { resolves.push({ id, requireToken: options.requireToken ?? true }); return options.requireToken === false ? { id, name: 'fake-account' } : { id, name: 'fake-account', token: FAKE.registered }; },
+        resolve: async (id, ...rest) => { resolves.push({ id, rest: rest.length }); return { id, name: 'fake-account' }; },
       };
       const wiring = (settings, over = {}) => createClaudeConnectorsWiring({
         dataDir: data, accounts, settings,
@@ -435,17 +426,12 @@ export default async function (t) {
       const offW = wiring({ read: async () => ({ enabled: false }) });
       resolves.length = 0;
       const onAccount = await on.resolve(ACCOUNT_ID);
-      t.ok('配線: オンの会話は、トークンを引かない登録（requireToken:false）を入口に通す。モデル一覧のための引き直しの口（resolveCatalogAccount）を足す',
-        resolves.length === 1 && resolves[0].requireToken === false && onAccount.connectors?.identity === OWN_DIR && typeof onAccount.resolveCatalogAccount === 'function' && onAccount.token === undefined, JSON.stringify(resolves));
-      resolves.length = 0;
-      const forCatalog = await onAccount.resolveCatalogAccount();
-      t.ok('配線: resolveCatalogAccount はトークン付きの登録を引く（長期トークンの無いアカウントの probeCatalog が使う。#195 で決めるまでそのまま）', forCatalog.token === FAKE.registered && resolves.length === 1 && resolves[0].requireToken === true);
-      resolves.length = 0;
-      const models = await on.resolve(ACCOUNT_ID, { forModels: true });
-      t.ok('配線: オンでもモデル一覧（forModels）はトークン付きの登録をそのまま返す（入口を通さない）', models.token === FAKE.registered && !models.connectors && resolves.length === 1 && resolves[0].requireToken === true);
+      t.ok('配線: オンの会話は、登録（id・名前だけ）を認証側に通し、専用フォルダの認証を ownDir と connectors に置く（トークンは無い）',
+        resolves.length === 1 && resolves[0].rest === 0 && onAccount.ownDir?.identity === OWN_DIR && onAccount.connectors === onAccount.ownDir && onAccount.token === undefined, JSON.stringify(resolves));
       resolves.length = 0;
       const offAccount = await offW.resolve(ACCOUNT_ID);
-      t.ok('配線: オフは今までどおり（トークン付きの登録・connectors も resolveCatalogAccount も無い）', offAccount.token === FAKE.registered && !offAccount.connectors && !offAccount.resolveCatalogAccount && resolves[0].requireToken === true);
+      t.ok('配線: オフも同じ認証側を通る（専用フォルダの ownDir あり・connectors なし・トークンなし。ADR 0352）',
+        resolves.length === 1 && offAccount.ownDir?.identity === OWN_DIR && offAccount.ownDir.enabled === false && !offAccount.connectors && offAccount.token === undefined);
       const authSrc = await fs.readFile(path.join(REPO, 'core/claude-connectors-auth.mjs'), 'utf8');
       const code = authSrc.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
       t.ok('認証側はトークンを渡さない・更新しない・ネットワークを使わない・期限の時計（タイマー・再起動）を持たない',
@@ -460,9 +446,13 @@ export default async function (t) {
       const probe = async args => { calls.push(args); return ['fake-connector']; };
       const connectors = { identity: OWN_DIR, prepare: async () => ({ env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN' } }) };
       const run = (resolve, deny = []) => connectorListProbe({ defaultId: async () => ACCOUNT_ID, resolve, probe })({ deny });
-      const got = await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered, connectors }), ['deny-me']);
-      t.ok('一覧: オンのアカウントは connectors（会話と同じ組み立て）を probe に渡す',
-        got[0] === 'fake-connector' && calls.length === 1 && calls[0].connectors === connectors && calls[0].token === FAKE.registered && calls[0].deny[0] === 'deny-me');
+      const got = await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', ownDir: connectors, connectors }), ['deny-me']);
+      t.ok('一覧: 登録したアカウントは ownDir（会話と同じ組み立て）を connectors として probe に渡す',
+        got[0] === 'fake-connector' && calls.length === 1 && calls[0].connectors === connectors && Object.keys(calls[0]).sort().join() === 'connectors,deny' && calls[0].deny[0] === 'deny-me');
+      calls.length = 0;
+      const offAuth = { ...connectors, enabled: false };
+      await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', ownDir: offAuth }));
+      t.ok('一覧: コネクターがオフのアカウントも ownDir を渡す（claude.ai のコネクターは出ない組み立て）', calls.length === 1 && calls[0].connectors === offAuth);
       const kinds = ['login', 'version', 'platform', 'ssh', 'keychain', 'keychainAuth', 'ownDirLogin', 'ownDirLinks', 'ownDirLinksWindows', 'ownDirProfile'];
       let bad = '';
       for (const kind of kinds) {
@@ -473,11 +463,10 @@ export default async function (t) {
       }
       t.ok(`一覧: 止める条件 ${kinds.length} 種（ConnectorsAuthError）はそのまま投げ、ログイン中のアカウントで読み直さない（probe を呼ばない）`, bad === '', bad);
       calls.length = 0;
-      await run(async () => ({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered }));
       await run(async () => { throw new Error('アカウントが無い'); });
       await run(async () => null);
-      t.ok('一覧: オフ・ほかの失敗・既定なしは今までの呼び方（{ deny, token } だけ。失敗と既定なしはログイン中 = token null）',
-        calls.length === 3 && calls.every(c => Object.keys(c).join() === 'deny,token') && calls[0].token === FAKE.registered && calls[1].token === null && calls[2].token === null, JSON.stringify(calls.map(c => Object.keys(c))));
+      t.ok('一覧: ほかの失敗・既定なしはログイン中のアカウントで読む（{ deny } だけ）',
+        calls.length === 2 && calls.every(c => Object.keys(c).join() === 'deny'), JSON.stringify(calls.map(c => Object.keys(c))));
       // オンの解決の想定外の例外（使用量の設定フォルダを引けない・ログインの有無を調べられない）も、入口（wiring）を通した一覧で
       // ConnectorsAuthError になり、ログイン中のアカウントで読み直さない（probe を呼ばない）
       const listData = path.join(tmp, 'list-wiring');
@@ -489,7 +478,7 @@ export default async function (t) {
         calls.length = 0;
         const w = createClaudeConnectorsWiring({
           dataDir: listData,
-          accounts: { usageDir: i => path.join(listData, 'claude-usage', i), hasUsageLogin: async () => true, resolve: async (id, o = {}) => ({ id, name: 'fake-account', ...(o.requireToken === false ? {} : { token: FAKE.registered }) }), ...accountsOver },
+          accounts: { usageDir: i => path.join(listData, 'claude-usage', i), hasUsageLogin: async () => true, resolve: async id => ({ id, name: 'fake-account' }), ...accountsOver },
           settings: { read: async () => ({ enabled: true }) },
           versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
           project: async () => ({ changed: false }), loginPresent: async () => 'present', managedFiles: [], env: {}, home: path.join(tmp, 'list-wiring-home'), platform: 'linux', ...over,
@@ -505,20 +494,20 @@ export default async function (t) {
       const installed = await installFakeClaude(path.join(tmp, 'probe-bin'));
       const seen = [];
       const { setClaudeSdkForTest } = await import('../../core/backends/claude.mjs');
-      const restoreSdk = setClaudeSdkForTest({ query: ({ options }) => { seen.push(options.env); throw Object.assign(new Error(`boom ${FAKE.registered}`), { code: 'E_FAKE' }); } });
+      const restoreSdk = setClaudeSdkForTest({ query: ({ options }) => { seen.push(options.env); throw Object.assign(new Error('boom'), { code: 'E_FAKE' }); } });
       process.env.AGENT_HOST_CLAUDE_BIN = installed.bin;
       const parentKeys = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
       const savedParent = Object.fromEntries(parentKeys.map(k => [k, process.env[k]]));
       process.env.CLAUDE_CODE_OAUTH_TOKEN = FAKE.parentOauth; process.env.ANTHROPIC_API_KEY = FAKE.apiKey;
       try {
         const { probeClaudeConnectors } = await import('../../core/backends/claude.mjs');
-        const e1 = await probeClaudeConnectors({ deny: [], token: FAKE.registered, connectors: { identity: OWN_DIR, prepare: async () => ({ env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN' } }) } }).then(() => null, e => e);
-        t.ok('一覧の読み取り（オン）: prepare() の専用フォルダだけで CLI を起こし（トークン・親の別の認証は渡さない）、失敗の文面にトークンを出さない（code は残す）',
+        const e1 = await probeClaudeConnectors({ deny: [], connectors: { identity: OWN_DIR, prepare: async () => ({ env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN' } }) } }).then(() => null, e => e);
+        t.ok('一覧の読み取り（オン）: prepare() の専用フォルダだけで CLI を起こし（親のトークン・別の認証は渡さない）、失敗の code は残す',
           seen.length === 1 && seen[0].CLAUDE_CONFIG_DIR === 'FAKE_OWN' && !('CLAUDE_CODE_OAUTH_TOKEN' in seen[0]) && !('ANTHROPIC_API_KEY' in seen[0]) && !('CLAUDE_CODE_OAUTH_SCOPES' in seen[0])
           && e1?.code === 'E_FAKE' && leaked(e1.message).length === 0 && !String(e1.stack).includes(ACCESS) && !e1.message.includes(FAKE.parentOauth), `${e1?.code} seen=${seen.length} ${JSON.stringify(Object.keys(seen[0] ?? {}).filter(k => /OAUTH|API_KEY|CONFIG/.test(k)))}`);
         seen.length = 0;
-        const e2 = await probeClaudeConnectors({ deny: [], token: FAKE.registered, connectors: { identity: OWN_DIR, prepare: async () => { throw new ConnectorsAuthError('ownDirLogin', { name: 'fake-account' }); } } }).then(() => null, e => e);
-        t.ok('一覧の読み取り（オン）: prepare() が止めれば CLI を起こさない（会話用トークンでもログイン中でも読まない）', e2?.code === 'connectors-ownDirLogin' && seen.length === 0);
+        const e2 = await probeClaudeConnectors({ deny: [], connectors: { identity: OWN_DIR, prepare: async () => { throw new ConnectorsAuthError('ownDirLogin', { name: 'fake-account' }); } } }).then(() => null, e => e);
+        t.ok('一覧の読み取り（オン）: prepare() が止めれば CLI を起こさない（ログイン中のアカウントでも読まない）', e2?.code === 'connectors-ownDirLogin' && seen.length === 0);
       } finally {
         restoreSdk();
         if (savedBin === undefined) delete process.env.AGENT_HOST_CLAUDE_BIN; else process.env.AGENT_HOST_CLAUDE_BIN = savedBin;
@@ -534,30 +523,33 @@ export default async function (t) {
       try {
         const prepareCalls = [];
         const connectors = { identity: OWN_DIR, prepare: async o => { prepareCalls.push(o); return { env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN' } }; } };
-        // オンのアカウントは入口（配線）がトークンを引かずに作る（requireToken:false）ので token を持たない
-        const on = { id: ACCOUNT_ID, name: 'fake-account', connectors };
+        // 登録したアカウントは入口（配線）が専用フォルダの認証（ownDir）を付けて作る。トークンは持たない（ADR 0352）
+        const on = { id: ACCOUNT_ID, name: 'fake-account', ownDir: connectors, connectors };
         const args = { cwd: path.join(tmp, 'work'), card: { held: true }, source: { write() {} } };
         const r = await claudeBackend.forAccount(on).adoptTurn(args);
         t.ok('付け直し: オンのアカウントは起動の直前に prepare()（リンク・設定の反映）を通り、トークンは渡さず専用フォルダの env を渡す',
           r === 'adopted' && prepareCalls.length === 1 && prepareCalls[0].cwd === args.cwd && seen.length === 1 && !seen[0].oauthToken
           && JSON.stringify(seen[0].connectorsEnv) === JSON.stringify({ CLAUDE_CONFIG_DIR: 'FAKE_OWN' }) && seen[0].connectors === connectors && seen[0].card === args.card && seen[0].source === args.source, JSON.stringify({ prepare: prepareCalls.length, seen: seen.length }));
         seen.length = 0;
-        const failing = { ...on, connectors: { identity: OWN_DIR, prepare: async () => { throw new ConnectorsAuthError('ownDirLogin', { name: 'fake-account' }); } } };
+        const failingAuth = { identity: OWN_DIR, prepare: async () => { throw new ConnectorsAuthError('ownDirLogin', { name: 'fake-account' }); } };
+        const failing = { ...on, ownDir: failingAuth, connectors: failingAuth };
         const e = await claudeBackend.forAccount(failing).adoptTurn(args).then(() => null, x => x);
         t.ok('付け直し: prepare() が止めれば付け直さない（会話用トークンへ戻らない）', e?.code === 'connectors-ownDirLogin' && seen.length === 0);
         seen.length = 0;
         await claudeBackend.forAccount({ ...on, endpoint: null }).adoptTurn({ ...args, endpoint: { baseUrl: 'https://compat.example.invalid' } });
-        await claudeBackend.forAccount({ id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered }).adoptTurn(args);
-        t.ok('付け直し: 互換の接続先はコネクターの認証を足さない・オフのアカウントは今までどおり（会話用トークン、env を足さない）',
-          seen.length === 2 && prepareCalls.length === 1 && !('connectorsEnv' in seen[0]) && seen[0].oauthToken === null && seen[1].oauthToken === FAKE.registered && !('connectorsEnv' in seen[1]), JSON.stringify(seen.map(s => Object.keys(s))));
+        const offAuth = { identity: OWN_DIR, enabled: false, prepare: async () => ({ env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } }) };
+        await claudeBackend.forAccount({ id: ACCOUNT_ID, name: 'fake-account', ownDir: offAuth }).adoptTurn(args);
+        t.ok('付け直し: 互換の接続先は専用フォルダの認証を足さない・コネクターがオフのアカウントも専用フォルダの env（claude.ai のコネクターを出さない）で付け直す',
+          seen.length === 2 && prepareCalls.length === 1 && !('connectorsEnv' in seen[0]) && !seen[0].oauthToken && !seen[1].oauthToken
+          && JSON.stringify(seen[1].connectorsEnv) === JSON.stringify({ CLAUDE_CONFIG_DIR: 'FAKE_OWN', ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }), JSON.stringify(seen.map(s => Object.keys(s))));
       } finally { claudeBackend.adoptTurn = saved; }
       const near = `${ACCOUNT_ID}2`;   // 先頭が同じ別のアカウント（消さない）
-      const touched = [{ id: ACCOUNT_ID }, { id: ACCOUNT_ID, connectors: { identity: OWN_DIR } }, { id: near }, { id: near, connectors: { identity: OWN_DIR } }];
+      const touched = [{ id: ACCOUNT_ID }, { id: ACCOUNT_ID, connectors: { identity: OWN_DIR } }, { id: near }];
       const before = catalogStateKeysForTest(touched);
       claudeBackend.invalidateModels(ACCOUNT_ID);
       const after = catalogStateKeysForTest();
-      t.ok('一覧の覚え: アカウントを消す・入れ替えると、オフのキーと入口オンのキー（:cn:own-dir）の両方を消す。先頭が同じ別のアカウントは残す',
-        [`account:${ACCOUNT_ID}`, `account:${ACCOUNT_ID}:cn:own-dir`].every(k => before.includes(k) && !after.includes(k)) && [`account:${near}`, `account:${near}:cn:own-dir`].every(k => after.includes(k)), after.join(','));
+      t.ok('一覧の覚え: アカウントを消す・入れ替えると、そのアカウントのキー（オン・オフ共通）を消す。先頭が同じ別のアカウントは残す',
+        before.includes(`account:${ACCOUNT_ID}`) && !after.includes(`account:${ACCOUNT_ID}`) && after.includes(`account:${near}`), after.join(','));
       claudeBackend.invalidateModels(near);
     }
 
@@ -747,7 +739,7 @@ export default async function (t) {
         versions: async () => ({ cli: VERIFIED_VERSIONS[0].cli, sdk: VERIFIED_VERSIONS[0].sdk }),
         project: async () => ({ changed: false }), loginPresent: async () => 'present', managedFiles: [], env: {}, home, platform: 'linux',
       });
-      const account = { id: ACCOUNT_ID, name: 'fake-account', token: FAKE.registered };
+      const account = { id: ACCOUNT_ID, name: 'fake-account' };
       const stopsAt = [];
       for (const [label, body, code] of [['env の ANTHROPIC_API_KEY', JSON.stringify({ env: { ANTHROPIC_API_KEY: SETTING_SECRET } }), 'connectors-env'],
         ['apiKeyHelper', JSON.stringify({ apiKeyHelper: `echo ${SETTING_SECRET}` }), 'connectors-env'],
@@ -760,10 +752,10 @@ export default async function (t) {
       t.ok('settings.json の確かめ: 別の認証（env・apiKeyHelper）・読めない設定・履歴の置き場は、解決のときに止める。メッセージに値を出さない', stopsAt.length === 0, stopsAt.join(' | '));
       await fs.writeFile(sfile, JSON.stringify({ env: { FOO: 'bar' } }));
       const resolved = (await make()(account)).account;
-      t.ok('settings.json の確かめ: 関係の無い env だけなら通る', resolved.connectors?.identity === OWN_DIR);
+      t.ok('settings.json の確かめ: 関係の無い env だけなら通る', resolved.ownDir?.identity === OWN_DIR);
       if (canLink) {
         await fs.writeFile(sfile, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: SETTING_SECRET } }));
-        const late = await resolved.connectors.prepare({ cwd: tmp }).then(() => null, x => x);
+        const late = await resolved.ownDir.prepare({ cwd: tmp }).then(() => null, x => x);
         t.ok('settings.json の確かめ: 解決のあとに別の認証が書かれても、起動の直前（prepare）で止める。メッセージに値を出さない', late?.code === 'connectors-env' && !late.message.includes(SETTING_SECRET) && leaked(late.message).length === 0, `late=${late?.code}`);
       } else t.skip('settings.json の確かめ: 起動の直前（prepare）の止め方（Windows でファイルのシンボリックリンクを作る権限が無い）');
       // 401 で乗り換える道を開く指定（ADR 0340）: settings.json の env にあっても（小文字の名前でも）env で止める

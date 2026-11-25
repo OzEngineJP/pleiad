@@ -431,9 +431,7 @@ export default async function (t) {
     const dataDir = path.join(root, 'data');
     await fs.mkdir(dataDir);
     await put(dataDir, 'claude-accounts.json', JSON.stringify({ version: 1, accounts: [account] }));
-    let secretReads = 0;
-    const secrets = { get: async () => { secretReads++; return null; }, delete: async () => {} };
-    const accounts = createClaudeAccounts({ dataDir, secrets, cliConfig: path.join(root, '.claude.json') });
+    const accounts = createClaudeAccounts({ dataDir, cliConfig: path.join(root, '.claude.json') });
     let versions = VERIFIED_VERSIONS[0];
     const wiring = createClaudeConnectorsWiring({
       // ファイルでログインを見る OS として動かす（macOS の止めと有無の判定は macKeychain で確かめる）
@@ -443,8 +441,8 @@ export default async function (t) {
     const own = accounts.usageDir(id);
     await fs.mkdir(own, { recursive: true });
 
-    await assert.rejects(wiring.resolve(id), { code: 'missing-token' });
-    const readsBeforeEnable = secretReads;
+    // コネクターがオフでも専用フォルダのログインが要る（会話用のトークンへ戻らない。ADR 0352）
+    await assert.rejects(wiring.resolve(id), { code: 'connectors-ownDirLogin' });
     await wiring.settings.setEnabled(id, true);
     // 入口の設定は enabled だけ。b1 の時代の mode が書かれていても読まない・書き直すと消える（ADR 0350）
     assert.deepEqual(await wiring.settings.read(id), { enabled: true });
@@ -460,13 +458,16 @@ export default async function (t) {
     assert.equal((await wiring.inspect(account)).kind, 'version');
     versions = VERIFIED_VERSIONS[0];
     const runtime = await wiring.resolve(id);
-    assert.equal(secretReads, readsBeforeEnable);   // オンの間は会話用トークンを読まない
     assert.equal(runtime.token, undefined);
+    assert.equal(runtime.connectors, runtime.ownDir);
     assert.equal(runtime.connectors.fresh, undefined);
-    await assert.rejects(runtime.resolveCatalogAccount(), { code: 'missing-token' });
+    await wiring.settings.setEnabled(id, false);
+    const offRuntime = await wiring.resolve(id);
+    assert.equal(offRuntime.connectors, undefined);
+    assert.equal(offRuntime.ownDir.enabled, false);
     assert.deepEqual(claudeOwnDirEnv(env, { CLAUDE_CONFIG_DIR: own }), { CLAUDE_CONFIG_DIR: own, PATH: 'example' });
     assert.deepEqual(env, parentEnv);
-    t.ok('専用フォルダ方式だけ会話用トークン、持ち主照合、期限の検査が不要', true);
+    t.ok('全アカウントが専用フォルダ方式（会話用トークン・持ち主照合・期限の検査が無い）', true);
 
     // A wrong entry stops preparation before starting a CLI or overwriting the entry.
     await put(own, 'projects', 'keep');

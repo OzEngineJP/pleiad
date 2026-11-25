@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 fs.mkdirSync(path.join(ROOT, 'temporary'), { recursive: true });
@@ -65,7 +66,7 @@ try {
   await wait(async () => (await taskOf(doneT.taskId))?.status === 'completed', 'finished child completed');
   const readyChild = (await taskOf(readyT.taskId)).sessionId;
   const clockChild = (await taskOf(clockT.taskId)).sessionId;
-  const { id: otherAccount } = await client.cmd('saveClaudeAccount', { name: 'Private', token: 'sk-ant-oat01-' + 'X'.repeat(48) });
+  const otherAccount = await seedClaudeAccount(path.join(base, 'data'), 'Private');
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   ab('set', 'viewport', '1280', '800');

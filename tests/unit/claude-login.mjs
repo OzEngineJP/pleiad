@@ -1,23 +1,21 @@
 // Claude のアカウントの認可を Pleiad から回す（core/claude-login.mjs）。本物の Claude Code もネットワークも使わない。
 // 出力の読み取り（ANSI・OSC 8・折り返し）、トークンを伏せること、疑似端末の偽物での進み方（URL → コード → 完了 / 失敗 / 時間切れ / 取り消し）、
-// 使用量の設定フォルダの env を確かめる。node-pty が読めれば、偽の CLI（tests/lib/fake-claude-login.mjs）を本物の疑似端末でも回す。
+// 新しいアカウントを済んだときだけ載せること（ADR 0352）、使用量の設定フォルダの env を確かめる。node-pty が読めれば、偽の CLI（tests/lib/fake-claude-login.mjs）を本物の疑似端末でも回す。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  stripAnsi, findAuthUrl, findToken, redactSecrets, outputTail, normalizeCode, loginEnv, createClaudeLogin, ptySpawner, loadPty, pipeSpawner,
+  stripAnsi, findAuthUrl, redactSecrets, outputTail, normalizeCode, loginEnv, createClaudeLogin, ptySpawner, loadPty, pipeSpawner,
 } from '../../core/claude-login.mjs';
 import { usageEnv, readClaudeAccountsUsage, NEEDS_USAGE_LOGIN } from '../../core/backends/claude-usage.mjs';
 
 export const name = 'claude-login';
-export const title = 'Claude のアカウントの認可: 出力の読み取り・トークンを伏せる・疑似端末での進み方・使用量の設定フォルダ';
+export const title = 'Claude のアカウントの認可: 出力の読み取り・トークンを伏せる・疑似端末での進み方・新しいアカウントの登録・使用量の設定フォルダ';
 
 const FAKE_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'fake-claude-login.mjs');
 const TOKEN = 'sk-ant-oat01-' + 'Ab3_-'.repeat(18) + 'xyz';
 const URL_ = 'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&code_challenge=c5pB1vM5&code_challenge_method=S256&state=IrIZK6KP';
-// tests/lib/fake-claude-login.mjs が出すものと同じ（あちらは読み込むと CLI として動き出すので、ここに写す）
-const FAKE_TOKEN = 'sk-ant-oat01-' + 'Zq9_'.repeat(20) + 'end';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(pred, ms = 5000) {
   const end = Date.now() + ms;
@@ -54,13 +52,6 @@ export default async function (t) {
   t.ok('カーソル位置の指定で折り返されていてもつなげる', findAuthUrl(positioned) === URL_);
   t.ok('認可以外の URL は拾わない', findAuthUrl('see https://code.claude.com/docs/en/setup for help') === null);
   t.ok('次の行の文章は URL につなげない', findAuthUrl(`${URL_}\r\nPaste code here`) === URL_);
-
-  const tokenOut = `\r\n\x1b[32m✓ created\x1b[39m\r\nYour OAuth token (valid for 1 year):\r\n\r\n\x1b[33m${TOKEN.slice(0, 40)}\r\n${TOKEN.slice(40)}\x1b[39m\r\n\r\nStore this token securely.`;
-  t.ok('折り返されたトークンをつなげて読む', findToken(tokenOut) === TOKEN, findToken(tokenOut));
-  t.ok('枠線（│）の中のトークンも読む', findToken(`│ ${TOKEN.slice(0, 30)} │\r\n│ ${TOKEN.slice(30)} │\r\n`) === TOKEN);
-  t.ok('1 行のトークン', findToken(`token: ${TOKEN}\n`) === TOKEN);
-  t.ok('再描画で一部だけ出たものより、全体を採る', findToken(`${TOKEN.slice(0, 30)}\x1b[2K\r${TOKEN}\r\n`) === TOKEN);
-  t.ok('トークンが無ければ null', findToken('Paste code here if prompted >') === null && findToken('sk-ant-short') === null);
 
   // ---- 伏せる
   t.ok('出力からトークンを伏せる', !redactSecrets(`bad ${TOKEN} x`).includes('sk-ant-') && redactSecrets(`bad ${TOKEN}`).includes('[トークン]'));
@@ -108,27 +99,30 @@ export default async function (t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-login-'));
   try {
     const events = [];
-    const saved = [];
     const marked = [];
+    const discarded = [];
     const opened = [];
     const pty = fakePty();
+    let seq = 0;
     const login = createClaudeLogin({
       command: () => ['/bin/claude'], emit: e => events.push(e), spawn: pty.spawn,
-      saveToken: async o => { saved.push(o); return { id: o.accountId ?? 'acct-new' }; },
-      usageDir: id => path.join(dir, 'claude-usage', id), markUsageLogin: async id => { marked.push(id); },
-      scratchDir: path.join(dir, 'tmp'), openExternal: url => opened.push(url), env: base,
+      usageDir: id => path.join(dir, 'claude-usage', id), markUsageLogin: async (id, add) => { marked.push({ id, add }); },
+      newAccountId: () => `acct-new${++seq}`, discardNew: async id => { discarded.push(id); },
+      openExternal: url => opened.push(url), env: base,
     });
     const of = id => events.filter(e => e.loginId === id);
 
-    // setup-token（新規）
-    const { loginId: a } = login.start({ kind: 'setup-token', name: '仕事用', open: true });
+    // 新しいアカウント: 名前で始め、済んだときだけ載せる
+    const { loginId: a } = login.start({ name: '仕事用', open: true });
     const pa = pty.last();
-    t.ok('setup-token を起動する', pa.args.join(' ') === 'setup-token' && pa.opts.env.CLAUDE_CONFIG_DIR.startsWith(path.join(dir, 'tmp')) && !pa.opts.env.CLAUDE_CODE_OAUTH_TOKEN);
-    const scratch = pa.opts.env.CLAUDE_CONFIG_DIR;
+    t.ok('新しいアカウントも auth login を、先に決めた id の設定フォルダで回す', pa.args.join(' ') === 'auth login --claudeai'
+      && pa.opts.env.CLAUDE_CONFIG_DIR === path.join(dir, 'claude-usage', 'acct-new1') && !pa.opts.env.CLAUDE_CODE_OAUTH_TOKEN && !pa.opts.env.ANTHROPIC_API_KEY);
+    t.ok('設定フォルダを作る', await fs.stat(path.join(dir, 'claude-usage', 'acct-new1')).then(s => s.isDirectory(), () => false));
     pa.emit(observed.slice(0, 120));
     t.ok('URL が揃うまでは知らせない', of(a).length === 0);
     pa.emit(observed.slice(120));
     t.ok('URL を知らせ、続けてコードを待つ', of(a).map(e => e.phase).join() === 'url,code' && of(a)[0].url === URL_);
+    t.ok('載せる前の新しいアカウントの id は画面に渡さない', of(a).every(e => e.accountId === null));
     t.ok('open なら既定のブラウザーで開くよう頼む', opened.length === 1 && opened[0] === URL_);
     let early = null; try { login.submitCode('login-nope', 'x'); } catch (e) { early = e; }
     t.ok('終わった・知らない認可にはコードを送れない', Boolean(early));
@@ -144,75 +138,75 @@ export default async function (t) {
     await sleep(200);
     pa.emit('good#code\r\n');
     t.ok('入力欄がコードを表示し直すだけでは失敗にしない', of(a).at(-1).phase === 'verifying');
-    pa.emit(tokenOut.slice(0, 120));
-    pa.emit(tokenOut.slice(120));
-    t.ok('トークンが揃うまで少し待つ', saved.length === 0);
-    await until(() => of(a).some(e => e.phase === 'done'), 3000);
-    t.ok('トークンを読んで保存する（新規は名前で）', saved.length === 1 && saved[0].token === TOKEN && saved[0].name === '仕事用' && !saved[0].accountId);
-    t.ok('完了を知らせ、作ったアカウントの id を返す', of(a).at(-1).phase === 'done' && of(a).at(-1).accountId === 'acct-new');
-    t.ok('終わったら（自分で終わらなければ少し待って）CLI を止める', await until(() => pa.killed, 3000));
-    t.ok('どのイベントにもトークンを載せない', !JSON.stringify(events).includes('sk-ant-'));
-    await sleep(300);
-    t.ok('使い捨ての設定フォルダを消す', await fs.access(scratch).then(() => false, () => true));
+    pa.emit('\r\nLogin successful.\r\n');
+    pa.exit(0);
+    await until(() => of(a).some(e => e.phase === 'done'));
+    t.ok('終了コード 0 で、名前を添えて載せる', marked.length === 1 && marked[0].id === 'acct-new1' && marked[0].add?.name === '仕事用');
+    t.ok('完了を知らせ、作ったアカウントの id を返す', of(a).at(-1).phase === 'done' && of(a).at(-1).accountId === 'acct-new1');
+    t.ok('済んだ新しいアカウントは片付けない', (await sleep(600), !discarded.includes('acct-new1')));
 
-    // setup-token: トークンを出さずに終わった
-    const { loginId: b } = login.start({ kind: 'setup-token', accountId: 'acct-1', name: '個人用' });
+    // 新しいアカウント: 失敗したら何も残さない
+    const { loginId: b } = login.start({ name: '個人用' });
     const pb = pty.last();
     pb.emit(observed);
     pb.emit('\r\nOAuth error: request failed with status 400 (code abc#def)\r\n');
     pb.exit(1);
     const failed = of(b).at(-1);
-    t.ok('トークン無しで終わったら失敗を知らせる（終了コードと末尾、トークンは伏せる）', failed.phase === 'error' && failed.message.includes('終了コード 1') && failed.message.includes('status 400') && !failed.message.includes('sk-ant-'), JSON.stringify(failed));
+    t.ok('失敗を知らせる（終了コードと末尾）', failed.phase === 'error' && failed.message.includes('終了コード 1') && failed.message.includes('status 400'), JSON.stringify(failed));
+    t.ok('失敗した新しいアカウントは載せず、設定フォルダを片付ける', marked.length === 1 && await until(() => discarded.includes('acct-new2'), 2000));
 
-    // usage-login
-    const { loginId: c } = login.start({ kind: 'usage-login', accountId: 'acct-1' });
+    // 登録済みのアカウントのログインし直し
+    const { loginId: c } = login.start({ accountId: 'acct-1' });
     const pc = pty.last();
-    t.ok('使用量の認可は auth login をアカウントの設定フォルダで回す', pc.args.join(' ') === 'auth login --claudeai'
-      && pc.opts.env.CLAUDE_CONFIG_DIR === path.join(dir, 'claude-usage', 'acct-1') && !pc.opts.env.CLAUDE_CODE_OAUTH_TOKEN && !pc.opts.env.ANTHROPIC_API_KEY);
-    t.ok('設定フォルダを作る', await fs.stat(path.join(dir, 'claude-usage', 'acct-1')).then(s => s.isDirectory(), () => false));
+    t.ok('登録済みのアカウントはその設定フォルダで回す', pc.args.join(' ') === 'auth login --claudeai'
+      && pc.opts.env.CLAUDE_CONFIG_DIR === path.join(dir, 'claude-usage', 'acct-1'));
     t.ok('open でなければブラウザーを開かない', (pc.emit(observed), opened.length === 1));
+    t.ok('登録済みのアカウントの id は初めから画面に渡す', of(c).every(e => e.accountId === 'acct-1'));
     login.submitCode(c, 'ok#code');
     pc.emit('\r\nLogin successful.\r\n');
     pc.exit(0);
     await until(() => of(c).some(e => e.phase === 'done'));
-    t.ok('終了コード 0 で認可済みの印を付ける', marked.join() === 'acct-1' && of(c).at(-1).phase === 'done');
+    t.ok('終了コード 0 で認可済みの印を付ける（名前は渡さない）', marked.at(-1).id === 'acct-1' && marked.at(-1).add === undefined && of(c).at(-1).phase === 'done');
 
-    // usage-login: 成功を出したまま終わらない
-    const { loginId: c2 } = login.start({ kind: 'usage-login', accountId: 'acct-2' });
+    // 成功を出したまま終わらない
+    const { loginId: c2 } = login.start({ accountId: 'acct-2' });
     const pc2 = pty.last();
     pc2.emit(observed); login.submitCode(c2, 'ok#code'); pc2.emit('\r\nLogin successful.\r\n');
     t.ok('成功の表示だけではすぐには完了にしない（終了を待つ）', !of(c2).some(e => e.phase === 'done'));
 
     // 取り消し・1 つだけ
-    const { loginId: d } = login.start({ kind: 'usage-login', accountId: 'acct-3' });
+    const { loginId: d } = login.start({ accountId: 'acct-3' });
     t.ok('新しく始めると前のものは取り消す', of(c2).at(-1).phase === 'cancelled' && pc2.killed);
     login.cancel(d);
     t.ok('取り消すと CLI を止めて知らせる', of(d).at(-1).phase === 'cancelled' && pty.last().killed);
     let gone = null; try { login.submitCode(d, 'x'); } catch (e) { gone = e; }
     t.ok('取り消したものにはコードを送れない', Boolean(gone));
-    login.start({ kind: 'usage-login', accountId: 'acct-4' });
+    const { loginId: e5 } = login.start({ name: '途中で' });
+    login.cancel(e5);
+    t.ok('取り消した新しいアカウントは載せず、設定フォルダを片付ける', await until(() => discarded.includes('acct-new3'), 2000) && !marked.some(m => m.id === 'acct-new3'));
+    login.start({ accountId: 'acct-4' });
     const p4 = pty.last();
     login.cancelAccount('acct-4');
     t.ok('アカウントを消すと、その認可を止める', p4.killed && login.active().length === 0);
 
     // 起動できない
-    let noKind = null; try { login.start({ kind: 'other' }); } catch (e) { noKind = e; }
-    t.ok('知らない種類は断る', Boolean(noKind));
-    const noCli = createClaudeLogin({ command: () => null, emit: () => {}, spawn: pty.spawn, scratchDir: dir, usageDir: () => dir });
-    let missing = null; try { noCli.start({ kind: 'setup-token', name: 'x' }); } catch (e) { missing = e; }
+    let noKind = null; try { login.start({ kind: 'setup-token', name: 'x' }); } catch (e) { noKind = e; }
+    t.ok('setup-token など知らない種類は断る（ADR 0352）', Boolean(noKind));
+    let noName = null; try { login.start({ name: '  ' }); } catch (e) { noName = e; }
+    t.ok('新しいアカウントは名前が要る', Boolean(noName));
+    const noCli = createClaudeLogin({ command: () => null, emit: () => {}, spawn: pty.spawn, usageDir: () => dir, newAccountId: () => 'x' });
+    let missing = null; try { noCli.start({ name: 'x' }); } catch (e) { missing = e; }
     t.ok('Claude Code が無ければ理由を返す', missing?.message.includes('Claude Code'));
-    const noPty = createClaudeLogin({ command: () => ['/bin/claude'], emit: () => {}, spawn: null, pipe: pty.spawn, scratchDir: dir, usageDir: id => path.join(dir, id) });
-    let noTty = null; try { noPty.start({ kind: 'setup-token', name: 'x' }); } catch (e) { noTty = e; }
-    t.ok('疑似端末が無いと setup-token は手動の貼り付けへ案内する', noTty?.message.includes('claude setup-token') && noTty.message.includes('貼り付け'));
+    const noPty = createClaudeLogin({ command: () => ['/bin/claude'], emit: () => {}, spawn: null, pipe: pty.spawn, usageDir: id => path.join(dir, id), newAccountId: () => 'acct-pipe' });
     const before = pty.procs.length;
-    noPty.start({ kind: 'usage-login', accountId: 'acct-5' });
-    t.ok('疑似端末が無くても使用量の認可はパイプで回す', pty.procs.length === before + 1);
+    noPty.start({ name: 'パイプ' });
+    t.ok('疑似端末が無くてもパイプで回す', pty.procs.length === before + 1);
     noPty.cancelAll();
 
     // 時間切れ
     const quick = createClaudeLogin({ command: () => ['/bin/claude'], emit: e => events.push(e), spawn: pty.spawn, timeoutMs: 50,
-      scratchDir: path.join(dir, 'tmp'), usageDir: id => path.join(dir, id) });
-    const { loginId: q } = quick.start({ kind: 'setup-token', name: 'x' });
+      usageDir: id => path.join(dir, id), newAccountId: () => 'acct-quick' });
+    const { loginId: q } = quick.start({ accountId: 'acct-q' });
     await until(() => of(q).some(e => e.phase === 'error'), 2000);
     t.ok('時間切れで止めて知らせる', of(q).at(-1)?.phase === 'error' && of(q).at(-1).message.includes('時間切れ') && pty.last().killed);
 
@@ -223,34 +217,26 @@ export default async function (t) {
       if (!spawner) continue;
       const log = path.join(dir, `fake-${label}.log`);
       const realEvents = [];
-      const realSaved = [];
       const real = createClaudeLogin({
         command: () => [process.execPath, FAKE_CLI], emit: e => realEvents.push(e), spawn: spawner,
-        saveToken: async o => { realSaved.push(o.token); return { id: 'acct-real' }; },
-        usageDir: id => path.join(dir, 'claude-usage', id), markUsageLogin: async () => {},
-        scratchDir: path.join(dir, 'tmp'), env: { ...process.env, FAKE_CLAUDE_LOG: log, CLAUDE_CODE_OAUTH_TOKEN: TOKEN },
+        usageDir: id => path.join(dir, 'claude-usage', id), markUsageLogin: async () => {}, newAccountId: () => 'acct-real',
+        env: { ...process.env, FAKE_CLAUDE_LOG: log, CLAUDE_CODE_OAUTH_TOKEN: TOKEN },
       });
-      const kinds = label === 'パイプ' ? ['usage-login'] : ['setup-token', 'usage-login'];
-      for (const kind of kinds) {
-        const { loginId } = real.start({ kind, ...(kind === 'setup-token' ? { name: 'real' } : { accountId: 'acct-real' }) });
-        const mine = () => realEvents.filter(e => e.loginId === loginId);
-        const asked = await until(() => mine().some(e => e.phase === 'code'), 20_000);
-        t.ok(`${label}: ${kind} の URL とコード待ちを読む`, asked && mine().find(e => e.phase === 'url')?.url?.startsWith('https://claude.com/cai/oauth/authorize?code=true'), JSON.stringify(mine()));
-        if (!asked) { real.cancelAll(); continue; }
+      const { loginId } = real.start({ name: 'real' });
+      const mine = () => realEvents.filter(e => e.loginId === loginId);
+      const asked = await until(() => mine().some(e => e.phase === 'code'), 20_000);
+      t.ok(`${label}: URL とコード待ちを読む`, asked && mine().find(e => e.phase === 'url')?.url?.startsWith('https://claude.com/cai/oauth/authorize?code=true'), JSON.stringify(mine()));
+      if (asked) {
         real.submitCode(loginId, 'bad');
         const retried = await until(() => mine().filter(e => e.phase === 'code').length >= 2, 10_000);
-        t.ok(`${label}: ${kind} で受け付けられなかったコードを知らせる`, retried && mine().filter(e => e.phase === 'code').at(-1).message?.includes('Invalid code'), JSON.stringify(mine().at(-1)));
+        t.ok(`${label}: 受け付けられなかったコードを知らせる`, retried && mine().filter(e => e.phase === 'code').at(-1).message?.includes('Invalid code'), JSON.stringify(mine().at(-1)));
         real.submitCode(loginId, 'good#1');
         const done = await until(() => mine().some(e => ['done', 'error'].includes(e.phase)), 20_000);
-        t.ok(`${label}: ${kind} を最後まで進める`, done && mine().at(-1).phase === 'done', JSON.stringify(mine().at(-1)));
-      }
-      if (kinds.includes('setup-token')) {
-        t.ok(`${label}: 折り返されたトークンをそのまま保存する`, realSaved.length === 1 && realSaved[0] === FAKE_TOKEN, realSaved[0]?.length);
-        t.ok(`${label}: イベントにトークンを載せない`, !JSON.stringify(realEvents).includes('sk-ant-'));
-      }
+        t.ok(`${label}: 最後まで進める`, done && mine().at(-1).phase === 'done', JSON.stringify(mine().at(-1)));
+      } else real.cancelAll();
       const seen = (await fs.readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-      t.ok(`${label}: CLI に会話用のトークン・API キーを渡さず、BROWSER を差し替える`, seen.length === kinds.length && seen.every(s => !s.hasOauthToken && !s.hasApiKey && s.browser?.includes('ply-no-browser')));
-      t.ok(`${label}: 使用量の認可はアカウントの設定フォルダに資格情報を残す`, await fs.access(path.join(dir, 'claude-usage', 'acct-real', '.credentials.json')).then(() => true, () => false));
+      t.ok(`${label}: CLI に会話用のトークン・API キーを渡さず、BROWSER を差し替える`, seen.length === 1 && seen.every(s => !s.hasOauthToken && !s.hasApiKey && s.browser?.includes('ply-no-browser')));
+      t.ok(`${label}: アカウントの設定フォルダに資格情報を残す`, await fs.access(path.join(dir, 'claude-usage', 'acct-real', '.credentials.json')).then(() => true, () => false));
       await fs.rm(path.join(dir, 'claude-usage', 'acct-real'), { recursive: true, force: true });
     }
   } finally {

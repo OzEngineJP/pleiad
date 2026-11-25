@@ -1,7 +1,7 @@
 // Claude のログインの期限切れ（401。#53・ADR 0212）。
 //   - normalize: assistant の error: 'authentication_failed' と、result の is_error・api_error_status: 401 から印（authFailed）を作る
 //   - claude バックエンド: 失敗の turnResult に kind: 'auth' と pristine（ツールも本文もまだ出ていない）を付ける。印が無くても文面で拾う
-//   - server（fake の台本 "fail-auth"）: auth（cli / token）と backend を添える。設定の行の expired・cliPath・cliVersion、印の消え方
+//   - server（fake の台本 "fail-auth"）: auth（cli / connectorsLogin）と backend を添える。設定の行の expired・cliPath・cliVersion、印の消え方
 // SDK の query は身代わりに差し替え（setClaudeSdkForTest）、server は fake バックエンドで流す。CLI も LLM も呼ばない
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -11,7 +11,7 @@ import { backend as claude, setClaudeSdkForTest } from '../../core/backends/clau
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { readSessions, writeSessions } from '../lib/data-store.mjs';
-import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createClaudeAuth } from '../../core/auth/claude-cli.mjs';
@@ -23,7 +23,6 @@ export const title = 'Claude のログインの期限切れ: 401 の見分け（
 const SESSION = '11111111-2222-4333-8444-555555555556';
 const MESSAGE = 'Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.';
 const THROWN = `Claude Code returned an error result: ${MESSAGE}`;
-const TOKEN = 'sk-ant-oat01-' + 'Q'.repeat(48);
 
 const init = () => ({ type: 'system', subtype: 'init', session_id: SESSION, model: 'claude-test' });
 const authAssistant = () => ({ type: 'assistant', parent_tool_use_id: null, session_id: SESSION, uuid: crypto.randomUUID(), error: 'authentication_failed',
@@ -166,10 +165,11 @@ export default async function (t) {
 
   // ---- 3. server（fake の台本 fail-auth）
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-auth-expired-'));
-  const api = await startFakeAnthropicApi({ [TOKEN]: 'org-token' });
   const cliDir = path.join(scratch, 'cli-config');
   await fs.mkdir(cliDir, { recursive: true });
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_ANTHROPIC_API: api.url, CLAUDE_CONFIG_DIR: cliDir }, dataDir: path.join(scratch, 'data') });
+  // 登録したアカウント（専用フォルダでログイン済み。ADR 0352）
+  const accountId = await seedClaudeAccount(path.join(scratch, 'data'), '仕事用');
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir }, dataDir: path.join(scratch, 'data') });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const status = () => c.cmd('authStatus', { backend: 'fake' });
   const ends = new Map();
@@ -212,17 +212,16 @@ export default async function (t) {
     t.ok('ほかの失敗には auth を添えず、期限切れにもしない', plain?.outcome === 'error' && !plain.kind && !plain.auth && !(await status()).expired, JSON.stringify(plain));
     t.ok('ほかの失敗は中断にしない（今のまま）', ends.get(sessionId)?.interrupted == null && (await loaded(sessionId)) === null, JSON.stringify(ends.get(sessionId)));
 
-    // Pleiad の Claude のアカウント（トークン）を使う会話
-    const saved = await c.cmd('saveClaudeAccount', { name: '仕事用', token: TOKEN });
+    // Pleiad の Claude のアカウント（専用フォルダのログイン）を使う会話（ADR 0352）
     const { sessionId: tokenSession } = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
-    await c.cmd('setTurnSettings', { sessionId: tokenSession, account: saved.id });
+    await c.cmd('setTurnSettings', { sessionId: tokenSession, account: accountId });
     const tokenFailed = await failure(tokenSession, 'fail-auth');
-    t.ok('アカウントのトークンの会話は auth: { mode: token, accountId, name }', tokenFailed?.kind === 'auth' && tokenFailed.auth?.mode === 'token'
-      && tokenFailed.auth.accountId === saved.id && tokenFailed.auth.name === '仕事用' && !('email' in tokenFailed.auth), JSON.stringify(tokenFailed));
-    t.ok('トークンの期限切れは CLI のログインの期限切れにしない', !(await status()).expired);
+    t.ok('アカウントの会話は auth: { mode: connectorsLogin, accountId, name }', tokenFailed?.kind === 'auth' && tokenFailed.auth?.mode === 'connectorsLogin'
+      && tokenFailed.auth.accountId === accountId && tokenFailed.auth.name === '仕事用' && !('email' in tokenFailed.auth), JSON.stringify(tokenFailed));
+    t.ok('アカウントのログイン切れは CLI のログインの期限切れにしない', !(await status()).expired);
     const tokenStop = await loaded(tokenSession);
-    t.ok('アカウントの会話の中断には、アカウントの id と名前を残す（トークンは残さない）', tokenStop?.reason === 'auth' && tokenStop.auth?.mode === 'token'
-      && tokenStop.auth.accountId === saved.id && tokenStop.auth.name === '仕事用' && !JSON.stringify(tokenStop).includes(TOKEN.slice(0, 20)), JSON.stringify(tokenStop));
+    t.ok('アカウントの会話の中断には、アカウントの id と名前を残す', tokenStop?.reason === 'auth' && tokenStop.auth?.mode === 'connectorsLogin'
+      && tokenStop.auth.accountId === accountId && tokenStop.auth.name === '仕事用', JSON.stringify(tokenStop));
 
     // ログインをやめる（設定のカード・初回の案内・会話の失敗の行の［やめる］）。待っていなければ何もしない
     const idle = await c.cmd('authCancel', { backend: 'fake' });
@@ -232,7 +231,6 @@ export default async function (t) {
   } finally {
     c.close?.();
     await server.stop();
-    await api.close?.();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 

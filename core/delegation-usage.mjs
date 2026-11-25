@@ -49,7 +49,7 @@ export function createUsageWarm({ warmModels, now = () => Date.now(), intervalMs
  *               アカウントの数だけ時間がかかりうるので、使用量の公開を待たせず、公開した後に（アカウントを 1 つずつ順に）呼ぶ。
  *               一覧が変わったときだけ、もう 1 回知らせる
  * scopeForAccount(b, account) … 候補に書かれたアカウントの範囲に絞ったバックエンド（使えなければ null）。アカウントごとに一覧を持つエージェントだけに使う
- * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, hasToken, identity }] }
+ * claudeIdentities() … { login: { org, email } | null, accounts: [{ id, usageLogin, identity }] }
  */
 export function createUsageMonitor({ backends, installed = () => true, read, candidates, modelKnown, warm = async () => {}, claudeIdentities = async () => null,
   scopeForAccount = null, intervalMs = REFRESH_MS, onChange = () => {} }) {
@@ -139,8 +139,8 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
         return { account, label: maskEmail(row.label), windows: freshWindows(row),
           ...(Object.hasOwn(row, 'checkedAt') ? { checkedAt: row.checkedAt } : {}),
           identity: ids ? (account ? registered?.identity ?? null : ids.login ?? null) : row.identity ?? null,
-          // 登録したアカウントは資格情報（Claude はトークン）が無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる
-          runnable: account ? (ids ? Boolean(registered?.hasToken) : row.ready !== false) : true };
+          // 登録したアカウントは資格情報（Claude は専用フォルダのログイン）が無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる
+          runnable: account ? (ids ? Boolean(registered?.usageLogin) : row.ready !== false) : true };
       });
     }
     return entry;

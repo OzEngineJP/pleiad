@@ -1,12 +1,10 @@
-// 登録した Claude アカウントで claude.ai のコネクターを使う入口（ADR 0340。段 1: 既定オフ・画面なし・書き込みなし）。
-// 入口はアカウントごとに 1 つのスイッチ。未設定・読めない・知らない版・知らない値はすべてオフ。
+// 登録した Claude アカウントで claude.ai のコネクターを使うかの設定（ADR 0340・0352）。
+// アカウントごとに 1 つのスイッチ。未設定・読めない・知らない版・知らない値はすべてオフ。
 //   <データ置き場>/claude-account-connectors.json = { version: 1, accounts: { <アカウント id>: { enabled: true } } }
 //   （秘密を含まない。claude-accounts.json の版は上げない。claude-connectors.json は設定 › 外部 MCP のコネクターの一覧の覚えで別のもの）
 //   コネクターの名前ごとのオフは、同じアカウントの項目に後から足せる（今は読まない。知らない項目は無視する）
-// 入口は gate(account) の 1 か所（core/server.mjs の accountResolve）。オフ・対象外のときは同じ account をそのまま返し、新しい認証の解決へ入らない。
-// オンのときだけ resolveAuth(account) を呼ぶ。既定の resolveAuth（段 1 の authNotAvailableYet）は「まだ使えない」（null）を返し、本物の資格情報を読まず、旧い経路のまま会話を始める。
-// 本物の resolveAuth は core/claude-connectors-auth.mjs（server が差す。専用フォルダ方式だけ。ADR 0350）。使えるときは認証の入った account を返し、使えないときは投げて会話を止める（旧い経路へは戻さない）。
-// 保存済みの mode（b1 の時代の印）は読まない。オンなら専用フォルダ方式
+// 登録したアカウントは、オン・オフに関係なく専用フォルダのログインで会話する（core/claude-connectors-auth.mjs の createClaudeConnectorsWiring。ADR 0352）。
+// オフのときは claude.ai のコネクターを出さない（ENABLE_CLAUDEAI_MCP_SERVERS=false）。保存済みの mode（b1 の時代の印）は読まない
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -27,9 +25,6 @@ const readJson = async (file) => {
   catch (e) { return e?.code === 'ENOENT' ? { ok: true, data: null } : { ok: false, data: null }; }
 };
 const writeJson = (file, data) => writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
-
-/** 段 1 の認証の解決: まだ使えない。何も読まず、何も始めない */
-export const authNotAvailableYet = async () => null;
 
 /**
  * 入口の設定。read(id) は書き込みをせず壊れていても投げない（段 1 互換）。
@@ -162,24 +157,3 @@ export function createClaudeConnectorsCache({ dataDir, maxAccounts = 50, maxConn
   };
 }
 
-/**
- * 入口。gate(account) は、会話が使うアカウント（claudeAccounts.resolve の結果）を、入口がオンのときだけ resolveAuth に通す。
- *   account が無い（ログイン中のアカウント・アカウントの指定なし）・id が無い → 設定を読まずにそのまま返す
- *   オフ → 設定を 1 回だけ読み、同じ account をそのまま返す（resolveAuth は呼ばない）
- *   オン → resolveAuth(account) を呼ぶ。結果の account があればそれを、無ければ（既定の段 1 の解決は常に無い）同じ account を返す。resolveAuth が投げたらそのまま投げる（止める）
- * 互換の接続先の会話は、server が accountResolve を呼ぶ前に分かれている（接続先の会話はアカウントを引かない）ので、ここへ来ない
- */
-export function createClaudeConnectorsGate({ dataDir, resolveAuth = authNotAvailableYet, settings = createClaudeConnectorSettings({ dataDir }) }) {
-  return {
-    settings,
-    async gate(account, config) {
-      if (!account?.id) return account;
-      config ??= await settings.read(account.id);
-      if (!config.enabled) return account;
-      return (await resolveAuth(account, config))?.account ?? account;
-    },
-  };
-}
-
-/** キャッシュのキーに足す識別子の接尾辞。オフ（識別子なし）は空で、キーは今までの文字列のまま */
-export const identitySuffix = identity => identity ? `:cn:${identity}` : '';

@@ -165,7 +165,7 @@ export function inputJsonSchema(op, locale) {
 
 const SECRET_KEY = /(secret|token|password|passwd|api[_-]?key|authorization|credential|cookie)s?$/i;
 
-/** 返す前の伏せ字。秘密らしい名前の欄の文字列を伏せる（hasToken のような真偽・個数は残る）。出力の型で秘密を持たせないのが本筋で、これは最後の網。 */
+/** 返す前の伏せ字。秘密らしい名前の欄の文字列を伏せる（hasKey のような真偽・個数は残る）。出力の型で秘密を持たせないのが本筋で、これは最後の網。 */
 export function maskOutput(value, key = '') {
   if (Array.isArray(value)) return value.map((v) => maskOutput(v));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskOutput(v, k)]));

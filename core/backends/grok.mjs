@@ -431,7 +431,6 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         };
         let error = null, outcome = 'ok';
         try {
-          if (args.oauthToken) throw new Error(t('accounts.badBackend'));
           check();
           // CLI の起動・履歴の再生・モードの適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す

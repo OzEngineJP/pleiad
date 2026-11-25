@@ -5,7 +5,8 @@ import path from 'node:path';
 import { loadClaudeSdk } from '../claude-sdk.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota, LOGIN_ACCOUNT, quotaFailure } from '../usage.mjs';
-import { claudeEnv, TOKEN_ENV } from '../claude-accounts.mjs';
+// 人が自分で env に置いた長期トークン（ログイン中のアカウントの会話はこれで動く）。登録したアカウントの使用量では外す
+const TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 import { claudeLoginPresent, macKeychainAuthFailure } from '../claude-own-dir.mjs';
 import { isClaudeAuthError } from './claude-normalize.mjs';
 import { t } from '../i18n.mjs';
@@ -13,13 +14,12 @@ import { t } from '../i18n.mjs';
 /**
  * 使用量を読むプロセスの env。
  *   configDir あり … 登録したアカウントの使用量。そのアカウント専用の設定フォルダ（`claude auth login` 済み）を
- *                    CLAUDE_CONFIG_DIR にし、会話用のトークン（CLAUDE_CODE_OAUTH_TOKEN）は外す。
- *                    setup-token のトークンは scope が user:inference だけで使用量を読めない（2026-09-23 確認）ため。
+ *                    CLAUDE_CONFIG_DIR にし、env の長期トークン（CLAUDE_CODE_OAUTH_TOKEN）は外す（会話と同じログインで読む。ADR 0352）。
  *   無し          … ログイン中のアカウント（今までどおり）
  */
-export function usageEnv(base = process.env, { token, configDir } = {}) {
-  if (!configDir) return claudeEnv(base, { token, extra: { CLAUDECODE: undefined } });
-  const env = claudeEnv(base, { extra: { CLAUDECODE: undefined } });
+export function usageEnv(base = process.env, { configDir } = {}) {
+  const env = { ...base, CLAUDECODE: undefined };
+  if (!configDir) return env;
   for (const key of Object.keys(env)) if ([TOKEN_ENV, 'CLAUDE_CONFIG_DIR'].includes(key.toUpperCase())) delete env[key];
   env.CLAUDE_CONFIG_DIR = configDir;
   return env;
@@ -30,14 +30,14 @@ export function usageEnv(base = process.env, { token, configDir } = {}) {
 // 同じ設定フォルダの更新の直列化は CLI の .oauth_refresh.lock に任せる（ADR 0350。Pleiad 側の順番の口は持たない）
 export const readClaudeUsage = (options = {}) => readClaudeUsageNow(options);
 
-async function readClaudeUsageNow({ token, configDir } = {}) {
+async function readClaudeUsageNow({ configDir } = {}) {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const { query } = await loadClaudeSdk();
   const q = query({ prompt: (async function* () { await gate; })(), options: {
     pathToClaudeCodeExecutable: claudeExecutable(), persistSession: false,
     settingSources: ['user'], tools: [], mcpServers: {}, settings: { disableAllHooks: true },
-    env: usageEnv(process.env, { token, configDir }),
+    env: usageEnv(process.env, { configDir }),
   } });
   let timer, result;
   try {
@@ -46,7 +46,7 @@ async function readClaudeUsageNow({ token, configDir } = {}) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(t('claude.usage.timeout')), { reason: 'timeout' })), 20_000); }),
     ]);
   } finally { clearTimeout(timer); release(); q.close(); }
-  return claudeUsageQuota(result, { token, configDir });
+  return claudeUsageQuota(result, { configDir });
 }
 
 const filled = value => typeof value === 'string' && value.length > 0;
@@ -80,9 +80,9 @@ export async function credentialsMissing({ configDir, env = process.env, home = 
  * 汎用の「取得できません」ではなく再ログインを促す（reason: 'no-login'）。ログイン中のアカウントはターミナルの `claude auth login`、
  * 登録したアカウントは「認可をやり直す」（readClaudeAccountsUsage が reauth を付ける）
  */
-export async function claudeUsageQuota(result, { token, configDir, missing = credentialsMissing } = {}) {
+export async function claudeUsageQuota(result, { configDir, missing = credentialsMissing } = {}) {
   const quota = claudeQuota(result);
-  if (quota.windows.length || quota.plan || token) return quota;
+  if (quota.windows.length || quota.plan) return quota;
   if (!(await Promise.resolve().then(() => missing({ configDir })).catch(() => false))) return quota;
   return { ...quota, reason: 'no-login', message: configDir ? t('claude.usage.reauthNeeded') : t('claude.usage.relogin') };
 }

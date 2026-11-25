@@ -1,4 +1,4 @@
-// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・秘匿・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0329）
+// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・専用フォルダでの取得・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0329・0352）
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -16,10 +16,23 @@ import { createBotSessions } from '../../core/bots/sessions.mjs';
 import { normalizePulse } from '../../core/bots/store.mjs';
 
 export const name = 'claude-catalog-accounts';
-export const title = 'Claude: アカウントごとのモデル一覧・検証・anyCatalog 隔離・秘匿・無効化・Mythos 説明・心拍';
+export const title = 'Claude: アカウントごとのモデル一覧・検証・anyCatalog 隔離・専用フォルダでの取得・無効化・Mythos 説明・心拍';
 
-const TOK_VERIFIED = 'sk-ant-oat01-' + 'V'.repeat(40);
-const TOK_PLAIN = 'sk-ant-oat01-' + 'N'.repeat(40);
+// 登録したアカウントの専用フォルダの認証（core/claude-connectors-auth.mjs の resolveAuth が付ける ownDir の写し。ADR 0352）。
+// 中身の無い名前だけのフォルダ（偽の CLI は env の CLAUDE_CONFIG_DIR でアカウントを見分ける）
+const DIR_VERIFIED = path.join(os.tmpdir(), 'ply-cat-own-verified');
+const DIR_PLAIN = path.join(os.tmpdir(), 'ply-cat-own-plain');
+const fakeOwnDir = (dir, { fail = null, prepared = null } = {}) => ({
+  identity: 'own-dir',
+  enabled: false,
+  authFailure: async () => null,
+  prepare: async () => {
+    prepared?.push(dir);
+    if (fail) throw fail;
+    return { env: { CLAUDE_CONFIG_DIR: dir, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } };
+  },
+});
+const acct = (id, dir = DIR_PLAIN, o) => ({ id, name: id, ownDir: fakeOwnDir(dir, o) });
 
 const STANDARD_14 = [
   { value: 'default', displayName: 'Default', description: 'Use default model' },
@@ -81,7 +94,7 @@ export default async function (t) {
     setLocale(prevLocale);
   }
 
-  // ---- 2. backendForAccount: accounts: 'token' / 'agent' で forAccount を呼ぶ（ログイン中・未指定は元を包む／そのまま）
+  // ---- 2. backendForAccount: accounts: 'token' / 'agent' で forAccount を呼ぶ（ログイン中・未指定は元を包む／そのまま）。'token' は「Pleiad がアカウントを持つ」印の名前（ADR 0352 からトークンは持たない）
   {
     const loginNull = await backendForAccount(claude, null);
     const loginUndef = await backendForAccount(claude, undefined);
@@ -89,7 +102,7 @@ export default async function (t) {
     assert.equal(loginUndef.id, 'claude');
     const plainWrapped = await backendForAccount({ id: 'no-accounts', capabilities: {} }, { id: 'a1' });
     assert.equal(plainWrapped.id, 'no-accounts');
-    const verified = await backendForAccount(claude, { id: 'acc-wrap-verified', token: TOK_VERIFIED });
+    const verified = await backendForAccount(claude, acct('acc-wrap-verified', DIR_VERIFIED));
     assert.notEqual(verified, claude);
     assert.equal(verified.id, 'claude');
 
@@ -105,25 +118,22 @@ export default async function (t) {
     t.ok('backendForAccount は token / agent の両方で forAccount を返し、未指定なら元のバックエンド', true);
   }
 
-  // ---- 3. probeCatalog の資格情報受け渡し・トークン秘匿・missing token・anyCatalog 隔離・invalidateModels
+  // ---- 3. probeCatalog の専用フォルダでの取得・ログインが無いアカウント・整えられないとき
   {
     const seenProbes = [];
     const logs = [];
     const origError = console.error;
     console.error = (...a) => { logs.push(a.map(String).join(' ')); };
-    let mode = 'normal';
+    const origOauth = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    // 共有のログインのトークンが環境にあっても、アカウントの取得には持ち込まない
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'inherited-from-env';
     const restore = setClaudeSdkForTest({
       executable: () => 'fake-claude',
       cliSigThrottleMs: 1e9,
       query: ({ options }) => {
-        const tok = options?.env?.CLAUDE_CODE_OAUTH_TOKEN ?? '';
-        seenProbes.push({ cwd: options?.cwd, hasTok: Boolean(tok), isVerified: tok === TOK_VERIFIED, isPlain: tok === TOK_PLAIN });
-        if (mode === 'leak-error' && tok === TOK_VERIFIED) {
-          // message・cause・追加の項目のどこにもトークンが混ざる失敗（見分けに要る code だけは残る）
-          throw Object.assign(new Error(`HTTP 401 bearer ${TOK_VERIFIED}`, { cause: new Error(`upstream rejected ${TOK_VERIFIED}`) }),
-            { code: 'E401', detail: `Authorization: Bearer ${TOK_VERIFIED}` });
-        }
-        const rows = tok === TOK_VERIFIED ? MYTHOS_16 : STANDARD_14;
+        const env = options?.env ?? {};
+        seenProbes.push({ cwd: options?.cwd, configDir: env.CLAUDE_CONFIG_DIR ?? null, oauth: env.CLAUDE_CODE_OAUTH_TOKEN ?? null, mcp: env.ENABLE_CLAUDEAI_MCP_SERVERS ?? null });
+        const rows = env.CLAUDE_CONFIG_DIR === DIR_VERIFIED ? MYTHOS_16 : STANDARD_14;
         return {
           initializationResult: async () => ({ models: rows }),
           supportedModels: async () => rows,
@@ -133,9 +143,9 @@ export default async function (t) {
       },
     });
     try {
-      const verified = await backendForAccount(claude, { id: 'acct-q-verified', token: TOK_VERIFIED });
-      const plain = await backendForAccount(claude, { id: 'acct-q-plain', token: TOK_PLAIN });
-      const missing = await backendForAccount(claude, { id: 'acct-q-missing', token: '' });
+      const verified = await backendForAccount(claude, acct('acct-q-verified', DIR_VERIFIED));
+      const plain = await backendForAccount(claude, acct('acct-q-plain'));
+      const missing = await backendForAccount(claude, { id: 'acct-q-missing', name: 'missing' });
 
       const [mLogin, mVerified, mPlain] = await Promise.all([claude.models(w1), verified.models(w1), plain.models(w1)]);
       assert.equal('claude-mythos-5-2' in mLogin, false);
@@ -150,37 +160,41 @@ export default async function (t) {
       assert.equal(await claude.matchModel('claude-mythos-5-2', w1), null);
       t.ok('probeCatalog: 承認のあるアカウントだけ Mythos 5.2 を持ち、ほかのアカウントとログイン中のアカウントは持たない（別名 mythos も作らない）', true);
 
-      // トークンの無いアカウントは CLI を起こさず、ログイン中へフォールバックもしない
+      // アカウントの一覧はそのアカウントの専用フォルダ（CLAUDE_CONFIG_DIR）で引き、環境のトークンは持ち込まない。ログイン中は共有の ~/.claude のまま
+      const byDir = (d) => seenProbes.filter((x) => x.configDir === d);
+      assert.ok(byDir(DIR_VERIFIED).length >= 1 && byDir(DIR_PLAIN).length >= 1, JSON.stringify(seenProbes));
+      assert.ok([...byDir(DIR_VERIFIED), ...byDir(DIR_PLAIN)].every((x) => x.oauth === null && x.mcp === 'false'), JSON.stringify(seenProbes));
+      assert.ok(seenProbes.some((x) => x.configDir === null && x.oauth === 'inherited-from-env'), 'ログイン中の一覧は今までどおりの環境で引く');
+      t.ok('アカウントの一覧は専用フォルダ（CLAUDE_CONFIG_DIR）で引き、環境の CLAUDE_CODE_OAUTH_TOKEN を持ち込まない', true);
+
+      // 専用フォルダの認証を持たないアカウントは CLI を起こさず、ログイン中へフォールバックもしない
       const beforeMissing = seenProbes.length;
       const mMissing = await missing.models(w1);
       assert.equal(seenProbes.length, beforeMissing);
       assert.equal('claude-mythos-5-2' in mMissing, false);
-      t.ok('トークンが無いアカウントの models は CLI を起こさず静的フォールバック', true);
+      t.ok('専用フォルダの認証が無いアカウントの models は CLI を起こさず静的フォールバック', true);
 
-      // エラーにトークンが混ざっても、ログと、投げ直すエラー（message・cause・追加の項目・stack）から伏せる
-      mode = 'leak-error';
+      // 専用フォルダを整えられない（リンクを作れない・ログインが無い）ときは CLI を起こさず、失敗のログを残して固定の一覧で答える
+      const prepared = [];
+      const broken = await backendForAccount(claude, acct('acct-q-broken', DIR_VERIFIED, { fail: new Error('cannot link'), prepared }));
       const logsBefore = logs.length;
-      await verified.models(w2, { refresh: true });
-      const newLogs = logs.slice(logsBefore);
-      assert.ok(newLogs.some((l) => l.includes('モデル一覧を取れなかった')), `失敗のログが出ていること: ${JSON.stringify(newLogs)}`);
-      assert.equal(logs.some((l) => l.includes(TOK_VERIFIED)), false, 'ログに生のトークンを出さない');
-      let thrown = null;
-      try { await probeClaudeCatalogForTest(w2, true, { id: 'acct-q-verified', token: TOK_VERIFIED }); } catch (e) { thrown = e; }
-      assert.ok(thrown, 'トークンの混ざった失敗は投げ直される');
-      assert.equal(String(thrown.message).includes(TOK_VERIFIED), false, 'message にトークンを残さない');
-      assert.equal('cause' in thrown, false, '元のエラー（cause）を渡さない');
-      assert.equal('detail' in thrown, false, '元のエラーの追加の項目を渡さない');
-      assert.equal(thrown.code, 'E401', '見分けに要る code だけは残す');
-      assert.equal(JSON.stringify(thrown, Object.getOwnPropertyNames(thrown)).includes(TOK_VERIFIED), false, 'stack にもトークンを残さない');
-      t.ok('probe 失敗のログが出ていて、ログと投げ直すエラー（message・cause・追加の項目・stack）に生トークンを残さない', true);
+      const beforeBroken = seenProbes.length;
+      const mBroken = await broken.models(w2, { refresh: true });
+      assert.equal(seenProbes.length, beforeBroken, '整えられなければ CLI を起こさない');
+      assert.deepEqual(prepared, [DIR_VERIFIED], '取得の前に専用フォルダを整える');
+      assert.equal('claude-mythos-5-2' in mBroken, false);
+      assert.ok(logs.slice(logsBefore).some((l) => l.includes('モデル一覧を取れなかった')), JSON.stringify(logs.slice(logsBefore)));
+      await assert.rejects(() => probeClaudeCatalogForTest(w2, true, { id: 'acct-q-missing' }), /missing Claude account own dir/);
+      t.ok('専用フォルダを整えられないときは CLI を起こさず固定の一覧で答え、認証の無いアカウントの取得は投げる', true);
     } finally {
+      if (origOauth === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = origOauth;
       console.error = origError;
       restore();
       claude.invalidateModels();
     }
   }
 
-  // ---- 4. sdk.probe の署名（生トークンを渡さない）・anyCatalog・coldSince・短い一覧・generation・LRU 64
+  // ---- 4. sdk.probe の署名（accountId だけ）・anyCatalog・coldSince・短い一覧・generation・LRU 64
   {
     const probeOpts = [];
     const customRows = new Map();
@@ -207,16 +221,16 @@ export default async function (t) {
       },
     });
     try {
-      // sdk.probe に生トークンを含めない（accountId だけ）
-      const verifiedIso = claude.forAccount({ id: 'verified-iso', token: TOK_VERIFIED });
-      const plainIso = claude.forAccount({ id: 'plain-iso', token: TOK_PLAIN });
-      const coldIso = claude.forAccount({ id: 'cold-iso', token: TOK_PLAIN });
+      // sdk.probe に渡すのは accountId だけ（専用フォルダの認証は渡さない）
+      const verifiedIso = claude.forAccount(acct('verified-iso', DIR_VERIFIED));
+      const plainIso = claude.forAccount(acct('plain-iso'));
+      const coldIso = claude.forAccount(acct('cold-iso'));
 
       const mVerified = await verifiedIso.models(w1);
       assert.equal('claude-mythos-5-2' in mVerified, true);
-      assert.equal(JSON.stringify(probeOpts.at(-1)).includes(TOK_VERIFIED), false);
-      assert.equal(probeOpts.at(-1).extra?.accountId, 'verified-iso');
-      t.ok('sdk.probe には生トークンを渡さず accountId だけ渡す', true);
+      assert.equal(JSON.stringify(probeOpts.at(-1)).includes(DIR_VERIFIED), false);
+      assert.deepEqual(probeOpts.at(-1).extra, { accountId: 'verified-iso' });
+      t.ok('sdk.probe には accountId だけ渡す', true);
 
       // anyCatalog の隔離: verified-iso が成功済みでも、失敗した plain-iso (別 cwd) には verified-iso の Mythos を貸さない
       customRows.set('plain-iso', new Error('offline'));
@@ -249,7 +263,7 @@ export default async function (t) {
 
       // 完全な一覧を一度も取れていないアカウントが短い一覧を返しても、別のアカウントの完全な一覧は貸さない（その短い一覧を使う）
       customRows.set('short-iso', () => SHORT_4);
-      const shortIso = claude.forAccount({ id: 'short-iso', token: TOK_PLAIN });
+      const shortIso = claude.forAccount(acct('short-iso'));
       const mShort = await shortIso.models(w1);
       assert.equal('claude-opus-4-6' in mShort, true);
       assert.equal('claude-opus-4-8' in mShort, false);
@@ -287,7 +301,7 @@ export default async function (t) {
       const lruCwds = Array.from({ length: CATALOG_MAX + 1 }, (_, i) => path.join(dir, `lru-${i}`));
       const lruCount = (cwd) => calls.get(`lru-iso|${cwd}`) ?? 0;
       customRows.set('lru-iso', () => STANDARD_14);
-      const lruIso = claude.forAccount({ id: 'lru-iso', token: TOK_PLAIN });
+      const lruIso = claude.forAccount(acct('lru-iso'));
       // 最初の 64 件は取り直し（refresh）で確実に 1 回ずつ引く（通常の呼び出しは手元の答えがあると裏で引くので、回数が揺れる）
       for (const cwd of lruCwds.slice(0, CATALOG_MAX)) await lruIso.models(cwd, { refresh: true });
       assert.equal(lruCwds.slice(0, CATALOG_MAX).every((cwd) => lruCount(cwd) === 1), true, '上限までは 1 回ずつ引いて、全部残っている');
@@ -312,7 +326,7 @@ export default async function (t) {
     }
   }
 
-  // ---- 4b. 失敗の再試行待ち・warmModels の直列・入れ替え／削除で一覧を忘れる・互換の接続先でアカウントのトークンを渡さない（アカウントごと）
+  // ---- 4b. 失敗の再試行待ち・warmModels の直列・入れ替え／削除で一覧を忘れる・互換の接続先でアカウントの専用フォルダを使わない（アカウントごと）
   {
     claude.invalidateModels();
     const calls = new Map();
@@ -341,8 +355,8 @@ export default async function (t) {
     try {
       console.error = () => {}; // 失敗のログは試験の出力に混ぜない
       const upOnly = () => [...STANDARD_14, { value: 'claude-up-only', displayName: 'Up Only', description: '' }];
-      const down = claude.forAccount({ id: 'retry-down', token: TOK_PLAIN });
-      const up = claude.forAccount({ id: 'retry-up', token: TOK_VERIFIED });
+      const down = claude.forAccount(acct('retry-down'));
+      const up = claude.forAccount(acct('retry-up', DIR_VERIFIED));
       behaviour.set('retry-down', new Error('offline'));
       behaviour.set('retry-up', upOnly);
 
@@ -376,7 +390,7 @@ export default async function (t) {
       // warmModels は、アカウントが何件あっても（ログイン中も含めて）CLI を同時に起こさず、呼んだ順に 1 本ずつ引く。1 件が失敗しても続きを止めない
       calls.clear(); startOrder.length = 0; inflight = 0; peak = 0;
       const warmIds = ['warm-a', 'warm-b', 'warm-c'];
-      const warmers = warmIds.map((id) => claude.forAccount({ id, token: TOK_PLAIN }));
+      const warmers = warmIds.map((id) => claude.forAccount(acct(id)));
       behaviour.set('warm-b', new Error('warm failed'));
       await Promise.all([claude.warmModels(w1), ...warmers.map((a) => a.warmModels(w1))]);
       assert.equal(peak, 1, 'warm は CLI を同時に起こさない');
@@ -384,19 +398,19 @@ export default async function (t) {
       assert.deepEqual(['login', ...warmIds].map((id) => calls.get(id)), [1, 1, 1, 1], '失敗した 1 件があっても、後ろのアカウントを引く');
       t.ok('warmModels は、ログイン中と登録アカウントの一覧を同時に起こさず順に引き、1 件の失敗で続きを止めない', true);
 
-      // トークンの入れ替え・アカウントの削除（invalidateModels(accountId)）で、そのアカウントの一覧を忘れる。ほかのアカウントの一覧は残る
+      // ログインし直し・アカウントの削除（invalidateModels(accountId)）で、そのアカウントの一覧を忘れる。ほかのアカウントの一覧は残る
       calls.clear();
       behaviour.set('swap-iso', () => STANDARD_14);
       behaviour.set('keep-iso', () => STANDARD_14);
-      const swap = claude.forAccount({ id: 'swap-iso', token: TOK_PLAIN });
-      const keep = claude.forAccount({ id: 'keep-iso', token: TOK_PLAIN });
+      const swap = claude.forAccount(acct('swap-iso'));
+      const keep = claude.forAccount(acct('keep-iso'));
       assert.equal('claude-mythos-5-2' in await swap.models(w1, { refresh: true }), false);
       await keep.models(w1, { refresh: true });
       assert.equal(await swap.validModel('claude-mythos-5-2'), false, '一覧を引いたあとは、一覧に無い ID を断る');
-      // 入れ替え: 同じ id のまま新しいトークン（承認のあるアカウントのもの）で引き直す
+      // 入れ替え: 同じ id のまま別の claude.ai アカウント（承認のあるもの）でログインし直して引き直す
       claude.invalidateModels('swap-iso');
       behaviour.set('swap-iso', () => MYTHOS_16);
-      const swapped = claude.forAccount({ id: 'swap-iso', token: TOK_VERIFIED });
+      const swapped = claude.forAccount(acct('swap-iso', DIR_VERIFIED));
       assert.equal(await swapped.validModel('claude-mythos-5-2'), true, '忘れた直後は一覧を持たない（引くまでは形の良い ID を断らない）');
       assert.equal('claude-mythos-5-2' in await swapped.models(w1, { refresh: true }), true, '入れ替え後は新しい一覧を引く');
       assert.equal(calls.get('swap-iso'), 2);
@@ -408,21 +422,30 @@ export default async function (t) {
       assert.deepEqual(startOrder, before, '削除したあとの確認は CLI を起こさない');
       await keep.models(w1);
       assert.equal(calls.get('keep-iso'), 1, 'ほかのアカウントの一覧は残る');
-      t.ok('トークンの入れ替え・削除（invalidateModels(accountId)）でそのアカウントの一覧だけを忘れ、削除後に CLI を起こさず、ほかのアカウントの一覧は残す', true);
+      t.ok('ログインし直し・削除（invalidateModels(accountId)）でそのアカウントの一覧だけを忘れ、削除後に CLI を起こさず、ほかのアカウントの一覧は残す', true);
 
-      // 互換の接続先の会話では、アカウントのトークンを渡さない（接続先の鍵で走る。アカウントの一覧でも裁かない）。公式のときはアカウントのトークンを渡す
+      // 互換の接続先の会話では、アカウントの専用フォルダを整えず env も足さない（接続先の鍵で走る）。公式のときは整えてから専用フォルダの env を渡す
       const seenRuns = [];
+      const prepared = [];
       const origRun = claude.runTurn;
-      claude.runTurn = (opts) => { seenRuns.push({ endpoint: Boolean(opts?.endpoint), token: opts?.oauthToken ?? null }); return (async function* () {})(); };
+      claude.runTurn = (opts) => { seenRuns.push({ endpoint: Boolean(opts?.endpoint), dir: opts?.connectorsEnv?.CLAUDE_CONFIG_DIR ?? null, ownDir: opts?.connectors?.identity ?? null, token: opts?.oauthToken ?? null }); return (async function* () {})(); };
       try {
-        const scoped = claude.forAccount({ id: 'compat-iso', token: TOK_VERIFIED });
-        scoped.runTurn({ endpoint: { id: 'ep-compat', baseUrl: 'http://127.0.0.1:1' } });
-        scoped.runTurn({});
-        scoped.runTurn({ oauthToken: TOK_PLAIN });
+        const scoped = claude.forAccount(acct('compat-iso', DIR_VERIFIED, { prepared }));
+        await scoped.runTurn({ endpoint: { id: 'ep-compat', baseUrl: 'http://127.0.0.1:1' } });
+        assert.deepEqual(prepared, [], '互換の接続先では専用フォルダを整えない');
+        await scoped.runTurn({});
       } finally { claude.runTurn = origRun; }
-      assert.deepEqual(seenRuns.map((r) => [r.endpoint, r.token]), [[true, null], [false, TOK_VERIFIED], [false, TOK_PLAIN]],
-        '互換の接続先ではアカウントのトークンを足さず、公式では足す（呼び出し側が渡したトークンはそのまま）');
-      t.ok('互換の接続先の会話にはアカウントのトークンを渡さず、公式の会話には渡す', true);
+      assert.deepEqual(seenRuns.map((r) => [r.endpoint, r.dir, r.ownDir, r.token]), [[true, null, null, null], [false, DIR_VERIFIED, 'own-dir', null]],
+        '互換の接続先では専用フォルダを使わず、公式では専用フォルダの env を渡す（トークンはどちらにも渡さない）');
+      assert.deepEqual(prepared, [DIR_VERIFIED]);
+      t.ok('互換の接続先の会話にはアカウントの専用フォルダを使わず、公式の会話は専用フォルダを整えてから走る', true);
+      let started = false;
+      claude.runTurn = () => { started = true; return (async function* () {})(); };
+      try {
+        await assert.rejects(() => claude.forAccount(acct('compat-fail', DIR_PLAIN, { fail: new Error('cannot link') })).runTurn({}), /cannot link/);
+      } finally { claude.runTurn = origRun; }
+      assert.equal(started, false, '整えられなければ会話を始めない');
+      t.ok('公式の会話で専用フォルダを整えられなければ、会話を始めずに投げる', true);
     } finally {
       Date.now = realNow;
       console.error = origError;
@@ -460,7 +483,7 @@ export default async function (t) {
       console.error = () => {};
       const extra = { value: 'claude-new-model', displayName: 'New Model', description: '' };
       behaviour.set('notify-late', () => MYTHOS_16);
-      const late = claude.forAccount({ id: 'notify-late', token: TOK_VERIFIED });
+      const late = claude.forAccount(acct('notify-late', DIR_VERIFIED));
 
       // 起動直後・アカウントの追加直後: 取れるのが待ち（3 秒）より遅い。画面の要求は固定の一覧で答える
       const gate = { ...deferred(), started: deferred() };
@@ -497,18 +520,18 @@ export default async function (t) {
       assert.equal('claude-new-model' in await late.models(w1), true);
       t.ok('一覧の中身が変わったときは知らせる', true);
 
-      // ログイン中の一覧は '' で知らせる。トークンは載せない
+      // ログイン中の一覧は '' で知らせる。アカウントの id のほかは載せない
       behaviour.set('login', () => STANDARD_14);
       await claude.models(w1, { refresh: true });
       const events = heard.splice(0);
       assert.deepEqual(events.map((event) => event.account), ['']);
       assert.deepEqual(Object.keys(events[0]), ['account'], '知らせに載せるのはアカウントの id だけ');
-      t.ok('ログイン中の一覧は空の id で知らせ、知らせにトークンを載せない', true);
+      t.ok('ログイン中の一覧は空の id で知らせ、知らせにアカウントの id のほかを載せない', true);
 
       // 取っている最中にアカウントを入れ替えた（invalidateModels）ら、古い結果は知らせない
       const staleGate = { ...deferred(), started: deferred() };
       gates.set('notify-gone', staleGate);
-      const gone = claude.forAccount({ id: 'notify-gone', token: TOK_PLAIN });
+      const gone = claude.forAccount(acct('notify-gone'));
       const staleRun = gone.models(w1, { refresh: true });
       await staleGate.started.promise;
       claude.invalidateModels('notify-gone');
@@ -687,7 +710,7 @@ export default async function (t) {
     t.ok('bot のアカウントを引けないときは、ログイン中の一覧へ落とさず、会話を作らず・既存の会話のモデルを書き換えずに断る', true);
   }
 
-  // ---- 6b. accountUnavailableBackend: アカウントを引けない（消した・トークンが無い）会話に渡すバックエンド
+  // ---- 6b. accountUnavailableBackend: アカウントを引けない（消した・ログインが無い）会話に渡すバックエンド
   {
     claude.invalidateModels();
     const home = path.join(dir, 'home-unavailable');
@@ -716,17 +739,17 @@ export default async function (t) {
       for (const member of ['listSessions', 'getSession', 'getMessages']) assert.equal(blocked[member], base[member], member);
       assert.equal(blocked.id, 'claude');
       // 選び直したアカウントで束縛し直すと、そのアカウントの一覧で動く（断るのは引けなかった会話だけ）
-      const rebound = await backendForAccount(blocked, { id: 'acct-verified', token: TOK_VERIFIED });
+      const rebound = await backendForAccount(blocked, acct('acct-verified', DIR_VERIFIED));
       assert.ok('claude-mythos-5-2' in await rebound.models(home), '選び直したアカウントの一覧で引ける');
       assert.equal(rebound.capabilities.internalCall, base.capabilities.internalCall);
       // 別のアカウントの一覧・ログイン中の一覧は返さない（断った後に、承認の無いアカウントの一覧が混ざらない）
-      assert.ok(!('claude-mythos-5-2' in await (await backendForAccount(blocked, { id: 'acct-plain', token: TOK_PLAIN })).models(home)));
+      assert.ok(!('claude-mythos-5-2' in await (await backendForAccount(blocked, acct('acct-plain'))).models(home)));
       // 'agent' 種は、資格情報が無いと履歴の元にも触れないので、Pleiad が持つ分だけ読む（これまでどおり）
       const agentBlocked = accountUnavailableBackend({ id: 'agentish', label: 'Agentish', capabilities: { accounts: 'agent' }, traits: {}, modes: () => ({}) }, error);
       await assert.rejects(() => agentBlocked.models(home), /account not found/);
       assert.equal(agentBlocked.capabilities.accounts, 'agent');
       assert.equal(agentBlocked.accountError, undefined, 'agent 種はこれまでどおり（理由の持ち方を足さない）');
-      t.ok('アカウントを引けない会話のバックエンド: トークンを要るものだけ断り、履歴は読め、アカウントは選び直せる（agent 種は Pleiad が持つ分だけ読む）', true);
+      t.ok('アカウントを引けない会話のバックエンド: アカウントの資格情報を要るものだけ断り、履歴は読め、アカウントは選び直せる（agent 種は Pleiad が持つ分だけ読む）', true);
     } finally {
       restore();
       claude.invalidateModels();
@@ -743,7 +766,7 @@ export default async function (t) {
     let inflight = 0, peak = 0, gate = null;
     const accountIds = ['mon-v1', 'mon-p1', 'mon-v2', 'mon-p2', 'mon-p3'];
     const verifiedIds = new Set(['mon-v1', 'mon-v2']);
-    const registry = new Map(accountIds.map((id) => [id, { id, token: verifiedIds.has(id) ? TOK_VERIFIED : TOK_PLAIN }]));
+    const registry = new Map(accountIds.map((id) => [id, acct(id, verifiedIds.has(id) ? DIR_VERIFIED : DIR_PLAIN)]));
     const scopedOf = (id) => claude.forAccount(registry.get(id));
     const realNow = Date.now;
     const restore = setClaudeSdkForTest({

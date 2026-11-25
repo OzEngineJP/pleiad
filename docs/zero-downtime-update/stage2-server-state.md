@@ -179,7 +179,7 @@
 | M48 | `botHost`（bot の会話。中は O21） | 4687 | `makeEmit` 2038、`endTurn` 5280、承認 4147 | 札 | O21 |
 | M49 | `worktreeHost`・`gitActivity` | 1842・1840 | | 保存済み | 台帳と隠し ref。片付けの判定が `runtime.turns` を見る（§5 の S12） |
 | M50 | `remote`・`remoteAgentPort`・`remoteDelegation` | 347・326・4462 | | 捨てる | 中継の鍵は保存済み。線は新しいサーバーが張り直す・追いつく |
-| M51 | `secretCipher`・`mcpSecrets`・`claudeAccountSecrets`・`compatSecrets` | 260-300 | | 捨てる | 復号した値の組は main に頼み直す（1-6 の合わせ 1） |
+| M51 | `secretCipher`・`mcpSecrets`・`compatSecrets` | 260-300 | | 捨てる | 復号した値の組は main に頼み直す（1-6 の合わせ 1） |
 | M52 | `voiceHost`・`claudeLogin`・`mcpOAuth`・`imageImporter`・`folderUploads`・`attachUploads` | 305・276・316・247・230・226 | | 捨てる | 通話は切れる。ログインの疑似端末・OAuth の流れ・取り込みは 2d で待つか取り消す（design.md §4.4「載せないもの」） |
 | M53 | そのほかの部品（`usageStore`・`quotaCache`・`contextSettings`・`plyMcp`・`claudeAccounts`・`compatEndpoints`・`notifySettings`・`residentPrefs`・`contextSession`・`mcpConfig`・`hooksConfig`・`plyHooks`・`routingUsage`・`opsHttp`・`sessionSearch`・`computerShots`・`agentScanLock`・`server`・`wss`） | 各所 | | 保存済み | 中身はデータ置き場から読む・キャッシュ。付け直しに関わる値は持たない |
 

@@ -115,7 +115,7 @@ import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
 import { sweepClaudeMcpFiles } from './claude-mcp-file.mjs';
 import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
-import { createClaudeAccounts, redactToken, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
+import { createClaudeAccounts, newAccountId } from './claude-accounts.mjs';
 import { createAgentAccounts } from './agent-accounts.mjs';
 import { createAgentAccountManager } from './agent-account-manager.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
@@ -561,21 +561,14 @@ const mcpSecrets = createSecretStore({ file: path.join(store.dataDir, 'mcp-secre
 const plyMcp = createPlyMcp({ dataDir: store.dataDir, secrets: mcpSecrets });
 // 暗号化できる起動（Pleiad デスクトップ）になったら、平文で残っている秘密を暗号化し直す（ロックの中で。npm start では何もしない）
 mcpSecrets.migrate().catch(() => {});
-// Claude のアカウント（会話ごとに選ぶ。claude setup-token のトークン）。秘密の置き方は MCP と同じ（core/claude-accounts.mjs）
-const claudeAccountSecrets = createSecretStore({ file: path.join(store.dataDir, 'claude-account-secrets.json'), cipher: secretCipher });
-claudeAccountSecrets.migrate().catch(() => {});
-// トークンの持ち主（発行された組織）を GET /v1/models の応答ヘッダーで確かめ、使用量の認可と食い違えば一覧で知らせる。
-// AGENT_HOST_ANTHROPIC_API は確認の送り先（テストの偽物用）。off なら確かめない（テストは既定で off。本物へは送らない）
-const tokenCheckApi = process.env.AGENT_HOST_ANTHROPIC_API || ANTHROPIC_API;
+// Claude のアカウント（会話ごとに選ぶ。アカウントごとの専用フォルダの claude.ai のログイン。ADR 0352。core/claude-accounts.mjs）
 // 子の claude CLI の起動の形（ログインとアカウントの削除の logout で同じものを使う）
 const claudeCliCommand = () => cliCommand('claude');
-const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir, secrets: claudeAccountSecrets,
-  checkOrg: tokenCheckApi === 'off' ? null : token => fetchTokenOrg(token, { baseUrl: tokenCheckApi }),
-  onChecked: () => emitGlobal({ type: 'claudeAccountsChanged', sessionId: null }),
+const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir,
   // macOS だけ、アカウントを消す前に同じ CLAUDE_CONFIG_DIR で claude auth logout を呼ぶ（ADR 0351。ほかの OS は何もしない）
   logout: dir => logoutClaudeOwnDir(dir, { command: claudeCliCommand }) });
-// claude.ai のコネクターを登録アカウントの会話へ渡す入口（ADR 0340・0350）。設定がオンのアカウントの会話だけが認証側を通る（専用フォルダ方式だけ）。
-// 認証側のファクトリーは I/O もタイマーも持たない（オフの経路は何も呼ばない）。トークンは持ち出さず、更新は CLI が自分で行う
+// 登録アカウントの会話を専用フォルダで起動する入口（ADR 0340・0350・0352）。コネクターのオン・オフに関係なく認証側を通り、オフは claude.ai のコネクターを出さない。
+// 認証側のファクトリーは I/O もタイマーも持たない。トークンは持ち出さず、更新は CLI が自分で行う
 const claudeAccountConnectors = createClaudeConnectorsWiring({
   dataDir: store.dataDir,
   accounts: claudeAccounts,
@@ -599,30 +592,23 @@ async function clearConnectorsLoginExpired(accountId) {
 }
 const tokenAccountBackend = () => listBackends().find(b => accountKind(b) === 'token') ?? null;
 
-// アカウントの認可を Pleiad から行う（疑似端末で claude setup-token / claude auth login を回す。core/claude-login.mjs）。
-// トークンは画面へ返さず、そのままアカウントの秘密へしまう
+// アカウントの認可を Pleiad から行う（疑似端末で claude auth login を、そのアカウントの専用フォルダで回す。core/claude-login.mjs。ADR 0352）。
+// 新しいアカウントは id を先に決め、ログインが済んだときだけ登録する（取り消し・失敗では専用フォルダごと消す）
 const claudeLogin = createClaudeLogin({
   command: claudeCliCommand,
   emit: event => emitGlobal({ ...event, sessionId: null }),
-  saveToken: async ({ accountId, name, token }) => {
-    const current = accountId ? (await claudeAccounts.list()).accounts.find(a => a.id === accountId) : null;
-    if (accountId && !current) throw new Error(t('accounts.deleted'));
-    const saved = await claudeAccounts.save({ ...(accountId ? { id: accountId } : {}), name: current?.name ?? name, token });
-    quotaStore.invalidate();
-    await claudeConnectorsCache.remove(saved.id).catch(() => {});
-    refreshClaudeAccountCatalog(saved.id, { warm: true });
-    emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
-    return saved;
-  },
   usageDir: id => claudeAccounts.usageDir(id),
-  markUsageLogin: async id => {
-    await claudeAccounts.markUsageLogin(id);
+  newAccountId,
+  markUsageLogin: async (id, created) => {
+    if (created) await claudeAccounts.add({ id, name: created.name });
+    else await claudeAccounts.markUsageLogin(id);
     await claudeConnectorsCache.remove(id).catch(() => {});
     tokenAccountBackend()?.invalidateModels?.(id);
+    refreshClaudeAccountCatalog(id, { warm: true });
     quotaStore.invalidate();
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
-  scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
+  discardNew: id => claudeAccounts.discard(id),
   // デスクトップ版は main に頼んで既定のブラウザーで開く（main が居ない間は OS に直に頼む。npm start では画面のリンクから開く）
   openExternal,
 });
@@ -639,14 +625,14 @@ onExit(() => accountManager.cancelAll());
 const accountKind = backend => backend?.capabilities?.accounts || false;
 /**
  * エージェントのアカウントの一覧（画面・委譲・使用量の共通の形）。ready はその会話で走らせられるか
- * （Claude はトークンがある、ほかはログインして資格情報をしまった）
+ * （Claude は専用フォルダのログインが済んだ、ほかはログインして資格情報をしまった）
  */
 async function accountRows(backend) {
   const kind = accountKind(backend);
   if (kind === 'token') {
     const { accounts } = await claudeAccounts.list();
     return Promise.all(accounts.map(async a => ({
-      id: a.id, name: a.name, ready: Boolean(a.hasToken) || (await claudeAccountConnectors.settings.read(a.id)).enabled,
+      id: a.id, name: a.name, ready: Boolean(a.usageLogin),
     })));
   }
   if (kind === 'agent') return (await agentAccounts.list(backend.id)).map(a => ({ id: a.id, name: a.name, ready: a.hasCredential }));
@@ -674,13 +660,13 @@ async function rememberAccount(backendId, id) {
   await savePref('account', id || null, backendId);
   if (accountKind(getBackend(backendId)) === 'token') await savePref('claudeAccount', id || null);
 }
-async function accountResolve(backend, id, options) {
+async function accountResolve(backend, id) {
   const kind = accountKind(backend);
   if (!id || !kind) return null;
   if (kind === 'token') {
     if (await agentAccounts.get(id)) return null;
-    // 登録したアカウントのコネクターの入口（ADR 0340）。オフ・未設定は同じ account がそのまま返る
-    return claudeAccountConnectors.resolve(id, options);
+    // 登録したアカウントの専用フォルダの認証（ADR 0352）。コネクターのオン・オフは認証の中で分ける
+    return claudeAccountConnectors.resolve(id);
   }
   return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });
 }
@@ -1079,7 +1065,7 @@ plusSession.onChange(({ type }) => { void syncPlusLink({ signedInAgain: type ===
 // 秘密を読めずに止まったリモートの接続・Plus のログインを読み直し、起動時に回せなかった平文の暗号化し直しを回す。再起動は要らない
 secretCipher.onAvailable?.(() => {
   console.log('  secrets: 暗号化の口が答えたので、読めなかった秘密を読み直す');
-  for (const s of [mcpSecrets, claudeAccountSecrets, agentAccountSecrets, compatSecrets, voiceSecrets, apiKeySecrets, secretValueStore, plusSecrets]) s.migrate().catch(() => {});
+  for (const s of [mcpSecrets, agentAccountSecrets, compatSecrets, voiceSecrets, apiKeySecrets, secretValueStore, plusSecrets]) s.migrate().catch(() => {});
   remote.retryLocked().catch(() => {});
   plusSession.retryLocked().catch(() => {});
   void plusHost.maybeRegister();
@@ -1412,17 +1398,17 @@ const TASK_SETTINGS = ['backend', 'model', 'effort', 'account'];
 /**
  * 依頼元の AI が書いた Claude のアカウント（ply_delegate・ply_task_send の account。ADR 0205）を内部の値に直して確かめる。
  * 書ける名前は ply_usage の account: 'login'（ログイン中のアカウント。内部は ''）か、登録したアカウントの id。
- * 断るのは、登録に無い・トークンが無い（子を走らせられない）・model の使用枠が満杯と分かっているとき。黙ってほかのアカウントに落とさない。
+ * 断るのは、登録に無い・ログインが無い（子を走らせられない）・model の使用枠が満杯と分かっているとき。黙ってほかのアカウントに落とさない。
  * 返すのは { account（内部の値）, label（伏せた見出し） }
  */
 async function requestedAccount(name, model, lng, backend = getBackend('claude')) {
-  const accounts = (await accountRows(backend)).map(a => ({ ...a, hasToken: a.ready }));
-  const names = () => [LOGIN_ACCOUNT, ...accounts.filter(a => a.hasToken).map(a => a.id)].join(', ');
+  const accounts = await accountRows(backend);
+  const names = () => [LOGIN_ACCOUNT, ...accounts.filter(a => a.ready).map(a => a.id)].join(', ');
   if (typeof name !== 'string' || name.length > 200) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: String(name ?? ''), accounts: names() }));
   const id = name === LOGIN_ACCOUNT ? '' : name;
   const row = id ? accounts.find(a => a.id === id) : null;
   if (id && !row) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: name, accounts: names() }));
-  if (row && !row.hasToken) throw new Error(agentT(lng, 'delegation.accountNoToken', { account: name, accounts: names() }));
+  if (row && !row.ready) throw new Error(agentT(lng, 'delegation.accountNoToken', { account: name, accounts: names() }));
   if (model) {
     const check = checkCandidate(candidateId(backend.id, model, id || null), { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
     if (check.reason === 'quota_full') throw new Error(agentT(lng, 'delegation.accountQuotaFull', { account: name, model }));
@@ -2931,7 +2917,7 @@ const toMs = (v) => (Number.isFinite(v) ? v : (v ? Date.parse(v) || null : null)
 // timeout = ルーティンの承認待ちが期限（approvalTimeoutMin）を過ぎて止めた（ADR 0112）、
 // auth = ログインが切れて（401・トークンの失効）ターンが止まった（Issue #232。どのアカウントかを auth に添える）
 const INTERRUPT_REASONS = new Set(["user", "update", "quit", "hostAway", "restart", "limit", "timeout", "settings", "auth"]);
-/** ログイン切れの中断に添える、何が切れたか（turnResult の auth と同じ形。mode: cli | token | account | connectorsLogin） */
+/** ログイン切れの中断に添える、何が切れたか（turnResult の auth と同じ形。mode: cli | account | connectorsLogin。token は ADR 0352 より前に保存された中断だけ） */
 const authOfInterrupt = (auth) => auth && typeof auth === "object" ? { mode: String(auth.mode ?? ""), accountId: auth.accountId ?? null,
   name: auth.name ?? null, email: auth.email ?? null } : null;
 // abort で画面・デスクトップ・ルーティンが渡せる理由。ほかの値（不正・省略）は user として扱う
@@ -3170,8 +3156,8 @@ const promptSuggestions = createSuggestionJobs({
 });
 
 /**
- * 使用量の表示に使うアカウント。会話用のトークンではなく、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む
- * （setup-token のトークンは scope が user:inference だけで使用量を読めない）。認可が済んでいないものは理由を出す。
+ * 使用量の表示に使うアカウント。会話と同じ、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む（ADR 0352）。
+ * 認可が済んでいないものは理由を出す。
  * 1 件も登録していなければ空＝今までどおりログイン中のアカウントだけ
  */
 async function usageAccounts(backendId = 'claude') {
@@ -4005,15 +3991,16 @@ function makeEmit(turn) {
         event = { ...event, ...turn.limit };
       }
       // ログインの期限切れ（401。バックエンドの kind: 'auth'）。互換の接続先の会話は接続先のキーの問題なので、ふつうの失敗のまま。
-      // CLI のログイン（mode: cli）か、Pleiad の Claude のアカウントのトークン（mode: token）かを添える。CLI のときは期限切れを覚える
+      // CLI のログイン（mode: cli）か、登録したアカウントのログイン（Claude は mode: connectorsLogin、ほかは mode: account）かを添える。CLI のときは期限切れを覚える
       // （claude auth status は期限が切れてもログイン済みを返すので、設定の行の ⚠ はこれで出す。ADR 0212）
       if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
         const accountId = limitAccount(turn.backend, turn.info.account) || '';
         const name = turn.authAccount?.id === accountId ? turn.authAccount.name : null;
         const connErr = event.connectorsError ?? turn.connectorsError ?? null;
-        const viaConnectors = Boolean(connErr || (accountId && accountKind(turn.backend) === 'token' && turn.connectorsEnabled));
+        // 登録した Claude のアカウントは、コネクターのオン・オフに関係なく専用フォルダのログインで走る（ADR 0352）
+        const viaConnectors = Boolean(connErr || (accountId && accountKind(turn.backend) === 'token'));
         if (viaConnectors) {
-          const ce = connErr ?? { kind: 'expired', scope: null, code: 'connectors-expired', accountId, accountName: name ?? '', reauth: true, needsOwnerCheck: false };
+          const ce = connErr ?? { kind: 'ownDirLogin', scope: null, code: 'connectors-ownDirLogin', accountId, accountName: name ?? '', reauth: true };
           event = { ...event, backend: turn.backend.id, connectorsError: ce, auth: { mode: 'connectorsLogin', accountId, name } };
           // トークンの時刻による停止とは別に、CLI が直接返した認証失敗を画面に記録する。
           if (!replay && accountId && !connErr) {
@@ -4022,7 +4009,7 @@ function makeEmit(turn) {
           }
         } else {
           event = { ...event, backend: turn.backend.id, auth: accountId
-            ? { mode: accountKind(turn.backend) === 'token' ? 'token' : 'account', accountId, name }
+            ? { mode: 'account', accountId, name }
             : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
           if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
         }
@@ -4031,9 +4018,9 @@ function makeEmit(turn) {
       }
       // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
       if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !limitAccount(turn.backend, turn.info.account)) authExpired.delete(turn.backend.id);
-      // コネクターの入口がオンのアカウントで通った = そのアカウントのログインは生きている。前に付けた期限切れの印を外す
+      // 登録したアカウント（専用フォルダ）で通った = そのアカウントのログインは生きている。前に付けた期限切れの印を外す
       // （外さないと、使用量の読み取りが控えに回っている間、ログインし直しの印が残り続けた。ADR 0351 の M7）
-      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && turn.connectorsEnabled && accountKind(turn.backend) === 'token') {
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && accountKind(turn.backend) === 'token') {
         const accountId = limitAccount(turn.backend, turn.info.account);
         if (accountId) void clearConnectorsLoginExpired(accountId);
       }
@@ -5230,7 +5217,7 @@ async function suggestWritableTitleOf(args) {
   const backend = await resolveBackendForSession(sessionId);
   if (!backend) throw new Error(t('agents.notFound'));
   // アカウントを引けない会話（消した・トークンが無い）は、内部呼出しの印が外れている（accountUnavailableBackend）。「対応していない」と取り違えさせず、引けなかった理由で断る
-  if (backend.accountError) throw new Error(t('title.failed', { error: redactToken(backend.accountError?.message ?? backend.accountError, null) }));
+  if (backend.accountError) throw new Error(t('title.failed', { error: String(backend.accountError?.message ?? backend.accountError) }));
   // 題を付けるには内部呼出しを分離して呼べる印が要る（Issue #180。呼べないなら通常の会話へは逃げない）
   if (!capabilityValue(backend.capabilities?.internalCall) || typeof backend.internalTurn !== 'function')
     throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
@@ -5265,7 +5252,7 @@ async function suggestWritableTitleOf(args) {
   } catch (err) {
     if (err?.code === INTERNAL_UNAVAILABLE) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
     if (err?.code === 'UNSUPPORTED') throw err;
-    throw new Error(t('title.failed', { error: redactSecret(redactToken(err?.message ?? err, null), endpoint?.key) }));
+    throw new Error(t('title.failed', { error: redactSecret(err?.message ?? err, endpoint?.key) }));
   }
 
   // 前後の記号を落とす。モデルが鉤括弧やクオートで包むことがある
@@ -5463,7 +5450,7 @@ const opsAgents = {
   list: () => describeBackends(),
   models: async (id, cwd, accountId) => {
     let backend = await pickBackend(null, id);
-    if (accountId) backend = await backendForAccount(backend, await accountResolve(backend, accountId, { forModels: true }));
+    if (accountId) backend = await backendForAccount(backend, await accountResolve(backend, accountId));
     return { backend: backend.id, models: await backend.models(cwd) };
   },
   modes: async (id) => { const backend = await pickBackend(null, id); return { backend: backend.id, modes: backend.modes() }; },
@@ -6061,7 +6048,7 @@ function pruneDocPlace(cfg, { kind, entries, legacyConfig, matrixCwd, home, devi
 const accountConnectorProbes = new Map(); // accountId -> Promise<void>
 const accountConnectorFailed = new Set();
 
-// 専用フォルダの準備（共有へのリンク・名前の重なりの退避。ADR 0350）の結果。更新のあとの起動（prepareAllAccountConnectors）と、入口をオンにしたときに作る。
+// 専用フォルダの準備（共有へのリンク・名前の重なりの退避。ADR 0350・0352）の結果。更新のあとの起動（prepareAllAccountConnectors）と、入口をオンにしたときに作る。
 // failure: リンクを作れなかった理由（inspect の失敗の形）。方式 b1 へは戻さず、止めて理由を画面に出す（直せば、見るたびにやり直して消える）。
 // moves: 共有へ移した・退避した項目（この起動の間だけ覚え、一覧の moved で画面に出す）
 const accountConnectorPrepared = new Map(); // accountId -> { failure: object | null, moves: object[] }
@@ -6089,12 +6076,15 @@ async function inspectAccountConnectors(acct, { cwd = null } = {}) {
   return retried.ok ? inspected : retried;
 }
 
-/** 更新のあとの起動で、入口がオンの既存のアカウントの専用フォルダを準備する（リンク・退避）。1 件の失敗が残りを止めない */
+/**
+ * 更新のあとの起動で、既存のアカウントの専用フォルダを準備する（リンク・退避）。コネクターのオン・オフに関係なく全アカウント（ADR 0352）。
+ * 先に、前の版が保存した会話用のトークン（setup-token）と持ち主の照合の記録を消す。1 件の失敗が残りを止めない
+ */
 async function prepareAllAccountConnectors() {
-  const [{ accounts }, enabledMap] = await Promise.all([claudeAccounts.list(), claudeAccountConnectors.settings.list()]);
-  let changed = false;
+  const dropped = await claudeAccounts.dropLegacyTokens().catch(() => ({ removed: false }));
+  const { accounts } = await claudeAccounts.list();
+  let changed = dropped.removed === true;
   for (const acct of accounts) {
-    if (!enabledMap[acct.id]) continue;
     const had = accountConnectorPrepared.has(acct.id);
     await prepareAccountConnectors(acct).catch(() => {});
     changed ||= had || accountConnectorPrepared.has(acct.id);
@@ -6113,7 +6103,7 @@ function probeAccountConnectors(acct, { identityHash, deny = [] }) {
     try {
       const account = await accountResolve(tokenAccountBackend(), acct.id);
       if (!account?.connectors) return;
-      const raw = await probeClaudeConnectors({ deny, token: account?.token ?? null, connectors: account?.connectors ?? null });
+      const raw = await probeClaudeConnectors({ deny, connectors: account.connectors });
       if (!await isEnabled()) return;
       const list = Array.isArray(raw) ? raw.map(x => (typeof x === 'string' ? { name: x, status: null } : x)).filter(x => typeof x?.name === 'string') : [];
       const connectors = [...new Set(list.map(x => x.name))].sort();
@@ -6183,7 +6173,6 @@ async function accountConnectorsList({ cwd = null, refresh = false, wait = false
     blockScope: inspected.ok ? null : inspected.scope,
     blockMessage: inspected.ok ? null : inspected.message,
     reauth: inspected.reauth === true,
-    needsOwnerCheck: inspected.needsOwnerCheck === true,
     connectors: cached ? cached.connectors : null,
     needsAuth: cached ? cached.needsAuth : [],
     reading: accountConnectorProbes.has(acct.id),
@@ -6215,7 +6204,6 @@ async function enrichClaudeAccountsList(result) {
           blockScope: r.blockScope,
           blockMessage: r.blockMessage,
           reauth: r.reauth,
-          needsOwnerCheck: r.needsOwnerCheck,
           connectedCount,
           needsAuthCount,
           reading: r.reading,
@@ -6265,7 +6253,7 @@ async function sessionConnectorsInfo(sessionId) {
   if (!acct) return null;
   const enabled = Boolean(enabledMap[acct.id]);
   if (!enabled) {
-    return { accountId: acct.id, accountName: acct.name, enabled: false, status: 'off', connectors: null, needsAuth: [], blockKind: null, blockMessage: null, reauth: false, needsOwnerCheck: false };
+    return { accountId: acct.id, accountName: acct.name, enabled: false, status: 'off', connectors: null, needsAuth: [], blockKind: null, blockMessage: null, reauth: false };
   }
   const inspected = await inspectAccountConnectors(acct, { cwd: meta.cwd ?? null });
   const cached = inspected.ok ? await claudeConnectorsCache.get(acct.id, { identityHash: inspected.identityHash, ttlMs: CONNECTOR_TTL_MS }) : null;
@@ -6278,7 +6266,6 @@ async function sessionConnectorsInfo(sessionId) {
     blockScope: inspected.ok ? null : inspected.scope,
     blockMessage: inspected.ok ? null : inspected.message,
     reauth: inspected.reauth === true,
-    needsOwnerCheck: inspected.needsOwnerCheck === true,
     connectors: cached?.connectors ?? null,
     needsAuth: cached?.needsAuth ?? [],
   };
@@ -9542,9 +9529,8 @@ async function beginTurn(ctx) {
     ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
     // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
     agentRuntime: !backend.capabilities?.plyAgents ? null : { ...agentPort, instructions: withAdded(agentPort.instructions, contextRecord.added) },
-    // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
-    // アカウント（ADR 0222）: Claude はトークン、ほかのエージェントはアカウントの置き場と資格情報
-    ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}),
+    // アカウント（ADR 0222・0352）: Claude は専用フォルダ（束縛したバックエンドが整える）、ほかのエージェントはアカウントの置き場と資格情報
+    ...(account ? { account } : {}),
     // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
     ...(endpoint ? { endpoint } : {}),
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
@@ -9708,7 +9694,7 @@ async function driveTurn(ctx, start) {
     else if (ctx.contextRecord && err?.nativeInjected) await ctx.saveContext().catch(() => {});
     if (!turn.errorShown) {
       if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
-      // コネクターの検査で止めた（ADR 0340 段 3）。会話の失敗の行が直す入口（ログインし直す・コネクターをオフにして送る）を出す。
+      // コネクターの検査で止めた（ADR 0340 段 3）。会話の失敗の行が直す入口（ログインし直す・再送する）を出す。
       // undelivered: 発言は渡っていない（送信待ちの「送れませんでした」に戻る）。画面は発言の下の行で直させ、送り直しは送信待ちの再送で行う
       const ce = err?.connectorsError;
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err),
@@ -9909,7 +9895,7 @@ async function restoreTurn(card, source) {
   let backend = getBackend(fields.backendId);
   if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
   // main がつながる前に復号を待たない（秘密の復号は main に頼むが、main とのパイプはこの付け直しの後に立つ。待つと起動が上限まで止まる）。
-  // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。トークンのアカウントは、名前とコネクターの入口の設定だけを読む
+  // 引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。登録した Claude アカウントは、一覧の行（名前）とコネクターの設定だけを読む
   let restoredAccount = null;
   if (!fields.endpointId && fields.accountId) {
     if (accountKind(backend) === 'agent') {
@@ -11508,7 +11494,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, await remote.setDeviceAgent(a.id, { ...(a.stopAll === true ? { stopAll: true } : {}) }));
         }
 
-        // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）
+        // Claude のアカウント（会話ごとに選ぶ）。返すのは名前と専用フォルダのログインの有無だけ
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
         case 'compatEndpoints':
           return await viaOp('endpoints.list');
@@ -11533,14 +11519,10 @@ wss.on("connection", (ws, req) => {
         }
         case 'claudeAccounts':
           return reply(true, await enrichClaudeAccountsList(await claudeAccounts.list()));
+        // 名前の変更だけ（新しいアカウントは claudeLoginStart の名前とログインで作る。ADR 0352）
         case 'saveClaudeAccount': {
-          const { id, name, token } = msg.args ?? {};
-          const saved = await claudeAccounts.save({ id, name, token });
-          quotaStore.invalidate();
-          await claudeConnectorsCache.remove(saved.id).catch(() => {});
-          if (!id || (token !== undefined && token !== null && String(token).trim() !== '')) {
-            refreshClaudeAccountCatalog(saved.id, { warm: true });
-          }
+          const { id, name } = msg.args ?? {};
+          const saved = await claudeAccounts.rename({ id, name });
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, { ...saved, ...(await enrichClaudeAccountsList(await claudeAccounts.list())) });
         }
@@ -11558,11 +11540,11 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, await enrichClaudeAccountsList(await claudeAccounts.list()));
         }
-        // アカウントの認可（claude setup-token / 使用量の claude auth login）を Pleiad から回す。進み具合は claudeLogin イベント
+        // アカウントの認可（専用フォルダの claude auth login）を Pleiad から回す。accountId が無ければ name の新しいアカウント（ADR 0352）。進み具合は claudeLogin イベント
         case 'claudeLoginStart': {
           const { kind, accountId, name, open } = msg.args ?? {};
           if (accountId && !(await claudeAccounts.has(String(accountId)))) throw new Error(t('accounts.notRegistered'));
-          if (kind === 'setup-token' && !accountId) await claudeAccounts.assertNameFree(name);   // 認可を回す前に、名前の不正・重複を止める
+          if (!accountId) await claudeAccounts.assertNameFree(name);   // 認可を回す前に、名前の不正・重複を止める
           return reply(true, claudeLogin.start({ kind, accountId: accountId ? String(accountId) : undefined, name: name ? String(name).trim() : undefined, open: Boolean(open) }));
         }
         case 'claudeLoginCode':
@@ -12583,7 +12565,7 @@ async function announce() {
   if (adopting.length) console.log(`  起動で拾ったターン ${adopting.length} 件（付け直しは待ち受けの後）`);
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
-  // 更新のあとの最初の起動で、入口がオンの既存のアカウントの専用フォルダを準備する（共有へのリンク・退避。作れなければ理由を画面に出す）。
+  // 更新のあとの最初の起動で、既存のアカウントの専用フォルダを準備する（共有へのリンク・退避。作れなければ理由を画面に出す。前の版のトークンも消す）。
   // 退避から 30 日を過ぎた項目は、起動時とそのあと 1 日ごとに消す（ADR 0350）
   void prepareAllAccountConnectors().catch(() => {});
   void sweepClaudeUsageArchives();

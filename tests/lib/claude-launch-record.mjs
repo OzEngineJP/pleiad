@@ -46,7 +46,7 @@ export const PARENTS = {
   undefinedOauth: { CLAUDE_CODE_OAUTH_TOKEN: undefined, CLAUDE_CONFIG_DIR: undefined },
   lowerCase: { claude_code_oauth_token: FAKE.parentOauth, Claude_Config_Dir: FAKE.configDir },
 };
-/** アカウントの状態: none = 指定なし（ログイン中のアカウントを選んだ場合も同じ道）/ registered = 登録したトークン */
+/** アカウントの状態: none = 指定なし（ログイン中のアカウントを選んだ場合も同じ道）/ registered = 登録したアカウント（専用フォルダ。accountFor で入口を通す。ADR 0352） */
 export const ACCOUNTS = ['none', 'registered'];
 export const ENDPOINTS = { none: null, compat: { baseUrl: 'https://compat.example.invalid', auth: 'bearer', key: FAKE.endpointKey, roles: { main: 'fake-model' }, options: {} } };
 
@@ -119,8 +119,7 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
   await fs.mkdir(data, { recursive: true }); await fs.mkdir(work, { recursive: true });
   await fs.writeFile(path.join(data, 'claude-accounts.json'), JSON.stringify({ version: 1, accounts: [{ id: ACCOUNT_ID, name: 'fake-account', createdAt: '2026-01-01T00:00:00.000Z' }] }));
   if (onSetup) await onSetup({ data });
-  const secrets = { get: async () => ({ token: FAKE.registered }), keys: async () => [], status: async () => null, set: async () => {}, delete: async () => {} };
-  const accounts = createClaudeAccounts({ dataDir: data, secrets, cliConfig: path.join(tmp, 'no-cli.json') });
+  const accounts = createClaudeAccounts({ dataDir: data, cliConfig: path.join(tmp, 'no-cli.json') });
   const installed = await installFakeClaude(path.join(tmp, 'bin'), { cli: CLI });
   const realQuery = (await sdkMod.loadClaudeSdk()).query;
   let sdkRec = [];
@@ -149,8 +148,8 @@ export async function recordAll({ root, accountFor = (accounts, id, ctx) => acco
         internalTurn: () => scoped.internalTurn({ prompt: 'hi', model: 'haiku', cwd: work, endpoint }),
         suggestTitle: () => scoped.suggestTitle({ transcript: 'hi', endpoint }),
         modelList: () => probeClaudeCatalogForTest(work, true, account?.id ? account : null),
-        // コネクターの入口がオンのアカウントは、server と同じく connectors を渡す（connectorListProbe。オフは今までの呼び方のまま）
-        connectorList: () => probeClaudeConnectors({ deny: [], token: account?.token ?? null, ...(account?.connectors ? { connectors: account.connectors } : {}) }),
+        // 登録したアカウントは、server と同じく専用フォルダの認証（ownDir）を渡す（connectorListProbe。オフは claude.ai のコネクターを出さない）
+        connectorList: () => probeClaudeConnectors({ deny: [], token: account?.token ?? null, ...(account?.ownDir ? { connectors: account.ownDir } : {}) }),
         usage: () => usage.readClaudeUsage({ token: account?.token, configDir: account?.id ? path.join(data, 'claude-usage', account.id) : undefined }),
       };
       if (e === 'compat') for (const k of ['modelList', 'connectorList', 'usage']) delete paths[k];

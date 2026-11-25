@@ -1,303 +1,148 @@
 // Claude のアカウント切り替え（core/claude-accounts.mjs）。LLM も Claude Code も呼ばない。
-// env の組み立て（トークンが env にだけ入る・process.env は変わらない・未選択なら今と同じ）と、
-// トークンの置き場（返さない・一覧に書かない・使えないときは止める）、使用量の並べ方を確かめる。
+// アカウントは専用フォルダ（<data>/claude-usage/<id>）のログイン 1 つだけ（ADR 0352）。一覧の中身・名前の検査・
+// ログインの印・削除・0.43.0-beta.24 より前の会話用トークンの片付け（dropLegacyTokens）を確かめる。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { claudeEnv, redactToken, normalizeToken, createClaudeAccounts, AccountError, TOKEN_ENV,
-  fetchTokenOrg, tokenChecks, readOauthAccount, cliConfigFile } from '../../core/claude-accounts.mjs';
-import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
-import { createStderrLog } from '../../core/backends/claude-background.mjs';
+import { createClaudeAccounts, AccountError, readOauthAccount, cliConfigFile, newAccountId, normalizeName } from '../../core/claude-accounts.mjs';
 
 export const name = 'claude-accounts';
-export const title = 'Claude のアカウント: env の組み立て・トークンの置き場・使えないアカウントで止める・トークンの持ち主の照合';
+export const title = 'Claude のアカウント: 一覧・名前・ログインの印・削除・会話用トークンの片付け（ADR 0352）';
 
-const TOKEN_A = 'sk-ant-oat01-' + 'A'.repeat(40);
-const TOKEN_B = 'sk-ant-oat01-' + 'B'.repeat(40);
+const ORG_WORK = '11111111-0000-4000-8000-000000000001';
+const LEGACY_TOKEN = 'sk-ant-oat01-' + 'A'.repeat(40);
 
 export default async function (t) {
-  // ---- env の組み立て
-  const before = JSON.stringify(process.env);
-  const hadToken = Object.hasOwn(process.env, TOKEN_ENV);
-  const base = { PATH: '/bin', ANTHROPIC_API_KEY: 'sk-api', HOME: '/home/x' };
-  const baseCopy = JSON.stringify(base);
-  const extra = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' };
+  // ---- 名前と id
+  t.ok('名前は前後の空白を落とす', normalizeName('  仕事用 ') === '仕事用');
+  let empty = null; try { normalizeName('  '); } catch (e) { empty = e; }
+  t.ok('空の名前は断る', Boolean(empty));
+  let long = null; try { normalizeName('x'.repeat(61)); } catch (e) { long = e; }
+  t.ok('長すぎる名前は断る', Boolean(long));
+  const a = newAccountId(), b = newAccountId();
+  t.ok('新しい id は acct- で始まり、毎回違う', /^acct-[0-9a-f]{12}$/.test(a) && a !== b);
 
-  const plain = claudeEnv(base, { extra });
-  t.ok('未選択なら base + extra と同じ env（トークンを足さない）', JSON.stringify(plain) === JSON.stringify({ ...base, ...extra }));
-  t.ok('未選択なら CLAUDE_CODE_OAUTH_TOKEN を持たない', !Object.hasOwn(plain, TOKEN_ENV));
-  const withToken = claudeEnv(base, { token: TOKEN_A, extra });
-  t.ok('選んだトークンは env にだけ入る', withToken[TOKEN_ENV] === TOKEN_A && withToken.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS === '0');
-  t.ok('base は書き換えない', JSON.stringify(base) === baseCopy && !Object.hasOwn(base, TOKEN_ENV));
-  t.ok('ANTHROPIC_API_KEY はそのまま残す（CLI の優先順位を変えない）', withToken.ANTHROPIC_API_KEY === 'sk-api');
-  const inherited = claudeEnv({ ...base, [TOKEN_ENV]: 'from-shell' }, {});
-  t.ok('未選択なら親の CLAUDE_CODE_OAUTH_TOKEN も消さない（今と同じ）', inherited[TOKEN_ENV] === 'from-shell');
-
-  const fromProcess = claudeEnv(process.env, { token: TOKEN_B, extra });
-  // Windows の Actions では PATH が Path という名前で入る。process.env は大小を区別せずに引けるが、広げた先は区別する
-  const pathKey = Object.keys(process.env).find(k => k.toUpperCase() === 'PATH');
-  t.ok('process.env を広げた env にトークンが入る', fromProcess[TOKEN_ENV] === TOKEN_B && fromProcess[pathKey] === process.env[pathKey]);
-  const unset = claudeEnv(process.env, { extra: { CLAUDECODE: undefined } });
-  t.ok('process.env から作っても、未選択なら process.env と同じ中身', Object.keys(process.env).every(k => k === 'CLAUDECODE' || unset[k] === process.env[k]) && unset[TOKEN_ENV] === process.env[TOKEN_ENV]);
-  t.ok('process.env は変わらない', JSON.stringify(process.env) === before && Object.hasOwn(process.env, TOKEN_ENV) === hadToken);
-
-  // ---- 伏せる
-  t.ok('エラーメッセージからトークンを伏せる', redactToken(`bad ${TOKEN_A} x ${TOKEN_A}`, TOKEN_A) === 'bad [トークン] x [トークン]');
-  t.ok('トークンが無ければそのまま', redactToken('as is', undefined) === 'as is');
-  const logged = [];
-  const log = createStderrLog({ log: s => logged.push(s), secrets: [TOKEN_A] });
-  log(`auth header ${TOKEN_A}\nnext line\n`);
-  t.ok('stderr の記録にトークンを残さない', logged.length === 2 && !logged.join('\n').includes(TOKEN_A) && logged[0].includes('[トークン]'));
-
-  // ---- 形式
-  t.ok('前後の空白は落とす', normalizeToken(`  ${TOKEN_A}\n`) === TOKEN_A);
-  let bad = null;
-  try { normalizeToken('sk-ant-oat01-abc def ghi jkl mno'); } catch (e) { bad = e; }
-  t.ok('空白が混じるトークンは断る', bad && bad.message.includes('setup-token') && !bad.message.includes('abc'));
-
-  // ---- 置き場
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-accounts-'));
   try {
-    const secrets = createSecretStore({ file: path.join(dir, 'claude-account-secrets.json'), cipher: plainCipher });
-    const accounts = createClaudeAccounts({ dataDir: dir, secrets, cliConfig: path.join(dir, 'no-cli.json') });
+    const accounts = createClaudeAccounts({ dataDir: dir, cliConfig: path.join(dir, 'no-cli.json') });
     t.ok('何も登録していなければ空', (await accounts.list()).accounts.length === 0);
     t.ok('未選択（空）は null＝ログイン中のアカウント', await accounts.resolve('') === null && await accounts.resolve(undefined) === null);
 
-    let missing = null;
-    try { await accounts.save({ name: '仕事用' }); } catch (e) { missing = e; }
-    t.ok('追加にはトークンが要る', missing?.message.includes('トークン'));
-    const { id: work } = await accounts.save({ name: ' 仕事用 ', token: TOKEN_A });
-    const { id: home } = await accounts.save({ name: '個人用', token: TOKEN_B });
+    // ---- 追加（ログインが済んでから載せる。core/claude-login.mjs）
+    const work = newAccountId(), home = newAccountId();
+    await accounts.assertNameFree('仕事用');
+    await accounts.add({ id: work, name: ' 仕事用 ' });
+    await accounts.add({ id: home, name: '個人用' });
     const listed = await accounts.list();
-    t.ok('一覧は id・表示名・登録済みかどうか・使用量の認可の有無と切れの印・持ち主の照合だけ', listed.accounts.length === 2 && listed.accounts[0].name === '仕事用'
-      && listed.accounts.every(a => a.hasToken === true && a.usageLogin === false && Object.keys(a).sort().join() === 'hasToken,id,name,tokenCheck,usageExpired,usageLogin' && a.usageExpired === false));
-    t.ok('確かめない設定では照合は unknown', listed.accounts.every(a => a.tokenCheck.status === 'unknown'));
-    t.ok('一覧にトークンを載せない', !JSON.stringify(listed).includes(TOKEN_A) && !JSON.stringify(listed).includes(TOKEN_B));
-    t.ok('保存先の状態を返す（暗号化できない起動では encrypted: false）', listed.storage?.encrypted === false);
-    const registry = await fs.readFile(path.join(dir, 'claude-accounts.json'), 'utf8');
-    t.ok('一覧のファイルにはトークンを書かない', !registry.includes(TOKEN_A) && !registry.includes(TOKEN_B));
-    t.ok('トークンは選んだアカウントのものが引ける', (await accounts.resolve(work)).token === TOKEN_A && (await accounts.resolve(home)).token === TOKEN_B);
+    t.ok('一覧は id・表示名・ログインの有無と切れの印だけ', listed.accounts.length === 2 && listed.accounts[0].name === '仕事用'
+      && listed.accounts.every(x => Object.keys(x).sort().join() === 'id,name,usageExpired,usageLogin' && x.usageLogin === true && x.usageExpired === false), JSON.stringify(listed));
+    t.ok('追加するとログインの印を置く', await accounts.hasUsageLogin(work));
+    t.ok('get は id と名前', JSON.stringify(await accounts.get(work)) === JSON.stringify({ id: work, name: '仕事用' }) && await accounts.get('acct-none') === null);
+    t.ok('has は登録の有無', await accounts.has(home) && !(await accounts.has('acct-none')));
+    t.ok('resolve は id と名前（トークンは持たない）', JSON.stringify(await accounts.resolve(work)) === JSON.stringify({ id: work, name: '仕事用' }));
 
-    await accounts.save({ id: work, name: '仕事' });
-    t.ok('名前だけ変えるとトークンは残る', (await accounts.resolve(work)).token === TOKEN_A && (await accounts.list()).accounts[0].name === '仕事');
-    await accounts.save({ id: work, name: '仕事', token: TOKEN_B });
-    t.ok('トークンを貼り直せる', (await accounts.resolve(work)).token === TOKEN_B);
-    await accounts.save({ id: work, name: '仕事', token: TOKEN_A });
-
-    // 同じ名前（前後の空白だけ除いて比べる。大文字小文字は区別する）は追加・名前の変更で止める
-    const dupMsg = async fn => { try { await fn(); } catch (e) { return e.message; } return null; };
-    t.ok('同じ名前の追加は止める（前後の空白は無視）', (await dupMsg(() => accounts.save({ name: ' 仕事 ', token: TOKEN_B }))) === '同じ名前のアカウントがあります'
-      && (await accounts.list()).accounts.length === 2);
-    t.ok('ほかのアカウントと同じ名前への変更は止める', (await dupMsg(() => accounts.save({ id: home, name: '仕事' }))) === '同じ名前のアカウントがあります'
-      && (await accounts.list()).accounts.find(a => a.id === home).name === '個人用');
-    t.ok('自分の名前のままの保存と、大文字小文字だけ違う名前は通す', (await dupMsg(() => accounts.save({ id: work, name: '仕事', token: TOKEN_A }))) === null
-      && (await dupMsg(() => accounts.save({ name: 'Work', token: TOKEN_B }))) === null
-      && (await dupMsg(() => accounts.save({ name: 'work', token: TOKEN_B }))) === null);
-    // 重複を許す前の既存データ: 読めて、名前を変えないトークンの差し替えは通り、片方を変えれば解消する
+    // ---- 名前の重複（前後の空白だけ除いて比べる。大文字小文字は区別する）
+    const codeOf = async fn => { try { await fn(); } catch (e) { return e.code ?? e.message; } return null; };
+    t.ok('ログインの前の検査: 同じ名前は bad-name で止める', (await codeOf(() => accounts.assertNameFree(' 仕事用 '))) === 'bad-name');
+    t.ok('ログインの前の検査: 空の名前も bad-name', (await codeOf(() => accounts.assertNameFree(''))) === 'bad-name');
+    t.ok('同じ名前の追加は bad-name で止める', (await codeOf(() => accounts.add({ id: newAccountId(), name: '仕事用' }))) === 'bad-name' && (await accounts.list()).accounts.length === 2);
+    t.ok('同じ id の追加は止める', Boolean(await codeOf(() => accounts.add({ id: work, name: '別名' }))));
+    const msg = async fn => { try { await fn(); } catch (e) { return e.message; } return null; };
+    t.ok('ほかのアカウントと同じ名前への変更は止める', (await msg(() => accounts.rename({ id: home, name: '仕事用' }))) === '同じ名前のアカウントがあります'
+      && (await accounts.get(home)).name === '個人用');
+    t.ok('自分の名前のままの保存と、大文字小文字だけ違う名前は通す', (await msg(() => accounts.rename({ id: work, name: '仕事用' }))) === null
+      && (await msg(() => accounts.rename({ id: home, name: 'Work' }))) === null && (await msg(() => accounts.assertNameFree('work'))) === null);
+    t.ok('登録していない id は名前を変えられない', Boolean(await msg(() => accounts.rename({ id: 'acct-none', name: 'x' }))));
+    // 重複を許す前の既存データ: 読めて、名前を変えない保存は通り、片方を変えれば解消する
     const regFile = path.join(dir, 'claude-accounts.json');
     const reg = JSON.parse(await fs.readFile(regFile, 'utf8'));
-    const dupIds = reg.accounts.filter(a => a.name === 'Work' || a.name === 'work').map(a => a.id);
-    reg.accounts.find(a => a.id === dupIds[1]).name = 'Work';
+    reg.accounts.find(x => x.id === work).name = 'Work';
     await fs.writeFile(regFile, JSON.stringify(reg));
-    t.ok('すでに同名が 2 つあるデータも一覧で読める', (await accounts.list()).accounts.filter(a => a.name === 'Work').length === 2);
-    t.ok('既存の同名は、名前を変えないトークンの差し替えができる', (await dupMsg(() => accounts.save({ id: dupIds[0], name: 'Work', token: TOKEN_A }))) === null);
-    t.ok('既存の同名は、片方の名前を変えれば解消する', (await dupMsg(() => accounts.save({ id: dupIds[1], name: 'Work 2' }))) === null
-      && (await dupMsg(() => accounts.save({ id: dupIds[1], name: 'Work' }))) === '同じ名前のアカウントがあります');
-    await accounts.remove(dupIds[0]); await accounts.remove(dupIds[1]);
+    t.ok('すでに同名が 2 つあるデータも一覧で読める', (await accounts.list()).accounts.filter(x => x.name === 'Work').length === 2);
+    t.ok('既存の同名は、名前を変えない保存ができる', (await msg(() => accounts.rename({ id: work, name: 'Work' }))) === null);
+    t.ok('既存の同名は、片方の名前を変えれば解消する', (await msg(() => accounts.rename({ id: work, name: '仕事用' }))) === null
+      && (await msg(() => accounts.rename({ id: work, name: 'Work' }))) === '同じ名前のアカウントがあります');
 
-    // 暗号化して保存したものを、この起動では復号できない（npm start で開いた）
-    const raw = JSON.parse(await fs.readFile(secrets.file, 'utf8'));
-    raw.entries[`claude-account:${home}`] = { enc: 'safeStorage', data: 'xxxx', at: new Date().toISOString() };
-    await fs.writeFile(secrets.file, JSON.stringify(raw));
-    let locked = null;
-    try { await accounts.resolve(home); } catch (e) { locked = e; }
-    t.ok('トークンを読めないアカウントは止める（黙ってログイン中へ落とさない）', locked instanceof AccountError && locked.code === 'unreadable' && locked.message.includes('個人用'));
+    // ---- 載せる前のアカウントの片付け（ログインの取り消し・失敗）
+    const pending = newAccountId();
+    await fs.mkdir(accounts.usageDir(pending), { recursive: true });
+    await fs.writeFile(path.join(accounts.usageDir(pending), '.credentials.json'), '{}');
+    await accounts.discard(pending);
+    t.ok('discard は載せる前のアカウントの設定フォルダを消す', await fs.access(accounts.usageDir(pending)).then(() => false, () => true));
+    await accounts.discard(work);
+    t.ok('discard は一覧に載っているアカウントを消さない', await accounts.has(work) && await accounts.hasUsageLogin(work));
 
-    await secrets.delete(`claude-account:${home}`);
-    let none = null;
-    try { await accounts.resolve(home); } catch (e) { none = e; }
-    t.ok('トークンが無いアカウントは止める', none instanceof AccountError && none.code === 'missing-token');
-    t.ok('トークンが無いことは一覧で分かる', (await accounts.list()).accounts.find(a => a.id === home).hasToken === false);
-
-    // 使用量の認可（アカウントごとの設定フォルダ）
+    // ---- ログインの印と切れの印
     const usageDir = accounts.usageDir(work);
-    t.ok('使用量の設定フォルダはデータ置き場の claude-usage/<id>', path.resolve(usageDir) === path.resolve(dir, 'claude-usage', work));
+    t.ok('設定フォルダはデータ置き場の claude-usage/<id>', path.resolve(usageDir) === path.resolve(dir, 'claude-usage', work));
     let badId = null; try { accounts.usageDir('../x'); } catch (e) { badId = e; }
     t.ok('id でないものからフォルダを作らない', Boolean(badId));
+    t.ok('切れの印を置ける（2 度目は変わらない）', (await accounts.markUsageExpired(work, 'expired')).changed === true && (await accounts.markUsageExpired(work)).changed === false);
+    t.ok('切れの印は一覧に出る', (await accounts.list()).accounts.find(x => x.id === work).usageExpired === true);
     await accounts.markUsageLogin(work);
-    await fs.writeFile(path.join(usageDir, '.credentials.json'), '{}');
-    t.ok('認可が済んだことが一覧で分かる', (await accounts.list()).accounts.find(a => a.id === work).usageLogin === true);
-    const targets = await accounts.usageTargets();
-    t.ok('使用量の対象は設定フォルダと認可の有無（トークンは含めない）', targets.length === 2 && targets.find(a => a.id === work).usageLogin === true
-      && targets.find(a => a.id === home).usageLogin === false && !JSON.stringify(targets).includes('sk-ant-'));
+    t.ok('ログインし直すと切れの印は消える', (await accounts.list()).accounts.find(x => x.id === work).usageExpired === false);
+    await accounts.markUsageExpired(work);
+    t.ok('clearUsageExpired でも消える', (await accounts.clearUsageExpired(work)).changed === true && !(await accounts.isUsageExpired(work)));
     let unknown = null; try { await accounts.markUsageLogin('acct-none'); } catch (e) { unknown = e; }
-    t.ok('登録していないアカウントには印を付けない', Boolean(unknown));
+    t.ok('登録していないアカウントにはログインの印を付けない', Boolean(unknown));
+    await fs.rm(path.join(accounts.usageDir(home), 'ply-usage-login.json'));
+    t.ok('ログインの印が無いアカウントには切れの印も付けない', (await accounts.markUsageExpired(home)).changed === false);
+    const targets = await accounts.usageTargets();
+    t.ok('使用量の対象は設定フォルダとログインの有無', targets.length === 2 && targets.find(x => x.id === work).usageLogin === true
+      && targets.find(x => x.id === home).usageLogin === false && targets.every(x => x.configDir === accounts.usageDir(x.id)));
 
+    // ---- 本人の見分け（委譲の振り分け）
+    await fs.writeFile(path.join(usageDir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG_WORK, emailAddress: 'work@example.com' } }));
+    const ids = await accounts.identities();
+    t.ok('identities: ログインの済んだアカウントは設定フォルダの .claude.json から本人を読む', ids.login === null
+      && JSON.stringify(ids.accounts.find(x => x.id === work).identity) === JSON.stringify({ org: ORG_WORK, email: 'work@example.com' })
+      && ids.accounts.find(x => x.id === home).identity === null && ids.accounts.find(x => x.id === home).usageLogin === false);
+
+    // ---- 削除
     await accounts.remove(work);
-    t.ok('削除すると使用量の設定フォルダ（CLI の資格情報）も消える', await fs.access(usageDir).then(() => false, () => true));
+    t.ok('削除すると設定フォルダ（CLI の資格情報）も消える', await fs.access(usageDir).then(() => false, () => true));
     let gone = null;
     try { await accounts.resolve(work); } catch (e) { gone = e; }
-    t.ok('削除したアカウントは止める', gone instanceof AccountError && gone.code === 'deleted');
-    t.ok('削除するとトークンも消える', !(await secrets.keys('claude-account:')).includes(`claude-account:${work}`));
+    t.ok('削除したアカウントは止める（黙ってログイン中へ落とさない）', gone instanceof AccountError && gone.code === 'deleted');
     let twice = null;
     try { await accounts.remove(work); } catch (e) { twice = e; }
     t.ok('無いものは消せない', Boolean(twice));
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 
-  // 使用量の並べ方（アカウントごとの設定フォルダで読む）は tests/unit/claude-login.mjs で確かめる
-
-  await ownerChecks(t);
-}
-
-// ---- トークンの持ち主の照合（ネットワークは使わない。fetch と組織の引き方は偽物）
-const ORG_WORK = '11111111-0000-4000-8000-000000000001';
-const ORG_PERSONAL = '22222222-0000-4000-8000-000000000002';
-const ORG_OTHER = 'aaaaaaaa-0000-4000-8000-000000000003';
-const TOKEN_C = 'sk-ant-oat01-' + 'C'.repeat(40);
-const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
-const until = async (pred, ms = 2000) => { for (const end = Date.now() + ms; !pred() && Date.now() < end;) await new Promise(done => setTimeout(done, 5)); return pred(); };
-
-async function ownerChecks(t) {
-  // ---- GET /v1/models?limit=1 の応答ヘッダー
-  const seen = [];
-  const fakeFetch = (reply) => async (url, init) => { seen.push({ url, headers: init.headers, method: init.method ?? 'GET', signal: init.signal }); return reply(); };
-  const res = (status, org) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(org ? { 'anthropic-organization-id': org } : {}), body: null });
-  const org = await fetchTokenOrg(TOKEN_A, { fetch: fakeFetch(() => res(200, ORG_WORK)), baseUrl: 'http://stub.invalid/' });
-  t.ok('組織は応答ヘッダー anthropic-organization-id から読む', org === ORG_WORK);
-  t.ok('送るのは GET /v1/models?limit=1（推論を消費しない）', seen[0].url === 'http://stub.invalid/v1/models?limit=1' && seen[0].method === 'GET');
-  t.ok('OAuth のトークンとして送る（Bearer・oauth の beta・版）', seen[0].headers.authorization === `Bearer ${TOKEN_A}`
-    && seen[0].headers['anthropic-beta'] === 'oauth-2025-04-20' && seen[0].headers['anthropic-version'] === '2023-06-01');
-  t.ok('時間切れを付ける', seen[0].signal instanceof AbortSignal);
-  const failed = async (opts) => { try { await fetchTokenOrg(TOKEN_A, opts); return null; } catch (e) { return e; } };
-  const e401 = await failed({ fetch: fakeFetch(() => res(401, ORG_WORK)) });
-  t.ok('200 でなければ失敗（組織が付いていても採らない）', e401?.message.includes('HTTP 401'));
-  const eNet = await failed({ fetch: async () => { throw new Error(`connect failed for ${TOKEN_A}`); } });
-  t.ok('つながらないときの文面にトークンを出さない', eNet && !eNet.message.includes(TOKEN_A) && eNet.message.includes('[トークン]'));
-  const eNone = await failed({ fetch: fakeFetch(() => res(200, null)) });
-  t.ok('応答に組織が無ければ失敗', eNone?.message.includes('組織'));
+  // ---- 0.43.0-beta.24 より前の会話用トークンの片付け（ADR 0352）
+  {
+    const data = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-legacy-'));
+    try {
+      const id = newAccountId();
+      await fs.writeFile(path.join(data, 'claude-account-secrets.json'), JSON.stringify({ version: 1, entries: { [`claude-account:${id}`]: { enc: 'plain', data: LEGACY_TOKEN } } }));
+      await fs.writeFile(path.join(data, 'claude-account-secrets.json.lock'), '');
+      await fs.mkdir(path.join(data, 'claude-login-tmp', 'x'), { recursive: true });
+      await fs.writeFile(path.join(data, 'claude-accounts.json'), JSON.stringify({ version: 1, accounts: [{ id, name: '前から', tokenOrg: ORG_WORK, tokenCheckedAt: '2026-01-01T00:00:00Z' }] }));
+      const accounts = createClaudeAccounts({ dataDir: data, cliConfig: path.join(data, 'no-cli.json') });
+      const first = await accounts.dropLegacyTokens();
+      const exists = p => fs.access(path.join(data, p)).then(() => true, () => false);
+      t.ok('会話用トークンの置き場（と錠）を消す', first.removed === true && !(await exists('claude-account-secrets.json')) && !(await exists('claude-account-secrets.json.lock')));
+      t.ok('前のログインの作業フォルダも消す', !(await exists('claude-login-tmp')));
+      const registry = await fs.readFile(path.join(data, 'claude-accounts.json'), 'utf8');
+      t.ok('一覧から持ち主の照合の記録（tokenOrg・tokenCheckedAt）を消し、アカウントは残す', !registry.includes('tokenOrg') && !registry.includes('tokenCheckedAt')
+        && JSON.parse(registry).accounts[0].id === id && JSON.parse(registry).accounts[0].name === '前から');
+      t.ok('ログインの無い前からのアカウントは、ログインし直すまで usageLogin: false', (await accounts.list()).accounts[0].usageLogin === false);
+      t.ok('2 度目は何も消さない', (await accounts.dropLegacyTokens()).removed === false);
+      const none = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-legacy-none-'));
+      t.ok('何も無いデータ置き場でも失敗しない', (await createClaudeAccounts({ dataDir: none }).dropLegacyTokens()).removed === false);
+      await fs.rm(none, { recursive: true, force: true });
+    } finally { await fs.rm(data, { recursive: true, force: true }); }
+  }
 
   // ---- 設定の .claude.json
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-owner-'));
-  const writeAccount = async (file, orgId, email) => {
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, String.fromCharCode(0xfeff) + JSON.stringify({ numStartups: 3, oauthAccount: { organizationUuid: orgId, emailAddress: email, accountUuid: 'x' } }));
-  };
+  const dir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-oauth-'));
   try {
-    const cliFile = path.join(dir, 'home', '.claude.json');
-    await writeAccount(cliFile, ORG_PERSONAL, 'personal@example.com');
-    t.ok('.claude.json のログイン中のアカウント（BOM 付きでも読む）', JSON.stringify(await readOauthAccount(cliFile)) === JSON.stringify({ org: ORG_PERSONAL, email: 'personal@example.com' }));
-    t.ok('無い・壊れた .claude.json は null', await readOauthAccount(path.join(dir, 'none.json')) === null);
+    const cliFile = path.join(dir2, 'home', '.claude.json');
+    await fs.mkdir(path.dirname(cliFile), { recursive: true });
+    await fs.writeFile(cliFile, String.fromCharCode(0xfeff) + JSON.stringify({ numStartups: 3, oauthAccount: { organizationUuid: ORG_WORK, emailAddress: 'work@example.com', accountUuid: 'x' } }));
+    t.ok('.claude.json のログイン中のアカウント（BOM 付きでも読む）', JSON.stringify(await readOauthAccount(cliFile)) === JSON.stringify({ org: ORG_WORK, email: 'work@example.com' }));
+    t.ok('無い・壊れた .claude.json は null', await readOauthAccount(path.join(dir2, 'none.json')) === null);
     t.ok('CLI の .claude.json は CLAUDE_CONFIG_DIR の中、無ければホームの直下',
-      cliConfigFile({ CLAUDE_CONFIG_DIR: path.join(dir, 'cfg') }, '/h') === path.join(dir, 'cfg', '.claude.json') && cliConfigFile({}, path.join(dir, 'h')) === path.join(dir, 'h', '.claude.json'));
-
-    // ---- 照合（純粋関数）
-    const row = (id, name, tokenOrg, usage, hasToken = true) => ({ id, name, hasToken, tokenOrg, usage });
-    const work = { org: ORG_WORK, email: 'work@example.com' }, personal = { org: ORG_PERSONAL, email: 'personal@example.com' };
-    let r = tokenChecks([row('a', '仕事用', ORG_WORK, work), row('b', '個人用', ORG_PERSONAL, personal)]);
-    t.ok('トークンの組織 = 使用量の認可の組織なら ok', r.get('a').status === 'ok' && r.get('b').status === 'ok' && !r.get('a').sameTokenAs);
-    r = tokenChecks([row('a', '仕事用', ORG_PERSONAL, work), row('b', '個人用', ORG_PERSONAL, personal)]);
-    t.ok('食い違えば mismatch、持ち主は別の登録アカウントの名前（2026-09-23 の事故の形）', r.get('a').status === 'mismatch' && r.get('a').ownerName === '個人用'
-      && r.get('a').ownerEmail === 'personal@example.com' && r.get('a').expectedEmail === 'work@example.com');
-    t.ok('正しい側には何も付けない（間違っているのは相手）', r.get('b').status === 'ok' && !r.get('b').sameTokenAs);
-    r = tokenChecks([row('a', '仕事用', ORG_PERSONAL, work)], personal);
-    t.ok('登録アカウントに持ち主が無ければ、ログイン中のアカウントかを見る', r.get('a').status === 'mismatch' && r.get('a').ownerLoggedIn === true
-      && r.get('a').ownerEmail === 'personal@example.com' && !r.get('a').ownerName);
-    r = tokenChecks([row('a', '仕事用', ORG_OTHER, work)], personal);
-    t.ok('持ち主が分からなくても mismatch（名前は付けない）', r.get('a').status === 'mismatch' && !r.get('a').ownerName && !r.get('a').ownerLoggedIn && r.get('a').expectedEmail === work.email);
-    r = tokenChecks([row('a', '仕事用', ORG_PERSONAL, null), row('b', '個人用', ORG_PERSONAL, personal)]);
-    t.ok('使用量の認可が無くても、別の登録アカウントの組織なら mismatch', r.get('a').status === 'mismatch' && r.get('a').ownerName === '個人用' && !r.get('a').expectedEmail);
-    r = tokenChecks([row('a', '仕事用', ORG_WORK, null)], { org: ORG_WORK, email: 'x' });
-    t.ok('使用量の認可が無く比べる相手が無ければ unknown（ログイン中と同じでも決めつけない）', r.get('a').status === 'unknown' && !r.get('a').ownerLoggedIn);
-    r = tokenChecks([row('a', '仕事用', null, work), row('b', 'none', ORG_WORK, work, false)]);
-    t.ok('未確認・トークン無しは unknown', r.get('a').status === 'unknown' && r.get('b').status === 'unknown');
-    r = tokenChecks([row('a', '仕事用', ORG_WORK, null), row('b', '仕事用2', ORG_WORK, null)]);
-    t.ok('2 つの登録のトークンが同じ組織なら sameTokenAs', r.get('a').sameTokenAs?.join() === '仕事用2' && r.get('b').sameTokenAs?.join() === '仕事用');
-    r = tokenChecks([row('a', '仕事用', ORG_WORK, work), row('b', '仕事用2', ORG_WORK, work)]);
-    t.ok('どちらも照合が合う同じアカウントの 2 重登録も sameTokenAs', r.get('a').status === 'ok' && r.get('a').sameTokenAs?.join() === '仕事用2' && r.get('b').sameTokenAs?.join() === '仕事用');
-
-    // ---- 保存・裏での確認
-    const data = path.join(dir, 'data');
-    const secrets = createSecretStore({ file: path.join(data, 'claude-account-secrets.json'), cipher: plainCipher });
-    const orgOf = { [TOKEN_A]: ORG_WORK, [TOKEN_B]: ORG_PERSONAL, [TOKEN_C]: ORG_OTHER };
-    let calls = [], fail = false, clock = 1_000_000, gate = null;
-    const checkOrg = async token => { calls.push(token); if (gate) await gate.promise; if (fail) throw new Error('offline'); return orgOf[token]; };
-    let changed = 0;
-    const make = (opts = {}) => createClaudeAccounts({ dataDir: data, secrets, checkOrg, onChecked: () => { changed++; }, cliConfig: cliFile, now: () => clock, ...opts });
-    const registry = async () => JSON.parse(await fs.readFile(path.join(data, 'claude-accounts.json'), 'utf8')).accounts;
-    const accounts = make();
-
-    const { id: workId } = await accounts.save({ name: '仕事用', token: TOKEN_B });
-    t.ok('保存したら組織を確かめて記録してから返す', calls.length === 1 && (await registry())[0].tokenOrg === ORG_PERSONAL && typeof (await registry())[0].tokenCheckedAt === 'string');
-    t.ok('一覧のファイルにトークンは書かない', !JSON.stringify(await registry()).includes('sk-ant-'));
-    let list = await accounts.list();
-    t.ok('使用量の認可が無く比べられなければ unknown', list.accounts[0].tokenCheck.status === 'unknown');
-    await writeAccount(path.join(accounts.usageDir(workId), '.claude.json'), ORG_WORK, 'work@example.com');
-    await accounts.markUsageLogin(workId);
-    list = await accounts.list();
-    t.ok('使用量の認可が済むと照合できる（ログイン中のアカウントのトークン）', list.accounts[0].tokenCheck.status === 'mismatch' && list.accounts[0].tokenCheck.ownerLoggedIn === true
-      && list.accounts[0].tokenCheck.expectedEmail === 'work@example.com');
-    t.ok('記録済みなら一覧で確かめ直さない', calls.length === 1);
-
-    const { id: personalId } = await accounts.save({ name: '個人用', token: TOKEN_C });
-    await writeAccount(path.join(accounts.usageDir(personalId), '.claude.json'), ORG_PERSONAL, 'personal@example.com');
-    await accounts.markUsageLogin(personalId);
-    list = await accounts.list();
-    const byId = id => list.accounts.find(a => a.id === id).tokenCheck;
-    t.ok('持ち主は別の登録アカウントの名前で知らせる', byId(workId).status === 'mismatch' && byId(workId).ownerName === '個人用' && !byId(workId).ownerLoggedIn);
-
-    // 貼り直し: 正しいトークン。確かめ直して ok に
-    await accounts.save({ id: workId, name: '仕事用', token: TOKEN_A });
-    list = await accounts.list();
-    t.ok('トークンを差し替えたら確かめ直す', calls.at(-1) === TOKEN_A && byId(workId).status === 'ok' && (await registry()).find(a => a.id === workId).tokenOrg === ORG_WORK);
-    const before = calls.length;
-    await accounts.save({ id: workId, name: '仕事用（改名）' });
-    t.ok('名前だけの変更では確かめない・記録も残す', calls.length === before && (await registry()).find(a => a.id === workId).tokenOrg === ORG_WORK);
-
-    // 確かめられなくても保存は止めない
-    fail = true;
-    await accounts.save({ id: workId, name: '仕事用', token: TOKEN_B });
-    const entry = (await registry()).find(a => a.id === workId);
-    t.ok('確認に失敗しても保存する（トークンは差し替わる）', (await accounts.resolve(workId)).token === TOKEN_B);
-    t.ok('差し替えたら前の記録は消す（未確認のまま）', !('tokenOrg' in entry) && !('tokenCheckedAt' in entry));
-    t.ok('未確認は unknown', (await accounts.list()).accounts.find(a => a.id === workId).tokenCheck.status === 'unknown');
-    const afterFail = calls.length;
-    await accounts.list(); await accounts.list();
-    t.ok('失敗した直後は一覧を引いても叩き続けない', calls.length === afterFail);
-    fail = false; clock += 6 * 60_000; changed = 0;
-    await Promise.all([accounts.list(), accounts.list(), accounts.list()]);
-    await until(() => changed > 0);
-    t.ok('数分おけば一覧を引いたときに確かめ直す（同時に引いても 1 回）', calls.length === afterFail + 1 && changed === 1);
-    t.ok('確かめ直した結果が一覧に出る', (await accounts.list()).accounts.find(a => a.id === workId).tokenCheck.ownerName === '個人用' && calls.length === afterFail + 1);
-
-    // この確認より前に保存したトークン（記録が無い）
-    const legacyData = path.join(dir, 'legacy');
-    const legacySecrets = createSecretStore({ file: path.join(legacyData, 'claude-account-secrets.json'), cipher: plainCipher });
-    const old = createClaudeAccounts({ dataDir: legacyData, secrets: legacySecrets, cliConfig: cliFile });
-    const { id: legacyId } = await old.save({ name: '前から', token: TOKEN_A });
-    calls = []; changed = 0; gate = deferred();
-    const fresh = createClaudeAccounts({ dataDir: legacyData, secrets: legacySecrets, checkOrg, onChecked: () => { changed++; }, cliConfig: cliFile, now: () => clock });
-    const first = await fresh.list();
-    t.ok('記録の無いトークンは一覧を待たせずに裏で確かめる', first.accounts[0].tokenCheck.status === 'unknown' && await until(() => calls.length === 1) && changed === 0);
-    await fresh.list(); const again = fresh.checkToken(legacyId);
-    await new Promise(done => setTimeout(done, 20));
-    t.ok('確かめている間に一覧を引いても重ねない', calls.length === 1);
-    gate.resolve(); gate = null;
-    await again; await until(() => changed > 0);
-    const legacyEntry = JSON.parse(await fs.readFile(path.join(legacyData, 'claude-accounts.json'), 'utf8')).accounts[0];
-    t.ok('裏で確かめた結果を記録し、一覧が変わったことを知らせる', changed === 1 && legacyEntry.tokenOrg === ORG_WORK);
-    await fresh.list();
-    t.ok('記録したら 2 度目は確かめない', calls.length === 1 && changed === 1);
-
-    // 確かめている途中でトークンを差し替えた: 古いトークンの結果は記録しない
-    gate = deferred(); calls = [];
-    const racing = fresh.checkToken(legacyId);
-    await until(() => calls.length === 1);
-    const replacing = fresh.save({ id: legacyId, name: '前から', token: TOKEN_C });
-    await until(() => calls.length === 2);
-    gate.resolve(); gate = null;
-    const [oldResult] = await Promise.all([racing, replacing]);
-    const racedEntry = JSON.parse(await fs.readFile(path.join(legacyData, 'claude-accounts.json'), 'utf8')).accounts[0];
-    t.ok('確かめている途中で差し替えたら、古いトークンの結果は記録しない', oldResult.changed === false && racedEntry.tokenOrg === ORG_OTHER && calls.join() === [TOKEN_A, TOKEN_C].join());
-    t.ok('照合の結果にトークンを載せない', !JSON.stringify(await fresh.list()).includes('sk-ant-'));
-  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+      cliConfigFile({ CLAUDE_CONFIG_DIR: path.join(dir2, 'cfg') }, '/h') === path.join(dir2, 'cfg', '.claude.json') && cliConfigFile({}, path.join(dir2, 'h')) === path.join(dir2, 'h', '.claude.json'));
+  } finally { await fs.rm(dir2, { recursive: true, force: true }); }
 }

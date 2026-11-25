@@ -585,7 +585,7 @@ async function t3Start(ctx) {
   const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => !SCRUB_ENV.test(key) || KEEP_ENV.has(key)));
   const env = {
     ...base, AGENT_HOST_DATA: l.pleiadData, AGENT_HOST_PORT: '0', AGENT_HOST_TOKEN: token, CLAUDE_CONFIG_DIR: l.t3Shared,
-    AGENT_HOST_BACKENDS: 'claude', AGENT_HOST_ANTHROPIC_API: 'off', AGENT_HOST_GIT_SNAPSHOTS: 'off', AGENT_HOST_WORKTREES: 'off',
+    AGENT_HOST_BACKENDS: 'claude', AGENT_HOST_GIT_SNAPSHOTS: 'off', AGENT_HOST_WORKTREES: 'off',
     AGENT_HOST_AGENT_BROWSER_PRESTART: 'off', AGENT_HOST_HOLDER_IDLE_MS: '5000', AGENT_HOST_LOCALE: 'ja', PLEIAD_SCAN_HOME: path.join(l.pleiadData, 'scan-home'),
   };
   const offset = fsSync.existsSync(l.t3Log) ? fsSync.statSync(l.t3Log).size : 0;

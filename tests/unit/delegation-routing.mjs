@@ -404,12 +404,12 @@ export default async function (t) {
     candidates: () => ['claude:opus', 'antigravity:gemini-3.8-flash-high', 'codex:gpt-6-sol'],
     modelKnown: async (b, m) => b.id === 'antigravity' ? agyKnows : m === 'opus',
     warm: async b => { warmed++; if (b.id === 'antigravity') agyKnows = true; },
-    claudeIdentities: async () => ({ login: { org: 'o', email: 'e@example.com' }, accounts: [{ id: 'acct-1', hasToken: true, identity: { org: 'o', email: 'E@example.com' } }, { id: 'acct-2', hasToken: false, identity: null }] }),
+    claudeIdentities: async () => ({ login: { org: 'o', email: 'e@example.com' }, accounts: [{ id: 'acct-1', usageLogin: true, identity: { org: 'o', email: 'E@example.com' } }, { id: 'acct-2', usageLogin: false, identity: null }] }),
   });
   t.ok('取る前は空（振り分けは待たずに「不明」で飛ばす）', Object.keys(monitor.snapshot()).length === 0);
   await monitor.refresh();
   const snap = monitor.snapshot();
-  t.ok('Claude: アカウントごとの枠・識別子・会話を回せるか（トークンの有無）', snap.claude.checkedAt === NOW && snap.claude.accounts.length === 3 && snap.claude.accounts[0].account === ''
+  t.ok('Claude: アカウントごとの枠・識別子・会話を回せるか（専用フォルダのログインの有無）', snap.claude.checkedAt === NOW && snap.claude.accounts.length === 3 && snap.claude.accounts[0].account === ''
     && snap.claude.accounts[1].identity.org === 'o' && snap.claude.accounts[1].runnable === true && snap.claude.accounts[2].runnable === false);
   t.ok('見出しのメールアドレスは伏せる（振り分けの記録はエージェントにも返る）', snap.claude.accounts[1].label === 'work a***@example.com');
   t.ok('取得に失敗した値は「不明」（checkedAt が null）', snap.antigravity.checkedAt === null && snap.antigravity.windows.length === 0);

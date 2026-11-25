@@ -1,13 +1,12 @@
 // Claude のアカウント（会話ごとに選ぶ。core/claude-accounts.mjs）の設定。
-// 一覧の追加・名前の変更・削除と、認可（Pleiad が疑似端末で `claude setup-token` / `claude auth login` を回す。core/claude-login.mjs）。
+// 一覧の追加・名前の変更・削除と、claude.ai のログイン（Pleiad が疑似端末で `claude auth login` を回す。core/claude-login.mjs）。
 //
-// 1 つのアカウントが持つ認証は 2 つ。「会話用のトークン」（setup-token。会話を動かす）と「claude.ai のログイン」（使用量の表示・
-// claude.ai のコネクターを読む。アカウントごとに別に認可する）。トークンは画面に出さない（サーバーも返さない。hasToken だけ）。
-// 手で貼る欄は、Pleiad から発行できないときの代わりに残す。
+// 1 つのアカウントが持つ認証は claude.ai のログイン 1 つだけ（ADR 0352）。会話・使用量の表示・claude.ai のコネクターは、
+// どれもアカウントごとの専用フォルダのログインで動く。新しいアカウントは、名前を付けてログインが済んだ時点で一覧に載る。
 //
 // 面は「カードがその場で開く」形（docs/design-system.md「Claude のアカウント」）:
 //   閉じたカード = 名前・状態の一行・直す必要があるときの 1 つのボタン・［編集］［削除］。
-//   開いたカード = 名前をその場で書き換える・認証ごとの行（状態と「発行し直す」「ログインし直す」）。流れ（コードを貼る等）は、その行の下で進む。
+//   開いたカード = 名前をその場で書き換える・ログインの行（状態と「ログインし直す」）。流れ（コードを貼る等）は、その行の下で進む。
 // 流れ（認可）が走っているカードは閉じない。［完了］・Esc は名前だけを片付け、流れは［やめる］か、済む・失敗して閉じるまで残る。
 // 取り消し（claudeLoginCancel）を送るのは［やめる］・別の流れを始める・流れのあるアカウントを削除する、の 3 つだけ（面を閉じても送らない）。
 // 状態（state）から HTML を作り、変わった所だけ差し替える（web/dom-patch.mjs）。描き直さないので、フォーカス・打ちかけの文字・
@@ -16,9 +15,8 @@ import { t } from './i18n.mjs';
 import { patch, flash, ms } from './dom-patch.mjs';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-// パスワード管理の拡張・ブラウザーに保存や補完を促されないための印（トークン・コード・表示名の欄）
+// パスワード管理の拡張・ブラウザーに保存や補完を促されないための印（コード・表示名の欄）
 const NOPM = 'autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"';
-const NOPM_SECRET = 'autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"';
 const sel = {
   card: id => `[data-account="${CSS.escape(id)}"]`,
   name: id => `[data-account="${CSS.escape(id)}"] [data-name]`,
@@ -27,11 +25,9 @@ const sel = {
   fix: (id, kind) => `[data-account="${CSS.escape(id)}"] .mp-body [data-fix="${CSS.escape(id)}:${kind}"]`,
   slot: (key, kind) => `[data-slot="flow:${CSS.escape(key)}:${kind}"]`,
   code: id => `[data-account="${CSS.escape(id)}"] [data-code]`,
-  token: id => `[data-account="${CSS.escape(id)}"] [data-token]`,
-  manual: id => `[data-account="${CSS.escape(id)}"] .mp-body [data-manual="${CSS.escape(id)}"]`,
   body: id => `[data-account="${CSS.escape(id)}"] .mp-body`,
 };
-const KINDS = { tok: 'setup-token', lg: 'usage-login' };
+const KINDS = { lg: 'usage-login' };
 const MAX_NAME = 60;
 
 export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) {
@@ -42,23 +38,21 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   panel.setAttribute('aria-labelledby', 'caTitle');
   document.getElementById('agentControls').append(panel);
 
-  let accounts = [], storage = null, loaded = null;
+  let accounts = [], loaded = null;
   let openId = '';                 // 開いているカード（追加のカードは draftId）
   let confirmId = '';              // 削除の確認を出しているカード
   let removing = '';               // 畳んで消えていくカード
-  let manualId = '';               // 手で貼る欄を出しているカード
-  let showToken = false;
   let message = '';                // 面の下の一言（読み込み中・削除の失敗）
   let saving = false;
-  let flow = null;                 // 進行中の認可 { id, kind: tok|lg, loginId, phase, url, message, name, accountId, popup }
+  let flow = null;                 // 進行中の認可 { id, kind: lg, loginId, phase, url, message, name, accountId, popup }
   const nd = {};                   // 打ちかけの表示名（カード id → 文字）
   const err = {};                  // 表示名の誤り（カード id → 文）
-  const fresh = {};                // いま済んだ認証（`${id}:tok` / `${id}:lg`）。✓ を出す
+  const fresh = {};                // いま済んだログイン（`${id}:lg`）。✓ を出す
   const lastFix = new Map();       // カードを開くとき、直すボタンが畳み終わるまで文字を残す
   const alias = new Map();         // 追加のカードが実際のアカウントになったとき、そのカードの DOM を引き継ぐ（実 id → 札）
   let seq = 1, draftId = 'new1';
   let focusAfter = null, selectAfter = false, flashAfter = [];
-  let cerr = '', terr = '';
+  let cerr = '';
   const coarse = matchMedia('(hover:none) and (pointer:coarse)').matches;
   // デスクトップ版はサーバーが既定のブラウザーで開く。ブラウザー版は押した時点で窓を開けておき、URL が届いたら移す（後から開くとポップアップとして止められる）
   // リモートの窓（plyRemote）はデスクトップ版でも、サーバーが開くのはホストの PC のブラウザー。ブラウザー版と同じく手元で開く（docs/remote.md §7.3）
@@ -66,7 +60,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
 
   /** 一覧を取り直す。force でなければ前回の結果を使い回す */
   async function load(force = false) {
-    if (!loaded || force) loaded = cmd('claudeAccounts').then(r => { accounts = r.accounts ?? []; storage = r.storage ?? null; return accounts; })
+    if (!loaded || force) loaded = cmd('claudeAccounts').then(r => { accounts = r.accounts ?? []; return accounts; })
       .catch(e => { loaded = null; throw e; });
     return loaded;
   }
@@ -77,7 +71,6 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   };
   const byId = id => entries().find(a => a.id === id);
   const keyOf = id => alias.get(id) ?? id;   // DOM の札（追加のカードから本物になったカードは、追加のときの札のまま）
-  const draftOf = () => byId(draftId);
 
   // ---------------------------------------------------------------- 表示名の検査（サーバーと同じ決まり: 前後の空白だけ除く・大文字小文字は区別する）
   function check(id, value) {
@@ -90,75 +83,47 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     return accounts.some(x => x.id !== id && x.name.trim() === v) ? t('accounts.name.duplicate') : '';
   }
 
-  // ---------------------------------------------------------------- 文言
-  /**
-   * トークンの持ち主の食い違い（サーバーの tokenCheck。core/claude-accounts.mjs の tokenChecks）。無ければ ''。
-   * setup-token はブラウザーでログイン中の claude.ai アカウントで黙って発行されるので、直し方はログインを切り替えて発行し直すこと
-   */
-  function ownerWarning(a) {
-    const c = a?.hasToken ? a.tokenCheck : null;
-    if (c?.status === 'mismatch') {
-      const reissue = t('accounts.owner.reissue');
-      const expected = c.expectedEmail ? t('accounts.owner.expected', { email: c.expectedEmail }) : '';
-      if (c.ownerName) return t('accounts.owner.named', { owner: c.ownerName, expected, reissue });
-      if (c.ownerLoggedIn) return t('accounts.owner.loggedIn', { email: c.ownerEmail ? t('accounts.owner.email', { email: c.ownerEmail }) : '', expected, reissue });
-      return t('accounts.owner.other', { email: c.expectedEmail ? t('accounts.owner.email', { email: c.expectedEmail }) : '', reissue });
-    }
-    if (c?.sameTokenAs?.length) return t('accounts.owner.same', { names: c.sameTokenAs.join(t('accounts.owner.nameJoin')) });
-    return '';
-  }
-
   // ---------------------------------------------------------------- 描画（状態 → HTML）
   const cancelButton = `<button class="btn" type="button" data-flow="cancel">${esc(t('accounts.cancel'))}</button>`;
   function codeStep(f, error) {
     const v = f.phase === 'verifying' || f.phase === 'done';   // 済んだ直後（一覧の取り直しの間）も入力できない姿のまま
     const link = /^https:\/\//.test(f.url ?? '') ? `<p class="mp-note"><a href="${esc(f.url)}" target="_blank" rel="noreferrer">${esc(t('accounts.flow.openLink'))}</a></p>` : '';
-    return `<form class="mp-stage" data-k="step:code" data-flowform novalidate><p>${esc(f.kind === 'lg' ? t('accounts.flow.step1Usage') : t('accounts.flow.step1Token'))}</p>${link}<p>${esc(t('accounts.flow.step2'))}</p>`
+    const step1 = f.accountId ? t('accounts.flow.step1Usage') : t('accounts.flow.step1New');
+    return `<form class="mp-stage" data-k="step:code" data-flowform novalidate><p>${esc(step1)}</p>${link}<p>${esc(t('accounts.flow.step2'))}</p>`
       + `<label class="mp-field"><input data-code aria-label="${esc(t('accounts.flow.codeLabel'))}" placeholder="${esc(t('accounts.flow.codePlaceholder'))}" ${NOPM} spellcheck="false"${error ? ' aria-invalid="true"' : ''}${v ? ' disabled' : ''}></label>`
       + `<div data-slot="cerr">${error ? `<p class="mp-state" role="alert">${esc(error)}</p>` : ''}</div>`
       + `<div class="mp-actions">${cancelButton}<button class="btn btn-primary" type="submit"${v ? ' disabled' : ''}><span data-t>${esc(v ? t('accounts.flow.verifying') : t('accounts.flow.submit'))}</span></button></div></form>`;
   }
-  function stepHtml(f, manualWord) {
+  function stepHtml(f) {
     if (f.phase === 'starting') return `<div class="mp-stage" data-k="step:starting"><p>${esc(t('accounts.flow.starting'))}</p><div class="mp-actions">${cancelButton}</div></div>`;
     if (f.phase === 'error') {
       return `<div class="mp-stage" data-k="step:error"><p class="mp-state" role="alert">${esc(f.message || t('accounts.flow.failed'))}</p><div class="mp-actions">`
-        + `${f.kind === 'tok' ? `<button class="btn lnk" type="button" data-manual="${esc(f.id)}">${esc(manualWord)}</button>` : ''}`
         + `<span class="mp-duo">${cancelButton}<button class="btn btn-primary" type="button" data-flow="retry">${esc(t('accounts.flow.retry'))}</button></span></div></div>`;
     }
     return codeStep(f, cerr || (f.phase === 'code' ? f.message : ''));
   }
-  function manualHtml(id) {
-    return `<form class="mp-stage" data-k="step:manual" data-manualform="${esc(id)}" novalidate><p class="mp-note">${esc(t('accounts.manual.note', { command: 'claude setup-token' })).replace('claude setup-token', '<code>claude setup-token</code>')}</p>`
-      + `<label class="mp-field"><span>${esc(t('accounts.manual.token'))}</span><div class="mp-row"><input type="${showToken ? 'text' : 'password'}" data-token ${NOPM_SECRET} spellcheck="false" aria-label="${esc(t('accounts.manual.token'))}"${terr ? ' aria-invalid="true"' : ''}>`
-      + `<button type="button" class="btn" data-show><span data-t>${esc(showToken ? t('accounts.manual.hide') : t('accounts.manual.show'))}</span></button></div><small>${esc(t('accounts.manual.hint'))}</small></label>`
-      + `<div data-slot="terr">${terr ? `<p class="mp-state" role="alert">${esc(terr)}</p>` : ''}</div>`
-      + `<div class="mp-actions"><button class="btn" type="button" data-manual="">${esc(t('accounts.cancel'))}</button><button class="btn btn-primary" type="submit"><span data-t>${esc(saving ? t('accounts.manual.saving') : t('accounts.manual.save'))}</span></button></div></form>`;
-  }
 
   function cardHtml(a) {
     const id = a.id, dr = Boolean(a.draft), edit = openId === id, n = esc(a.name), e = err[id];
-    const own = dr ? '' : ownerWarning(a);
-    const hasToken = !dr && a.hasToken, hasLogin = !dr && a.usageLogin;
+    const hasLogin = !dr && a.usageLogin;
     // claude.ai のログインが切れている（更新できなかった印。ADR 0340 段 3）。直すボタンは「claude.ai にログインし直す」
     const expired = hasLogin && Boolean(a.usageExpired);
-    const f = flow?.id === id ? flow : null, manual = manualId === id, confirm = confirmId === id;
+    const f = flow?.id === id ? flow : null, confirm = confirmId === id;
     // edit = 名前を書き換えている（［完了］を出す）。open = 中身が開いている（書き換え中か、流れが走っている）
     const open = edit || Boolean(f);
-    // 閉じたカードの直すボタン（認証が無い → ログインがまだ）。操作の組 [直す][編集][削除] の先頭に置く。持ち主の食い違いは知らせの横の［トークンを発行し直す］
-    const want = dr ? null : !hasToken ? { kind: 'tok', label: t('accounts.issue') } : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : expired ? { kind: 'lg', label: t('accounts.redoUsage') } : null;
+    // 閉じたカードの直すボタン（ログインがまだ・切れている）。操作の組 [直す][編集][削除] の先頭に置く
+    const want = dr ? null : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : expired ? { kind: 'lg', label: t('accounts.redoUsage') } : null;
     const fix = open ? null : want;
     if (want) lastFix.set(id, want);
     const fx = fix ?? lastFix.get(id);
     // 開いたカードで一番目立たせる操作は 1 つ
-    const main = f || manual ? 'step' : dr || !hasToken || own ? 'tok' : !hasLogin || expired ? 'lg' : 'done';
+    const main = f ? 'step' : dr || !hasLogin || expired ? 'lg' : 'done';
     const pri = k => main === k ? ' btn-primary' : '';
     const tgl = dr ? [t('accounts.cancel'), t('accounts.label.cancelAdd')] : edit ? [t('accounts.done'), t('accounts.label.done', { name: a.name })] : [t('accounts.edit'), t('accounts.label.edit', { name: a.name })];
-    const manualWord = hasToken ? t('accounts.manualReplace') : t('accounts.manualNew');
-    const tokWord = hasToken ? t('accounts.status.registered') : t('accounts.status.none');
     const lgWord = expired ? t('accounts.status.expired') : hasLogin ? t('accounts.status.done') : t('accounts.status.none');
     const key = alias.get(id) ?? id;
     // 状態の行。直すボタンがあるカードでは名前の下（名前と同じ列）に入れ、操作の組が名前の横に収まらなければ組ごと状態の行の下へ回る
-    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { token: tokWord, login: lgWord }))}</small></div></div>`;
+    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { login: lgWord }))}</small></div></div>`;
 
     const head = `<div class="mp-row mp-head"><div class="mp-card-info"><div class="mp-name">`
       + `<strong data-k="nm"${edit ? ' aria-hidden="true"' : ''}${a.name.length > 20 ? ` title="${n}"` : ''}>${n}</strong>`
@@ -170,20 +135,14 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       + `<button class="btn${edit && !dr ? pri('done') : ''}" type="button" data-toggle="${esc(id)}"${dr && f ? ' hidden' : ''} aria-expanded="${open}" aria-controls="mpb-${esc(key)}" aria-label="${esc(tgl[1])}"><span data-t>${esc(tgl[0])}</span></button>`
       + `<span class="mp-hfold${dr ? '' : ' open'}" data-k="delf"><span><button class="btn" type="button" data-del="${esc(id)}" aria-label="${esc(a.name ? t('accounts.label.delete', { name: a.name }) : t('accounts.label.newAccount'))}">${esc(t('accounts.delete'))}</button></span></span></div></div>`;
 
-    const ownNote = `<div class="mp-own" data-slot="own:${esc(key)}">${!open && own ? `<div class="mp-confirm"><p class="mp-warn">⚠ ${esc(own)}</p><div class="mp-card-actions"><button class="btn btn-quiet" type="button" data-fix="${esc(id)}:tok">${esc(t('accounts.reissue'))}</button></div></div>` : ''}</div>`;
-
-    const step = kind => f?.kind === kind ? stepHtml(f, manualWord) : kind === 'tok' && manual ? manualHtml(id) : '';
-    const cred = (kind, label, status, acts, extra = '') => `<div class="mp-cred" data-k="cred:${kind}" role="group" aria-label="${esc(label)}"><div class="mp-cred-info"><span>${esc(label)}</span><small data-t aria-live="polite">${esc(status)}</small></div>`
-      + `<div class="mp-fold${f?.kind === kind || (kind === 'tok' && manual) ? '' : ' open'}" data-k="acts"><div class="mp-fold-in mp-card-actions">${acts}</div></div>${extra}<div class="mp-flow" data-slot="flow:${esc(key)}:${kind}" tabindex="-1">${step(kind)}</div></div>`;
-    const tok = cred('tok', t('accounts.token'), dr ? t('accounts.status.none') : fresh[id + ':tok'] && !own ? t('accounts.status.tokenFresh') : tokWord,
-      `<button class="btn lnk" type="button" data-manual="${esc(id)}">${esc(manualWord)}</button><button class="btn${pri('tok')}" type="button" data-fix="${esc(id)}:tok">${esc(hasToken ? t('accounts.reissue') : t('accounts.issue'))}</button>`,
-      `<div class="mp-tw" data-slot="tw:${esc(key)}">${open && own ? `<p class="mp-warn">⚠ ${esc(own)}</p>` : ''}</div>`);
+    const step = kind => f?.kind === kind ? stepHtml(f) : '';
+    const cred = (kind, label, status, acts) => `<div class="mp-cred" data-k="cred:${kind}" role="group" aria-label="${esc(label)}"><div class="mp-cred-info"><span>${esc(label)}</span><small data-t aria-live="polite">${esc(status)}</small></div>`
+      + `<div class="mp-fold${f?.kind === kind ? '' : ' open'}" data-k="acts"><div class="mp-fold-in mp-card-actions">${acts}</div></div><div class="mp-flow" data-slot="flow:${esc(key)}:${kind}" tabindex="-1">${step(kind)}</div></div>`;
     const lg = cred('lg', t('accounts.login'), fresh[id + ':lg'] ? t('accounts.status.loginFresh') : lgWord,
       `<button class="btn${pri('lg')}" type="button" data-fix="${esc(id)}:lg">${esc(hasLogin ? t('accounts.redoUsage') : t('accounts.authorizeUsage'))}</button>`);
-    const body = `<div class="mp-fold${open ? ' open' : ''}" data-k="body" id="mpb-${esc(key)}"><div class="mp-fold-in mp-wide mp-body" role="group" aria-label="${esc(dr ? t('accounts.label.newAccount') : t('accounts.label.settings', { name: a.name }))}" tabindex="-1">${tok}`
-      + `<div class="mp-fold${dr ? '' : ' open'}" data-k="lgf"><div class="mp-fold-in mp-wide">${lg}</div></div></div></div>`;
+    const body = `<div class="mp-fold${open ? ' open' : ''}" data-k="body" id="mpb-${esc(key)}"><div class="mp-fold-in mp-wide mp-body" role="group" aria-label="${esc(dr ? t('accounts.label.newAccount') : t('accounts.label.settings', { name: a.name }))}" tabindex="-1">${lg}</div></div>`;
     const conf = `<div data-slot="confirm:${esc(key)}">${confirm ? `<div class="mp-confirm" role="group" aria-label="${esc(t('accounts.label.confirm', { name: a.name }))}"><p>${esc(t('accounts.confirmDelete', { name: a.name }))}</p><div class="mp-card-actions"><button class="btn" type="button" data-confirm="no">${esc(t('accounts.cancel'))}</button><button class="btn danger" type="button" data-confirm="yes">${esc(t('accounts.confirmDeleteButton'))}</button></div></div>` : ''}</div>`;
-    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct${open ? ' is-open' : ''}${edit ? ' is-edit' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${want ? '' : sum}${ownNote}${body}${conf}</div></div></div>`;
+    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct${open ? ' is-open' : ''}${edit ? ' is-edit' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${want ? '' : sum}${body}${conf}</div></div></div>`;
   }
 
   function html() {
@@ -194,7 +153,6 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       + `<div data-slot="empty">${accounts.length || adding ? '' : `<p class="mp-note">${esc(t('accounts.empty'))}</p>`}</div>`
       + `<div class="mp-fold${adding ? '' : ' open'}" data-k="addf"><div class="mp-fold-in"><button type="button" class="btn" data-add>${esc(t('accounts.add'))}</button></div></div>`
       + `<p class="mp-note">${esc(t('accounts.usageNote'))}</p>`
-      + `<p class="mp-note">${storage ? esc(storage.encrypted ? t('accounts.storage.encrypted') : t('accounts.storage.plain')) : ''}</p>`
       + `<p class="mp-state" data-k="state" role="status">${esc(message)}</p>`;
   }
 
@@ -230,8 +188,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     }
     const running = flow?.id === id;
     if (!running) { delete nd[id]; cerr = ''; }
-    delete err[id]; delete fresh[id + ':tok']; delete fresh[id + ':lg'];
-    if (manualId === id) { manualId = ''; terr = ''; showToken = false; }
+    delete err[id]; delete fresh[id + ':lg'];
     openId = '';
     return true;
   }
@@ -252,8 +209,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       flow = null;
       if (lid && live) cmd('claudeLoginCancel', { loginId: lid }).catch(() => {});
     }
-    if (manualId === id) manualId = '';
-    cerr = terr = ''; showToken = false;
+    cerr = '';
   }
 
   // ---------------------------------------------------------------- 認可の流れ
@@ -267,8 +223,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       if (e) { err[id] = e; focusAfter = sel.name(id); selectAfter = false; draw(); return; }
       delete err[id];
     }
-    if (manualId === id) manualId = '';
-    cerr = terr = '';
+    cerr = '';
     await startLogin({ id, kind, accountId: a.draft ? undefined : id, name });
   }
   async function startLogin({ id, kind, accountId, name }) {
@@ -306,7 +261,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   }
   async function submitCode(form) {
     const f = flow; if (!f?.loginId || f.phase !== 'code' && f.phase !== 'url') return;
-    const code = String($('[data-code]', form)?.value ?? form.querySelector('[data-code]')?.value ?? '').trim();
+    const code = String(form.querySelector('[data-code]')?.value ?? '').trim();
     if (!code) { cerr = t('accounts.flow.codeRequired'); focusAfter = sel.code(f.id); draw(); return; }
     f.phase = 'verifying'; f.message = ''; cerr = ''; focusAfter = sel.slot(keyOf(f.id), f.kind); draw();
     try { await cmd('claudeLoginCode', { loginId: f.loginId, code }); }
@@ -343,10 +298,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     if (id === draftId && f.accountId) id = promoteDraft(f.accountId);
     fresh[id + ':' + f.kind] = true; flashAfter.push(`${sel.card(id)} [data-k="cred:${f.kind}"]`);
     flow = null;
-    const a = byId(id);
-    // 書き換え中で開いたままなら次の操作へ。流れだけで開いていたカードは閉じるので、フォーカスがその中にあったときだけ［編集］へ
-    if (openId === id) focusAfter = f.kind === 'tok' && a && !a.usageLogin ? sel.fix(id, 'lg') : sel.toggle(id);
-    else if (wasIn) focusAfter = sel.toggle(id);
+    // 書き換え中で開いたままなら［完了］へ。流れだけで開いていたカードは閉じるので、フォーカスがその中にあったときだけ［編集］へ
+    if (openId === id || wasIn) focusAfter = sel.toggle(id);
     draw(); onChange();
   }
   /** 追加のカードが実際のアカウントになった: 同じ DOM を引き継ぎ、新しい追加のカードを用意する */
@@ -374,30 +327,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   }
   const inCard = id => { const c = $(sel.card(id)), ae = document.activeElement; return Boolean(c && ae && c.contains(ae)); };
 
-  // ---------------------------------------------------------------- 手で貼る・削除
-  async function saveManual(form) {
-    const id = form.dataset.manualform, a = byId(id); if (!a || saving) return;
-    const token = form.querySelector('[data-token]').value.trim();
-    if (!token) { terr = t('accounts.manual.required'); focusAfter = sel.token(id); draw(); return; }
-    let name = a.name;
-    if (a.draft) {
-      name = (nd[id] ?? '').trim();
-      const e = check(id, name);
-      if (e) { err[id] = e; focusAfter = sel.name(id); draw(); return; }
-    }
-    saving = true; draw();
-    try {
-      const r = await cmd('saveClaudeAccount', { ...(a.draft ? {} : { id }), name, token });
-      accounts = r.accounts ?? accounts; storage = r.storage ?? storage; loaded = Promise.resolve(accounts);
-      let to = id;
-      if (a.draft && r.id) to = promoteDraft(r.id);
-      manualId = ''; terr = ''; showToken = false; saving = false;
-      fresh[to + ':tok'] = true; flashAfter.push(`${sel.card(to)} [data-k="cred:tok"]`);
-      const b = byId(to);
-      focusAfter = b && !b.usageLogin ? sel.fix(to, 'lg') : sel.toggle(to);
-      draw(); onChange();
-    } catch (e) { saving = false; terr = e.message; focusAfter = sel.token(id); draw(); }
-  }
+  // ---------------------------------------------------------------- 削除
   async function remove(id) {
     message = '';
     const order = entries().filter(x => !x.draft).map(x => x.id), next = order.filter(x => x !== id)[Math.min(order.indexOf(id), order.length - 2)];
@@ -406,7 +336,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     } catch (e) { confirmId = ''; message = t('accounts.deleteFailed', { error: e.message }); draw(); return; }
     confirmId = '';
     if (flow?.id === id) stopFlow(id);   // 流れのあるアカウントの削除は、その流れに取り消しを送る
-    if (openId === id) { if (manualId === id) manualId = ''; delete nd[id]; delete err[id]; openId = ''; }
+    if (openId === id) { delete nd[id]; delete err[id]; openId = ''; }
     removing = id; focusAfter = next ? sel.toggle(next) : '[data-add]'; draw();
     // 畳み終わってから一覧から外す（下のカードが跳ばない）
     setTimeout(async () => { try { await load(true); } catch {} removing = ''; draw(); onChange(); }, ms('--dur'));
@@ -431,21 +361,9 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       if (d.confirm === 'no') { confirmId = ''; focusAfter = sel.del(id); }
       else { await remove(id); return; }
     } else if (d.fix) { const [id, kind] = d.fix.split(':'); await startFlow(id, kind); return; }
-    else if (d.manual != null) {
-      if (!d.manual) { const id = manualId; manualId = ''; terr = ''; showToken = false; focusAfter = sel.manual(id); }
-      else {
-        const id = d.manual, a = byId(id), er = a?.draft ? check(id, (nd[id] ?? '').trim()) : '';
-        if (er) { err[id] = er; focusAfter = sel.name(id); }
-        else {
-          if (openId !== id && !(await openCard(id, sel.token(id)))) { draw(); return; }
-          if (flow?.id === id) stopFlow(id);
-          manualId = id; terr = ''; showToken = false; focusAfter = sel.token(id);
-        }
-      }
-    } else if (d.show != null) showToken = !showToken;
     else if (d.flow === 'retry') {
       const f = flow; if (!f) return;
-      // origin と同じく、流れが知ったアカウント（追加の途中で登録された物も）があればそれで、無ければ名前でやり直す
+      // origin と同じく、流れが知ったアカウント（登録済みのもの）があればそれで、無ければ名前でやり直す
       await startLogin({ id: f.id, kind: f.kind, accountId: f.accountId ?? (byId(f.id)?.draft ? undefined : f.id), name: f.name });
       return;
     } else if (d.flow === 'cancel') { cancelFlow(); return; }
@@ -454,32 +372,28 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   });
   panel.addEventListener('submit', e => {
     e.preventDefault();
-    const f = e.target;
-    if (f.matches('[data-flowform]')) submitCode(f);
-    else if (f.matches('[data-manualform]')) saveManual(f);
+    if (e.target.matches('[data-flowform]')) submitCode(e.target);
   });
   panel.addEventListener('input', e => {
     const i = e.target, id = i.dataset?.name;
     if (id != null) { nd[id] = i.value; if (err[id]) { delete err[id]; draw(); } }
     else if (i.dataset?.code != null && cerr) { cerr = ''; draw(); }
-    else if (i.dataset?.token != null && terr) { terr = ''; draw(); }
   });
   panel.addEventListener('keydown', async e => {
     if (e.isComposing) return;
     const id = e.target.dataset?.name;
     if (e.key === 'Enter' && id != null) {
-      // 登録済み: Enter は名前を保存して閉じる。新しいカード: Enter は一番の操作（トークンを発行）
+      // 登録済み: Enter は名前を保存して閉じる。新しいカード: Enter は一番の操作（claude.ai にログイン）
       e.preventDefault();
       if (saving) return;
-      if (byId(id)?.draft) await startFlow(id, 'tok');
+      if (byId(id)?.draft) await startFlow(id, 'lg');
       else if (await closeCard('done')) { focusAfter = sel.toggle(id); draw(); }
     } else if (e.key === 'Escape') {
-      // 1 回に 1 層: 削除の確認 → 手で貼る欄 → カード（名前を戻す）。流れは止めない（［やめる］だけが止める）。設定の画面までは届かせない
+      // 1 回に 1 層: 削除の確認 → カード（名前を戻す）。流れは止めない（［やめる］だけが止める）。設定の画面までは届かせない
       const o = openId;
-      if (!confirmId && !o && !manualId) return;
+      if (!confirmId && !o) return;
       e.preventDefault(); e.stopPropagation();
       if (confirmId) { const c = confirmId; confirmId = ''; focusAfter = sel.del(c); }
-      else if (manualId) { const m = manualId; manualId = ''; terr = ''; showToken = false; focusAfter = sel.manual(m); }
       else { const dr = byId(o)?.draft, running = flow?.id === o; await closeCard('esc'); focusAfter = running ? sel.slot(keyOf(o), flow.kind) : dr ? '[data-add]' : sel.toggle(o); }
       draw();
     }
@@ -489,17 +403,16 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   /** 面を閉じる。流れは止めない（origin と同じ。開き直すと、流れがまだ生きていれば続きが見える） */
   function close() {
     panel.hidden = true;
-    openId = ''; confirmId = ''; manualId = ''; message = ''; terr = ''; showToken = false;
+    openId = ''; confirmId = ''; message = '';
     for (const k of Object.keys(nd)) delete nd[k];
     for (const k of Object.keys(err)) delete err[k];
     for (const k of Object.keys(fresh)) delete fresh[k];
     draw();
   }
-  // usageLogin: そのアカウントの claude.ai のログインを始める。reissue: そのアカウントの会話用のトークンの発行し直しを始める
-  // （会話の失敗の行の［トークンを発行し直す］。web/auth-expired.mjs、ADR 0212）。
+  // usageLogin: そのアカウントの claude.ai のログイン（し直し）を始める（会話の失敗の行の［ログインし直す］。web/auth-expired.mjs、ADR 0212・0352）。
   // focus: そのアカウントのカードの［編集］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   let onOpen = () => {};
-  async function open({ usageLogin, reissue, focus } = {}) {
+  async function open({ usageLogin, focus } = {}) {
     openSettings(); panel.hidden = false; onOpen('claude');   // backend-allow: この面は Claude のアカウント専用
     message = t('accounts.loading'); draw();
     try {
@@ -507,10 +420,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       message = ''; confirmId = ''; draw();
       panel.scrollIntoView({ block: 'nearest' });
       const target = usageLogin && accounts.find(a => a.id === usageLogin);
-      const again = !target && reissue && accounts.find(a => a.id === reissue);
       if (target) await startFlow(target.id, 'lg');
-      else if (again) await startFlow(again.id, 'tok');
-      else if (reissue) { message = t('accounts.reissueMissing'); draw(); }
+      else if (usageLogin) { message = t('accounts.loginMissing'); draw(); }
       else if (focus && accounts.some(a => a.id === focus)) { focusAfter = sel.toggle(focus); draw(); }
     } catch (e) { message = e.message; draw(); }
   }

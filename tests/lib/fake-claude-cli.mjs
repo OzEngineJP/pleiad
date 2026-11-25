@@ -22,6 +22,14 @@ import crypto from 'node:crypto';
 const VERSION = process.env.FAKE_CLAUDE_VERSION || '2.1.288';
 const argv = process.argv.slice(2);
 if (argv.includes('--version')) { process.stdout.write(`${VERSION} (Claude Code)\n`); process.exit(0); }
+if (argv[0] === 'auth' && argv[1] === 'login') {
+  // ログイン（core/claude-login.mjs）は偽のログイン（fake-claude-login.mjs）で回す。標準入出力はそのまま渡す
+  const { spawn } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fake-claude-login.mjs', import.meta.url)), ...argv], { stdio: 'inherit' });
+  child.on('exit', code => process.exit(code ?? 1));
+  await new Promise(() => {});
+}
 if (argv[0] === 'auth') { process.stdout.write(`${JSON.stringify({ loggedIn: true, authMethod: 'fake', email: 'fake@example.invalid' })}\n`); process.exit(0); }
 
 const MODEL = 'claude-fake';
@@ -303,12 +311,14 @@ function onControlRequest(m) {
         try {
           const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8'));
           const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
+          // トークンが無ければ、専用フォルダ（CLAUDE_CONFIG_DIR）の資格情報の accessToken を 'cred:<accessToken>' の鍵にする（登録したアカウント。ADR 0352）
+          const key = tok || ownDirKey();
           account = cfg.accounts?.[tok] ?? {};
-          const picked = tok ? (cfg.tokens?.[tok] ?? cfg.default) : (cfg.login ?? cfg.default);
-          // delays: { <トークン または 'login'>: ミリ秒 }。一覧の応答を遅らせる（取れるのが画面の待ちより後になる場面）
-          delay = Number(cfg.delays?.[tok || 'login']) || 0;
+          const picked = key ? (cfg.tokens?.[key] ?? (tok ? cfg.default : (cfg.login ?? cfg.default))) : (cfg.login ?? cfg.default);
+          // delays: { <鍵 または 'login'>: ミリ秒 }。一覧の応答を遅らせる（取れるのが画面の待ちより後になる場面）
+          delay = Number(cfg.delays?.[key || 'login']) || 0;
           if (process.env.FAKE_CLAUDE_PROBE_LOG) {
-            const who = tok ? (cfg.labels?.[tok] ?? 'token') : 'login';
+            const who = key ? (cfg.labels?.[key] ?? (tok ? 'token' : 'login')) : 'login';
             fs.appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, `${who}\n`);
           }
           if (Array.isArray(picked)) models = picked;
@@ -338,7 +348,7 @@ function onControlRequest(m) {
         try { labels = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8')).labels ?? {}; } catch { /* 呼び名なし */ }
         const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
         fs.appendFileSync(process.env.FAKE_CLAUDE_ENV_LOG, `${JSON.stringify({ who: tok ? (labels[tok] ?? 'token') : 'login',
-          scopes: process.env.CLAUDE_CODE_OAUTH_SCOPES ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null })}\n`);
+          scopes: process.env.CLAUDE_CODE_OAUTH_SCOPES ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null, claudeAi: process.env.ENABLE_CLAUDEAI_MCP_SERVERS ?? null })}\n`);
       }
       reply({ mcpServers: [] }); return;
     }
@@ -399,3 +409,12 @@ process.stdin.on('end', () => { ended = true; log('stdin end'); pump(); });
 log(`start ${sessionId} resume=${Boolean(resumeArg)} ppid=${process.ppid}`);
 process.on('uncaughtException', error => { log(`uncaught: ${error?.stack ?? error}`); process.exit(1); });
 process.on('unhandledRejection', error => { log(`unhandled: ${error?.stack ?? error}`); process.exit(1); });
+
+/** 専用フォルダの資格情報の accessToken から作る鍵（'cred:<accessToken>'）。無ければ '' */
+function ownDirKey() {
+  try {
+    const dir = process.env.CLAUDE_CONFIG_DIR;
+    const access = dir && JSON.parse(fs.readFileSync(path.join(dir, '.credentials.json'), 'utf8')).claudeAiOauth?.accessToken;
+    return access ? `cred:${access}` : '';
+  } catch { return ''; }
+}

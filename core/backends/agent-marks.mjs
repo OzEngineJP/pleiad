@@ -38,7 +38,7 @@ export const CAPABILITY_STATES = {
     computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,
     login: true,
-    // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）
+    // 会話ごとのアカウント（Pleiad の台帳。アカウントごとの専用フォルダのログイン。ADR 0352）を選べる。server は account を渡す（core/claude-accounts.mjs）
     accounts: 'token',
     // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
     compatEndpoints: true,

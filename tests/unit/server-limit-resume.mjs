@@ -4,6 +4,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, writeSessions } from '../lib/data-store.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-limit-resume';
 export const title = '上限で中断しても自動では再開しない。上限中に送った指示は解除時刻に流れ（解除時刻が分からなければすぐ送る）、人の「再開」は解除の後に効く。古い自動再開の予定と印は読まない';
@@ -93,7 +94,7 @@ export default async function (t) {
     // ---- 5. アカウントを替えて送ると、止まった枠の待ちは解ける（解除時刻まで待たない）
     const switched = await newSession();
     await c.runTurn({ sessionId: switched, prompt: `limit ${Date.now() + 3 * HOUR}` });
-    const account = await c.cmd('saveClaudeAccount', { name: '別のアカウント', token: 'sk-ant-oat01-' + 'Y'.repeat(48) });
+    const account = { id: await seedClaudeAccount(dataDir, '別のアカウント') };
     await c.cmd('sendMessage', { sessionId: switched, messageId: 'switchedq00001', prompt: 'echo:before-switch' });
     t.ok('替える前は、解除時刻まで送信待ち', (await c.cmd('listMessages', { sessionId: switched })).find(m => m.id === 'switchedq00001')?.waiting?.reason === 'limit');
     const switchedFrom = c.mark();
