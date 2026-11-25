@@ -553,7 +553,7 @@ function loadWhenNear(hold, ev, place) {
  */
 export function renderPresent(ev) {
   const e = ev ?? {};
-  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0353）。古い保存分はここへ来る前に省く（web/timeline.mjs）が、
+  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0354）。古い保存分はここへ来る前に省く（web/timeline.mjs）が、
   // 来ても「未知の種類」のカードにせず、何も出さない
   if (e.kind === 'git') { const none = el('div'); none.hidden = true; return none; }
   // worktree で始めた印の行（ADR 0089）

@@ -125,7 +125,7 @@ export function createInternalCalls({ dataDir, usageStore, accountResolve, backe
       ac.signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
     });
     const turned = Promise.resolve().then(() => scoped.internalTurn({ kind, prompt, model, effort, mode, signal: ac.signal, locale, cwd, endpoint,
-      oauthToken: account?.token ?? null, account: account ?? null })).then((value) => ({ value }), (error) => ({ error }));
+      account: account ?? null })).then((value) => ({ value }), (error) => ({ error }));
     const first = await Promise.race([turned, aborted]);
     let latePending = false;
     if (first === ABORTED) {

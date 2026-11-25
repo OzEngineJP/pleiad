@@ -2,7 +2,7 @@
 // 保持役の子ごとの label（札）に置き、新しいサーバーが付け直し（adoptTurn）で読む純粋な JSON。
 //   - cardOf(ctx): ctx から札本体（card）と秘密の欄（secrets）を分けて取り出す。版 v: 1。
 //   - restoreFields(card): 札から復元用のフィールド群を取り出す。知らない版は null を返す。
-//   - 秘密（account.token、endpoint のキーなど）は札本体に入れない（保持役の預かり物 stash に置く想定）。
+//   - 秘密（endpoint のキーなど）は札本体に入れない（保持役の預かり物 stash に置く想定）。
 //   - 途中送信の控えを 1 つの欄（steers）にまとめる形（項目の id ごとに「誰が待っているか」）。
 //   - ターンの前の切り口（T1: baseline の発言数と最後の uuid）。
 //   - 会話の口のトークン（connectionTokens: { agents, computer, browser, control, context }）。
@@ -193,7 +193,7 @@ export function cardOf(ctx, options = {}) {
     skipped: Array.isArray(ctx.shellHandoff.skipped) ? [...ctx.shellHandoff.skipped] : [],
   } : null;
 
-  // 6. （欠番）git の撮影 (T33) は ADR 0353 でやめた。古い版が書いた card.git は restoreFields が読まずに捨てる
+  // 6. （欠番）git の撮影 (T33) は ADR 0354 でやめた。古い版が書いた card.git は restoreFields が読まずに捨てる
 
   // 7. 会話の口のトークン (M2, O9-O12)
   const connectionTokens = extractTokensFromCtx(ctx);

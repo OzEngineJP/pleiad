@@ -329,7 +329,7 @@ export function createBotPage(host) {
     if (!kind) return;
     try {
       const list = kind === 'token'
-        ? ((await host.cmd('claudeAccounts'))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }))
+        ? ((await host.cmd('claudeAccounts'))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.usageLogin) }))
         : ((await host.invoke('accounts.list', { backend }))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
       S.accounts.set(backend, list);
     } catch { if (!S.accounts.has(backend)) S.accounts.set(backend, []); }

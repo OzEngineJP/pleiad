@@ -196,11 +196,11 @@ const SUITES = [
   // main への口（core/main-port.mjs）: parentPort の素通し・main が居ない起動・つながっていない口・差し込める形
   './unit/main-port.mjs',
   './unit/process-exit.mjs',
-  // 裏の作業の子プロセス（ADR 0353）: 止めても終わらない子でも期限で戻る・数える・taskkill は非同期・ply_shell と `!` は変えない
+  // 裏の作業の子プロセス（ADR 0354）: 止めても終わらない子でも期限で戻る・数える・taskkill は非同期・ply_shell と `!` は変えない
   './unit/process-background.mjs',
-  // 場所ごとの見張り（ADR 0353）: 止めても終わらない子を数える・生きている間は新しく始めない・続く時間切れで休む・同じ種類は 1 本に合流
+  // 場所ごとの見張り（ADR 0354）: 止めても終わらない子を数える・生きている間は新しく始めない・続く時間切れで休む・同じ種類は 1 本に合流
   './unit/place-guard.mjs',
-  // git の裏の作業の見張り（ADR 0353。偽の git）: 止まらない git は BUSY・続く時間切れは REST・同じ種類は 1 本・隠し ref の片付けは 1 回・撮影の口が無い
+  // git の裏の作業の見張り（ADR 0354。偽の git）: 止まらない git は BUSY・続く時間切れは REST・同じ種類は 1 本・隠し ref の片付けは 1 回・撮影の口が無い
   './unit/git-background-guard.mjs',
   './unit/opencode-server-exit.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
@@ -221,7 +221,7 @@ const SUITES = [
   // サーバー越し: 承認カードの payload・スクショの保存と配信・computer.state・computerStop・委譲の子の承認（fake + 偽の driver）
   './unit/server-computer.mjs',
   './unit/modes.mjs',
-  // git の動き（ADR 0085・0353）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、残った隠し ref の片付け（一時リポジトリ）
+  // git の動き（ADR 0085・0354）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、残った隠し ref の片付け（一時リポジトリ）
   './unit/git-info.mjs',
   './unit/git-info-index-mtime.mjs',
   './unit/git-pr.mjs',

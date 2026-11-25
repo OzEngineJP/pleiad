@@ -249,7 +249,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export async function listProcesses() {
   const win = process.platform === 'win32';
   const [command, args] = win ? [systemTool('tasklist'), ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'pid=,comm=']];
-  // 掃除（起動の後・1 時間ごと）の裏の作業。誰も結果を待たないので、止めても終わらない子は待たずに戻る（ADR 0353）
+  // 掃除（起動の後・1 時間ごと）の裏の作業。誰も結果を待たないので、止めても終わらない子は待たずに戻る（ADR 0354）
   const result = await runBackground(command, args, { windowsHide: true, timeoutMs: 10_000, maxOutputChars: 32 * 1024 * 1024 });
   if (result.startError || result.exitCode !== 0 || result.timedOut || result.stuck) return null;
   const map = new Map();

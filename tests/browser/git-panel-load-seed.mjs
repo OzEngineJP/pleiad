@@ -1,7 +1,7 @@
 // tests/browser/git-panel-load.cjs の種。git パネルの読み込みの形を、使い捨てのリポジトリと fake の会話で作る。
 //   gpl-far … 80 コミットのリポジトリ（最初に読む 50 件を超える）。履歴の先頭ページと「続きを読む」の確認に使う
 // 会話の cwd はこのリポジトリ。ほかに worktree を 3 つ作る（作業場所のタブの確認）。
-// 「この会話の間」の範囲と会話の始まりの目印（隠し ref の撮影）は ADR 0353 で消したので、種にも作らない。
+// 「この会話の間」の範囲と会話の始まりの目印（隠し ref の撮影）は ADR 0354 で消したので、種にも作らない。
 // 使い方: node tests/browser/git-panel-load-seed.mjs <空のデータ置き場> <リポジトリを作る空のフォルダー>
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

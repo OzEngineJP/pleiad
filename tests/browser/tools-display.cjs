@@ -54,7 +54,7 @@ async () => {
     check(Boolean(term.querySelector('.tc-term-cursor')), 'Running terminal shows cursor');
     updateTerminal(term, { command: '<script>bad</script>', output: lines, exitCode: 0 });
     check(!term.querySelector('script') && !term.querySelector('.tc-term-cursor') && term.textContent.endsWith('exit 0'), 'Completed terminal escapes command, removes cursor, shows exit 0');
-    // The "変更: N ファイル" row of a delegation card (ADR 0085 decision 6) was removed (ADR 0353): the card never asks git for it.
+    // The "変更: N ファイル" row of a delegation card (ADR 0085 decision 6) was removed (ADR 0354): the card never asks git for it.
     // Only a worktree child keeps its workspace row (branch). Exercise the card decorator with a controlled task, independent of
     // whether a backend can create isolated children on the verification host.
     const source = await (await fetch('/client.mjs')).text();

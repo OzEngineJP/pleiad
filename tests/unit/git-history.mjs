@@ -43,7 +43,7 @@ export default async function (t) {
     sh(repo, 'merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
     sh(repo, 'tag', 'v1');
     const activity = createGitActivity();
-    // 前の版が残した撮影（refs/pleiad/turn/…。ADR 0353 で撮影はやめたが、片付けるまで残っている）が履歴に混ざらない
+    // 前の版が残した撮影（refs/pleiad/turn/…。ADR 0354 で撮影はやめたが、片付けるまで残っている）が履歴に混ざらない
     const snap = sh(repo, 'commit-tree', sh(repo, 'rev-parse', 'HEAD^{tree}'), '-p', 'HEAD', '-m', 'pleiad turn snapshot');
     sh(repo, 'update-ref', 'refs/pleiad/turn/session-hist-1/1-start', snap);
     t.ok('撮影の ref が残っている', sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/pleiad/turn/') === 'refs/pleiad/turn/session-hist-1/1-start');

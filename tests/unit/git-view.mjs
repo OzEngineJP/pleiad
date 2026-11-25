@@ -1,6 +1,6 @@
 // git の動きの画面の部品（web/git-view.mjs・web/git-panel.mjs の純粋な部分）。
 // 文の組み立て（changeText・branchLabel・filesText）と、右パネルの枠の表（gitSlots）を、最小の DOM で見る。
-// 返答の下の要約行と委譲カードの「変更」の行は ADR 0353 でやめた（web/git-view.mjs に残っていないこと）。
+// 返答の下の要約行と委譲カードの「変更」の行は ADR 0354 でやめた（web/git-view.mjs に残っていないこと）。
 import assert from 'node:assert/strict';
 import * as view from '../../web/git-view.mjs';
 import { changeText, branchLabel, filesText } from '../../web/git-view.mjs';
@@ -15,8 +15,8 @@ export default async function (t) {
   assert.equal(filesText({ files: 2, add: 6, del: 2 }), '2 ファイル +6 −2');
   t.ok('文: +a −d・ブランチ名（分離した HEAD・コミット前）・N ファイル', true);
 
-  assert.deepEqual(Object.keys(view).sort(), ['branchLabel', 'changeText', 'filesText'], '返答の下の要約行・委譲カードの「変更」の行の部品（ADR 0353 で削除）は残っていない');
-  t.ok('要約行・委譲の「変更」の行の部品は無い（ADR 0353）', true);
+  assert.deepEqual(Object.keys(view).sort(), ['branchLabel', 'changeText', 'filesText'], '返答の下の要約行・委譲カードの「変更」の行の部品（ADR 0354 で削除）は残っていない');
+  t.ok('要約行・委譲の「変更」の行の部品は無い（ADR 0354）', true);
 
   // ---- 右パネルの表（gitSlots）
   const slots = gitSlots({ label: 'git', footer: ['custom0', 'custom1'] });

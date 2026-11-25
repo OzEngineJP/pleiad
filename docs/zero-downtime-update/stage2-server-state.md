@@ -1,7 +1,7 @@
 # 段階 2 の 2b: サーバーのメモリの仕分けと、「始める」と「動かす」の切り目
 
 - 状態: 2b-1・2b-3 実装済み、2b-2 実装済み（2026-10-06）。札の形 `core/turn-card.mjs`（純関数、版 `v: 1`、秘密の分離、途中送信の枠組み、T1、connectionTokens、上限）。2b-4 実装済み（2026-10-07）。付け直しの入口 `restoreTurn`・`adoptTurn`、旧サーバーの口 `handOffTurn`、再生の道 `core/adopt.mjs`、起動の順序と後片付けの除外（下の「2b-4 の実装のメモ」）。2b-5 実装済み（2026-10-07）。fake の台本 `held:`（別プロセスの偽の CLI `core/backends/fake-agent.mjs` を保持役の子に載せる）と、保持役の元からの付け直し。「途中で引き継ぐ」台本（ツールの実行中・承認待ち・終わった直後）のテスト `tests/unit/adopt-held.mjs`（下の「2b-5 の実装のメモ」）。2b-6 実装済み（2026-10-07）。承認のカードの id が決まった値（`core/approval-id.mjs`）・札の置き直し（強制終了でも付け直せる）・止め始めていたターンの中断の送り直し・待ち受けのポートの待ち（下の「2b-6 の実装のメモ」）。2b-7 実装済み（2026-10-07）。札の途中送信の欄（`pendingSteers`・`liveNotices`・`liveInstructions`・`agentTasks` の claim）・委譲の子を待つ `execute` を前半と後半に分けて `agentTasks.adoptRun` で付け直し・起動の復元の除外（S8）・会話の層の `adoptTurn`（下の「2b-7 の実装のメモ」）。2c 実装済み（2026-10-07）。Claude の CLI を保持役に載せ（`core/backends/claude-held.mjs`。既定は載せない・`AGENT_HOST_CLAUDE_HOLDER=on` で載せる）、同じ CLI に `query` を作り直して付け直す（下の「2c の実装のメモ」）
-- 注（2026-11-25）: この表が扱う「始まりの撮影」（T33 `gitSetup`・`git`・`gitLate`）と `gitActivity` の隠し ref（M49）、表中の「git の撮影」は、[ADR 0353](../adr/0353-remove-turn-snapshots-and-guard-background-git.md) でターンごとの撮影ごと消した。札（`core/turn-card.mjs`）は `git` の欄を読まない（古い札に残っていても無視する）。行番号を含む表は、書いた時点の記録としてそのまま残す
+- 注（2026-11-25）: この表が扱う「始まりの撮影」（T33 `gitSetup`・`git`・`gitLate`）と `gitActivity` の隠し ref（M49）、表中の「git の撮影」は、[ADR 0354](../adr/0354-remove-turn-snapshots-and-guard-background-git.md) でターンごとの撮影ごと消した。札（`core/turn-card.mjs`）は `git` の欄を読まない（古い札に残っていても無視する）。行番号を含む表は、書いた時点の記録としてそのまま残す
 - 正本: [plan.md](plan.md) の 2b とリスク R2・R8・R15、[design.md](design.md) §4（保持役・付け直し・札・記録の再生）・§5（引き継ぎ。§5.4 起動時の後片付けとぶつかる所）
 - 目的: 2b の最初の一歩（R8 の表）。付け直すターンで「何を札に入れ、何を再生で作り、何を捨てるか」を、コードの場所つきで決める。そのうえで `runTurnInternal` の切り目と、2b を小さく取り込む段の順番を決める
 
@@ -180,7 +180,7 @@
 | M48 | `botHost`（bot の会話。中は O21） | 4687 | `makeEmit` 2038、`endTurn` 5280、承認 4147 | 札 | O21 |
 | M49 | `worktreeHost`・`gitActivity` | 1842・1840 | | 保存済み | 台帳と隠し ref。片付けの判定が `runtime.turns` を見る（§5 の S12） |
 | M50 | `remote`・`remoteAgentPort`・`remoteDelegation` | 347・326・4462 | | 捨てる | 中継の鍵は保存済み。線は新しいサーバーが張り直す・追いつく |
-| M51 | `secretCipher`・`mcpSecrets`・`claudeAccountSecrets`・`compatSecrets` | 260-300 | | 捨てる | 復号した値の組は main に頼み直す（1-6 の合わせ 1） |
+| M51 | `secretCipher`・`mcpSecrets`・`compatSecrets` | 260-300 | | 捨てる | 復号した値の組は main に頼み直す（1-6 の合わせ 1） |
 | M52 | `voiceHost`・`claudeLogin`・`mcpOAuth`・`imageImporter`・`folderUploads`・`attachUploads` | 305・276・316・247・230・226 | | 捨てる | 通話は切れる。ログインの疑似端末・OAuth の流れ・取り込みは 2d で待つか取り消す（design.md §4.4「載せないもの」） |
 | M53 | そのほかの部品（`usageStore`・`quotaCache`・`contextSettings`・`plyMcp`・`claudeAccounts`・`compatEndpoints`・`notifySettings`・`residentPrefs`・`contextSession`・`mcpConfig`・`hooksConfig`・`plyHooks`・`routingUsage`・`opsHttp`・`sessionSearch`・`computerShots`・`agentScanLock`・`server`・`wss`） | 各所 | | 保存済み | 中身はデータ置き場から読む・キャッシュ。付け直しに関わる値は持たない |
 

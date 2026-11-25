@@ -13,7 +13,6 @@ import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkSt
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { claudeUsageAuthFailure, readClaudeAccountsUsage } from './claude-usage.mjs';
-import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
 import { writeClaudeMcpFile, adoptClaudeMcpFile } from '../claude-mcp-file.mjs';
@@ -48,7 +47,6 @@ import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, CALL_TIMEOUT_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
-import { identitySuffix } from "../claude-connectors.mjs";
 import { claudeOwnDirEnv } from "../claude-connectors-auth.mjs";
 import { OWN_DIR } from "../claude-own-dir.mjs";
 
@@ -139,11 +137,10 @@ const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_C
 const states = new Map();
 const accountScopeKey = (account) => {
   const id = typeof account === "string" ? account : account?.id;
-  const key = id ? `account:${id}` : "login";
-  // コネクターの入口がオンのときだけ識別子の接尾辞を足す（ADR 0340）。オフはこの分岐へ入らず、キーは今までの文字列のまま
-  return account?.connectors?.identity ? key + identitySuffix(account.connectors.identity) : key;
+  // 登録したアカウントは、コネクターのオン・オフに関係なく専用フォルダのログインで一覧を引く（ADR 0353）。一覧はオン・オフで変わらないので分けない
+  return id ? `account:${id}` : "login";
 };
-/** 試験用: アカウントごとのキャッシュのキー（ADR 0340。入口がオフのキーが今までと同じ文字列であることを試験が確かめる） */
+/** 試験用: アカウントごとのキャッシュのキー（ADR 0353。コネクターのオン・オフで変わらないことを試験が確かめる） */
 export const accountScopeKeyForTest = (account) => accountScopeKey(account);
 /** 試験用: 一覧を覚える場所を作り（touch のアカウントごと）、今あるキーを返す（invalidateModels が入口オンのキーも消すことを試験が確かめる。ADR 0340） */
 export const catalogStateKeysForTest = (touch = []) => { for (const account of touch) stateFor(account); return [...states.keys()]; };
@@ -162,11 +159,9 @@ function invalidateCatalog(accountId) {
     states.clear();
     return;
   }
-  // コネクターの入口がオンのときのキー（account:<id>:cn:<識別子>。identitySuffix）も一緒に消す（ADR 0340）
   const key = accountScopeKey(accountId);
-  for (const [k, s] of states) {
-    if (k === key || k.startsWith(`${key}:cn:`)) { s.gen++; states.delete(k); }
-  }
+  const s = states.get(key);
+  if (s) { s.gen++; states.delete(key); }
 }
 // 一覧が手元に入った・変わったことを知らせる口（サーバーが画面へ取り直しを促す。ADR 0329）。
 // 画面の要求が先に着いて固定の一覧を答えたあと（起動直後・アカウントの追加直後）に本物の一覧が取れても、画面からは見えないので、
@@ -204,8 +199,9 @@ function cliSignature() {
 function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
 
 async function probeCatalog(cwd, withSettings, account = null) {
-  if (account?.connectors?.identity === OWN_DIR) account = await account.resolveCatalogAccount();
-  if (account?.id && !account?.token) throw new Error("missing Claude account token");
+  // 登録したアカウントは、会話と同じく専用フォルダを整えてから、そのログインで引く（ADR 0353）。整えられなければ投げる（保存した一覧か固定の一覧に戻る）
+  if (account?.id && !account?.ownDir) throw new Error("missing Claude account own dir");
+  const auth = account?.ownDir ? await account.ownDir.prepare({ cwd }) : null;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 30_000);
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
@@ -214,8 +210,8 @@ async function probeCatalog(cwd, withSettings, account = null) {
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
       pathToClaudeCodeExecutable: sdk.executable(),
-      // アカウントの指定があるときは会話と同じ共有の設定フォルダ＋そのアカウントのトークンで引く
-      env: claudeEnv(process.env, account?.token ? { token: account.token } : {}),
+      // アカウントの指定があるときは会話と同じ専用フォルダで引く。無ければログイン中のアカウント（共有の ~/.claude）
+      env: auth ? claudeOwnDirEnv(process.env, auth.env) : { ...process.env },
       abortController: ac,
       ...(withSettings
         ? { settingSources: ["user", "project", "local"], settings: { disableAllHooks: true }, strictMcpConfig: true, mcpServers: {}, ...(cwd ? { cwd } : {}) }
@@ -233,10 +229,6 @@ async function probeCatalog(cwd, withSettings, account = null) {
       }
     }
     return { rows, efforts, applied: withSettings };
-  } catch (err) {
-    if (!account?.token) throw err;
-    // 元のエラー（message・cause・追加のプロパティ）にはトークンが混ざりうるので渡さない。伏せた文面と、見分けに要る code / kind だけを持つ新しいエラーにする
-    throw Object.assign(new Error(redactToken(err?.message ?? err, account.token)), err?.code ? { code: err.code } : {}, err?.kind ? { kind: err.kind } : {});
   } finally {
     clearTimeout(timer);
     try { q?.close?.(); } catch { /* 既に閉じている */ }
@@ -244,15 +236,15 @@ async function probeCatalog(cwd, withSettings, account = null) {
   }
 }
 sdk.probe ??= probeCatalog;
-// 試験用: 一覧の取得（CLI を起こす 1 回分）そのもの。投げるエラーにトークンが混ざらないことを試験が確かめる
+// 試験用: 一覧の取得（CLI を起こす 1 回分）そのもの。登録したアカウントを専用フォルダで引くことを試験が確かめる
 export const probeClaudeCatalogForTest = (cwd, withSettings, account = null) => probeCatalog(cwd, withSettings, account);
 
 /** コネクターの読み取りの上限（ms）。画面の待ちはこれ以上にする */
 export const CONNECTOR_PROBE_MS = 20_000;
 
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
-// connectors: コネクターの入口がオンのアカウント（専用フォルダ方式。ADR 0350）。会話と同じ組み立て（専用フォルダ・権限）で読み、取れなければ投げる
-export async function probeClaudeConnectors({ deny = [], token = null, connectors = null, signal = null } = {}) {
+// connectors: 登録したアカウントの専用フォルダの認証（ADR 0350・0353）。会話と同じ組み立て（専用フォルダ・権限）で読み、取れなければ投げる。無ければログイン中のアカウント
+export async function probeClaudeConnectors({ deny = [], connectors = null, signal = null } = {}) {
   const ownDir = connectors?.identity === OWN_DIR;
   const auth = ownDir ? await connectors.prepare() : null;
   const ac = new AbortController();
@@ -265,9 +257,8 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
   try {
     const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
-      // token: Pleiad に登録した Claude のアカウント（無ければログイン中のアカウント）。会話と同じ環境で読む
       pathToClaudeCodeExecutable: sdk.executable(),
-      env: ownDir ? claudeOwnDirEnv(process.env, auth.env) : claudeEnv(process.env, { token }),
+      env: ownDir ? claudeOwnDirEnv(process.env, auth.env) : { ...process.env },
       abortController: ac,
       settingSources: ["user"], settings: { disableAllHooks: true, ...(deny.length ? { deniedMcpServers: deny.map((serverName) => ({ serverName })) } : {}) },
       persistSession: false, stderr: () => {},
@@ -277,8 +268,8 @@ export async function probeClaudeConnectors({ deny = [], token = null, connector
     return connectorList(await q.mcpServerStatus());
   } catch (err) {
     if (!auth) throw err;
-    // オンのときは、渡したトークンが混ざりうる元のエラーを渡さない（伏せた文面と判定に使う情報だけ）
-    throw Object.assign(new Error(redactToken(err?.message ?? err, token)), {
+    // 専用フォルダのときは、ログインが切れたか（ログインし直しの案内に使う）を持たせて投げる
+    throw Object.assign(new Error(String(err?.message ?? err)), {
       ...(err?.code ? { code: err.code } : {}),
       cliAuthFailed: claudeUsageAuthFailure(err),
     });
@@ -375,7 +366,7 @@ function loadCatalog(cwd, pref, { refresh = false, waitProbe = false, passive = 
       if (scope.gen !== gen || states.get(scope.key) !== scope) return null;
       e.failed = Date.now(); e.cliSig = cliSig;
       // SDK を取っていないだけなら黙る（固定の一覧で答える。取った後の引き直しで埋まる）
-      if (!isClaudeSdkMissing(err)) console.error("  Claude のモデル一覧を取れなかった:", redactToken(String(err?.message ?? err), account?.token));
+      if (!isClaudeSdkMissing(err)) console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err));
       return e.value;
     })
     .finally(() => { e.probe = null; e.background = false; });
@@ -450,25 +441,21 @@ function makeScopedBackend(account) {
     warmModels: (cwd) => warmCatalog(cwd, account),
     validModel: (model) => validClaudeModel(model, account),
     matchModel: (name, cwd, opts) => matchClaude(name, cwd, account, opts),
-    runTurn: (opts, adopt) => backend.runTurn({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }, adopt),
-    adoptTurn: (args) => backend.adoptTurn({ ...args, oauthToken: args?.oauthToken ?? (args?.endpoint ? null : account?.token) }),
-    internalTurn: (opts) => backend.internalTurn({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
-    suggestTitle: (opts) => backend.suggestTitle({ ...opts, oauthToken: opts?.oauthToken ?? (opts?.endpoint ? null : account?.token) }),
   };
-  return account?.connectors ? withConnectorsAuth(scoped, account) : scoped;
+  return account?.ownDir ? withOwnDirAuth(scoped, account) : scoped;
 }
 
 /**
- * コネクターの入口がオンのアカウント（専用フォルダ方式。ADR 0350）の会話・内部呼出し: 起動の直前に専用フォルダを整え（リンク・設定の反映。
- * core/claude-connectors-auth.mjs の prepare）、env（CLAUDE_CONFIG_DIR）を渡す。トークンは渡さない（更新は CLI が自分で行う）。
- * 整えられなければ投げて始めない（会話用に登録したトークンへは戻さない）。
- * 互換の接続先の呼出しは今までどおり（コネクターの認証を足さない）。オフのアカウントはこの関数に来ない
+ * 登録したアカウント（専用フォルダ方式。ADR 0350・0353）の会話・内部呼出し: 起動の直前に専用フォルダを整え（リンク・設定の反映。
+ * core/claude-connectors-auth.mjs の prepare）、env（CLAUDE_CONFIG_DIR。コネクターがオフなら ENABLE_CLAUDEAI_MCP_SERVERS=false も）を渡す。
+ * トークンは渡さない（更新は CLI が自分で行う）。整えられなければ投げて始めない。
+ * 互換の接続先の呼出しは今までどおり（専用フォルダの認証を足さない）
  */
-function withConnectorsAuth(scoped, account) {
+function withOwnDirAuth(scoped, account) {
   const authed = async (opts, call) => {
     if (opts?.endpoint) return call(opts);
-    const auth = await account.connectors.prepare({ cwd: opts?.cwd }).catch(error => { throw undelivered(error); });
-    return call({ ...opts, oauthToken: null, connectorsEnv: auth.env, connectors: account.connectors });
+    const auth = await account.ownDir.prepare({ cwd: opts?.cwd }).catch(error => { throw undelivered(error); });
+    return call({ ...opts, connectorsEnv: auth.env, connectors: account.ownDir });
   };
   return {
     ...scoped,
@@ -939,7 +926,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, connectorsEnv = null, connectors = null, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, connectorsEnv = null, connectors = null, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -963,7 +950,6 @@ export const backend = {
     // 開けておけば、裏で走っている間も途中送信（control.steer）を main に届けられる。
     // 閉じるのは tracker.canCloseInput() が揃ったとき（claude-background.mjs）と中断のときだけ。
     const tracker = createTurnTracker();
-    const activeOauthToken = oauthToken;
     const activeConnectorsEnv = connectorsEnv;
     const ownDir = connectors?.identity === OWN_DIR || adopt?.card.connectorsMode === OWN_DIR;
     // 専用フォルダのログインで CLI が断られたとき、macOS で項目が有れば鍵束を開けなかった（ロック中など）とみて keychain の失敗にする
@@ -1065,7 +1051,7 @@ export const backend = {
       mcpFile = adopt ? adoptClaudeMcpFile(store.dataDir, adopt.card.mcpFile) : await writeClaudeMcpFile(store.dataDir, httpServers);
     }
     catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } throw undelivered(e); }
-    const hide = text => redactSecret(redactToken(text, activeOauthToken), endpoint?.key);
+    const hide = text => redactSecret(text, endpoint?.key);
     // resume する前に読む（CLI はこの値を読み戻し、result はそこからの累計になる）。1 つの query の result は全部これから引く。
     // 付け直しは札の値（旧サーバーがターンの始まりに読んだもの。CLI が query の終わりに書く値を読み直すとずれる）
     const costBase = adopt ? (adopt.card.costBase ?? null) : await readCostBase(sessionId);
@@ -1384,15 +1370,15 @@ export const backend = {
             ...(held ? { spawnClaudeCodeProcess: held.spawnClaudeCodeProcess } : {}),
             // env は置き換え（足し算ではない）なので process.env を必ず広げる。
             // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
-            // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
+            // 会話で選んだアカウントは専用フォルダ（CLAUDE_CONFIG_DIR）を、この会話の env にだけ入れる（process.env は触らない。ADR 0353）
             // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
             env: { ...(endpoint ? { ...claudeCompatEnv(process.env, endpoint, claudeExtraEnv), ...browserEnv, ...controlRuntime?.env }
               : ownDir ? claudeOwnDirEnv({ ...process.env, ...browserEnv, ...controlRuntime?.env }, { ...claudeExtraEnv, ...activeConnectorsEnv })
-              : { ...claudeEnv(process.env, { token: activeOauthToken, extra: activeConnectorsEnv ? { ...claudeExtraEnv, ...activeConnectorsEnv } : claudeExtraEnv }), ...browserEnv, ...controlRuntime?.env }),
+              : { ...process.env, ...claudeExtraEnv, ...browserEnv, ...controlRuntime?.env }),
               // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
               ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
             // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
-            stderr: createStderrLog({ secrets: [activeOauthToken, endpoint?.key].filter(Boolean) }),
+            stderr: createStderrLog({ secrets: [endpoint?.key].filter(Boolean) }),
             resume: resumeTarget ?? undefined,
         // 同じ会話の中で巻き戻して送り直す（core/conversations.mjs の rewind。ADR 0102）。at は残す最後の発言、drops は捨てる発言（ユーザーの発言）の uuid。
         // 同じ session id・同じ JSONL のまま、at から枝を伸ばす。捨てる範囲が drops のターンだけでなければ CLI が拒否する（下の catch）
@@ -1549,7 +1535,7 @@ export const backend = {
       }
       const modelFailed = !auth && (modelRejected || isClaudeModelError(err?.message ?? err));
       emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced, ...(connectorsError ? { connectorsError } : {}) } : modelFailed ? { kind: 'model', pristine: !produced } : {}) });
-      const thrown = ownDirKeychain || ((activeOauthToken || endpoint) && errOut?.message && message !== errOut.message) ? Object.assign(new Error(message), connectorsError ? { connectorsError } : {}) : errOut;
+      const thrown = ownDirKeychain || (endpoint && errOut?.message && message !== errOut.message) ? Object.assign(new Error(message), connectorsError ? { connectorsError } : {}) : errOut;
       throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();
@@ -1714,7 +1700,7 @@ export const backend = {
    * 接続先の会話一覧にも残さない。止められた（signal）ときは null、失敗は投げる（取れた分の使用量は error.usage に載せる）。
    * 返りは { text, usage }。usage は測れなければ null（0 扱いにしない。core/usage.mjs の internalTask 行へ渡る）
    */
-  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, oauthToken, connectorsEnv = null, connectors = null }) {
+  async internalTurn({ prompt, model, signal, locale, cwd, endpoint, connectorsEnv = null, connectors = null }) {
     let text = "", usage = null;
     const ac = new AbortController();
     const stop = () => ac.abort();
@@ -1753,8 +1739,7 @@ export const backend = {
           // settingSources が空なのでユーザーの settings.json は読まれず、env だけで足りる
           abortController: ac,
           ...(endpoint ? { env: claudeCompatEnv(process.env, endpoint) }
-            : connectors?.identity === OWN_DIR ? { env: claudeOwnDirEnv(process.env, connectorsEnv) }
-            : oauthToken ? { env: claudeEnv(process.env, connectorsEnv ? { token: oauthToken, extra: connectorsEnv } : { token: oauthToken }) } : {}) },
+            : connectors?.identity === OWN_DIR ? { env: claudeOwnDirEnv(process.env, connectorsEnv) } : {}) },
       })) {
         if (m.type === "assistant") for (const b of m.message?.content ?? []) if (b.type === "text") text += b.text;
         // 最後の result メッセージにこの呼出しの使用量が載る（入力はキャッシュの作成・読みを含む）
@@ -1766,7 +1751,7 @@ export const backend = {
       }
     } catch (err) {
       // 秘密を消すために Error を作り直しても、呼び出し側が使う code（INTERNAL_UNAVAILABLE 等）・usage・cause は落とさない
-      const e = oauthToken || endpoint ? new Error(redactSecret(redactToken(err?.message ?? err, oauthToken), endpoint?.key)) : err;
+      const e = endpoint ? new Error(redactSecret(err?.message ?? err, endpoint?.key)) : err;
       e.usage = usage;
       if (e !== err) { e.code = err?.code; e.cause = err; }
       if (ac.signal.aborted) return { text, usage, aborted: true };
@@ -1785,8 +1770,8 @@ export const backend = {
    * 返すのは生成された生のテキスト。前後の記号を落とす整形は server 側（バックエンド非依存）。
    */
   // locale は会話の言語。タイトルもその言語で作らせる
-  async suggestTitle({ transcript, oauthToken, connectorsEnv = null, connectors = null, endpoint = null, locale }) {
-    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, oauthToken, ...(connectorsEnv ? { connectorsEnv, connectors } : {}), locale });
+  async suggestTitle({ transcript, connectorsEnv = null, connectors = null, endpoint = null, locale }) {
+    const out = await backend.internalTurn({ prompt: agentT(locale, 'title.claude') + NL + NL + transcript, model: "haiku", endpoint, ...(connectorsEnv ? { connectorsEnv, connectors } : {}), locale });
     return out?.text ?? "";
   },
 };

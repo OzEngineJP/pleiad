@@ -1,7 +1,7 @@
 // playwright-cli run-code --filename=tests/browser/git-panel-load.cjs
 // git パネルの読み込み（docs/design-system.md「git パネルの読み込み」）: 段ごとの表示（頭と変更の一覧が先・履歴と作業場所は後から骨組み → 入れ替え）・
 // 作業場所は開くまで中身を読まない（件数はタブの名前だけ）・動きを減らす設定。
-// 会話の始まり ⚑ と「この会話の間」の範囲は ADR 0353 で消した（ターンごとの変更の記録をやめたため）ので、ここでは確かめない。
+// 会話の始まり ⚑ と「この会話の間」の範囲は ADR 0354 で消した（ターンごとの変更の記録をやめたため）ので、ここでは確かめない。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (token git-panel-test, port 7433, AGENT_HOST_LOCALE=ja). Never run against live data:
 //   node tests/browser/git-panel-load-seed.mjs <empty data dir> <empty repo dir>
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<data dir> AGENT_HOST_PORT=7433 AGENT_HOST_TOKEN=git-panel-test AGENT_HOST_LOCALE=ja node core/server.mjs

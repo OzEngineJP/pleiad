@@ -5,6 +5,6 @@ async (isolated = false) => {
   if (!card.querySelector('.tc-details')?.open) throw Error('Open the delegation card first');
   if (!card.querySelector('.tc-pane-main.on') || !card.querySelector('.rt-where')) throw Error('Delegation must open on its request and routing details');
   if (Boolean(card.querySelector('.wt-delegate')) !== isolated) throw Error('Unexpected workspace type');
-  if (card.querySelector('.git-delegate')) throw Error('The changes row was removed (ADR 0353): no child shows it');
+  if (card.querySelector('.git-delegate')) throw Error('The changes row was removed (ADR 0354): no child shows it');
   return { passed: 3, isolated };
 }

@@ -45,7 +45,7 @@ async (page) => {
 
   await page.locator('.cg-row').first().waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('.cg-row:not(.wt)')].filter((r) => r.getBoundingClientRect().height > 0).length >= 3);
-  // 範囲の切り替え（「この会話の間」）は ADR 0353 で消した。残る範囲は「コミットしていない変更」と履歴だけなので、切り替えは出さない
+  // 範囲の切り替え（「この会話の間」）は ADR 0354 で消した。残る範囲は「コミットしていない変更」と履歴だけなので、切り替えは出さない
   check(await page.locator('.rbar, [data-rg]').count() === 0, 'no range switch: only the uncommitted changes and the history remain');
   const rowCount = await page.locator('.cg-row').count();
   check(rowCount >= 3, 'the graph has commit rows');

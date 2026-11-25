@@ -3383,8 +3383,6 @@ function connectorsFailure(node, { sessionId, messageId, ce, layout, pristine = 
       connectorsLogins.set(accountId, set);
       claudeAccounts.open({ usageLogin: accountId });
     }),
-    openAccount: () => claudeAccounts.open({ focus: accountId }),
-    off: () => cmd('invoke', { op: 'accounts.setConnectors', args: { id: accountId, enabled: false } }),
     resend: async ({ auto }) => {
       if (outbox) { await cmd('messageAction', { sessionId, messageId, action: 'retry' }); return true; }
       return resendFailedTurn({ sessionId, messageId, node, auto, pristine, auth: ev?.auth, agent: b?.label ?? '' });
@@ -3504,7 +3502,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === "read") { if (readCompletions.apply(ev.reads)) renderSessions(); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
-  // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
+  // Claude のアカウントの claude.ai のログイン（claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); connectorsLoginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
@@ -4403,7 +4401,7 @@ function authFailureRow(node, ev) {
     login: () => authLogin(b, { fromRow: true }),
     cancel: () => cmd('authCancel', { backend: ev.backend }).catch(() => {}),
     resend: ({ auto }) => resendFailedTurn({ sessionId: ev.sessionId, messageId: ev.messageId, node, auto, pristine, auth, agent }),
-    reissue: () => auth.mode === 'token' ? claudeAccounts.open({ reissue: auth.accountId }) : agentAccounts.open(ev.backend),
+    reissue: () => auth.mode === 'token' ? claudeAccounts.open({ usageLogin: auth.accountId }) : agentAccounts.open(ev.backend),
     spinner: () => runMark(),
   });
   authRows = authRows.filter((x) => x.node.isConnected);
@@ -4803,7 +4801,7 @@ const agentAccounts = setupAgentAccounts({ cmd, labelOf,
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
   if (kind === 'token') return claudeAccounts.list().map((a) => ({
-    id: a.id, name: a.name, ready: Boolean(a.hasToken) || a.connectors?.enabled === true, connectors: a.connectors ?? null,
+    id: a.id, name: a.name, ready: Boolean(a.usageLogin), connectors: a.connectors ?? null,
   }));
   if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
   return [];
@@ -7332,7 +7330,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   // 追加指示の行は、受け付けた位置（出来事・錨・受付時刻）に置く。配送中・待機・届かなかった分も同じ行で状態だけ変わる
   for (const it of buildItems(messages, presents)) {
     // worktree の印の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
-    // （古い保存分の kind: 'git' は buildItems が既に省く。ADR 0353）
+    // （古い保存分の kind: 'git' は buildItems が既に省く。ADR 0354）
     if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     if (it.m?.role === 'instruction') {
@@ -7637,7 +7635,7 @@ function decorateDelegateCard(card) {
   (card.querySelector('.tc-pane-main') ?? card.querySelector('.tc-details-body'))?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
-  // 開いたとき、子の作業場所（worktree のブランチ）の行を出す。「変更」の行（ADR 0085 の決定 6）は ADR 0353 でやめた
+  // 開いたとき、子の作業場所（worktree のブランチ）の行を出す。「変更」の行（ADR 0085 の決定 6）は ADR 0354 でやめた
   const shell = card.querySelector('.tc-details');
   if (shell && !shell.dataset.gitHook) {
     shell.dataset.gitHook = '1';

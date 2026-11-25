@@ -1,12 +1,12 @@
-// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085・0353）。
+// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085・0354）。
 //
 // execFile('git', …) でシェルを通さない。windowsHide・タイムアウト・GIT_OPTIONAL_LOCKS=0・読み取り系だけ。
-// 書くのは隠し ref（worktree を退避する refs/pleiad/archive/…。ターンごとの refs/pleiad/turn/… は ADR 0353 でやめたので、残りを消すだけ）と、
+// 書くのは隠し ref（worktree を退避する refs/pleiad/archive/…。ターンごとの refs/pleiad/turn/… は ADR 0354 でやめたので、残りを消すだけ）と、
 // そのための一時 index・commit オブジェクトだけで、
 // ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。git が無い・git 管理外・時間切れは、例外にせず ok: false を返す
 // （画面は静かに「情報なし」にする）。子は core/process.mjs の runBackground()（ADR 0270 の規則 ①。裏の作業なので、止めても終われない子は待たない）。
 // 遅いファイルシステムで積み上げない: 場所（リポジトリ）ごとに、止めても終われない子が生きている間と、時間切れが続いた後の休みの間は、
-// 新しい git を起こさず ok: false（code: 'BUSY' | 'REST'）を返す（ADR 0353。core/place-guard.mjs）
+// 新しい git を起こさず ok: false（code: 'BUSY' | 'REST'）を返す（ADR 0354。core/place-guard.mjs）
 import { runBackground } from './process.mjs';
 import { createPlaceGuard } from './place-guard.mjs';
 import fs from 'node:fs/promises';
@@ -19,7 +19,7 @@ const READ = new Set(['rev-parse', 'status', 'log', 'diff', 'diff-tree', 'for-ea
 /** 隠し ref を作る側。read-tree・add・write-tree は GIT_INDEX_FILE が一時 index のときだけ、update-ref は refs/pleiad/ だけ */
 const WRITE = new Set(['read-tree', 'add', 'write-tree', 'commit-tree', 'update-ref']);
 
-/** ターンごとの撮影の隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）。撮影は ADR 0353 でやめた。今は残りを消す（dropTurnRefs）ためだけに持つ */
+/** ターンごとの撮影の隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）。撮影は ADR 0354 でやめた。今は残りを消す（dropTurnRefs）ためだけに持つ */
 export const REF_PREFIX = 'refs/pleiad/turn/';
 /** worktree を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0089） */
 export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
@@ -348,7 +348,7 @@ async function copyIndex(src, dst) {
  * 失敗・時間切れは null。
  * 同じ場所の撮影は 1 本ずつ（走っているものの次の 1 回を、待つ側みんなで共有する。走り始めた後に頼んだ側へ前の結果は渡さない）。
  * 場所が BUSY・REST のときは起こさず null。signal が止まったら（待つ側が諦めた）、その側は null で抜け、待つ側が誰も居なければ走っている git も止める。
- * 使うのは、利用者が開いた画面（変更の一覧・差分・新しいタブの変更の数）と worktree の退避だけ。ターンごとの撮影は ADR 0353 でやめた
+ * 使うのは、利用者が開いた画面（変更の一覧・差分・新しいタブの変更の数）と worktree の退避だけ。ターンごとの撮影は ADR 0354 でやめた
  */
 export async function snapshotTree(root, { signal = null } = {}) {
   const place = placeGuard.placeOf(root);
@@ -413,7 +413,7 @@ export async function deleteRefs(root, refs, options = {}) {
 }
 
 /**
- * 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）を、全部消す（ADR 0353）。消すのは refs/pleiad/turn/ の ref だけ
+ * 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）を、全部消す（ADR 0354）。消すのは refs/pleiad/turn/ の ref だけ
  * （ブランチ・タグ・index・作業ツリー・worktree の退避の ref refs/pleiad/archive/ には触れない）。
  * 数千本あっても終えられるように: 数百本ずつ（CLEANUP_CHUNK）の削除に分け、1 回ごとに長い上限（CLEANUP_TIMEOUT）を使い、
  * この時間切れは場所の休みに数えない（counts: false）。全体の時間は CLEANUP_BUDGET_MS まで。

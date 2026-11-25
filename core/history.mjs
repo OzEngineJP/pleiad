@@ -181,7 +181,7 @@ export async function readPresents(sessionId, { strict = false } = {}) {
  */
 export async function recordPresent(sessionId, payload) {
   if (!sessionId || !payload) return null;
-  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0353）。誰かが渡しても残さない
+  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0354）。誰かが渡しても残さない
   if (payload.kind === 'git') return null;
 
   const record = {
@@ -235,7 +235,7 @@ export async function recordPresent(sessionId, payload) {
 }
 
 /**
- * 画面へ返す保存済みの提示から、もう出さない種類を除く（ADR 0353）。返答の下の変更の行（kind: 'git'。ADR 0085）は、ターンごとの記録を
+ * 画面へ返す保存済みの提示から、もう出さない種類を除く（ADR 0354）。返答の下の変更の行（kind: 'git'。ADR 0085）は、ターンごとの記録を
  * やめたので出さない。古い会話のファイルに残った行は書き換えず（keepPresents・巻き戻しの添字は記録のままの並びで数える）、読んで返すときだけ黙って省く。
  * 画面の側（web/render.mjs・web/client.mjs）も同じ種類を黙って飛ばす（壊れた表示や「未知の種類」の表示にしない）
  */

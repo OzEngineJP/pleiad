@@ -217,7 +217,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・agent-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json・plus-secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数・Plus のセッション 1 件。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・agent-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json・plus-secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数・Plus のセッション 1 件。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [

@@ -491,7 +491,7 @@ export async function nativeForkPresentContracts() {
   await fs.writeFile(shot, 'SHOT');
   await recordPresent('sdk-source', { kind: 'file', by: 'human', path: 'C:/work/a.png', turnKey: 'k1' });
   await anchorAttachments('sdk-source', 'k1', 'u1');
-  // 時刻を渡せる種類（worktree の印の行）で、切り口の前後に並ぶ提示を作る（kind: 'git' は ADR 0353 で記録をやめた）
+  // 時刻を渡せる種類（worktree の印の行）で、切り口の前後に並ぶ提示を作る（kind: 'git' は ADR 0354 で記録をやめた）
   await recordPresent('sdk-source', { kind: 'worktree', at: '2026-01-01T00:00:00.500Z', worktree: { id: 'w1', branch: 'pleiad/ply-1', origin: 'main', conflicts: [], count: 0 } });
   await recordPresent('sdk-source', { kind: 'chromeClosed', by: 'ai', path: shot, chromeClosed: { by: 'agent' } });
   const kinds = async id => (await wrapped.getPresents(id)).map(p => p.kind);
@@ -515,7 +515,7 @@ export async function nativeForkPresentContracts() {
   assert.deepEqual(await kinds('sdk-source'), ['file', 'worktree', 'chromeClosed']);
 }
 
-// 返答の下の変更の行（kind: 'git'。ADR 0085）は記録をやめた（ADR 0353）。古い会話のファイルに残った行は、
+// 返答の下の変更の行（kind: 'git'。ADR 0085）は記録をやめた（ADR 0354）。古い会話のファイルに残った行は、
 // 書き換えずに残し、画面へ返すときと画面で並べるときに黙って省く（壊れた表示や「未知の種類」の表示にしない）
 export async function legacyGitPresentContracts() {
   const history = await import('../../core/history.mjs');

@@ -353,7 +353,7 @@
     "backendDisabled": "The specified backend is not enabled.",
     "modelUnknown": "model_unknown: The model {{model}} is not in the current {{backend}} model list (available: {{models}}). Fix or omit model and delegate again.",
     "accountUnknown": "account_unknown: the agent account {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
-    "accountNoToken": "account_no_token: the agent account {{account}} has no sign-in token, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
+    "accountNoToken": "account_no_token: the agent account {{account}} isn't signed in to claude.ai, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
     "accountNotInTiers": "account_not_in_tiers: no {{agent}} account is in the delegation settings. Only accounts placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Omit backend and let automatic selection choose. Nothing was changed.",
     "accountNotInTiersRoutingOff": "account_not_in_tiers: no {{agent}} account is in the delegation settings. Only accounts placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Retry with another backend, or ask the user. Nothing was changed.",
     "cwdNotDirectory": "cwd must be a directory.",

@@ -326,7 +326,7 @@ export default async function (t) {
     const root = tempDir();
     const logFile = boot.serverLogFile(root);
     fs.writeFileSync(path.join(dataDir, 'prefs.json'), JSON.stringify({ memoryLearnPaused: true }));
-    const baseEnv = { ...process.env, AGENT_HOST_DATA: dataDir, AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_ANTHROPIC_API: 'off', AGENT_HOST_ROUTING_USAGE: 'off', AGENT_HOST_OPENROUTER_API: 'http://127.0.0.1:9',
+    const baseEnv = { ...process.env, AGENT_HOST_DATA: dataDir, AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_ROUTING_USAGE: 'off', AGENT_HOST_OPENROUTER_API: 'http://127.0.0.1:9',
       AGENT_HOST_WORKTREES: 'off', AGENT_HOST_LOCALE: 'ja' };
     delete baseEnv.AGENT_HOST_TOKEN;
     let pid = null;

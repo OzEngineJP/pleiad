@@ -5,6 +5,9 @@
 //     sha256 と、argv の数・env のキーの一覧・認証に関わる env の値。このブランチの組み立ての関数からは作らない（旧い道が変わると両方が一緒にずれて気づけないため）
 //   - 含めない経路: 保持役に載せるかの判断（heldPlan。保持役の実体が要る）と、その先の保持役の中の動き。保持役への起動の変換（createHeldCli の spawn）だけを記録する。
 //     付け直し（adoptTurn）は runTurn に同じ options を渡すだけなので別には記録しない
+//   - 固定するのはアカウントの指定なし（none）の行だけ。登録したアカウント（registered）の行は ADR 0353 で意図して変えた（会話用のトークンをやめ、
+//     全アカウントを専用フォルダで起動する）ので fixture から外し、tests/unit/claude-connectors-auth.mjs の 4 節（オン・オフの記録の差は
+//     ENABLE_CLAUDEAI_MCP_SERVERS だけ・トークンを渡さない）で確かめる
 //   - 落ちたとき: 失敗の行に、合わなかった組み合わせ × 経路と手がかり（argv の数・env のキーの増減・認証の値）が出る。中身を見るには
 //       LAUNCH_RECORD_DUMP=<フォルダー> node tests/run.mjs claude-launch-main-pinned     … <フォルダー>/records.json に比べる前の記録を丸ごと書き出す
 //     を、このブランチと main の worktree（下の LAUNCH_RECORD_ROOT）で 1 回ずつ流し、2 つの records.json を JSON の差分で見比べる
@@ -26,17 +29,17 @@ const REPO = fileURLToPath(new URL('../..', import.meta.url));
 
 export default async function (t) {
   const root = process.env.LAUNCH_RECORD_ROOT || REPO;
-  const got = digest(await recordAll({ root }));
+  const labels = scenarios().filter(([, a]) => a === 'none').map(([p, a, e]) => `${p}/${a}/${e}`);
+  const got = digest(await recordAll({ root, only: labels }));
   if (process.env.LAUNCH_RECORD_WRITE) {
     await fs.writeFile(process.env.LAUNCH_RECORD_WRITE, JSON.stringify(got, null, 1) + '\n');
     t.ok('fixture を書き出した', true);
     return;
   }
   const want = JSON.parse(await fs.readFile(fixtureFile(), 'utf8'));
-  const labels = scenarios().map(([p, a, e]) => `${p}/${a}/${e}`);
   t.ok('組み合わせの数が fixture と同じ', JSON.stringify(Object.keys(want)) === JSON.stringify(labels), `${Object.keys(want).length} / ${labels.length}`);
   const bad = explain(want, got);
-  t.ok(`全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ`, bad.count === 0, bad.text);
+  t.ok(`アカウントの指定なしの全 ${labels.length} 組み合わせ × 経路の起動の記録が main と同じ`, bad.count === 0, bad.text);
   // 記録に本物の秘密が入っていない: 認証に関わる env の値は固定の偽物だけ（両方の OS の fixture）
   const fakes = new Set(Object.values(FAKE));
   const odd = [];

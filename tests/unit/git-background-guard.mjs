@@ -1,4 +1,4 @@
-// git の裏の作業の見張り（ADR 0353。core/git-info.mjs・git-activity.mjs。LLM は呼ばない）。遅い・止まる git を作る偽の git（tests/lib/fake-git.mjs）で、
+// git の裏の作業の見張り（ADR 0354。core/git-info.mjs・git-activity.mjs。LLM は呼ばない）。遅い・止まる git を作る偽の git（tests/lib/fake-git.mjs）で、
 // 遅いファイルシステムで裏の作業が積み上がらないことを、時間どおりに確かめる:
 //   - 止めても終われない git: 上限で戻る → 生きている間は新しい git を起こさず BUSY → 終われば自動で戻る
 //   - 止められる git の時間切れが続く: 2 回目から休み（REST）。休みの間は起こさない
@@ -6,7 +6,7 @@
 //   - 同じ種類の裏の作業は 1 本ずつ: 状態の取り直し（fresh でない 5 つ → 1 本、fresh の 5 つ → 2 本）・撮影（5 つ → add 2 本）・変更の数え（5 つ → 撮影 1 本）
 //   - 残っている隠し ref の片付け: リポジトリごとに 1 回・読めなかったらあけてやり直し（本物の git で消す所は git-info・server-git が見る）。
 //     数百本ずつ・長い上限・時間切れは休み（REST）に数えない・途中までなら残りから続く（数千本を 1 回の読みの上限に入れない）
-//   - ターンごとの撮影をやめた（ADR 0353）: 撮影の口・環境変数・表示の値がコードに残っていない
+//   - ターンごとの撮影をやめた（ADR 0354）: 撮影の口・環境変数・表示の値がコードに残っていない
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

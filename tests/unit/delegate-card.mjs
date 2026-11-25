@@ -50,7 +50,7 @@ export default async function(t) {
   assert.equal(card.querySelectorAll('.tc-go').length, 1);
   t.ok('結果が届いたら自分の id を使い、古い結び付きと内訳を残さない', true);
 
-  // 同じ作業場所を使う子には何も出さない（別の会話のコミットまで混ざって当てにならないため。ADR 0353）。
+  // 同じ作業場所を使う子には何も出さない（別の会話のコミットまで混ざって当てにならないため。ADR 0354）。
   // worktree の子だけ「作業場所: worktree <ブランチ>」の行が出る。git は読まない（読む関数・「変更」の行の部品は client.mjs に無い）
   assert.ok(!source.includes('paintDelegateGit') && !source.includes('renderDelegateGit') && !source.includes('git-delegate'), '「変更」の行の描画は client.mjs に残っていない');
   const wsStart = source.indexOf('function paintDelegateWorkspace(');

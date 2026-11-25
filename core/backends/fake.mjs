@@ -27,7 +27,7 @@
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "retry-wait <limit|error> <秒|none> gate:<名前> <本文>" … 再試行の待ち（OpenCode の session.status の retry を写した activity retrying と同じ形。ADR 0229）を出し、
 //                    ゲートが開いたら running に戻って本文を返す。<秒> は次の再試行までの秒（none は時刻が分からない待ち）。待ちの間に中断されたら aborted
-//   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
+//   "whoami"       … 渡されたアカウント（account）の id の指紋を本文にする。無ければ account:none
 //   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
 //                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0147）
 //   "context:<json>" … ply_context（contextRuntime）のツールを { name, arguments } で 1 回呼び、返りを本文にする
@@ -513,7 +513,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, shellRuntime = null, secretsRuntime = null, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, shellRuntime = null, secretsRuntime = null, browserInstructions, account = null, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
     // 審査モードで通さない台本は、台本として読まずに言葉をそのまま返す（下の plain）
     const plain = isReviewMode() && !fakeScriptAllowed(scriptOf(prompt));
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
@@ -934,8 +934,8 @@ export const backend = {
         out.text = JSON.stringify({ deleted: deletedNatives, live: [...sessions.keys()] });
         await say(emit, out.text, out.uuid);
       } else if (/(^|\n)whoami$/.test(text)) {   // 分岐した会話の最初のターンは履歴の引き継ぎ文の末尾に来る
-        // トークンそのものは出さない。同じトークンかどうかだけ分かる指紋
-        out.text = oauthToken ? `account:${crypto.createHash("sha256").update(oauthToken).digest("hex").slice(0, 12)}` : "account:none";
+        // id そのものは出さない。同じアカウントかどうかだけ分かる指紋
+        out.text = account?.id ? `account:${crypto.createHash("sha256").update(account.id).digest("hex").slice(0, 12)}` : "account:none";
         await say(emit, out.text, out.uuid);
       } else if (/(^|\n)compact-window(?: base:\d+)?$/.test(text)) {   // 子にだけ渡る自動圧縮の窓。渡っていなければ none
         // base:N は Claude の新しい会話の最初の返答の usage（固定の部分。ADR 0166）の代わり。新しい会話のときだけ出す
