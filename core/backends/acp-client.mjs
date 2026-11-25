@@ -188,6 +188,7 @@ export class AcpClient {
       const promise = new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject, timer: null, method: 'session/prompt', params: null }); });
       promise.catch(() => {});
       this.trailing.push(promise);
+      this.#noteId(id);
     }
   }
 
@@ -207,8 +208,16 @@ export class AcpClient {
       this.pending.set(id, { resolve, reject, timer: null, method, params: null });
     });
     this.running.catch(() => {});
-    const n = /^pleiad-(\d+)$/.exec(String(id))?.[1];
-    if (n) this.nextId = Math.max(this.nextId, Number(n));
+    this.#noteId(id);
+  }
+
+  /**
+   * 前のサーバーが付けた依頼の id（pleiad-<n>）を見たら、次の番号をそれより後ろにする（付け直し）。会話寿命の子（core/backends/acp-held.mjs）は
+   * 付け直しの後も次のターンを受けるので、番号を 0 から数え直すと、前のサーバーが付けた id と重なる。番号は桁あふれしない範囲だけ受ける
+   */
+  #noteId(id) {
+    const n = Number(/^pleiad-(\d{1,15})$/.exec(String(id))?.[1]);
+    if (Number.isSafeInteger(n)) this.nextId = Math.max(this.nextId, n);
   }
 
   async #start() {
@@ -309,6 +318,8 @@ export class AcpClient {
     }
     if (!Object.hasOwn(frame, 'id')) return this.#fail(rpcError(`Invalid ${this.label} ACP response`, -32600));
     if (!isRpcId(frame.id)) return this.#fail(rpcError(`Invalid ${this.label} ACP response id`, -32600));
+    // 記録の再生（付け直し）に出てくる前のサーバーの依頼の答え。履歴でも、次の番号はそれより後ろにする
+    if (opts?.replay) this.#noteId(frame.id);
     const pending = this.pending.get(frame.id);
     if (!pending) return; // Late response after timeout is harmless.
     const hasError = Object.hasOwn(frame, 'error'), hasResult = Object.hasOwn(frame, 'result');

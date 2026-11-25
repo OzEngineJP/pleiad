@@ -17,6 +17,7 @@ import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { KEEP_MS } from '../process.mjs';
 import { ADOPT_TURN_MARK, holderSource, replayRecord } from '../adopt.mjs';
+import { sweepIdleAcp } from './acp-held.mjs';
 import { sweepHeldHomes } from './antigravity-context.mjs';
 
 /** 保持役の子の id の頭。保持役は Claude・fake の子とも共有するので、agy の子だけを見分ける */
@@ -166,21 +167,12 @@ let swept = false;
 export async function sweepIdle(client, { ids = new Set() } = {}) {
   if (swept) return [];
   swept = true;
-  const children = (client.welcome?.children ?? []).filter(child => String(child.id).startsWith(AGY_CHILD_PREFIX) && !ids.has(child.id));
-  const stopped = [];
-  for (const child of children) {
-    // 付け直せる子（札と印の両方がある。server の restoreAdoptedTurns と同じ条件）には触れない。どちらかが欠けたものは、止める人が居ない idle の子
-    if (child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) continue;
-    try {
-      await client.attach(child.id, { from: (child.seq ?? 0) + 1 });
-      if (child.alive) client.kill(child.id, { tree: true }); else client.release(child.id);
-      await client.detach(child.id);
-      stopped.push(child.id);
-    } catch { /* つながりが切れた・子が消えた */ }
-  }
-  const referenced = new Set(children.filter(child => child.alive && child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])).map(child => child.label?.backendCard?.agy?.home).filter(Boolean));
-  sweepHeldHomes(referenced);
-  return stopped;
+  // 止める子の選び方は ACP の会話寿命と共通（core/backends/acp-held.mjs の sweepIdleAcp）。agy は、残る子が指さない置き場（held-*）も消す
+  return sweepIdleAcp(client, {
+    prefix: AGY_CHILD_PREFIX,
+    ids,
+    onHomes: kept => sweepHeldHomes(new Set(kept.map(child => child.label?.backendCard?.agy?.home).filter(Boolean))),
+  });
 }
 
 /**

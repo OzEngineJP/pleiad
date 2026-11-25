@@ -7,6 +7,7 @@
     "account-backend-i18n": 241,
     "acp-client": 4500,
     "acp-error": 67,
+    "acp-held-conversation": 5000,
     "acp-prompt-card": 732,
     "acp-record-merge": 218,
     "acp-steer": 3211,

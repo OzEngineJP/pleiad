@@ -8,6 +8,10 @@
 //   印（turn）は、session/prompt を書く直前に打つ（再生はここから）。札（label）はサーバーのターンの札（core/turn-card.mjs）で、
 //     サーバーの touchCard が control.holder.label で置き直す
 //   ターンが終わったら札と印を外してから子を止める（endTurn → close）
+// 寿命（lifetime）: 'turn'（既定。Devin・Grok）は 1 ターン 1 プロセス。'conversation'（agy の ACP）は会話のあいだ子が生き、ターンの間は idle で次のターンを待つ。
+//   会話寿命の endTurn は札と印を外すだけで子を止めない（idle の間は札を置かない。遅れて届いた置き直しで idle の子を付け直す対象に戻さない）。
+//   印は markTurn でターンごとに打ち直す。アプリの終了は exitFrames（end・kill）を client.sendBatch で 1 回に送る。
+//   札と印の欠けた idle の子は、次のサーバーの起動で sweepIdleAcp が止める（止めるタイマーを持つ人が居なくなったため）
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
@@ -52,13 +56,17 @@ export async function heldAcpPlan({ dataDir, argv, envName, log = console.error 
  * 保持役の子を ACP の CLI の ChildProcess に見せる口。DevinAcp・GrokAcp の held に渡す。
  *   createHeldAcp({ client })   このサーバーが起こす子（start で spawn する）
  *   createHeldAcp({ source })   付け直す子（source は core/adopt.mjs の holderSource）
+ * lifetime: 'turn'（既定）か 'conversation'（上の「寿命」）。childPrefix: 保持役の子の id の頭（保持役は Claude・Codex・fake の子とも共有するので、自分の子だけを見分ける）
  * start は proc を返すだけ（読みは begin で始める。付け直しは、再生の前に写し（mapper）を組み立てるため）。
  * open は attach の答え（pendingRequests。付け直す子だけ）を返す
  */
-export function createHeldAcp({ client = null, source = null } = {}) {
+export function createHeldAcp({ client = null, source = null, lifetime = 'turn', childPrefix = ACP_CHILD_PREFIX } = {}) {
+  if (lifetime !== 'turn' && lifetime !== 'conversation') throw new Error(`acp: unknown held lifetime (${String(lifetime)})`);
+  const conversation = lifetime === 'conversation';
   let id = source?.id ?? null;
   const adopting = Boolean(source);
   let exited = null, closing = false;
+  let idle = false;   // 会話寿命だけ: ターンの間（endTurn の後、次の markTurn まで）。札は置かない
   let proc = null, onLine = () => {}, onStderr = () => {}, started = false;
 
   const writeLine = data => { if (!exited) source.write(String(data)); };
@@ -117,7 +125,7 @@ export function createHeldAcp({ client = null, source = null } = {}) {
       if (!source) {
         const target = directCommand(argv);
         if (!target) throw new Error('acp: the CLI cannot be started by the holder');
-        id = `${ACP_CHILD_PREFIX}${crypto.randomUUID().slice(0, 8)}`;
+        id = `${childPrefix}${crypto.randomUUID().slice(0, 8)}`;
         // 出来事の購読は spawn より前（holderSource が先に購読を始める）
         source = holderSource(client, { id, acked: 0, seq: 0, marks: {} }, { spawned: true });
         client.spawn({ id, command: target.command, args: target.args, cwd: cwd || undefined, env, policy: 'jsonrpc', keepMs: KEEP_MS });
@@ -157,14 +165,21 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     },
 
     /** ターンの最初の行（session/prompt）を書く直前に打つ。印は次の行（保持役が子の出力の通番で数える）。再生はここから */
-    markTurn() { if (source && !exited) source.client.mark(id, ADOPT_TURN_MARK); },
-    /** 札を子に置く（server の touchCard が、札の中身が変わるたびに呼ぶ） */
-    label(card) { if (source && !exited) source.client.label(id, card); },
+    markTurn() { if (source && !exited) { idle = false; source.client.mark(id, ADOPT_TURN_MARK); } },
+    /** 札を子に置く（server の touchCard が、札の中身が変わるたびに呼ぶ）。会話寿命は idle の間は置かない */
+    label(card) { if (source && !exited && !idle) source.client.label(id, card); },
 
-    /** ターンが終わった（子を止める前に、付け直す対象から外す）。札と印を 1 回の書き込みで外す */
+    /** ターンが終わった（会話寿命は子が idle で次のターンを待つ。ターン寿命は続けて close で止める）。付け直す対象から外す: 札と印を 1 回の書き込みで外す。終わった子には触れない */
     endTurn() {
       if (!source || exited) return;
+      if (conversation) idle = true;
       source.client.sendBatch([{ t: 'label', id, label: null }, { t: 'unmark', id, name: ADOPT_TURN_MARK }]);
+    },
+
+    /** アプリの終了で子を止める依頼（stdin を閉じ、木ごと止める）。続けて write せず、client.sendBatch で 1 回にまとめて送る。終わった子は空 */
+    exitFrames() {
+      if (!source || exited) return [];
+      return [{ t: 'end', id }, { t: 'kill', id, tree: true }];
     },
 
     /** 子を止める（stdin を閉じ、木ごと止める）。終わるのを待つ（上限つき） */
@@ -200,4 +215,31 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     kill() { if (source && !exited) source.client.kill(id, { tree: true }); },
   };
   return held;
+}
+
+/**
+ * 付け直せる子か（札と印の両方がある。server の restoreAdoptedTurns と同じ条件）。どちらかが欠けたものは、止める人が居ない idle の子
+ */
+const adoptable = child => Boolean(child.label) && Number.isInteger(child.marks?.[ADOPT_TURN_MARK]);
+
+/**
+ * 前のサーバーが保持役に残した idle の子を止める: prefix の子のうち、**札か印の欠けた**ものを止める（旧サーバーの停止・更新・落ちで、止めるタイマーを持つ人が居なくなった）。
+ * 札と印を持つ子は付け直し（server の restoreAdoptedTurns）が読むので触れない。ids は、この呼び出しの前に保持役へつないでいた自分の子（止めない）。
+ * onHomes(kept) は止めた後に（子が居なくても）1 回呼ぶ。kept は、付け直せる生きた子（札と印を持つもの）。agent の置き場（agy の held-*）を、生きている子が指していないものだけ消すために使う。
+ * 「プロセスで 1 回だけ」の制御は呼ぶ側が持つ（antigravity-held.mjs の sweepIdle）。戻り値は止めた子の id
+ */
+export async function sweepIdleAcp(client, { prefix = ACP_CHILD_PREFIX, ids = new Set(), onHomes = null } = {}) {
+  const children = (client.welcome?.children ?? []).filter(child => String(child.id).startsWith(prefix) && !ids.has(child.id));
+  const stopped = [];
+  for (const child of children) {
+    if (adoptable(child)) continue;
+    try {
+      await client.attach(child.id, { from: (child.seq ?? 0) + 1 });
+      if (child.alive) client.kill(child.id, { tree: true }); else client.release(child.id);
+      await client.detach(child.id);
+      stopped.push(child.id);
+    } catch { /* つながりが切れた・子が消えた */ }
+  }
+  if (onHomes) onHomes(children.filter(child => child.alive && adoptable(child)));
+  return stopped;
 }
