@@ -480,15 +480,33 @@ export default async function (t) {
   }
 
   {
+    // 外からのリンクやコメントの「ADR 0301」を壊さないため、承認済みの古い 2 ファイルだけを例外にする
+    const KNOWN_DUPLICATE_ADR_FILES = new Set(['0301-markdown-rows-truth.md', '0301-session-list-without-ai-label.md']);
+    const duplicatedAdrNumbers = (names) => {
+      const byNumber = new Map();
+      for (const name of names) {
+        const match = /^(\d{4})-/.exec(name);
+        if (!match) continue;
+        byNumber.set(match[1], [...(byNumber.get(match[1]) ?? []), name]);
+      }
+      return [...byNumber].flatMap(([number, files]) => {
+        if (files.length < 2) return [];
+        const rest = [...files];
+        for (const file of KNOWN_DUPLICATE_ADR_FILES) {
+          const index = rest.indexOf(file);
+          if (index !== -1) rest.splice(index, 1);
+        }
+        return rest.length ? [[number, rest]] : [];
+      });
+    };
+
+    const known = [...KNOWN_DUPLICATE_ADR_FILES];
+    t.ok('例外の 1 組だけなら通る', duplicatedAdrNumbers(known).length === 0, JSON.stringify(duplicatedAdrNumbers(known)));
+    t.ok('0301 に 3 つ目が足されたら落ちる', JSON.stringify(duplicatedAdrNumbers([...known, '0301-third.md'])) === JSON.stringify([['0301', ['0301-third.md']]]), JSON.stringify(duplicatedAdrNumbers([...known, '0301-third.md'])));
+    t.ok('新しい番号の重なりは落ちる', JSON.stringify(duplicatedAdrNumbers(['0355-one.md', '0355-two.md'])) === JSON.stringify([['0355', ['0355-one.md', '0355-two.md']]]), JSON.stringify(duplicatedAdrNumbers(['0355-one.md', '0355-two.md'])));
+
     const entries = await fs.readdir(path.join(ROOT, 'docs', 'adr'), { withFileTypes: true });
-    const byNumber = new Map();
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const match = /^(\d{4})-/.exec(entry.name);
-      if (!match) continue;
-      byNumber.set(match[1], [...(byNumber.get(match[1]) ?? []), entry.name]);
-    }
-    const duplicated = [...byNumber].filter(([, files]) => files.length > 1);
-    t.ok('docs/adr に同じ 4 桁の番号のファイルは 2 つ以上無い', duplicated.length === 0, duplicated.map(([number, files]) => `${number}: ${files.join(', ')}`).join(' / '));
+    const duplicated = duplicatedAdrNumbers(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+    t.ok('docs/adr に同じ 4 桁の番号のファイルは、例外の 1 組を除いて 2 つ以上無い', duplicated.length === 0, duplicated.map(([number, files]) => `${number}: ${files.join(', ')}`).join(' / '));
   }
 }
