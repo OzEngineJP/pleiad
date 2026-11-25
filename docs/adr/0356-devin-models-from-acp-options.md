@@ -25,9 +25,10 @@
 5. **選択肢に無いもの**: 選んだモデル・段がその会話の選択肢に無ければ、送らずに断る（`DEVIN_MODEL_UNAVAILABLE`・`DEVIN_EFFORT_UNAVAILABLE`、`rejected: 'model' | 'thought_level'`）。送った値を CLI が `-32602` で断ったときは、`devin-acp.mjs` がどの設定か（`configRejected: { option }`）だけの印を付ける（wire の文面は外へ出さない）。どちらも prompt を送る前なので `undelivered` にし、`turnResult` に `kind: 'model'`・`pristine: true` を付ける。委譲の振り分けはその候補を 30 分外し（0311）、次の候補で作り直す。0343（一覧で拒否しない）とは食い違わない: 断るのは Pleiad の控えの一覧ではなく、CLI がその会話で示した選択肢で、CLI の答えそのものだから。
 6. **保存済みの古い名前**（利用者の決定。Pleiad で Devin を使うのは利用者 1 人という前提）:
    - 委譲の設定（`prefs.json` の `delegationRouting.tiers` の候補と、その `efforts`）にある Devin の候補は、この版の最初の起動で 1 回だけ全部消す。古いカタログの名前か ACP の名前かは見分けず、置き換えない。
-   - 1 回きりはデータの形の版（`DATA_SCHEMA` は 4 のまま）ではなく、`prefs.json` の印（`migrations` に `devin-acp-candidates`）で決める（`core/prefs-migrations.mjs` の `removeDevinCandidatesOnce`。起動の中で store が `prefs.json` を読む前に呼ぶ）。印が無いときだけ消して印を立て、同じ書き込み（一時ファイルから rename）で済ませる。消すものがあれば、移す前の `prefs.json` を `backup-prefs-<日時>/` に残す。消した数は起動のログに 1 行（`data.devinCandidatesRemoved`）残す。画面の通知は出さない。
+   - 1 回きりはデータの形の版（`DATA_SCHEMA` は 4 のまま）ではなく、`prefs.json` の印（`migrations` に `devin-acp-candidates`）で決める（`core/prefs-migrations.mjs` の `removeDevinCandidatesOnce`。設定を受け取って移行した設定を返すだけの純粋な関数で、自分では書かない。起動の中で store が `prefs.json` を読む前に、`core/store.mjs` の `migratePrefs` に渡して呼ぶ）。印が無いときだけ消して印を立て、`setPref` と同じ書き込みの口（一時ファイルから rename）で済ませる。新しい書き込みの口は足さない（`tests/data-writes-allowlist.mjs` は変えない）。移す前の写し（`backup-prefs-<日時>/`）は残さない: 消すのは委譲の候補だけで、利用者が選び直せば戻るため。消した数は起動のログに 1 行（`data.devinCandidatesRemoved`）残す。画面の通知は出さない。
+   - Devin を名指しして外す 1 行（`isDevin`）は、能力の印・エージェントの記述からは引かず、`backend-allow` の印を付けた（`tests/lint-backends.mjs`。保存済みの Devin の候補だけを外す 1 回きりの処理で、別のエージェントへ広げないため）。
    - 2 回目以降の起動は印があるので何もせず、利用者が選び直した Devin の候補は残る。前の版は `prefs.json` の知らないキーも書き戻すので、版を戻して上げ直しても印が残り、何もしない。
-   - 読めない・書けないときは起動を止めない。ログに 1 行（`data.devinCandidatesFailed`）残し、印が立たないので次の起動でやり直す。
+   - 読めない（壊れている）・書けないときは起動を止めない。`prefs.json` には触れず（書けなければメモリも戻す）、ログに 1 行（`data.devinCandidatesFailed`）残し、印が立たないので次の起動でやり直す。`prefs.json` が無い置き場は、印だけの `prefs.json` を作る（後で選んだ Devin の候補を次の起動で外さないため）。
    - 会話のモデル・既定のモデルなど、ほかに残る古い名前は置き換えない。§5 のとおり「使えないモデル」として止め、人に選び直してもらう（新しい画面の部品は足さない）。
 
 ### 変えないもの

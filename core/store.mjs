@@ -55,12 +55,15 @@ const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "la
 function jsonFile(file) {
   let cache = null;
   return {
-    async read() {
+    // strict: 無いファイルだけを空として扱い、壊れている・オブジェクトでないときは投げる（cache は埋めない。起動の移行が壊れた設定を上書きしないため）
+    async read({ strict = false } = {}) {
       if (cache) return cache;
       try {
         const v = JSON.parse(await fs.readFile(file, "utf8"));
+        if (strict && !(v && typeof v === "object" && !Array.isArray(v))) throw new Error(`${path.basename(file)} is not an object`);
         cache = v && typeof v === "object" && !Array.isArray(v) ? v : {};
-      } catch {
+      } catch (e) {
+        if (strict && e?.code !== "ENOENT") throw e;
         cache = {};
       }
       return cache;
@@ -214,6 +217,25 @@ export async function setPref(key, value, backendId) {
     }
     await prefs.write();
     return { ...all };
+  });
+}
+
+/**
+ * 起動の一度きりの移行（core/prefs-migrations.mjs）。今の prefs.json の写しを migrate に渡し、返った { prefs, ... } の prefs で
+ * 丸ごと置き換えて、setPref と同じ口（一時ファイルから置き換え）で書く。null を返せば何もしない（書かない）。
+ * 書けなければメモリを書く前に戻して投げる（ファイルは元のまま。次の起動でやり直せる）。prefs.json が壊れていれば触れずに投げる。
+ * データ置き場のロックを持って、設定を読む前に呼ぶ。戻り値は migrate の戻り値（null か、{ prefs, ... }）。
+ */
+export async function migratePrefs(migrate) {
+  return exclusive(async () => {
+    const all = await prefs.read({ strict: true });
+    const result = migrate({ ...all });
+    if (!result) return null;
+    const before = { ...all };
+    const replace = next => { for (const key of Object.keys(all)) delete all[key]; Object.assign(all, next); };
+    replace(result.prefs);
+    try { await prefs.write(); } catch (e) { replace(before); throw e; }
+    return result;
   });
 }
 

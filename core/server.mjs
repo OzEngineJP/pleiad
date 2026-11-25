@@ -271,10 +271,10 @@ const lockWaitedMs = Date.now() - lockFrom;
 if (STARTED_BY_MAIN && lockWaitedMs > 0) console.log(`  [start] got the data lock after ${lockWaitedMs} ms at=${Date.now()}`);
 const migrated = await retryTransient(() => ensureDataSchema(store.dataDir));
 if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
-// 委譲の段の Devin の候補を 1 回だけ外す（prefs.json の印で 1 回きり。core/prefs-migrations.mjs、ADR 0356）。store が prefs.json を読む前に済ませる。
-// 画面には出さず、起動のログに 1 行だけ残す。失敗しても起動は止めない（印が立たないので、次の起動でやり直す）
+// 委譲の段の Devin の候補を 1 回だけ外す（prefs.json の印で 1 回きり。core/prefs-migrations.mjs、ADR 0356）。store が prefs.json を読む前に済ませる
+// （store の設定の書き込みの口 migratePrefs を通る）。画面には出さず、起動のログに 1 行だけ残す。失敗しても起動は止めない（印が立たないので、次の起動でやり直す）
 try {
-  const devin = removeDevinCandidatesOnce(store.dataDir);
+  const devin = await store.migratePrefs(removeDevinCandidatesOnce);
   if (devin?.count) console.log(`  ${t('data.devinCandidatesRemoved', devin)}`);
 } catch (e) { console.error(`  ${t('data.devinCandidatesFailed')}`, String(e?.message ?? e)); }
 const slowLog = createSlowLog({ dataDir: store.dataDir });
