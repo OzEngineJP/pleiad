@@ -211,7 +211,7 @@ async function accountPanel(t) {
     await ui.refresh();
     const rows = root.querySelectorAll('.rt-cand-row');
     const label = row => row.querySelector('.mn').textContent;
-    t.ok('候補の名前は「モデル · アカウント」。書かない候補はログイン中のアカウント', label(rows[0]) === 'Sonnet · ログイン中のアカウント' && label(rows[1]) === 'Sonnet · personal'
+    t.ok('候補の名前は「モデル · 接続先」。書かない候補は CLI のログイン', label(rows[0]) === 'Sonnet · CLI のログイン' && label(rows[1]) === 'Sonnet · personal'
       && label(rows[2]) === 'Opus · work', rows.map(label).join(' / '));
     t.ok('アカウントの無いエージェントの候補は名前だけで、下の行にエージェントの名前', label(rows[3]) === 'gpt-6-sol' && rows[3].querySelector('small').textContent === 'Codex');
     t.ok('アカウントの候補の下の行は、そのアカウントの使用量だけ（エージェントの名前は付けない）',

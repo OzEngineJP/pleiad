@@ -421,6 +421,10 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .conn-panel .conn-add{margin-top:10px}
 .conn-panel .conn-add>.mp-link{min-height:var(--hit)}
 .conn-kind-h{margin:10px 0 4px;font-size:var(--fs-s);color:var(--ink-weak)}
+.conn-kinds .mp-preset{background:var(--surface-1);min-height:var(--hit)}
+.conn-kinds .mp-preset:hover{background:var(--surface-sel)}
+.conn-kinds .mp-preset>span{font-weight:600}
+.conn-kinds .mp-preset small{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 .conn-panel .mp-state{margin:10px 0 0}
 .mp-name>strong .def{font-weight:400;font-size:var(--fs-s);color:var(--ink-weak)}
 .mp-acct.cc .mp-sum>small{font-size:12px;color:var(--ink-weak)}
@@ -430,7 +434,7 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct .btn,.mp-fold-in>[data-add]{min-height:var(--hit)}
 .mp-acct .mp-stage .mp-note a{display:inline-flex;align-items:center;min-height:var(--hit);margin-block:calc((1lh - var(--hit)) / 2)}
 .mp-acct .btn.lnk{color:var(--ink-blue)}
-/* 見出しの行: 名前 | 操作の組（［直す］［編集］［削除］）。組は割らない。直すボタンが無いカードと開いたカードは 1 行で、長い名前のほうを省く。
+/* 見出しの行: 名前 | 操作の組（［直す］［編集］［削除］）。組は割らない（収まらないほど狭いときだけ、組の中で折り返す）。直すボタンが無いカードと開いたカードは 1 行で、長い名前のほうを省く。
    直すボタンがあるカードは、名前（と下の状態の行）の列が「名前の幅か 18em の広いほう」と組を並べて収まらなければ、組ごと状態の行の下へ回り右に寄る（窓の幅ではなく、カードの幅と名前の長さで決まる）。
    状態の行と名前の欄は width:0;min-width:100% で列の幅に合わせ、列の自然な幅（折り返しの判断）には名前だけが効くようにする */
 .mp-acct .mp-head{flex-wrap:nowrap}
@@ -439,9 +443,10 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct:is(.has-fix,.cc):not(.is-open) .mp-head>.mp-card-info{flex:1 1 auto;min-width:min(100%,18em)}
 .mp-acct:is(.has-fix,.cc) .mp-card-info>.mp-fold,.mp-acct:is(.has-fix,.cc):not(.is-open) .mp-name-in,.mp-acct.cc .mp-card-info>.mp-ln{width:0;min-width:100%}
 /* 右端の基準は 1 本: 塗りのボタンは面の端、文字だけのボタンは文字の端を、カードの内側の端に揃える（文字だけのボタンで終わる組は、その余白の分だけ外へ出す） */
-.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:nowrap;margin-left:auto;margin-right:-12px;transition:opacity var(--dur) var(--ease-out),visibility 0s}
+.mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:wrap;max-width:calc(100% + 12px);margin-left:auto;margin-right:-12px;transition:opacity var(--dur) var(--ease-out),visibility 0s}
 .mp-acct .mp-cred>.mp-fold:has(.mp-card-actions>.btn:last-child:not(.btn-primary):not(.btn-quiet)){margin-right:-12px}
 .mp-acct .mp-head>.mp-card-actions.away{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+@media (max-width:520px){.mp-acct .mp-head>.mp-card-actions .btn{padding-inline:8px}}
 .mp-name{display:grid;align-items:center;min-height:var(--hit);min-width:0}
 .mp-name>*{grid-area:1/1;min-width:0}
 .mp-name>strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;transition:opacity var(--dur) var(--ease-out),visibility 0s}

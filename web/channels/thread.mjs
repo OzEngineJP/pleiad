@@ -162,7 +162,7 @@ export function createThread(host) {
     const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
     const made = sessionId ?? seen?.sessionId ?? null;
     return { backend: seen?.backend ?? next.backend ?? row?.backend ?? ((bot.plain && !made && plainBackend) || bot.backend),
-      account: bot.plain ? '' : bot.account ?? '', sessionId: made, values,
+      account: bot.plain ? '' : bot.account ?? '', endpoint: bot.plain ? '' : bot.endpoint ?? '', sessionId: made, values,
       defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
   }
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
@@ -1091,6 +1091,8 @@ export function createThread(host) {
     },
     claudeAccountsChanged() { composer.invalidateVocab?.(); },
     agentAccountsChanged() { composer.invalidateVocab?.(); },
+    // 互換の接続先の登録が変わった（名前・確認の結果。web/client.mjs が取り直せる状態にしてから呼ぶ）
+    connChanged() { composer.invalidateVocab?.(); },
   };
 
   // ---------------------------------------------------------------- 開く・閉じる

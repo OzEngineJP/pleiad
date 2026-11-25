@@ -63,30 +63,30 @@
   },
   "accounts": {
     "backend": {
-      "inUse": "{{agent}} のアカウントは使用中です。処理が終わってから、もう一度お試しください。",
-      "inUseByTurn": "{{agent}} のアカウントは会話またはバックグラウンドのコマンドで使用中です。処理が終わってから、もう一度お試しください。",
-      "removing": "{{agent}} のアカウントを削除しています。",
-      "removedOrRemoving": "{{agent}} のアカウントは削除中、または削除済みです。",
-      "directoryRemoved": "{{agent}} のアカウントの保存先は削除されています。アカウントを登録し直してください。",
-      "loginRunning": "この {{agent}} のアカウントはログインの途中です。",
+      "inUse": "{{agent}} の接続先は使用中です。処理が終わってから、もう一度お試しください。",
+      "inUseByTurn": "{{agent}} の接続先は会話またはバックグラウンドのコマンドで使用中です。処理が終わってから、もう一度お試しください。",
+      "removing": "{{agent}} の接続先を削除しています。",
+      "removedOrRemoving": "{{agent}} の接続先は削除中、または削除済みです。",
+      "directoryRemoved": "{{agent}} の接続先の保存先は削除されています。接続先を登録し直してください。",
+      "loginRunning": "この {{agent}} の接続先はログインの途中です。",
       "loginCancelled": "{{agent}} のログインをやめました。",
-      "notLoggedIn": "この {{agent}} のアカウントでログインしてください。",
+      "notLoggedIn": "この {{agent}} の接続先でログインしてください。",
       "loginNoCredential": "{{agent}} のログイン後に認証情報を確認できませんでした。もう一度ログインしてください。",
       "loginFailed": "{{agent}} のログインを完了できませんでした。もう一度お試しください。",
-      "permissionsUnknown": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を確認できませんでした。",
-      "permissionsFailed": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を設定できませんでした。",
-      "credentialUnreadable": "{{agent}} のアカウントの認証情報を読み取れません。"
+      "permissionsUnknown": "{{agent}} の接続先の認証情報を保護するためのアクセス権を確認できませんでした。",
+      "permissionsFailed": "{{agent}} の接続先の認証情報を保護するためのアクセス権を設定できませんでした。",
+      "credentialUnreadable": "{{agent}} の接続先の認証情報を読み取れません。"
     },
-    "deleted": "そのアカウントは削除されています",
-    "notRegistered": "そのアカウントは登録されていません",
-    "nameRequired": "アカウントの名前を入れてください",
-    "listBroken": "アカウントの一覧（agent-accounts.json）を読めません",
-    "badBackend": "アカウントを持てないエージェントです",
-    "credentialUnreadable": "アカウントの資格情報を読めません: {{message}}",
-    "loginBusy": "このアカウントはログインの途中です",
+    "deleted": "その接続先は削除されています",
+    "notRegistered": "その接続先は登録されていません",
+    "nameRequired": "接続先の名前を入れてください",
+    "listBroken": "接続先の一覧（agent-accounts.json）を読めません",
+    "badBackend": "接続先を登録できないエージェントです",
+    "credentialUnreadable": "接続先の資格情報を読めません: {{message}}",
+    "loginBusy": "この接続先はログインの途中です",
     "loginFailed": "ログインを完了できませんでした",
-    "tooMany": "登録できるアカウントは100件までです",
-    "credentialMissing": "このアカウントでログインしてください"
+    "tooMany": "登録できる接続先は100件までです",
+    "credentialMissing": "この接続先でログインしてください"
   },
   "permission": {
     "delegateEscalationHost": "この委譲は {{host}} で {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
@@ -201,8 +201,8 @@
     "endpointInvalid": "接続先の指定が不正です",
     "endpointNotRegistered": "選択した接続先は登録されていません",
     "modelUnavailable": "選択したモデルは使用できません",
-    "accountInvalid": "アカウントの指定が不正です",
-    "accountNotRegistered": "選択したアカウントは登録されていません",
+    "accountInvalid": "接続先の指定が不正です",
+    "accountNotRegistered": "選択した接続先は登録されていません",
     "unknownPref": "知らない設定: {{key}}",
     "unknownMode": "知らない承認モード: {{value}}",
     "unknownModel": "知らないモデル: {{value}}"
@@ -543,13 +543,13 @@
     },
     "usage": {
       "timeout": "使用量の取得が時間切れです",
-      "needsLogin": "使用量を表示するには、設定の「Claude のアカウント」で「claude.ai にログイン」を済ませてください。",
-      "loginAccount": "ログイン中のアカウント",
+      "needsLogin": "使用量を表示するには、設定 › エージェント設定の接続先で「ログインする」を済ませてください。",
+      "loginAccount": "CLI のログイン",
       "failed": "取得できませんでした: {{message}}",
-      "failedReauth": "取得できませんでした: {{message}}。続くときは「claude.ai にログインし直す」を押してください。",
+      "failedReauth": "取得できませんでした: {{message}}。続くときは「ログインし直す」を押してください。",
       "keychain": "Mac のキーチェーンを開けないため、取得できませんでした。画面でロックを解除すると、次の読み取りで表示されます。解除しても続くときはログインし直してください。",
       "relogin": "ログイン情報にトークンが無いため、使用量を読めません。再ログインが必要です。ターミナルで claude auth login を実行してください。",
-      "reauthNeeded": "このアカウントの claude.ai のログインが切れています。「claude.ai にログインし直す」を押してください。"
+      "reauthNeeded": "この接続先の claude.ai のログインが切れています。「ログインし直す」を押してください。"
     },
     "redacted": {
       "token": "[トークン]",
@@ -583,29 +583,29 @@
       "notReady": "まだ認可の準備ができていません。少し待ってからもう一度お試しください"
     },
     "accounts": {
-      "nameRequired": "アカウントの表示名を入力してください",
+      "nameRequired": "接続先の表示名を入力してください",
       "nameTooLong": "表示名は {{max}} 文字以内にしてください",
-      "nameDuplicate": "同じ名前のアカウントがあります",
-      "listBroken": "Claude のアカウント一覧を読み込めません。形式が壊れています",
-      "badId": "アカウントの id が正しくありません",
-      "notRegistered": "そのアカウントは登録されていません",
-      "deleted": "この会話で選んでいる Claude のアカウントは削除されています。アカウントを選び直してください"
+      "nameDuplicate": "同じ名前の接続先があります",
+      "listBroken": "Claude の接続先の一覧を読み込めません。形式が壊れています",
+      "badId": "接続先の id が正しくありません",
+      "notRegistered": "その接続先は登録されていません",
+      "deleted": "この会話で選んでいる接続先は削除されています。接続先を選び直してください"
     },
     "connectors": {
-      "ownDirLogin": "Claude のアカウント「{{name}}」は claude.ai にログインしていないか、ログインが切れています。設定のアカウント一覧でログインしてください。",
+      "ownDirLogin": "接続先「{{name}}」は claude.ai にログインしていないか、ログインが切れています。設定 › エージェント設定の接続先でログインしてください。",
       "keychain": "「{{name}}」のログインが入っている Mac のキーチェーンを開けません。画面でロックを解除してから送り直してください。",
-      "keychainAuth": "Claude のアカウント「{{name}}」のログインで断られました。Mac のキーチェーンのロックを解除して送り直してください。解除しても続くときはログインし直してください。",
-      "ssh": "ssh などの画面の無いログインからは、Claude のアカウント「{{name}}」を使えません。Mac の画面から Pleiad を起動してください。",
+      "keychainAuth": "接続先「{{name}}」のログインで断られました。Mac のキーチェーンのロックを解除して送り直してください。解除しても続くときはログインし直してください。",
+      "ssh": "ssh などの画面の無いログインからは、接続先「{{name}}」を使えません。Mac の画面から Pleiad を起動してください。",
       "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
       "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
       "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
-      "login": "Claude のアカウント「{{name}}」の claude.ai のログインが見つからないか、読み込めません。設定のアカウント一覧でログインし直してください",
-      "version": "Claude Code を更新してください。登録したアカウントには CLI 2.1.322 以上と Pleiad が固定する SDK が必要です（今: CLI {{cli}} / SDK {{sdk}}、基準: {{verified}}）。SDK が異なる場合は Pleiad を更新してください",
-      "platform": "Claude のアカウント「{{name}}」は、この OS（{{platform}}）ではまだ使えません",
-      "env": "Claude のアカウント「{{name}}」は、別の認証・接続先の指定（{{names}}。環境変数か settings.json（共有・作業場所・ローカル・管理者））があると使えません",
-      "envSettings": "Claude のアカウント「{{name}}」は、settings.json（共有・作業場所・ローカル・管理者）を読み取れないため使えません（別の認証の指定が無いことを確かめられません）",
-      "history": "Claude のアカウント「{{name}}」は、会話の履歴の置き場を動かす指定（{{names}}。環境変数か settings.json（共有・作業場所・ローカル・管理者））があると使えません",
-      "profile": "Claude のアカウント「{{name}}」のコネクターの設定を、共有の設定フォルダーへ反映できませんでした"
+      "login": "接続先「{{name}}」の claude.ai のログインが見つからないか、読み込めません。設定 › エージェント設定の接続先でログインし直してください",
+      "version": "Claude Code を更新してください。登録した接続先には CLI 2.1.322 以上と Pleiad が固定する SDK が必要です（今: CLI {{cli}} / SDK {{sdk}}、基準: {{verified}}）。SDK が異なる場合は Pleiad を更新してください",
+      "platform": "接続先「{{name}}」は、この OS（{{platform}}）ではまだ使えません",
+      "env": "接続先「{{name}}」は、別の認証・接続先の指定（{{names}}。環境変数か settings.json（共有・作業場所・ローカル・管理者））があると使えません",
+      "envSettings": "接続先「{{name}}」は、settings.json（共有・作業場所・ローカル・管理者）を読み取れないため使えません（別の認証の指定が無いことを確かめられません）",
+      "history": "接続先「{{name}}」は、会話の履歴の置き場を動かす指定（{{names}}。環境変数か settings.json（共有・作業場所・ローカル・管理者））があると使えません",
+      "profile": "接続先「{{name}}」のコネクターの設定を、共有の設定フォルダーへ反映できませんでした"
     }
   },
   "effort": {
@@ -631,10 +631,10 @@
   },
   "codex": {
     "accounts": {
-      "shareFailed": "Codex のアカウントで {{entry}} を共有できませんでした（{{code}}）。シンボリックリンクを作成できるようにして、もう一度お試しください。",
-      "threadBusy": "Codex の会話は別のアカウントまたは実行環境で使用中です。処理が終わってから、もう一度お試しください。",
+      "shareFailed": "Codex の接続先で {{entry}} を共有できませんでした（{{code}}）。シンボリックリンクを作成できるようにして、もう一度お試しください。",
+      "threadBusy": "Codex の会話は別の接続先または実行環境で使用中です。処理が終わってから、もう一度お試しください。",
       "releaseTimeout": "前の Codex の会話の終了を確認できませんでした。しばらく待ってから、もう一度お試しください。",
-      "releaseFailed": "前の Codex のアカウントとの接続を閉じられませんでした。もう一度お試しください。"
+      "releaseFailed": "前の Codex の接続先との接続を閉じられませんでした。もう一度お試しください。"
     },
     "description": "ChatGPT のサブスク枠を使う",
     "modes": {
@@ -790,7 +790,7 @@
   },
   "opencode": {
     "usage": {
-      "cliLogin": "OpenCode のログイン中のアカウント",
+      "cliLogin": "CLI のログイン",
       "copilotUnavailable": "GitHub Copilot の有限の使用枠は返されませんでした。無制限か、取得できない状態です。",
       "copilotPremiumRequests": "GitHub Copilot Premium requests",
       "copilotPremiumModels": "GitHub Copilot プレミアムモデル",
@@ -830,8 +830,8 @@
       "compactionOwner": "この要求から Pleiad 担当の指示を安全に除外できませんでした。新しい会話を始めるか、指示の担当を OpenCode に変更してください"
     },
     "auth": {
-      "accountRunCommand": "端末で次のコマンドを実行し、この OpenCode のアカウントでログインしてください。",
-      "accountLoggedIn": "OpenCode のアカウントでログインしました。",
+      "accountRunCommand": "端末で次のコマンドを実行し、この OpenCode の接続先でログインしてください。",
+      "accountLoggedIn": "OpenCode の接続先でログインしました。",
       "freeOnly": "OpenCode Zen の無料のモデルだけ",
       "detail": "OpenCode（opencode auth login でつないだ接続先）",
       "runCommand": "このコマンドを端末で実行し、つなぐ接続先を選んでログインしてください。（終わるとここが自動で切り替わります）",
@@ -842,7 +842,7 @@
   },
   "antigravity": {
     "accounts": {
-      "unavailable": "Antigravity のアカウント切替は未対応です。OS の共有資格情報を安全に分離できません。ログイン中のアカウントを使うか、別の OS ユーザーまたは仮想マシンで実行してください。"
+      "unavailable": "Antigravity の接続先の切り替えは未対応です。OS の共有資格情報を安全に分離できません。CLI のログインを使うか、別の OS ユーザーまたは仮想マシンで実行してください。"
     },
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {
@@ -1123,7 +1123,7 @@
       "oauthAppsWeekly": "OAuth アプリ・週次",
       "modelWeekly": "{{model}}・週次"
     },
-    "codexUnavailable": "使用枠を取得できません。API 接続や未対応のアカウントでは表示されません。",
+    "codexUnavailable": "使用枠を取得できません。API 接続や未対応の接続先では表示されません。",
     "claudeUnavailable": "使用枠を取得できません。API 接続・権限不足・未対応の CLI では表示されません。",
     "authChanged": "認証状態が変わりました。更新してください。",
     "fetchFailed": "取得に失敗しました。ログイン状態を確認し、しばらくして更新してください。",

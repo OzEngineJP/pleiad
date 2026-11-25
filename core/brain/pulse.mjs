@@ -138,13 +138,20 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (!base) throw new Error(`pulse backend unavailable: ${backendId}`);
     const cwd = os.homedir();
     const own = backendId === bot.backend;
-    const accountId = own && base.capabilities?.accounts ? bot.account ?? '' : '';
+    // 互換の接続先を選んだ bot は、心拍も同じ接続先で動く（ADR 0357。アカウントは使わない）。引けない（消した・確認に失敗した等）ときは投げて止める（公式へ落とさない）
+    const endpointId = own && base.capabilities?.compatEndpoints ? bot.endpoint ?? '' : '';
+    const endpoint = endpointId && typeof host.endpointResolve === 'function' ? await host.endpointResolve(endpointId, backendId) : null;
+    if (endpointId && !endpoint) throw new Error(`pulse endpoint unavailable: ${endpointId}`);
+    const row = endpointId && typeof host.endpointRow === 'function' ? await host.endpointRow(endpointId) : null;
+    const accountId = !endpointId && own && base.capabilities?.accounts ? bot.account ?? '' : '';
     // アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、使えないバックエンドを受ける（下の resolveModel が断る。心拍は走らせない）
     const backend = accountId && typeof host.accountBackend === 'function'
       ? await host.accountBackend(base, accountId)
       : base;
-    const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
-    const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);
+    // 接続先では公式の既定（prefs）のモデル・段を持ち込まない
+    const askedModel = bot.pulse?.model || (endpointId ? '' : prefs.backends?.[backendId]?.model) || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined;
+    const model = await host.resolveModel(null, askedModel, backend, cwd, endpointId);
+    const effort = await host.resolveEffort(null, (endpointId ? '' : prefs.backends?.[backendId]?.effort) || undefined, backend, model, cwd, row);
     const mode = narrowestMode(backend.modes());
     if (!mode) throw new Error(`pulse backend has no read-only mode: ${backendId}`);
     // 分離して呼べない backend では第2段を起動しない（恒常的なので、再試行しても同じ。journal 行も作らないで止める）
@@ -154,7 +161,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     // 心拍も bot のアカウントの枠で動く（ADR 0224）。bot 自身の backend（アカウントを選べるもの）で走るときだけ
     let out;
     try {
-      out = await host.internalCall({ kind: 'pulse', backend: base, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id, accountId });
+      out = await host.internalCall({ kind: 'pulse', backend: base, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id, accountId, ...(endpoint ? { endpoint } : {}) });
     } catch (e) {
       // 呼出しを始めた後の失敗（部分の使用量を含む）。予算へは呼び出し側で反映する
       e.internalCallAttempted = true;

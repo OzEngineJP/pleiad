@@ -175,6 +175,23 @@ try {
       } else check(false, `${id}: 足したアカウントに［既定にする］がある`);
     }]);
   }
+  // キーボードの人の行き先: ［接続先］を Enter で開いても［接続先］に残る。追加を Esc でやめると［＋ 接続先を追加］へ戻る（描き直しで消えるボタンに居ても同じ役の要素へ戻す）
+  for (const id of AGENTS) {
+    scenes.push([`${id}: キーボードのフォーカス（［接続先］・［＋ 接続先を追加］）`, async page => {
+      const on = sel => page.evaluate(s => document.activeElement === document.querySelector(s), `${card(id)} ${sel}`);
+      await page.locator(`${card(id)} .connect`).focus();
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(900);
+      check(await on('.connect'), `${id}: ［接続先］を Enter で開いても、フォーカスは［接続先］に残る`);
+      await page.locator(`${card(id)} [data-add]`).focus();
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(500);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      check(await on('[data-add]'), `${id}: 追加を Esc でやめると、フォーカスは［＋ 接続先を追加］へ戻る`);
+      check(await page.locator(`${card(id)} .agent-conn`).isVisible(), `${id}: Esc は 1 層だけ閉じ、設定の画面や接続先の一覧は閉じない`);
+    }]);
+  }
   const failed = [];
   for (const [name, run] of scenes) {
     const { ctx, page, errors } = await session();

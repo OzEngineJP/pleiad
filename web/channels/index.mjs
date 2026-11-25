@@ -89,6 +89,8 @@ export function setupChannels(host) {
     sideTabChanged(tab) { each('sideTabChanged', tab); },
     /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */
     homeChanged() { each('homeChanged'); },
+    /** 接続先の登録が変わった（アカウント・互換の接続先。web/client.mjs が一覧を取り直せる状態にしてから呼ぶ。bot のページの行。web/channels/bot-page.mjs） */
+    connChanged() { each('connChanged'); },
     /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
     schedulesChanged() { each('schedulesChanged'); },
     /** 脇のルーティンの見出しを開く（閉じたレールの時計から。web/channels/sidebar.mjs） */

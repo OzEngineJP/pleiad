@@ -25,7 +25,7 @@
     "core/usage-migrations.mjs": 1,
     "core/usage.mjs": 3,
     "web/cli-setup.mjs": 1,
-    "web/client.mjs": 6,
+    "web/client.mjs": 5,
     "web/compat-endpoints.mjs": 3,
     "web/compat-presets.mjs": 2,
     "web/composer-controls.mjs": 1,

@@ -2193,7 +2193,9 @@ main.dropping #log{background:var(--surface-1)}
   :root.desktop body.settings #sidebar header{height:auto;-webkit-app-region:no-drag}
   /* エージェントのカードは操作を名前行の下へ回し、ロゴの分だけ下げる */
   .agent-card{padding:11px 12px}
-  .agent-actions{flex-basis:100%;margin-left:0;padding-left:28px;justify-content:flex-start}
+  .agent-card .ar2{grid-template-columns:18px minmax(0,1fr)}
+  .agent-card .ar2-a{grid-column:2;justify-content:flex-start;flex-wrap:wrap}
+  .agent-card .ar2-w{grid-column:2}
   .agent-conn{padding:4px 0 2px 0}
 }
 /* 送った発言の吹き出しの下の一行（web/conversation-view.mjs・web/outbox.mjs。docs/design-system.md「送信の表示」）。

@@ -65,7 +65,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
         name: e.name, isDefault: e.isDefault, warn: c.warn, dataset: { endpoint: e.id }, confirming: asking,
         status: t('conn.compatLine', { kind: KIND_LABEL[e.kind ?? KIND[agent]] ?? '', host: hostOf(e.baseUrl), check: c.text }),
         actions: asking ? [] : [
-          unchecked && { label: checking === e.id ? t('compat.checking') : t('conn.check'), onClick: () => recheck(e), disabled: checking === e.id },
+          unchecked && { label: checking === e.id ? t('compat.checking') : t('conn.check'), quiet: true, onClick: () => recheck(e), disabled: checking === e.id },
           !e.isDefault && { label: t('conn.makeDefault'), onClick: () => setDefault(e.id) },
           { label: t('conn.edit'), onClick: () => startForm(e) },
           { label: t('conn.delete'), onClick: () => { confirming = e.id; draw(); } },

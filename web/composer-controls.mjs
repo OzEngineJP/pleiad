@@ -551,8 +551,8 @@ function connOptions(d) {
 }
 /** 選んでいる接続先の key。互換を選んでいればそれ、無ければアカウント（'' = CLI のログイン） */
 const connSelected = (d) => (d.endpoint?.selected ? `endpoint:${d.endpoint.selected}` : `account:${d.accounts ? d.account ?? "" : ""}`);
-/** 1 段目に接続先の行を出すか。選べる先が CLI のログインだけで、それを選んでいれば出さない */
-const connShown = (d) => connOptions(d).length > 1 || connSelected(d) !== "account:";
+/** 1 段目に接続先の行を出すか。選べる先が CLI のログインだけで、それを選んでいれば出さない（bot のページの注記も同じ判定。web/channels/bot-page.mjs） */
+export const connShown = (d) => connOptions(d).length > 1 || connSelected(d) !== "account:";
 
 /** 2 段目に入ったときのフォーカス: 検索の欄 → 選んでいる行 → 最初の行 */
 function focusView(pop) {
@@ -647,7 +647,8 @@ function topView(ctx) {
     const cur = connOptions(d).find((o) => o.key === sel);
     rows.push(navRow({ key: "nav:conn", ic: glyph(PLUG), label: t("composer.endpoint.title"), value: cur?.label ?? "", title: cur?.title,
       note: cur?.warn ? cur.note : null, two: Boolean(cur?.warn), warn: Boolean(cur?.warn),
-      meta: cur?.kind === "account" ? weekMeta(cur.usage) : null, onClick: () => go("conn") }));
+      // connLocked: bot の接続先は bot のページで変える（スレッドの入力欄は読むだけ。ADR 0357）
+      meta: cur?.kind === "account" ? weekMeta(cur.usage) : null, onClick: d.connLocked ? null : () => go("conn") }));
   }
   // モデル
   const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("conn.endpointDefault")

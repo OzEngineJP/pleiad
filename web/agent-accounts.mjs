@@ -58,7 +58,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   panel.className = 'mp-panel'; panel.id = 'agentAccountsPanel'; panel.hidden = true;
   panel.innerHTML = `<div id="aaList"></div>
   <section class="mp-card" id="aaFlow" hidden aria-live="polite"><h3 id="aaFlowTitle"></h3><div id="aaFlowBody"></div></section>
-  <form id="aaForm" hidden><h3 id="aaFormTitle"></h3>
+  <form id="aaForm" class="mp-card" hidden><h3 id="aaFormTitle"></h3>
   <label class="mp-field"><span data-i18n="agentAccounts.form.name"></span><input id="aaName" required maxlength="60" data-i18n-placeholder="agentAccounts.form.namePlaceholder" autocomplete="off"></label>
   <div class="mp-actions"><button type="button" class="btn" id="aaCancel" data-i18n="agentAccounts.cancel"></button><button type="submit" class="btn btn-primary" id="aaSubmit"></button></div>
   <p class="mp-state" id="aaFormState" role="status"></p></form>
@@ -91,7 +91,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
       return connCard({
         name: a.name, isDefault: def, status: status(a), warn: !a.hasCredential, dataset: { account: a.id }, confirming: asking,
         actions: asking ? [] : [
-          !a.hasCredential && { label: t('conn.login'), onClick: () => startLogin(a, drawnView) },
+          !a.hasCredential && { label: t('conn.login'), quiet: true, onClick: () => startLogin(a, drawnView) },
           !def && makeDefault && { label: t('conn.makeDefault'), onClick: () => makeDefault(backend, a.id) },
           { label: t('conn.edit'), onClick: () => edit(a, drawnView) },
           { label: t('conn.delete'), onClick: () => { if (showing(drawnView)) { confirming = a.id; draw(); } } },
@@ -256,7 +256,12 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   };
   const close = () => { panel.hidden = true; view = null; $('aaForm').hidden = true; resetForm(); void cancelFlow(); };
   const add = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
-  $('aaCancel').onclick = () => { const adding = !editingId; $('aaForm').hidden = true; resetForm(); if (adding) onAddEnd(); };
+  $('aaCancel').onclick = () => {
+    const was = editingId, adding = !was;
+    $('aaForm').hidden = true; resetForm();
+    if (adding) onAddEnd(); else $('aaList').querySelector(`[data-account="${CSS.escape(was)}"] .mp-card-actions button`)?.focus();
+  };
+  $('aaForm').onkeydown = (e) => { if (e.key !== 'Escape' || e.isComposing) return; e.preventDefault(); e.stopPropagation(); $('aaCancel').click(); };
 
   // focus: そのアカウントの行の［ログインし直す］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   async function open(id, { focus } = {}) {

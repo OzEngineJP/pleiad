@@ -4962,7 +4962,8 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
       // bot の会話のアカウントは bot の定義（bots.setAccount。ADR 0224）。スレッドで作業場所を変えても Chats の既定に替えない
       if (!manual.account && account === undefined && !current.bot) account = scoped?.account ?? await defaultAccount(bid);
-      if (!manual.endpoint && endpoint === undefined) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
+      // bot の会話の接続先も bot の定義（bots.setAccount。ADR 0357）。アカウントと同じく、作業場所を変えても既定に替えない
+      if (!manual.endpoint && endpoint === undefined && !current.bot) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
       pendingWorktree = Boolean(!manual.worktree && remembered?.worktree && !worktreeHost.worktrees.lookup(requestedCwd));
     }
     if (args.worktreePending === false || requestedCwd && worktreeHost.worktrees.lookup(requestedCwd)) pendingWorktree = false;
@@ -8978,6 +8979,10 @@ botHost = createBotHost({
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
   // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
   accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
+  // bot の互換の接続先（bots.setAccount。ADR 0357）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
+  endpointHas: (backendId, id) => compatEndpoints.has(id, backendId),
+  endpointRow: (id) => endpointRow(id),
+  endpointResolve: (id, backendId) => compatEndpoints.resolve(id, backendId),
   // bot のアカウントを、送った会話（Codex・OpenCode）では次のターンの予約にする。人の既定には覚えない
   reserveAccount: (sessionId, account) => reserveTurnSettings({ sessionId, account, keepPrefs: true }),
 });

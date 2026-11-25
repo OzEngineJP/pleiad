@@ -121,15 +121,11 @@
       "unconfirmed": "Unconfirmed",
       "checkStatus": "Check status",
       "checkFailed": "Couldn't check",
-      "loggedIn": "Signed in",
       "loggedOut": "Not signed in",
       "stateOn": "Signed in",
       "install": "Install",
       "signOut": "Sign out",
       "signIn": "Sign in",
-      "accounts": "Accounts",
-      "endpoints": "Endpoints",
-      "accountsEndpoints": "Accounts and endpoints",
       "pasteCode": "Paste the redirect URL or code",
       "submitCode": "Submit",
       "cancelLogin": "Cancel",
@@ -718,7 +714,7 @@
     "bgSpoken": "Background: {{items}}. Open the list",
     "bgEndedSpoken": "Background: {{n}} completed. Open the list"
   },
-  "conn": {"toggle": "Connections", "count": "Connections {{n}}", "needFix": "⚠ Connections needing attention {{n}}", "cliLogin": "CLI login", "isDefault": "· Default for new chats", "defaultShort": "Default", "makeDefault": "Make default", "login": "Sign in", "relogin": "Sign in again", "logout": "Sign out", "check": "Check connection", "edit": "Edit", "done": "Done", "delete": "Delete", "cancel": "Cancel", "official": "Official", "officialAs": "Official · {{email}}", "signedIn": "Official · Signed in", "signedOut": "Official · ⚠ Not signed in", "expired": "Official · ⚠ Sign-in expired", "pending": "Official · Waiting for sign-in", "compatLine": "{{kind}} · {{host}} · {{check}}", "add": "+ Add connection", "kindTitle": "Connection type", "kindOfficial": "Official", "kindCompat": "Compatible ({{kind}})", "officialPreset": "Official account", "officialHint": "Sign in to {{agent}} and add", "envKey": "⚠ The ANTHROPIC_API_KEY environment variable is set, so every connection uses that key.", "confirmDelete": "Delete “{{name}}”? Chats using this connection can't send until you pick another.", "keyAlsoDeleted": "The saved key is deleted too.", "loggedInNote": "Signed in. You can pick this connection in the composer.", "logoutCommand": "To remove the CLI login, run {{command}} in a terminal", "defaultFailed": "Couldn't make it the default: {{error}}", "row": "Connection", "manage": "Manage connections…", "subSignedOut": "⚠ Not signed in", "subFailed": "{{kind}} · ⚠ Check failed", "menu": "Connection (next turn)", "endpointDefault": "Connection default"},
+  "conn": {"toggle": "Connections", "count": "Connections {{n}}", "needFix": "⚠ Connections needing attention {{n}}", "cliLogin": "CLI login", "isDefault": "· Default for new chats", "makeDefault": "Make default", "login": "Sign in", "relogin": "Sign in again", "logout": "Sign out", "check": "Check connection", "edit": "Edit", "delete": "Delete", "cancel": "Cancel", "official": "Official", "officialAs": "Official · {{email}}", "signedIn": "Official · Signed in", "signedOut": "Official · ⚠ Not signed in", "expired": "Official · ⚠ Sign-in expired", "pending": "Official · Waiting for sign-in", "compatLine": "{{kind}} · {{host}} · {{check}}", "add": "+ Add connection", "kindTitle": "Connection type", "kindOfficial": "Official", "kindCompat": "Compatible ({{kind}})", "officialPreset": "Official account", "officialHint": "Sign in to {{agent}} and add", "envKey": "⚠ The ANTHROPIC_API_KEY environment variable is set, so every connection uses that key.", "confirmDelete": "Delete “{{name}}”? Chats using this connection can't send until you pick another.", "keyAlsoDeleted": "The saved key is deleted too.", "loggedInNote": "Signed in. You can pick this connection in the composer.", "defaultFailed": "Couldn't make it the default: {{error}}", "subSignedOut": "⚠ Not signed in", "subFailed": "{{kind}} · ⚠ Check failed", "endpointDefault": "Connection default"},
   "compat": {
     "kind": {
       "anthropic": "Anthropic-compatible",
@@ -773,7 +769,6 @@
       "model": "Model",
       "save": "Save"
     },
-    "notSet": "(not set)",
     "checking": "Checking…",
     "loading": "Loading…",
     "check": {
@@ -782,22 +777,9 @@
       "failed": "⚠ Check failed: {{error}} ({{when}})"
     },
     "action": {
-      "close": "Close",
-      "makeDefault": "Make default",
-      "edit": "Edit",
-      "delete": "Delete",
-      "cancel": "Cancel",
-      "confirmDelete": "Delete"
+      "cancel": "Cancel"
     },
     "list": {
-      "title": "{{agent}} endpoints",
-      "official": "Official (signed-in account)",
-      "isDefault": "default for new conversations",
-      "mainLabel": "Main: ",
-      "modelLabel": "Model: ",
-      "confirmDelete": "Delete “{{name}}”? Conversations using it will need to choose another endpoint.",
-      "add": "＋ Add endpoint",
-      "notEncrypted": "Keys can't be encrypted in this session (they are saved to a file only you can read).",
       "recheckOk": "Connected to “{{name}}”.",
       "recheckFailed": "Check failed for “{{name}}”: {{error}}",
       "deleteFailed": "Couldn't delete: {{error}}"
@@ -805,14 +787,7 @@
     "form": {
       "modelId": "Model ID",
       "modelNotListed": "Not in the list. Press Enter to use this ID as is.",
-      "editTitle": "Edit “{{name}}”",
-      "endpoint": "endpoint",
-      "addTitle": "Add {{agent}} endpoint",
       "saved": "✓ Saved “{{name}}”",
-      "savedHint": "You can choose it from the model menu in the composer.",
-      "addAnother": "Add another",
-      "backToList": "Back to list",
-      "kind": "Endpoint type",
       "name": "Name",
       "namePlaceholder": "e.g. LiteLLM for work",
       "urlPlaceholder": "https://example.com (without /v1)",
@@ -827,7 +802,6 @@
       "connected": "✓ Connected",
       "connectedModels_one": "✓ Connected · {{count}} model",
       "connectedModels_other": "✓ Connected · {{count}} models",
-      "roles": "Model assignments",
       "context": "Context length",
       "contextTokens": "Context length (tokens)",
       "contextEmptyClaude": "Empty means 200,000",
@@ -844,27 +818,12 @@
     }
   },
   "agentAccounts": {
-    "title": "{{agent}} accounts",
-    "intro": "Choose a {{agent}} account for each conversation. Adding an account signs in with it. Conversations with no account chosen use the account {{agent}} is signed in with now.",
     "close": "Close",
-    "add": "Add account",
     "cancel": "Cancel",
-    "login": "Sign in",
-    "relogin": "Sign in again",
-    "edit": "Rename",
-    "delete": "Delete",
-    "confirmDelete": "Delete \"{{name}}\"? Conversations that use this account stop at their next message.",
-    "confirmDeleteButton": "Delete",
     "deleteFailed": "Could not delete: {{error}}",
-    "empty": "No accounts yet.",
     "loading": "Loading…",
-    "status": {
-      "signedIn": "Signed in",
-      "signedInAs": "Signed in ({{label}})",
-      "signedOut": "Not signed in yet"
-    },
     "form": {
-      "addTitle": "Add a {{agent}} account",
+      "addTitle": "Add a {{agent}} connection",
       "editTitle": "Rename \"{{name}}\"",
       "name": "Name",
       "namePlaceholder": "Work, for example",
@@ -879,29 +838,21 @@
       "openLink": "Open the sign-in page",
       "runCommand": "Run this command in a terminal and sign in. This moves on by itself when you finish.",
       "copy": "Copy",
-      "done": "Signed in. You can choose this account in the composer.",
-      "doneAs": "Signed in as {{label}}. You can choose this account in the composer.",
       "failed": "Could not sign in.",
       "retry": "Try again"
     }
   },
   "accounts": {
-    "title": "Claude accounts",
-    "close": "Close",
-    "intro": "You can choose a registered account next to the model in the composer. Conversations without one use the signed-in account.",
-    "add": "＋ Add account",
-    "usageNote": "Conversations, usage, and claude.ai connectors all run on each account’s own claude.ai login. If the ANTHROPIC_API_KEY environment variable is set, it takes precedence.",
     "login": "claude.ai login",
-    "summary": "claude.ai login: {{login}}",
     "status": {
       "expired": "Expired",
       "done": "Done",
       "none": "Not yet",
       "loginFresh": "✓ Done"
     },
-    "loginMissing": "That account couldn’t be found. Choose it from the list and sign in to claude.ai again.",
-    "redoUsage": "Log in to claude.ai again",
-    "authorizeUsage": "Log in to claude.ai",
+    "loginMissing": "That connection couldn’t be found. Choose it from the list and sign in again.",
+    "redoUsage": "Sign in again",
+    "authorizeUsage": "Sign in",
     "edit": "Edit",
     "done": "Done",
     "delete": "Delete",
@@ -912,25 +863,23 @@
       "delete": "Delete “{{name}}”",
       "settings": "Settings for “{{name}}”",
       "confirm": "Confirm deleting “{{name}}”",
-      "newAccount": "New account",
-      "cancelAdd": "Cancel adding the account"
+      "newAccount": "New connection",
+      "cancelAdd": "Cancel adding the connection"
     },
-    "confirmDelete": "Delete “{{name}}”? Conversations using this account can't send until you choose another. Its claude.ai login is also removed.",
     "confirmDeleteButton": "Delete",
-    "empty": "No accounts yet.",
     "deleteFailed": "Couldn't delete: {{error}}",
     "loading": "Loading…",
     "name": {
       "label": "Display name",
       "placeholder": "Work, personal, etc.",
-      "required": "Enter a display name for the account.",
-      "duplicate": "An account with this name already exists."
+      "required": "Enter a display name for the connection.",
+      "duplicate": "A connection with this name already exists."
     },
     "flow": {
       "openLink": "Click here if the browser doesn't open",
       "starting": "Starting Claude Code…",
-      "step1Usage": "1. In the browser, sign in to Claude with this account and click “Authorize”.",
-      "step1New": "1. In the browser, sign in to Claude with the account you want to add and click “Authorize”.",
+      "step1Usage": "1. In the browser, sign in to Claude for this connection and click “Authorize”.",
+      "step1New": "1. In the browser, sign in to Claude for the connection you want to add and click “Authorize”.",
       "step2": "2. Paste the code shown in the browser.",
       "codePlaceholder": "Paste the code",
       "codeLabel": "Code shown in the browser",
@@ -1214,7 +1163,7 @@
       "unread": "The connector list hasn't been read yet",
       "none": "No connectors on claude.ai",
       "needsAuth": "Needs re-authorization",
-      "footLead": "To switch per account, ",
+      "footLead": "To switch per connection, ",
       "footLink": "change it in External MCP →"
     },
     "state": {
@@ -1725,9 +1674,9 @@
   },
   "mcp": {
     "accounts": {
-      "group": "claude.ai connectors (per account)",
+      "group": "claude.ai connectors (per connection)",
       "status": {
-        "nologin": "Not logged in · Use \"Log in to claude.ai\" in Claude accounts",
+        "nologin": "Not logged in · Use \"Sign in\" on the connection",
         "off": "Off · Logged in to claude.ai",
         "stopped": "On · Stopped · {{why}}",
         "unusable": "Unavailable · {{why}}",
@@ -1755,7 +1704,7 @@
         "nologin": "\"{{name}}\" isn't logged in to claude.ai",
         "login": "Can't read the claude.ai login for \"{{name}}\". Log in again to turn this on",
         "version": "Your Claude Code version hasn't been verified for connectors, so this can't be turned on",
-        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet",
+        "platform": "claude.ai connectors for registered connections aren't available on this OS yet",
         "env": "Environment variable auth (such as ANTHROPIC_API_KEY) takes priority, so this can't be turned on",
         "settings": "settings.json has another auth setting or can't be read, so this can't be turned on",
         "history": "A setting moves the conversation history, so this can't be turned on",
@@ -1792,7 +1741,7 @@
       "originPly": "Also in the settings of {{agents}}",
       "originAgent": "In the settings of {{agents}}",
       "originPlugin": "In the plugins of {{agents}}",
-      "originConnector": "In the account of {{agents}}",
+      "originConnector": "In the connection of {{agents}}",
       "agentsAria": "Agents that use {{name}}",
       "agentAria": "Use {{name}} in {{agent}}",
       "askAria": "Confirm connecting {{name}} to {{to}} too",
@@ -1964,7 +1913,7 @@
       "model": "Model",
       "backend": "Agent",
       "effort": "Thinking effort",
-      "account": "Account"
+      "account": "Connection"
     },
     "by": {
       "human": "You",
@@ -2007,36 +1956,36 @@
   "chat": {
     "connectorsFail": {
       "why": {
-        "ownDirLogin": "“{{name}}” isn't signed in to claude.ai, or the sign-in has expired. Sign in to send.",
+        "ownDirLogin": "Connection “{{name}}” isn't signed in to claude.ai, or the sign-in has expired. Sign in to send.",
         "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
         "keychainAuth": "The sign-in for “{{name}}” was refused. Unlock the Mac keychain, then send again. If it keeps happening after unlocking, sign in again.",
-        "ssh": "Registered Claude accounts can't send from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
+        "ssh": "Registered connections can't send from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
         "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
         "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
         "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
-        "login": "To send with \"{{name}}\", log in to claude.ai first.",
-        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified with registered accounts yet (verified: {{verified}}). Update Claude Code.",
-        "platform": "Registered Claude accounts aren't available on this OS yet.",
-        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so the registered account's sign-in can't be used. Remove them.",
-        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with the registered account. Remove the setting.",
-        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with the registered account. Remove it.",
+        "login": "To send with connection \"{{name}}\", sign in first.",
+        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified with registered connections yet (verified: {{verified}}). Update Claude Code.",
+        "platform": "Registered connections aren't available on this OS yet.",
+        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so the registered connection can't be used. Remove them.",
+        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with the registered connection. Remove the setting.",
+        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with the registered connection. Remove it.",
         "profile": "Stopped because the connector settings for \"{{name}}\" couldn't be applied to the shared config folder. Send again."
       },
       "fix": {
-        "relogin": "Log in to claude.ai again",
-        "login": "Log in to claude.ai",
+        "relogin": "Sign in again",
+        "login": "Sign in",
         "resend": "Resend"
       },
       "cancel": "Cancel",
       "waiting": "Waiting for the claude.ai login…",
       "sending": "Sending again…",
       "done": {
-        "relogin": "✓ Logged in to claude.ai again and sent it again",
-        "login": "✓ Logged in to claude.ai and sent it again",
+        "relogin": "✓ Signed in again and sent it again",
+        "login": "✓ Signed in and sent it again",
         "resend": "✓ Sent it again"
       },
       "resendFailed": "Couldn't send it again: {{error}}",
-      "loginFailed": "Couldn't log in to claude.ai. Please try again"
+      "loginFailed": "Couldn't sign in. Please try again"
     },
     "secretRequest": {
       "headingMark": "Secret needed",
@@ -2241,12 +2190,12 @@
         "notice": "{{agent}} is waiting for your approval to change context settings"
       },
       "endpointDelete": {
-        "label": "Endpoint",
-        "question": "{{agent}} wants to delete an endpoint",
+        "label": "Connection",
+        "question": "{{agent}} wants to delete a connection",
         "allow": "Allow deleting",
         "allowed": "Deleting allowed",
         "failed": "Couldn't delete",
-        "notice": "{{agent}} is waiting for your approval to delete an endpoint"
+        "notice": "{{agent}} is waiting for your approval to delete a connection"
       },
       "sessionDelete": {
         "label": "Conversation",
@@ -2429,10 +2378,10 @@
     "authExpired": {
       "login": "Your {{agent}} sign-in ({{email}}) has expired.",
       "loginNoEmail": "Your {{agent}} sign-in has expired.",
-      "token": "The claude.ai login for Claude account “{{name}}” has expired.",
-      "account": "Sign-in expired for account \"{{name}}\" ({{agent}})",
-      "openAccounts": "Open accounts",
-      "tokenUnnamed": "The claude.ai login for this Claude account has expired.",
+      "token": "The claude.ai login for connection “{{name}}” has expired.",
+      "account": "Sign-in expired for connection \"{{name}}\" ({{agent}})",
+      "openAccounts": "Open connection settings",
+      "tokenUnnamed": "The claude.ai login for this connection has expired.",
       "signInAgain": "Sign in again",
       "waiting": "Sign in in your browser…",
       "cancel": "Cancel",
@@ -2656,11 +2605,11 @@
         "effort": "Effort",
         "mode": "Approval mode",
         "cwd": "Working directory",
-        "endpoint": "Endpoint",
-        "account": "Account"
+        "endpoint": "Connection",
+        "account": "Connection"
       },
       "cancel": "Cancel",
-      "endpointMain": "endpoint's main model",
+      "endpointMain": "connection's main model",
       "targetDefault": " (the new agent's default model)",
       "useDefault": "Use default",
       "behindNote": "Messages use the settings selected when you press Send. If those settings cannot take effect during the current turn, the message waits for the next turn.",
@@ -2727,24 +2676,15 @@
       "historyRetry": "Load again"
     },
     "account": {
-      "signedIn": "Signed in",
-      "signedInAccount": "Signed-in account",
-      "noToken": "No credentials",
-      "deleted": "Deleted account",
       "chooseAgain": "Choose again",
-      "deletedWarning": "The selected account was deleted. Choose another account.",
-      "noTokenWarning": "Account \"{{name}}\" has no credentials. Sign in from Accounts in Settings."
+      "noTokenWarning": "Connection \"{{name}}\" isn’t signed in. Sign in from Connections in Settings › Agent settings."
     },
     "endpoint": {
-      "official": "Official",
-      "deleted": "Deleted endpoint",
-      "deletedWarning": "The selected endpoint was deleted. Choose another endpoint from the model chip.",
-      "failedWarning": "The last check of the endpoint \"{{name}}\" failed. Check it again in Settings › Agents › Endpoints.",
-      "officialClaude": "Anthropic · Uses the signed-in account",
-      "officialCodex": "OpenAI · Uses your ChatGPT sign-in",
-      "failedSuffix": " · ⚠ Check failed",
-      "noWebSearch": "Web search isn't available with this endpoint ({{name}}).",
-      "details": "Endpoint details",
+      "deleted": "Deleted connection",
+      "deletedWarning": "The selected connection was deleted. Choose another connection from the model chip.",
+      "failedWarning": "The last check of the connection \"{{name}}\" failed. Check it again under Connections in Settings › Agent settings.",
+      "noWebSearch": "Web search isn't available with this connection ({{name}}).",
+      "details": "Connection details",
       "failedNote": "⚠ Check failed"
     },
     "draft": {
@@ -2865,10 +2805,8 @@
       "deleteStatusHint_one": "{{count}} session becomes No status",
       "deleteStatusHint_other": "{{count}} sessions become No status",
       "empty": "Empty",
-      "account": "Account (next turn)",
-      "accountFailed": "Couldn't change the account: {{error}}",
-      "endpoint": "Endpoint (next turn)",
-      "endpointFailed": "Couldn't change the endpoint: {{error}}"
+      "endpoint": "Connection (next turn)",
+      "endpointFailed": "Couldn't change the connection: {{error}}"
     },
     "statusFailed": "Couldn't change the status: {{error}}",
     "untitled": "New session",
@@ -3420,15 +3358,13 @@
           "ownDirProfile": "couldn't apply settings to the dedicated folder"
         }
       },
-      "title": "Account",
-      "compatOff": "Accounts aren't used with compatible endpoints",
       "week": "Week {{percent}}"
     },
     "endpoint": {
-      "title": "Endpoint",
-      "manage": "Manage endpoints…",
+      "title": "Connection",
+      "manage": "Manage connections…",
       "lost": "Not available: {{items}}",
-      "pick": "Choose endpoint"
+      "pick": "Choose connection"
     },
     "model": {
       "title": "Model",
@@ -3448,7 +3384,7 @@
     "effort": {
       "label": "Effort",
       "defaultFollow": {
-        "endpoint": "Default (uses the endpoint's setting)",
+        "endpoint": "Default (uses the connection's setting)",
         "agy": "Default (uses agy's setting)",
         "agent": "Default (uses the agent's setting)"
       },
@@ -3642,7 +3578,7 @@
       "noteSince": "Recorded since {{when}}. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill.",
       "noteEmpty": "No usage yet. Only runs completed in Pleiad after this feature was added. Input includes cache. Estimated cost is the agent's estimate, not your subscription bill."
     },
-    "endpoint": "Endpoint {{name}}",
+    "endpoint": "Connection {{name}}",
     "endpointLocal": "Usage can't be shown (local).",
     "endpointRemote": "Usage can't be shown. Check your balance in the {{name}} dashboard.",
     "endpointCost": "Estimated costs for compatible endpoints aren't reliable (unit prices are unknown).",
@@ -3655,7 +3591,7 @@
       "otherAgents": "Other agents",
       "title": "Usage",
       "unavailable": "Usage is unavailable.",
-      "endpointUnavailable": "Usage is unavailable for this endpoint.",
+      "endpointUnavailable": "Usage is unavailable for this connection.",
       "unauthorized": "Not authorized",
       "chipLabel": "{{agent}} usage: {{text}}",
       "chipTitle": "{{agent}} · {{label}} {{percent}} used / {{reset}}",
@@ -4134,8 +4070,8 @@
     "notEncrypted": "This launch can't encrypt keys (they are stored in a file only you can read).",
     "deferred": {
       "title": "Moving the API keys is on hold",
-      "locked": "The old encrypted keys can't be read in this launch. Open Pleiad in a launch that can decrypt (the desktop app) to move them. Until then, voice calls, delegation and endpoints keep using their current keys.",
-      "other": "The old key storage can't be read, so moving the keys is on hold. Until then, voice calls, delegation and endpoints keep using their current keys."
+      "locked": "The old encrypted keys can't be read in this launch. Open Pleiad in a launch that can decrypt (the desktop app) to move them. Until then, voice calls, delegation and connections keep using their current keys.",
+      "other": "The old key storage can't be read, so moving the keys is on hold. Until then, voice calls, delegation and connections keep using their current keys."
     },
     "deferredInUse": "Moving the keys is on hold, so the current key is still in use (Settings › Secrets and variables)",
     "deferredShort": "Moving the keys is on hold (Settings › Secrets and variables)",
@@ -4157,7 +4093,7 @@
       "checkedHint": "Checked ✓ {{when}}"
     },
     "register": {
-      "hint": "Registered in Secrets and variables, so endpoints and delegation can choose it too.",
+      "hint": "Registered in Secrets and variables, so connections and delegation can choose it too.",
       "useNow": "Register and use"
     },
     "add": {
@@ -4195,7 +4131,7 @@
     "uses": {
       "none": "Not used anywhere",
       "aria": "Where {{name}} is used",
-      "endpoint": "{{agent}} endpoint \"{{name}}\"",
+      "endpoint": "{{agent}} connection \"{{name}}\"",
       "voice": "Voice calls",
       "judge": "Automatic delegate selection",
       "computer": "wait_until questions",
@@ -4211,7 +4147,7 @@
     },
     "replace": {
       "input": "New key for {{name}}",
-      "cost": "Replacing checks the endpoints that use it again (this may cost a little).",
+      "cost": "Replacing checks the connections that use it again (this may cost a little).",
       "done": "Replaced the {{name}} key"
     },
     "result": {
@@ -4226,7 +4162,7 @@
       "keyOk": "Key checked",
       "keyFailed": "Check failed: the key was not accepted",
       "error": "Check failed: {{error}}",
-      "openEndpoint": "Open endpoint",
+      "openEndpoint": "Open connection",
       "openSettings": "Open settings",
       "close": "Close"
     },
@@ -4289,7 +4225,7 @@
       "ownCaption": "It is registered in Secrets and variables as a separate key.",
       "keyRequired": "Enter the other key",
       "registersOpenrouter": "Registered in Secrets and variables, so voice calls and delegation can choose it too.",
-      "registersNamed": "Registered in Secrets and variables under this endpoint's name."
+      "registersNamed": "Registered in Secrets and variables under this connection's name."
     }
   },
   "routing": {
@@ -4368,7 +4304,7 @@
       "disabled": "not enabled",
       "not_installed": "not installed",
       "no_token": "no token",
-      "no_account": "account not registered"
+      "no_account": "connection not registered"
     },
     "line": {
       "head": "{{kind}} · {{difficulty}} → {{target}}",
@@ -4403,8 +4339,8 @@
       "skipped": "Skipped · {{reason}}",
       "pace": "pace {{pace}}×",
       "until": "until {{time}}",
-      "loginAccount": "Signed-in account",
-      "account": "Account: {{name}}",
+      "loginAccount": "CLI login",
+      "account": "Connection: {{name}}",
       "retried": "Retried",
       "target": "Delegated to",
       "targetPinned": "{{target}} (chosen by the requester)",
@@ -4533,8 +4469,8 @@
       "candidateAdded": "Added {{candidate}} to the end of {{tier}}",
       "candidateChanged": "Changed candidate {{position}} in {{tier}} to {{candidate}}",
       "noModels": "Can't read the model list",
-      "accountLogin": "Signed-in account",
-      "accountLoginSame": "Signed-in account ({{name}})",
+      "accountLogin": "CLI login",
+      "accountLoginSame": "CLI login ({{name}})",
       "relogin": "Sign in again",
       "reloginLabel": "Sign in to {{account}} again (Settings › Agent settings)",
       "empty": "No candidates",

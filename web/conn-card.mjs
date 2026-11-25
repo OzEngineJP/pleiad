@@ -14,7 +14,7 @@ export function defaultBadgeHtml(esc) { return `<span class="def"> ${esc(t('conn
 
 /**
  * @param {{ name: string, isDefault?: boolean, status?: string, warn?: boolean,
- *   actions?: Array<{ label: string, onClick: () => void, act?: string, primary?: boolean, aria?: string, disabled?: boolean } | null | false>,
+ *   actions?: Array<{ label: string, onClick: () => void, act?: string, primary?: boolean, quiet?: boolean, aria?: string, disabled?: boolean } | null | false>,
  *   extra?: Node[], dataset?: Record<string,string>, confirming?: boolean }} o
  */
 export function connCard({ name, isDefault = false, status = '', warn = false, actions = [], extra = [], dataset = {}, confirming = false }) {
@@ -29,7 +29,7 @@ export function connCard({ name, isDefault = false, status = '', warn = false, a
   const acts = el('div', `mp-card-actions${confirming ? ' away' : ''}`);
   for (const a of actions) {
     if (!a) continue;
-    const b = el('button', `btn${a.primary ? ' btn-primary' : ''}`, a.label);
+    const b = el('button', `btn${a.primary ? ' btn-primary' : a.quiet ? ' btn-quiet' : ''}`, a.label);
     b.type = 'button';
     if (a.act) b.dataset.act = a.act;
     if (a.aria) b.setAttribute('aria-label', a.aria);
