@@ -88,6 +88,8 @@
     "lastReply": "last reply {{when}}",
     "state": {
       "working": "Working",
+      "thinking": "Thinking",
+      "writing": "Writing",
       "waiting": "Waiting for you",
       "done": "Done",
       "checking": "Needs a look",
@@ -180,23 +182,10 @@
       "working": "Reply in thread · reaches {{name}} even while it works",
       "to": "Reply in thread · goes to {{name}}"
     },
-    "stop": "Stop",
-    "stopping": "Stopping…",
     "stopFailed": "Could not stop: {{error}}",
     "titleNoSession": "No bot conversation in this thread yet",
     "shellNoSession": "The bot has no conversation in this thread yet. Talk to it first, then run the command",
-    "shellWhere": "Run in {{name}}'s working folder",
-    "band": {
-      "context": "Context {{rate}}%",
-      "contextTitle": "{{name}}'s conversation in this thread uses {{rate}}% of its context",
-      "working": "{{who}} is working",
-      "waiting": "{{who}} is waiting for you",
-      "someone": "A bot",
-      "calls": "{{count}} hand-offs",
-      "stopped": "Stopped",
-      "tokens": "{{tokens}} tokens in this thread",
-      "tokensTitle": "New input {{input}} · output {{output}} (cache read {{cached}} is not counted)"
-    }
+    "shellWhere": "Run in {{name}}'s working folder"
   },
   "bot": {
     "iconLabel": "Change icon",

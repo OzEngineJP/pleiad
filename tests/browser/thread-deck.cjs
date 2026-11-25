@@ -174,8 +174,7 @@ async page => {
   await page.waitForFunction(() => document.querySelectorAll('#chThread .th-tools .bundle .hist .hi:not(.hid)').length === 4);
   check(true, 'clicking the tools row opens all the tool calls');
   await sleep(700);   // まとまりが開く間（約 540ms）は、見出しの位置を保つためにスクロールを直す。落ち着いてから測る
-  const band = await page.locator('.th-band').textContent();
-  check(band.includes('このスレッドで 1.2k トークン'), 'the band quietly shows the tokens used in this thread');
+  check(await page.locator('.th-band, .th-band-tokens, .th-stop').count() === 0 && !(await page.locator('#chThread').textContent()).includes('トークン'), 'there is no band under the log any more (no tokens, no context %, no stop band)');
   const turnA = (await turnPosts(A.id))[0];
   check(await page.locator(`#chThread [data-post-id="${turnA.id}"] a.file-link, #chThread [data-post-id="${turnA.id}"] .post-body a`).count() >= 1, 'a file path in the reply is a link');
   check(await page.locator('#chThread .post-tool.reply').first().evaluate((n) => getComputedStyle(n).display) === 'none', 'the reply tool is not shown inside the thread (the composer is the reply)');
@@ -234,9 +233,9 @@ async page => {
   const card = page.locator('#chThread .th-perms .mw .card');
   await card.first().waitFor({ timeout: 8000 });
   const cardInfo = await page.evaluate(() => ({ head: document.querySelector('#chThread .th-perms .card-head')?.textContent, buttons: [...document.querySelectorAll('#chThread .th-perms .card-actions button')].map((b) => b.textContent.trim()),
-    band: document.querySelector('.th-band')?.textContent, stop: !!document.querySelector('.th-stop') }));
+    stop: document.getElementById('thAbort') && !document.getElementById('thAbort').hidden }));
   check(cardInfo.head.includes('承認を待っている') && cardInfo.head.includes('Bash') && cardInfo.buttons.includes('許可') && cardInfo.buttons.includes('拒否'), 'a thread waiting for approval shows the same approval card as Chats, inside the thread');
-  check(cardInfo.band.includes('Lynx があなたを待っています') && cardInfo.stop, 'the band says who waits for you and offers 止める');
+  check(cardInfo.stop, 'while a bot waits for you the ■ beside send is shown (the same stop as Chats)');
   await page.locator('#chThread .th-perms .card-actions button', { hasText: '許可' }).last().click();
   await page.waitForFunction(() => document.querySelector('#chThread .th-perms .mw.done, #chThread .th-perms .card.done'));
   const resolved = await page.evaluate(() => window.__sent.filter((c) => c.command === 'resolvePermission').length);
@@ -260,23 +259,27 @@ async page => {
 
   // ================================================================ 作業中: 書き足し・［止める］
   await open(C.id);
-  await page.waitForFunction(() => document.querySelector('.th-stop'));
+  await page.waitForFunction(() => { const b = document.getElementById('thAbort'); return b && !b.hidden; });
+  const thinking = await page.evaluate(() => { const r = document.querySelector('#chThread .post-state.working'); return { text: r?.textContent.replace(/\s+/g, ' ').trim(), clock: !!r?.querySelector('.post-state-clock'), band: !!document.querySelector('.th-band') }; });
+  check(/^(考えている|書いている)\s*·\s*(\d+ 分 )?\d+ 秒$/.test(thinking.text ?? '') && thinking.clock && !thinking.band,'a working bot shows one line in the reply spot「考えている · 12 秒」(no band, no "...")', thinking);
   check(await page.locator('#thPrompt').getAttribute('placeholder').then((p) => p.includes('作業中でも Owl に届きます')), 'the thread composer says it reaches the working bot (steer)');
   await page.locator('#thPrompt').click();
   await page.keyboard.type('途中の書き足し');
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(() => [...document.querySelectorAll('#chThread .post-body')].some((n) => n.textContent.includes('途中の書き足し')));
-  check(await page.evaluate(() => document.getElementById('thPrompt').value) === '' && !!(await page.locator('.th-stop').count()), 'a reply typed while the bot works is posted (steer) and the bot keeps working');
+  check(await page.evaluate(() => document.getElementById('thPrompt').value) === '' && await page.evaluate(() => !document.getElementById('thAbort').hidden), 'a reply typed while the bot works is posted (steer) and the bot keeps working');
   const steered = (await readThread(C.id)).posts.find((p) => p.text === '途中の書き足し');
   check(steered?.author.kind === 'human' && steered.threadId === C.id, 'the reply is saved in the thread through channels.post');
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'edit', post: { ...(await turnPosts(C.id))[0], state: 'working', text: '洗い出します。\n\n- [x] cart サービスの呼び出しを数える\n- [x] pricing.quote() を探す\n- [ ] 一括見積もりの形を決める\n- [ ] 移行する', editedAt: Date.now() } });
   const ck = await page.evaluate(() => ({ items: [...document.querySelectorAll('#chThread ul.ck li')].map((li) => li.className), run: document.querySelectorAll('#chThread ul.ck li.cur .run').length, text: document.querySelector('#chThread ul.ck li').textContent }));
   check(ck.items.join() === 'done,done,cur,todo' && ck.run === 1 && ck.text.trim() === 'cart サービスの呼び出しを数える', 'the progress checklist is drawn with ✓ for done, the arc for the current step and rings for the rest');
-  await page.locator('.th-stop').click();
-  await page.waitForFunction(() => document.querySelector('.th-band')?.textContent.includes('止めました'));
+  await page.locator('#thAbort').click();
+  await page.waitForFunction(() => document.querySelector('#chThread .th-sys-sq'));
   const stopped = await readThread(C.id);
-  check(stopped.threads[0].stopped?.by.kind === 'human' && stopped.posts.some((p) => p.author.kind === 'system'), '止める stops the thread through channels.stopThread and leaves a system line');
-  check(await page.locator('#chThread .th-sys').count() >= 1 && await page.locator('.th-stop').count() === 0, 'the stopped thread shows the system line and no stop button');
+  check(stopped.threads[0].stopped?.by.kind === 'human' && stopped.posts.some((p) => p.author.kind === 'system' && p.state === 'stopped'), 'the ■ stops the thread through channels.stopThread and leaves a system line');
+  const sysLine = await page.evaluate(() => { const n = document.querySelector('#chThread .th-sys'); return { text: n?.textContent.replace(/\s+/g, ' ').trim(), sq: !!n?.querySelector('.th-sys-sq') }; });
+  check(/^中断しました\s*·\s*\d{1,2}:\d{2}$/.test(sysLine.text ?? '') && sysLine.sq, 'the stopped thread shows「■ 中断しました · 時刻」in the reply spot', sysLine);
+  check(await page.evaluate(() => document.getElementById('thAbort').hidden), 'the ■ is gone once the thread is stopped');
 
   // ================================================================ リアクション・@ の補完・目次・可視化
   await open(A.id);
@@ -406,8 +409,6 @@ async page => {
   });
   check(narrow.deck === 'solo' && near(narrow.w, 360, 1) && narrow.l >= 0 && narrow.side !== 'none', 'at 360px the thread is the whole screen and offers the sidebar button');
   check(!narrow.overflow && narrow.composerInView, 'nothing overflows sideways and the composer stays on screen');
-  const tok = await page.evaluate(() => { const n = document.querySelector('#chThread .th-band-tokens'); const r = n.getBoundingClientRect(); return { w: r.width, clipped: n.scrollWidth > n.clientWidth + 1, shown: n.querySelector('.th-tok-num')?.textContent, spoken: n.textContent, title: n.title }; });
-  check(tok.shown === '1.2k' && tok.w < 60 && !tok.clipped && tok.spoken === 'このスレッドで 1.2k トークン' && tok.title.includes('入力'), 'at 360px the band shows only 1.2k (never cut off); the words stay for screen readers and the details in the title');
   await page.locator(`#chThread [data-post-id="${turnA.id}"] .post-body a`).first().click();
   await sleep(300);
   const sheet = await page.evaluate(() => { const p = document.getElementById('filePreview').getBoundingClientRect(); return { panel: document.body.classList.contains('file-preview-open'), full: p.width >= innerWidth - 1 && p.height >= innerHeight - 1 }; });

@@ -85,12 +85,14 @@
     "lastReply": "最後の返信 {{when}}",
     "state": {
       "working": "作業中",
+      "thinking": "考えている",
+      "writing": "書いている",
       "waiting": "あなた待ち",
       "done": "終了",
       "checking": "要確認",
       "failed": "失敗",
       "failedWithBody": "終わり方に問題がありました",
-      "stopped": "止めました",
+      "stopped": "中断しました",
       "skipped": "スキップ",
       "missed": "Pleiad が止まっていた間の分"
     },
@@ -176,23 +178,10 @@
       "working": "スレッドに返信 · 作業中でも {{name}} に届きます",
       "to": "スレッドに返信 · {{name}} に届きます"
     },
-    "stop": "止める",
-    "stopping": "止めています…",
     "stopFailed": "止められませんでした: {{error}}",
     "titleNoSession": "このスレッドにはまだ bot の会話がありません",
     "shellNoSession": "宛先の bot のこのスレッドの会話がまだありません。先に話しかけてから実行してください",
-    "shellWhere": "{{name}} の作業場所で実行",
-    "band": {
-      "context": "コンテキスト {{rate}}%",
-      "contextTitle": "{{name}} のこのスレッドの会話のコンテキスト {{rate}}%",
-      "working": "{{who}} が作業中",
-      "waiting": "{{who}} があなたを待っています",
-      "someone": "bot",
-      "calls": "呼び合い {{count}} 回",
-      "stopped": "止めました",
-      "tokens": "このスレッドで {{tokens}} トークン",
-      "tokensTitle": "新しい入力 {{input}} · 出力 {{output}}（キャッシュ読み出し {{cached}} は含めません）"
-    }
+    "shellWhere": "{{name}} の作業場所で実行"
   },
   "bot": {
     "iconLabel": "アイコンを変更",

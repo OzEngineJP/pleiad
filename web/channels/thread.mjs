@@ -2,13 +2,12 @@
 // 実体は bot の作業の会話なので、Chats の会話と同じ画面の形にする: 見出し（入口は目次・git・内蔵ブラウザー）・投稿の列・入力欄。
 //   根の投稿 → 返信。bot の返事は進捗のチェックリストを同じ投稿の編集で更新（S4 が畳んだターンの投稿）、道具は「道具 n 件」の折りたたみ
 //   （Chats と同じ Bundle）、可視化は投稿の中にインライン、ファイルのリンク・HTML・ブラウザーは右パネル（host.filePreview）。
-//   作業中は［止める］（channels.stopThread）と、このスレッドで使ったトークン。承認待ちはスレッドの中に承認のカード（Chats と同じ部品。どちらで押しても同じ resolvePermission）。
+//   作業中は返事の場所に「考えている · 12 秒」の 1 行、止めるのは入力欄の送信の横の ■（channels.stopThread。Chats と同じ形）。承認待ちはスレッドの中に承認のカード（Chats と同じ部品。どちらで押しても同じ resolvePermission）。
 // 板の並べ方・滑らせ方は deck.mjs（流れとの 2 枚）。この部品は #chThread の中身だけを持つ。
 // 部品の口（web/channels/index.mjs）: openThread(channelId, threadId)・show(view)・hide()・onEvent(ev)・contextForPanel(anchor)。
-import { el, svgEl } from '../dom.mjs';
+import { el } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
-import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
@@ -41,34 +40,6 @@ export function titleOf(root) {
   const stripped = plain.replace(/^(?:@\S+\s*)+/, '').trim();
   return (stripped || plain).slice(0, 120);
 }
-
-/** トークンの数。1.2k */
-export function tokensText(n) {
-  const v = Math.max(0, Math.round(Number(n) || 0));
-  if (v < 1000) return String(v);
-  const k = v / 1000;
-  return `${k >= 100 ? Math.round(k) : (Math.round(k * 10) / 10).toString()}k`;
-}
-
-/**
- * スレッドのトークンを「新しい入力・出力・キャッシュ読み」に分ける。入力はキャッシュ読みを含む（Claude・Codex・Antigravity とも）ので、
- * キャッシュ読みを引いたものが新しい入力。キャッシュ読みが入力より大きいのは、キャッシュを入力と分けて数えていた頃の Antigravity の行
- * （core/usage.mjs の inputWithCache と同じ見方）なので、その入力はキャッシュを含まないものとして読む
- * @param {{ input?: number, output?: number, cached?: number }} tokens
- */
-export function tokenSplit(tokens) {
-  const cached = Math.max(0, Number(tokens?.cached) || 0);
-  const raw = Math.max(0, Number(tokens?.input) || 0);
-  const output = Math.max(0, Number(tokens?.output) || 0);
-  const fresh = cached > raw ? raw : raw - cached;
-  return { fresh, output, cached, total: fresh + output };
-}
-
-const stopIcon = () => {
-  const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  svg.append(svgEl('rect', { x: 7, y: 7, width: 10, height: 10, rx: 2.5 }));
-  return svg;
-};
 
 export function createThread(host) {
   const body = document.getElementById('channelsBody');
@@ -105,9 +76,6 @@ export function createThread(host) {
   // 会話の移動（最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
   const frame = el('div', 'log-frame th-frame');
   frame.append(log);
-  const band = el('div', 'th-band');
-  band.hidden = true;
-  band.setAttribute('role', 'status');
   // サブエージェントの入口（入力欄のすぐ上の右端。Chats の「バックグラウンド」と同じチップ。bot が委譲した子がいなければ出さない）。
   // 押すと bot ごとに子を並べる一覧が開く（Chats と同じ部品。docs/design-system.md「バックグラウンド」）
   const subs = el('div', 'work-entry th-subs');
@@ -127,6 +95,7 @@ export function createThread(host) {
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
+    onStop: () => stopThread(),
     dest: () => destOptions(),
     onDestChange: () => { paintPlaceholder(); composer.setDisabled(Boolean(S.channel?.archivedAt || (threadReadOnly() && !composer.dest?.bot)), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); },
     settings: (botId) => botSettings(botId),
@@ -184,7 +153,7 @@ export function createThread(host) {
       try { return (await host.cmd('suggestTitle', { sessionId }))?.title ?? null; }
       catch (err) { composer.say(t('session.titleSuggestFailed', { error: err?.message ?? String(err) }), true); return null; }
     } });
-  root.append(head.el, frame, band, subs, composer.el);
+  root.append(head.el, frame, subs, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -406,78 +375,24 @@ export function createThread(host) {
     head.setSession(activeSession());
   }
 
-  let bandSig = '', stopBusy = false;
-  function paintBand() {
+  // 送信の横の ■: bot が作業中（承認待ちを含む）の間だけ出す。押すとこのスレッドの bot の会話をすべて止める（channels.stopThread）
+  let stopBusy = false;
+  function paintStop() {
     const th = S.thread;
-    // トークンはキャッシュ読みを除いた分（新しい入力 + 出力）。キャッシュは内訳で別に見せる
-    const split = tokenSplit(th?.tokens);
-    const total = split.total;
-    const live = liveBots();
-    const working = th?.state === 'working' || th?.state === 'waiting' || live.length > 0;
-    const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
-    const stopped = !working && Boolean(th?.stopped);
-    const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    // 宛先の bot の、このスレッドの会話の文脈の量（Chats の文脈のメーターと同じ数。会話の一覧の行の contextWindow）
-    const destId = composer.dest?.bot?.id;
-    const cw = destId ? host.state?.sessions?.find((s) => s.id === S.thread?.sessions?.[destId])?.contextWindow : null;
-    const ctxRate = cw?.windowTokens ? Math.min(100, Math.max(0, Math.round(100 * cw.usedTokens / cw.windowTokens))) : null;
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, ctxRate, destId]);
-    if (sig === bandSig) return;
-    bandSig = sig;
-    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
-    band.hidden = false;
-    band.classList.toggle('quiet', !working && !stopped);
-    const text = el('span', 'th-band-text');
-    const pieces = [];
-    if (working) {
-      const who = live.map((b) => b.name).join(' ⇄ ');
-      const span = el('span', 'th-band-live');
-      if (waiting) span.append(el('span', 'th-band-mark', '◆'));
-      else span.append(runMark(t('channels:feed.state.working')));
-      for (const b of live) span.append(botIcon(b, 'th-band-icon'));
-      const name = who || t('channels:thread.band.someone');
-      span.append(el('span', 'th-band-who', waiting ? t('channels:thread.band.waiting', { who: name }) : t('channels:thread.band.working', { who: name })));
-      pieces.push(span);
-      if (calls >= 1 && live.length > 1) pieces.push(el('span', null, t('channels:thread.band.calls', { count: calls })));
-    } else if (stopped) pieces.push(el('span', null, t('channels:thread.band.stopped')));
-    if (total) {
-      // 「このスレッドで 1.2k トークン」。狭い幅は数字だけ（前後の語は CSS で見えなくするだけで、読み上げには残る）
-      const num = tokensText(total);
-      const full = t('channels:thread.band.tokens', { tokens: num });
-      const at = full.indexOf(num);
-      const tok = el('span', 'th-band-tokens');
-      if (at < 0) tok.textContent = full;
-      else tok.append(el('span', 'th-tok-aux', full.slice(0, at)), el('span', 'th-tok-num', num), el('span', 'th-tok-aux', full.slice(at + num.length)));
-      tok.title = t('channels:thread.band.tokensTitle', { input: split.fresh, output: split.output, cached: split.cached });
-      pieces.push(tok);
-    }
-    if (ctxRate !== null) {
-      const ctx = el('span', 'th-band-ctx', t('channels:thread.band.context', { rate: ctxRate }));
-      ctx.title = t('channels:thread.band.contextTitle', { name: composer.dest?.bot?.name ?? '', rate: ctxRate });
-      pieces.push(ctx);
-    }
-    pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
-    band.replaceChildren(text);
-    if (working) {
-      const stop = el('button', 'btn btn-quiet th-stop');
-      stop.type = 'button';
-      stop.disabled = stopBusy;
-      stop.append(stopIcon(), stopBusy ? t('channels:thread.stopping') : t('channels:thread.stop'));
-      stop.onclick = () => stopThread();
-      band.append(stop);
-    }
+    const working = th?.state === 'working' || th?.state === 'waiting' || liveBots().length > 0;
+    composer.setStop({ show: working || stopBusy, disabled: stopBusy });
   }
   async function stopThread() {
     if (stopBusy || !S.threadId) return;
     stopBusy = true;
-    paintBand();
+    paintStop();
     try {
       await host.invoke('channels.stopThread', { channelId: S.channelId, threadId: S.threadId });
     } catch (err) {
       composer.say(t('channels:thread.stopFailed', { error: err?.message ?? String(err) }));
     } finally {
       stopBusy = false;
-      paintBand();
+      paintStop();
     }
   }
 
@@ -485,7 +400,9 @@ export function createThread(host) {
   const sysNode = (p) => {
     const n = el('div', 'th-sys');
     n.dataset.postId = p.id;
-    n.append(el('span', 'th-sys-mark', '–'), el('span', null, p.text ?? ''));
+    // 止めた知らせ（state: stopped）は「■ 中断しました · 17:34」。そのほかの Pleiad の知らせは「– 本文」
+    if (p.state === 'stopped') n.append(el('span', 'th-sys-sq'), el('span', null, p.text ?? ''), el('span', 'th-sys-when', `· ${whenText(p.at)}`));
+    else n.append(el('span', 'th-sys-mark', '–'), el('span', null, p.text ?? ''));
     return n;
   };
 
@@ -616,7 +533,7 @@ export function createThread(host) {
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
-    bandSig = ''; band.hidden = true; band.replaceChildren(); meter.update(null, null);
+    stopBusy = false; composer.setStop();
     nav.reset(); toc.reset();
     readSent = 0;
     host.background?.watch([]);
@@ -645,7 +562,7 @@ export function createThread(host) {
       windows = turnWindows(S.posts);
       paintHead();
       paintAll();
-      paintBand();
+      paintStop();
       paintPlaceholder();
       syncSubs();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
@@ -1015,7 +932,7 @@ export function createThread(host) {
   function afterPosts() {
     windows = turnWindows(S.posts);
     syncRetry();
-    paintBand();
+    paintStop();
     paintPlaceholder();
     composer.refresh();
     composer.syncEdit();
@@ -1087,7 +1004,7 @@ export function createThread(host) {
       if (threadReadOnly()) composer.edit.end({ restore: true });
       composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       if (retitled) paintHead();
-      paintBand();
+      paintStop();
       paintPlaceholder();
       syncSubs();
       paintPendingPerms();
@@ -1095,15 +1012,14 @@ export function createThread(host) {
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
-      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintBand(); composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || ev.channel.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); }
+      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintStop(); composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || ev.channel.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); }
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);
       if (ev.bot) S.bots.set(ev.bot.id, shownBot(ev.bot, t));
       if (!S.threadId || !S.ready) return;
       for (const id of postEls.keys()) repaint(id);
-      bandSig = '';
-      paintBand();
+      paintStop();
       paintPlaceholder();
       composer.refresh();
       paintSubs();

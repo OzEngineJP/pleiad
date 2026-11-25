@@ -59,6 +59,11 @@
 .post-state.waiting .post-state-text{color:var(--ink-mark)}
 .post-state.failed .post-state-text,.post-state.checking .post-state-text{color:var(--ink-strong);font-weight:700}
 .post-state-mark{font-size:10px;line-height:1}
+/* 作業中の「考えている · 12 秒」。経過は等幅の数字で、増えても行が揺れない。中断は四角（入力欄の ■ と同じ形） */
+.post-state.working .post-state-text{color:var(--ink)}
+.post-state-dot{opacity:.6}
+.post-state-clock{font-family:var(--font-mono);font-size:11px;font-variant-numeric:tabular-nums}
+.post-state-sq,.th-sys-sq{flex:none;width:10px;height:10px;border-radius:2px;background:currentColor}
 /* 返事のない失敗: 「✕ 失敗」の右に理由を 1 行（長ければ省く。全文は title）と、その下に［やり直す］ */
 .post-state-reason{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-weak)}
 .post-retry-row{margin-top:6px}

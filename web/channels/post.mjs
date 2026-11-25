@@ -5,6 +5,7 @@
 import { el, svgEl } from '../dom.mjs';
 import { fmt, t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
+import { durationText } from '../chrome-control.mjs';
 import { backendLogo } from '../side.mjs';
 import { placeAttachments, attachmentHtml, paintUserBody, userTools, attachmentImageSrc } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
@@ -190,11 +191,47 @@ export function paintChecklist(body, working) {
  */
 export const isTurnFailure = (post) => post.state === 'failed' && Boolean(post.turn) && !post.failedWithBody && typeof post.failure === 'string' && !post.deletedAt;
 
+/** 返事の文章があるか（書き出す前の待ちの印「…」だけではない） */
+const hasText = (post) => { const s = String(post.text ?? '').trim(); return s !== '' && s !== '…'; };
+
+// 作業中の返事の経過時間。画面に残っている分だけ 1 秒ごとに進め、無くなったら止める（ターンの投稿は作業中に書き換わらないので、時計だけ別に進める）
+const clocks = new Set();
+let clockTimer = null;
+function tickClocks() {
+  const at = Date.now();
+  for (const node of clocks) {
+    if (!node.isConnected) { clocks.delete(node); continue; }
+    node.textContent = durationText((at - Number(node.dataset.since)) / 1000);
+  }
+  if (!clocks.size) { clearInterval(clockTimer); clockTimer = null; }
+}
+function watchClock(node) {
+  clocks.add(node);
+  if (!clockTimer) { clockTimer = setInterval(tickClocks, 1000); clockTimer.unref?.(); }
+}
+
 /** 状態の行（bot のターンの投稿・ルーティンの実行の根）。成功を緑の ✓ で見せない（終了は文字だけ） */
 function stateLine(post) {
   const state = post.state;
   if (!state) return null;
   if (state === 'done' && !post.routine) return null;
+  // bot の返事を待つ間: 返事の場所の 1 行「考えている · 12 秒」（文章を書き出したら「書いている」）。止めるのは入力欄の ■
+  if (state === 'working' && post.turn) {
+    const row = el('div', 'post-state working');
+    const clock = el('span', 'post-state-clock');
+    clock.dataset.since = String(post.at);
+    clock.textContent = durationText((Date.now() - post.at) / 1000);
+    row.append(runMark(t('channels:feed.state.working')), el('span', 'post-state-text', t(hasText(post) ? 'channels:feed.state.writing' : 'channels:feed.state.thinking')), el('span', 'post-state-dot', '·'), clock);
+    watchClock(clock);
+    return row;
+  }
+  // 止めた返事: 文章が残っていれば止めた記録はスレッドの「■ 中断しました · 時刻」の行が持つ。何も書けずに止めたときだけ、返事の場所に 1 行
+  if (state === 'stopped' && post.turn) {
+    if (hasText(post)) return null;
+    const row = el('div', 'post-state stopped');
+    row.append(el('span', 'post-state-sq'), el('span', 'post-state-text', t('channels:feed.state.stopped')));
+    return row;
+  }
   const softFailure = state === 'failed' && post.turn && post.failedWithBody;
   const row = el('div', `post-state ${softFailure ? 'failed-body' : state}`);
   if (state === 'working') row.append(runMark(t('channels:feed.state.working')));
@@ -300,8 +337,8 @@ export function fillPost(root, post, ctx) {
   const body = el('div', 'post-body');
   if (post.deletedAt) {
     body.append(el('span', 'post-deleted', t('channels:feed.deleted')));
-  } else if (isTurnFailure(post)) {
-    // 本文は出さない（「✕ 失敗 · 理由」の行が返事の場所を占める）
+  } else if (isTurnFailure(post) || (post.turn && !hasText(post))) {
+    // 本文は出さない（失敗は「✕ 失敗 · 理由」、待つ間は「考えている」の行が返事の場所を占める。「…」は待ちの印で、読ませない）
     body.hidden = true;
   } else if (info.kind === 'human') {
     // あなたの投稿は Chats の自分の発言と同じ描き方（添付をその位置に・長ければ畳む。原文は dataset.raw。web/user-message.mjs）

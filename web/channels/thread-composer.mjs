@@ -21,7 +21,7 @@ import { announce } from '../message-actions.mjs';
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
-const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'usageChip', 'nextSettings',
+const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip', 'nextSettings',
   'resumeNote', 'armedNote', 'draftFail', 'connNote'];
 
 /**
@@ -42,15 +42,18 @@ const UNUSED = ['armedChip', 'draftSaved', 'abort', 'resume', 'contextStrip', 'u
  * @param {(sessionId: string) => Promise<void>} [o.compact] 宛先の bot の会話を圧縮する（/compact）
  * @param {() => { id: string, text: string }[]} [o.pending] bot へ届く前のあなたの投稿（送信待ちの行。投稿の順）
  * @param {(postId: string) => Promise<void>} [o.withdrawPending] 送信待ちの投稿を取り下げる（［取り消し］・［編集］）
+ * @param {() => void} [o.onStop] 送信の横の ■（作業中の返事を止める。通常の会話の中断と同じ形。出し入れは setStop）
  * @param {object} [o.edit] 「編集して再送信」の持ち分（web/composer/edit-mode.mjs の host）: target(id) → { time, tail } か null、send(ctx)、branch(ctx)、decorate(id, on, tail)、locate(id)
  */
-export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {},
+export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {}, onStop = () => {},
   settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
   const els = composerEls(PREFIX, form);
   for (const part of UNUSED) if (els[part]) els[part].hidden = true;
+  els.abort.hidden = true;
+  els.abort.onclick = () => onStop();
 
   // ---- スレッドの持ち物（提案・集団宛ての確認・@ の候補）。入力の箱の上に置く
   const hint = el('div', 'ch-hint');
@@ -540,6 +543,12 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       paintHint();
     },
     refresh() { paintHint(); paintDest(); paintSchedules(); c.fit(); },
+    /** 送信の横の ■ を出し入れする。disabled は止めている最中 */
+    setStop({ show = false, disabled = false } = {}) {
+      els.abort.hidden = !show;
+      els.abort.disabled = disabled;
+      c.fit();
+    },
     invalidateVocab() { vocabFor = null; effortKey = ''; paintDest(); },
     /** 予定が動いた */
     paintSchedules,
