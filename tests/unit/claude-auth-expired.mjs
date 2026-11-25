@@ -11,7 +11,7 @@ import { backend as claude, setClaudeSdkForTest } from '../../core/backends/clau
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { readSessions, writeSessions } from '../lib/data-store.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { claudeAccountServerEnv, seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createClaudeAuth } from '../../core/auth/claude-cli.mjs';
@@ -169,7 +169,8 @@ export default async function (t) {
   await fs.mkdir(cliDir, { recursive: true });
   // 登録したアカウント（専用フォルダでログイン済み。ADR 0353）
   const accountId = await seedClaudeAccount(path.join(scratch, 'data'), '仕事用');
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir }, dataDir: path.join(scratch, 'data') });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir, ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')) },
+    dataDir: path.join(scratch, 'data') });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const status = () => c.cmd('authStatus', { backend: 'fake' });
   const ends = new Map();

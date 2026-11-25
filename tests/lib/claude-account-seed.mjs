@@ -5,6 +5,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { newAccountId } from '../../core/claude-accounts.mjs';
+import { VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
+import { installFakeClaude } from './fake-claude.mjs';
+
+/**
+ * 置いたアカウントで会話・委譲を走らせるサーバーの env。登録したアカウントは版の確かめ（CLI 2.1.322 以上）とログインの有無を通るので、
+ * 本物の CLI の無い CI でも通るよう、dir に偽の CLI を置いて確かめた版で答えさせる。macOS でもログインを専用フォルダのファイルで見る
+ * （AGENT_HOST_FAKE_OWN_DIR_LOGIN。本物のキーチェーンを見ない）
+ */
+export async function claudeAccountServerEnv(dir) {
+  const fake = await installFakeClaude(dir);
+  return { ...fake.env, FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, AGENT_HOST_FAKE_OWN_DIR_LOGIN: 'file' };
+}
 
 /**
  * @param {string} dataDir
@@ -23,7 +35,7 @@ export async function seedClaudeAccount(dataDir, name, { id = newAccountId(), lo
   const dir = path.join(dataDir, 'claude-usage', id);
   await fs.mkdir(dir, { recursive: true });
   if (login) {
-    // Pleiad の印と、CLI の資格情報（中身は偽物。Pleiad は有無だけを見る。macOS 以外）
+    // Pleiad の印と、CLI の資格情報（中身は偽物。Pleiad は有無だけを見る。macOS は claudeAccountServerEnv の env で同じファイルを見る）
     await fs.writeFile(path.join(dir, 'ply-usage-login.json'), JSON.stringify({ at: new Date().toISOString() }) + '\n');
     await fs.writeFile(path.join(dir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: access, scopes: ['user:profile'] } }));
   }
