@@ -2345,6 +2345,8 @@ const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT
 const shellBridge = createShellBridge({
   withSessionWrite: withWritableSession,
   askPermission: request => askPermission(request),
+  isAlwaysAllowed: async sessionId => Boolean((await store.get(sessionId)).shellAlwaysAllow),
+  rememberAlwaysAllow: async sessionId => store.setSessionData(sessionId, 'shellAlwaysAllow', true),
   holder: shellJobHolder,
   onJobStart: (sessionId, job) => {
     sessionCommands?.track(sessionId, { id: job.jobId, command: job.command, cwd: job.cwd, startedAt: job.startedAt });

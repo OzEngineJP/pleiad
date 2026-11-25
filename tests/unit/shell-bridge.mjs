@@ -312,12 +312,71 @@ export default async function (t) {
     mode = { scope: 'workspace', autonomy: 'ask' };
     allow = false;
     r = await call('run', { command: 'echo denied-run' });
-    t.ok('尋ねるモードでは聞き、断られたら走らせない', r.isError && asked.length === 1 && asked[0].toolName === 'ply_shell' && asked[0].input.command === 'echo denied-run' && !r.text.includes('denied-run\n'), r.text);
+    t.ok('尋ねるモードでは聞き、断られたら走らせない', r.isError && asked.length === 1 && asked[0].toolName === 'ply_shell' && asked[0].canAlways === true && asked[0].input.command === 'echo denied-run' && !r.text.includes('denied-run\n'), r.text);
     allow = true;
-    r = await call('run', { command: 'echo allowed-run' });
-    t.ok('許されたら走らせる', r.text.includes('allowed-run') && asked.length === 2, r.text);
+    r = await call('run', { command: 'echo allowed-once' });
+    t.ok('一度だけの許可（once）で走らせても、印は残さず次の呼び出しでまた聞く', r.text.includes('allowed-once') && asked.length === 2, r.text);
+    r = await call('run', { command: 'echo allowed-once-again' });
+    t.ok('… 2 回目もカードが出る', r.text.includes('allowed-once-again') && asked.length === 3, r.text);
     r = await call('output', { jobId: 'sh-missing' });
     t.ok('知らないジョブは断る', r.isError && r.text.includes('sh-missing'));
+
+    // ---- 「常に許可」（この会話の間、再起動をまたいでも残る・ほかの会話には効かない・読むだけのモードでは断る）
+    const persisted = new Map();
+    const askedAlways = [];
+    let replyAlways = { allow: true, always: false };
+    const bootBridge = () => {
+      const b = createShellBridge({
+        askPermission: async (req) => { askedAlways.push(req); return replyAlways; },
+        isAlwaysAllowed: async (sid) => persisted.get(sid) === true,
+        rememberAlwaysAllow: async (sid) => { persisted.set(sid, true); },
+      });
+      const srv = http.createServer((req, res) => b.handle(req, res));
+      return { b, srv };
+    };
+    const b1 = bootBridge();
+    await new Promise((res) => b1.srv.listen(0, '127.0.0.1', res));
+    const origin1 = `http://127.0.0.1:${b1.srv.address().port}`;
+    let mode1 = { scope: 'workspace', autonomy: 'ask' };
+    const p1 = b1.b.open({ origin: origin1, locale: 'ja', owner: async () => ({ sessionId: 'conv-1', cwd: dir, mode: mode1, env: {} }) });
+    const p2 = b1.b.open({ origin: origin1, locale: 'ja', owner: async () => ({ sessionId: 'conv-2', cwd: dir, mode: { scope: 'workspace', autonomy: 'ask' }, env: {} }) });
+    try {
+      // 1. 「常に許可」で許可すると、以後の run・start はカードを出さない
+      replyAlways = { allow: true, always: true };
+      r = await callOn(p1, 'run', { command: 'echo first-always' });
+      t.ok('常に許可: 初回は canAlways: true のカードを出し、許可で実行する', !r.isError && r.text.includes('first-always') && askedAlways.length === 1 && askedAlways[0].canAlways === true && persisted.get('conv-1') === true);
+      r = await callOn(p1, 'run', { command: 'echo second-no-card' });
+      t.ok('常に許可の後は、次の run でカードを出さない', !r.isError && r.text.includes('second-no-card') && askedAlways.length === 1);
+      r = await callOn(p1, 'start', { command: 'echo start-no-card' });
+      const alwaysStartId = /ジョブ (sh-[a-f0-9]+)/.exec(r.text)?.[1];
+      t.ok('常に許可の後は、start でもカードを出さない', !r.isError && Boolean(alwaysStartId) && askedAlways.length === 1);
+      if (alwaysStartId) { await until(() => !b1.b.job('conv-1', alwaysStartId)?.running); }
+
+      // 2. ほかの会話には効かない
+      replyAlways = { allow: true, scope: 'once' };
+      r = await callOn(p2, 'run', { command: 'echo other-session' });
+      t.ok('別の会話には効かず、承認カードを出す（once では印を残さない）', !r.isError && r.text.includes('other-session') && askedAlways.length === 2 && askedAlways[1].sessionId === 'conv-2' && !persisted.has('conv-2'));
+
+      // 3. 読むだけのモードに変わったら、印があっても断る
+      mode1 = { scope: 'readonly', autonomy: 'ask' };
+      r = await callOn(p1, 'run', { command: 'echo readonly-after-always' });
+      t.ok('常に許可の印があっても、承認モードが読むだけに変わったら断る', r.isError && r.text.includes('読み取りだけ') && askedAlways.length === 2, r.text);
+    } finally {
+      await b1.b.closeAll();
+      b1.srv.close();
+    }
+
+    // 4. 再起動後も残る（新しい bridge インスタンスでも、会話のデータから印を読む）
+    const b2 = bootBridge();
+    await new Promise((res) => b2.srv.listen(0, '127.0.0.1', res));
+    const p1After = b2.b.open({ origin: `http://127.0.0.1:${b2.srv.address().port}`, locale: 'ja', owner: async () => ({ sessionId: 'conv-1', cwd: dir, mode: { scope: 'workspace', autonomy: 'ask' }, env: {} }) });
+    try {
+      r = await callOn(p1After, 'run', { command: 'echo after-restart' });
+      t.ok('再起動後も会話のデータの印が残り、カードを出さずに通る', !r.isError && r.text.includes('after-restart') && askedAlways.length === 2);
+    } finally {
+      await b2.b.closeAll();
+      b2.srv.close();
+    }
   } finally {
     await bridge.closeAll();
     await longBridge.closeAll();
