@@ -6,14 +6,17 @@
 // - output の waitMs（任意。RUN_WAIT_MAX_MS まで）: 走っているジョブが終わるか waitMs が過ぎるまで待ってから返す（新しい出力だけでは戻らない）。
 //   人が止めたら止まり終わった時点で戻る。ターンが止まった・呼び出した側が切れたら待つのをやめるだけで、ジョブは止めない
 // - 走らせる口は core/host-shell.mjs。シェルが終わったら、パイプを握ったプロセスが残っていても少し待って戻る（leftover）
-// - 承認: 読み取りだけのモードでは断る。確認なし（autonomy: never）のモードのほかは、走らせる前に会話へ承認のカードを出す
-//   （エージェントのサンドボックスの外になるので、エージェント側の承認とは別に Pleiad が決める。エージェント側では ply_shell を自動で通す）
+// - 承認: 読み取りだけのモードでは断る。確認なし（autonomy: never）と「この会話で常に許可」の印がある会話のほかは、走らせる前に会話へ承認のカードを出す
+//   （エージェントのサンドボックスの外になるので、エージェント側の承認とは別に Pleiad が決める。エージェント側では ply_shell を自動で通す）。
+//   カードで「常に許可」が選ばれたらその会話の印を覚え、以後は確認を出さない（読むだけのモードへ変わったら印があっても断る）
 // - ジョブの出力はメモリだけ（OUTPUT_KEEP。古い方から捨て、どこまで捨てたかを数える）。データ置き場に書かない。
 //   保持役に載せたジョブ（ADR 0270 段 2a）は、保持役の子の記録にも残る（サーバーを入れ替えても output・list で読める）
 // - 終わったジョブは JOBS_KEPT まで覚える（output で読み直せる）
 //
-//   createShellBridge({ askPermission, onJobStart, onJobChange, onJobEnd, now?, holder?, listedAfterMs? })
+//   createShellBridge({ askPermission, isAlwaysAllowed?, rememberAlwaysAllow?, onJobStart, onJobChange, onJobEnd, now?, holder?, listedAfterMs? })
 //     askPermission(request)            server の askPermission（{ toolName, input, title, sessionId, signal, kind, canAlways, locale }）
+//     isAlwaysAllowed(sessionId)        この会話で「常に許可」が選ばれているか（既定はメモリの Set）
+//     rememberAlwaysAllow(sessionId)    この会話に「常に許可」の印を残す（server は store.setSessionData で会話データへ保存）
 //     onJobStart(sessionId, job)・onJobChange(sessionId, job)・onJobEnd(sessionId, job)  見張り（core/session-commands.mjs）・裏の一覧・終わりの知らせ
 //       onJobChange は、裏の一覧に出るかどうか（listed）が変わったとき（待っている run が一覧に出始めた・run が裏へ移った）
 //     holder                           保持役の口（core/ply-shell-held.mjs の createPlyShellHolder）。無ければジョブはサーバーの子
@@ -98,8 +101,11 @@ function outputBuffer() {
   };
 }
 
-export function createShellBridge({ askPermission, onJobStart = () => {}, onJobChange = () => {}, onJobEnd = () => {}, now = Date.now, holder = null, withSessionWrite = (_id, fn) => fn(), listedAfterMs = RUN_LISTED_AFTER_MS } = {}) {
+export function createShellBridge({ askPermission, isAlwaysAllowed: givenAlways, rememberAlwaysAllow: givenRemember, onJobStart = () => {}, onJobChange = () => {}, onJobEnd = () => {}, now = Date.now, holder = null, withSessionWrite = (_id, fn) => fn(), listedAfterMs = RUN_LISTED_AFTER_MS } = {}) {
   const sessions = new Map();   // sessionId -> Map(jobId -> job)
+  const memoryAlways = new Set();
+  const isAlwaysAllowed = givenAlways ?? ((sessionId) => memoryAlways.has(sessionId));
+  const rememberAlwaysAllow = givenRemember ?? ((sessionId) => { memoryAlways.add(sessionId); });
 
   const jobsOf = (sessionId) => { if (!sessions.has(sessionId)) sessions.set(sessionId, new Map()); return sessions.get(sessionId); };
   /** 裏の一覧に出すか。start のジョブ（裏へ移った run を含む）と、少し待っている run */
@@ -123,9 +129,11 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobC
     const scope = owner.mode?.scope;
     if (scope === 'none' || scope === 'readonly') throw new Error(agentT(lng, 'shell.readOnly'));
     if (owner.mode?.autonomy === 'never') return;
+    if (owner.sessionId && await isAlwaysAllowed(owner.sessionId)) return;
     const answer = await askPermission({ toolName: 'ply_shell', input: { command: args.command, cwd: args.cwd },
-      title: agentT(lng, 'shell.approvalTitle', { command: String(args.command).slice(0, 300) }), sessionId: owner.sessionId, signal, kind: 'tool', canAlways: false, locale: lng });
+      title: agentT(lng, 'shell.approvalTitle', { command: String(args.command).slice(0, 300) }), sessionId: owner.sessionId, signal, kind: 'tool', canAlways: true, locale: lng });
     if (!answer?.allow) throw new Error(answer?.message ? agentT(lng, 'shell.deniedWith', { message: answer.message }) : agentT(lng, 'shell.denied'));
+    if ((answer.always || answer.scope === 'always') && owner.sessionId) await rememberAlwaysAllow(owner.sessionId);
   }
 
   function prepare(owner, args, lng) {
