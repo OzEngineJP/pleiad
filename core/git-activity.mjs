@@ -26,30 +26,44 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     tail.then(() => { if (chains.get(key) === tail) chains.delete(key); });
     return next;
   }
-  const cache = new Map();
+  const cache = new Map();      // cwd → { at（読み終えた時刻）, value }
+  const lastGood = new Map();   // 場所 → 最後に読めた状態（場所が BUSY・REST のとき、これを返す）
   const pruned = new Set();
 
   /** 今のブランチと先頭のコミット。変更の数は数えない（ターンの始まりと終わりに使う軽い版） */
-  async function readHead(root) {
-    const r = await git.readGit(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no']);
-    if (!r.ok) return { branch: null, detached: false, head: null };
+  async function readHead(root, signal = null) {
+    const r = await git.readGit(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], { signal });
+    // failed: 読めなかった（場所が BUSY・REST のときも）。コミットが無いのとは違う。比べる側（finish）が、読めなかった分で「動いた」と見ないために区別する
+    if (!r.ok) return { branch: null, detached: false, head: null, failed: true };
     const s = git.parseStatus(r.stdout);
     return { branch: s.branch, detached: s.detached, head: s.oid };
   }
 
-  /** 状態。fresh でなければ TTL 内の前回の値を返す。git 管理外は null */
+  /**
+   * 状態。fresh でなければ TTL（読み終えた時刻から）内の前回の値を返す。git 管理外は null。
+   * 同じリポジトリの取り直しは 1 本ずつ: fresh でなければ走っているものに合流し、fresh は走っているものの次の 1 回を共有する
+   * （走り始めた後に頼まれた fresh に、前の結果は渡さない）。場所が BUSY・REST（遅いファイルシステムで止まっている）のときは、
+   * 読み直さず、前に読めた値を返す（無ければ null）
+   */
   function status(cwd, { fresh = false } = {}) {
     if (!cwd) return Promise.resolve(null);
     const hit = cache.get(cwd);
-    if (!fresh && hit && now() - hit.at < TTL_MS) return hit.value;
-    const value = serial(`cwd:${cwd}`, async () => {
+    if (!fresh && hit && now() - hit.at < TTL_MS) return Promise.resolve(hit.value);
+    const key = `status:${git.placeGuard.placeOf(cwd)}`;
+    return git.placeGuard.coalesce(key, async () => {
       const s = await git.readStatus(cwd);
-      return s ? { ...s, at: now() } : null;
+      const place = git.placeGuard.placeOf(cwd);
+      if (s) {
+        const value = { ...s, at: now() };
+        lastGood.set(place, value);
+        return value;
+      }
+      return git.placeBlocked(cwd) ? lastGood.get(place) ?? null : null;
+    }, { mode: fresh ? 'trailing' : 'join' }).then((value) => {
+      // 失敗（null）・前の値を返したものは覚えない。git の出入りがすぐ反映されるように
+      if (value && value.at >= now() - TTL_MS && !git.placeBlocked(cwd)) cache.set(cwd, { at: now(), value }); else cache.delete(cwd);
+      return value;
     });
-    cache.set(cwd, { at: now(), value });
-    // 失敗（null）は覚えない。git の出入りがすぐ反映されるように
-    value.then((v) => { if (!v && cache.get(cwd)?.value === value) cache.delete(cwd); }, () => cache.delete(cwd));
-    return value;
   }
   const invalidate = (cwd) => { if (cwd) cache.delete(cwd); else cache.clear(); };
 
@@ -57,15 +71,18 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
 
   /**
    * ターンの始まり。git の作業場所でなければ null。撮影できなかったときも、ブランチと HEAD は控えて要約に使う。
-   * ref は会話の id が決まってから attach で書く（新しい会話は最初のターンの途中で決まる）
+   * ref は会話の id が決まってから attach で書く（新しい会話は最初のターンの途中で決まる）。
+   * signal: 呼び出し側が待つのを諦めたら止める（走っている git を残さない。ADR 0352）。止まったら null。
+   * 撮影は skipUnborn（まだコミットが無いリポジトリは撮らない。HEAD が無いと毎回すべてのファイルを読み直すため）。撮れなかったときと同じ扱い
    */
-  async function begin({ cwd }) {
-    const info = await git.repoInfo(cwd);
-    if (!info) return null;
-    const [head, tree] = await Promise.all([readHead(info.root), git.snapshotTree(info.root)]);
+  async function begin({ cwd, signal = null }) {
+    const info = await git.repoInfo(cwd, { signal });
+    if (!info || signal?.aborted) return null;
+    const [head, tree] = await Promise.all([readHead(info.root, signal), git.snapshotTree(info.root, { signal, skipUnborn: true })]);
+    if (signal?.aborted) return null;
     const parent = head.head;
     const commit = tree ? await git.commitTree(info.root, tree, parent) : null;
-    return { cwd, root: info.root, linked: info.linked, headStart: head.head, branchStart: head.branch, detachedStart: head.detached,
+    return { cwd, root: info.root, linked: info.linked, headStart: head.head, branchStart: head.branch, detachedStart: head.detached, headKnown: !head.failed,
       startTree: tree, startCommit: commit, n: null, first: false };
   }
 
@@ -90,13 +107,15 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     if (!turn) return null;
     await attach(turn, sessionId);
     return serial(`session:${sessionId ?? turn.root}`, async () => {
-      const [head, tree] = await Promise.all([readHead(turn.root), git.snapshotTree(turn.root)]);
+      const [head, tree] = await Promise.all([readHead(turn.root), git.snapshotTree(turn.root, { skipUnborn: true })]);
       invalidate(turn.cwd);
       const endCommit = tree ? await git.commitTree(turn.root, tree, head.head) : null;
       const diff = turn.startTree && tree ? await git.diffFiles(turn.root, turn.startTree, tree) : null;
-      const moved = head.head !== turn.headStart;
+      // 始めか終わりの HEAD が読めなかった（遅い場所で止まっていた）ときは、コミット・ブランチの動きは比べない（読めなかった分を「動いた」と見ない）
+      const comparable = turn.headKnown !== false && !head.failed;
+      const moved = comparable && head.head !== turn.headStart;
       const since = moved ? await git.commitsSince(turn.root, turn.headStart) : { count: 0, commits: [] };
-      const switched = head.branch !== turn.branchStart || head.detached !== turn.detachedStart;
+      const switched = comparable && (head.branch !== turn.branchStart || head.detached !== turn.detachedStart);
       const pr = [...events].reverse().find((e) => e.kind === 'pr') ?? null;
       const created = events.some((e) => e.kind === 'branch');
       const total = diff?.total ?? { files: 0, add: 0, del: 0 };
@@ -173,8 +192,10 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     const running = counting.get(info.root);
     if (running) return running;
     const run = (async () => {
-      const head = (await git.headCommit(info.root)) ?? EMPTY_TREE;
-      const tree = await git.snapshotTree(info.root);
+      // まだコミットが無いリポジトリは数えない（null）。撮影は毎回すべてのファイルを読み直す重い作業になるため（ADR 0352）
+      const head = await git.headCommit(info.root);
+      if (!head) return null;
+      const tree = await git.snapshotTree(info.root, { skipUnborn: true });
       if (!tree) return null;
       return git.countDiffFiles(info.root, head, tree);
     })().finally(() => counting.delete(info.root));

@@ -4,7 +4,7 @@
 // 遅延起動（core/context-connections.mjs）が、起きたときに覚えた一覧を次の起動でも広告するために使う。
 // 台帳（mcp_processes）: stdio で起こした根の PID と、当時のサーバー（親）の PID・起動時刻を記録する。
 // 起動時の掃除（sweep）で、記録の親が死んでいる分を木ごと止める。画面には出さず、サーバーのログと台帳に残す（承認済みの形）。
-import { run } from './process.mjs';
+import { run, runBackground } from './process.mjs';
 import { systemTool } from './win-system.mjs';
 import { openData } from './data-schema.mjs';
 import { mcpToolCacheTable, mcpProcessTable } from './db.mjs';
@@ -24,11 +24,12 @@ async function startTimesOf(pids, { now = Date.now } = {}) {
   const out = new Map();
   if (!pids.length) return out;
   if (process.platform === 'win32') {
-    const res = await run(systemTool('powershell'), ['-NoProfile', '-NonInteractive', '-Command',
+    const res = await runBackground(systemTool('powershell'), ['-NoProfile', '-NonInteractive', '-Command',
       `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToFileTimeUtc())" }`],
       { timeoutMs: 15_000, windowsHide: true, maxOutputChars: 4 * 1024 * 1024 });
     // 死んでいる pid が混ざると Get-Process は出力しつつ status 1 で返る。起動自体が失敗したときだけ取れないとみなす
     if (res.startError) throw new Error(res.startError);
+    if (res.timedOut) throw new Error('process list timed out');   // 取れていない一覧を「居ない」と読まない
     for (const line of String(res.stdout ?? '').split(/\r?\n/)) {
       const m = /^(\d+):(\d+)\s*$/.exec(line.trim());
       if (m) out.set(Number(m[1]), Number((BigInt(m[2]) - FILETIME_EPOCH_DIFF) / 10000n));
@@ -36,9 +37,10 @@ async function startTimesOf(pids, { now = Date.now } = {}) {
     return out;
   }
   // etimes（秒）は macOS の ps に無いので、Linux と macOS の両方にある etime（[[dd-]hh:]mm:ss）を読む
-  const res = await run('ps', ['-o', 'pid=,etime=', '-p', pids.join(',')], { timeoutMs: 15_000 });
+  const res = await runBackground('ps', ['-o', 'pid=,etime=', '-p', pids.join(',')], { timeoutMs: 15_000 });
   // 死んでいる pid が混ざると ps も非 0 で返る（残りの pid は出力される）
   if (res.startError) throw new Error(res.startError);
+  if (res.timedOut) throw new Error('process list timed out');
   const at = now();
   for (const line of String(res.stdout ?? '').split(/\r?\n/)) {
     const m = /^\s*(\d+)\s+(\S+)\s*$/.exec(line);

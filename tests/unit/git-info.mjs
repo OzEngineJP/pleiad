@@ -168,7 +168,12 @@ export default async function (t) {
     await fs.writeFile(path.join(fresh, 'a.txt'), 'a\n');
     const fsum = await activity.finish(fturn, 'session-eeee-5', []);
     const fchanges = await activity.changes(fresh, 'session-eeee-5', 'uncommitted');
-    t.ok('コミット前のリポジトリでも動く（親なしの撮影・空の tree との差）', fsum?.files === 1 && fchanges?.files[0]?.path === 'a.txt', JSON.stringify([fsum, fchanges]));
+    // 裏の撮影（ターンの始まり・終わり）は、コミットが無いリポジトリでは撮らない（HEAD が無いと毎回すべてのファイルを読み直す。ADR 0352）。
+    // 撮れなかったときと同じ扱いで、要約は付かない。利用者が開いた変更の一覧は今までどおり、空の tree との差で出す
+    t.ok('コミット前のリポジトリ: ターンの撮影は撮らず（要約なし）、変更の一覧は動く（親なしの撮影・空の tree との差）',
+      fturn?.startTree === null && fturn.startCommit === null && fsum === null && fchanges?.files[0]?.path === 'a.txt', JSON.stringify([fturn, fsum, fchanges]));
+    t.ok('コミット前のリポジトリ: 数えるだけの口（新しいタブの「変更 N ファイル」）も撮らない（null）', await activity.changeCount(fresh) === null);
+    t.ok('コミット前のリポジトリ: skipUnborn なしの撮影（利用者が開いた画面）は撮れる', Boolean(await git.snapshotTree(fresh)) && await git.snapshotTree(fresh, { skipUnborn: true }) === null);
 
     // 追い越し: 書く操作は refs/pleiad だけ・読み取り以外は断る
     let threw = 0;

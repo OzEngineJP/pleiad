@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { rmSync } from 'node:fs';
-import { run, detach } from './process.mjs';
+import { run, runBackground, detach } from './process.mjs';
 import { systemTool } from './win-system.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -249,8 +249,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export async function listProcesses() {
   const win = process.platform === 'win32';
   const [command, args] = win ? [systemTool('tasklist'), ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'pid=,comm=']];
-  const result = await run(command, args, { windowsHide: true, timeoutMs: 10_000, maxOutputChars: 32 * 1024 * 1024 });
-  if (result.startError || result.exitCode !== 0) return null;
+  // 掃除（起動の後・1 時間ごと）の裏の作業。誰も結果を待たないので、止めても終わらない子は待たずに戻る（ADR 0352）
+  const result = await runBackground(command, args, { windowsHide: true, timeoutMs: 10_000, maxOutputChars: 32 * 1024 * 1024 });
+  if (result.startError || result.exitCode !== 0 || result.timedOut || result.stuck) return null;
   const map = new Map();
   for (const line of String(result.stdout ?? '').split(/\r?\n/)) {
     // "agent-browser.exe","12345","Console","1","10,000 K" / "  12345 /path/to/agent-browser"

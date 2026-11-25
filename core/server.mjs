@@ -9589,7 +9589,8 @@ async function launchTurn(ctx, dispatch = null) {
   // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
   // 撮影が遅いときは待たずに始める（その回は撮影なし）
   if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
-    turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
+    const gitAbort = new AbortController();
+    turn.gitSetup = gitActivity.begin({ cwd, signal: gitAbort.signal }).then(g => {
       if (turn.gitLate) return null;
       turn.git = g;
       touchCard(turn);
@@ -9597,8 +9598,9 @@ async function launchTurn(ctx, dispatch = null) {
     }).catch(() => {});
     let began = false;
     await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
-    // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
-    if (!began) { turn.gitLate = true; touchCard(turn); }
+    // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない。
+    // 走っている git は止める（残すと、遅い場所で撮影が積み上がる。ADR 0352。止めても終われない git は place-guard が数え、その場所へは新しく始めない）
+    if (!began) { turn.gitLate = true; gitAbort.abort(); touchCard(turn); }
   }
   await hooks.beforeDelivery?.();
   if (dispatch) {

@@ -3,6 +3,7 @@
 //
 //   run()        完了を待つ短命の子（git・gh・--version・taskkill・`!` の 1 回のシェルなど）。プロセスのハンドルは返さない。
 //                出力は上限つきで集め、onOutput で流す。止める・時間切れはこの中で木ごとに止める
+//   runBackground()  run() の、Pleiad が自分から始める裏の作業向け。止めても終わらない子を待たずに戻る（killDeadlineMs）
 //   start()      保持役（core/holder/）に起こさせる長く生きる子。戻り値は { id, client, source }（source は記録・write・ack）。
 //                保持役を使えないときは null（呼び出し側は短命の run() に落とすか、起動不能を返す）
 //   detach()     サーバーの子でない形で起こす（保持役自身の起動。core/holder/client.mjs）。pid だけ返す
@@ -18,6 +19,9 @@ import { bootEnv } from './boot-env.mjs';
 import { holderKey } from './holder/protocol.mjs';
 import { trackChild } from './proc-track.mjs';
 import { systemTool } from './win-system.mjs';
+
+/** taskkill 自身が返ってこないときの上限（非同期なので誰も待たないが、残さない） */
+const TASKKILL_TIMEOUT_MS = 10_000;
 
 // 同期の終了処理を、process には 1 本だけ登録して配る。短命の子を片付けたら戻り値で解除する。
 const exitCleanups = new Set();
@@ -49,9 +53,12 @@ export function holderRootFor({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_ROOT
 
 /**
  * 完了を待つ子を 1 回走らせる。プロセスのハンドルは返さない。
- * @returns Promise<{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, leftover?, startError? }>
+ * @returns Promise<{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, leftover?, stuck?, startError? }>
  *   exitCode は分からなければ null（止めた・時間切れ・起こせない）
  *   leftover は、子は終わったが出力のパイプを握ったプロセスが残った（exitCloseGraceMs を過ぎても close が来ない）
+ *   stuck は、止めても killDeadlineMs の間に子が終わらなかった（I/O 待ちで kill が効かない）。待たずに戻り、onLeftover({ pid, ended, command, cwd }) を 1 回呼ぶ。
+ *     ended は、その子が本当に終わったときに解ける Promise（呼び出し側が「まだ生きている子」を数えるのに使う）。killDeadlineMs が 0 なら使わない（今までどおり close まで待つ）
+ *   killWith(child) は、止める操作の差し込み口（試験が「kill を無視する子」を作るため。ふだんは渡さない）
  *   onOutput(stream, piece) は、上限（maxOutputChars。文字数。runHostShell の OUTPUT_LIMIT と同じ数え方）に収まった分だけ呼ぶ
  */
 export function run(command, args = [], {
@@ -59,28 +66,53 @@ export function run(command, args = [], {
   maxOutputChars = Infinity, windowsHide = true, detached = process.platform !== 'win32',
   stdio = ['ignore', 'pipe', 'pipe'], killTree = false, shell = false,
   exitCloseGraceMs = 0, killedCloseGraceMs = 0,
+  killDeadlineMs = 0, onLeftover = null, killWith = null,
 } = {}) {
   return new Promise(resolve => {
     const started = Date.now();
     const out = { stdout: '', stderr: '' };
     let truncated = false, timedOut = false, stopped = false, done = false;
-    let child = null, exited = null, closeTimer = null, timer = null;
+    let child = null, exited = null, closeTimer = null, timer = null, deadlineTimer = null;
     let onAbort = () => {};
     const finish = (result) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       clearTimeout(closeTimer);
+      clearTimeout(deadlineTimer);
       signal?.removeEventListener?.('abort', onAbort);
       resolve({ exitCode: null, signal: null, ...out, durationMs: Date.now() - started, timedOut, stopped, truncated, ...result });
     };
     const kill = () => {
       if (!child?.pid) return;
+      if (killWith) { try { killWith(child); } catch { /* 試験の差し込み */ } return; }
       if (!killTree) { try { child.kill('SIGKILL'); } catch { /* 既に終わっている */ } return; }
-      if (process.platform === 'win32') spawnSync(systemTool('taskkill'), ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      // taskkill は待たない（spawnSync だとサーバー全体が止まる。止まらないプロセスを相手にすると長く掛かる）。終わりは exit / close で見る
+      if (process.platform === 'win32') {
+        try {
+          const killer = spawn(systemTool('taskkill'), ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore', timeout: TASKKILL_TIMEOUT_MS });
+          killer.on('error', () => {});
+          killer.unref();
+        } catch { /* 起こせない。あとは killDeadlineMs が締める */ }
+      }
       else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 既に終わっている */ } } }
     };
-    onAbort = () => { stopped = true; if (exited) finish({}); else kill(); };
+    // 止めた（上限・stop）後、killDeadlineMs が過ぎても子が終わらなければ（Google Drive 等の I/O 待ちで kill が効かない）、待たずに締める。
+    // 子は残るので、onLeftover に pid と「本当に終わったとき解ける ended」を渡す（呼び出し側が生き残りを数える）
+    const stopChild = () => {
+      kill();
+      if (!(killDeadlineMs > 0) || deadlineTimer || done) return;
+      deadlineTimer = setTimeout(() => {
+        if (done) return;
+        const alive = !exited;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        if (alive) { try { onLeftover?.({ pid: child.pid, ended, command, cwd }); } catch { /* 通知の失敗で締めを止めない */ } }
+        finish(alive ? { stuck: true } : {});
+      }, killDeadlineMs);
+    };
+    let ended = Promise.resolve();
+    onAbort = () => { stopped = true; if (exited) finish({}); else stopChild(); };
     if (signal?.aborted) { stopped = true; finish({}); return; }
     // input を渡すときは、標準入力を開ける（既定は 'ignore'）
     const childStdio = input != null && stdio[0] === 'ignore' ? ['pipe', ...stdio.slice(1)] : stdio;
@@ -88,8 +120,9 @@ export function run(command, args = [], {
       child = spawn(command, Array.isArray(args) ? args.map(String) : [], { cwd, env, windowsHide, detached, stdio: childStdio, shell });
       trackChild(child, cwd);
     } catch (error) { finish({ startError: String(error?.message ?? error) }); return; }
+    ended = new Promise(settle => { child.once('exit', () => settle()); child.once('error', () => { if (!child.pid) settle(); }); });
     signal?.addEventListener?.('abort', onAbort, { once: true });
-    if (timeoutMs > 0) timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else kill(); }, timeoutMs);
+    if (timeoutMs > 0) timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else stopChild(); }, timeoutMs);
     if (input != null && child.stdin) child.stdin.end(input);
     for (const stream of ['stdout', 'stderr']) {
       const readable = child[stream];
@@ -117,6 +150,23 @@ export function run(command, args = [], {
       }, grace);
       closeTimer.unref?.();
     });
+  });
+}
+
+/** 裏の作業（runBackground）の子は、止めてからこの時間たっても終わらなければ待たずに戻る（ADR 0352） */
+export const BACKGROUND_KILL_DEADLINE_MS = 1_000;
+
+/**
+ * Pleiad が自分から始める裏の作業（git の状態・撮影、gh、ps の確認など。誰も結果を待たない）の子を走らせる。run() との違い:
+ *   - 止めた（上限・stop）後 BACKGROUND_KILL_DEADLINE_MS で、終われない子（遅いファイルシステムの I/O 待ち）を待たずに戻る。結果に stuck: true、onLeftover に { pid, ended }
+ *   - 出力のパイプを握ったまま残るプロセスは、終わった 2 秒後に待たずに締める（leftover: true。終了コードは残す）
+ *   - 止めるのは木ごと（Windows は taskkill /t /f を非同期で）
+ * エージェント・人が頼んだコマンド（ply_shell・`!` の runHostShell）はこれを使わず、run() のまま。
+ */
+export function runBackground(command, args = [], options = {}) {
+  return run(command, args, {
+    killTree: true, exitCloseGraceMs: 2_000, killedCloseGraceMs: 500, killDeadlineMs: BACKGROUND_KILL_DEADLINE_MS,
+    ...options,
   });
 }
 
