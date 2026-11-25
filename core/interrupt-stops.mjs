@@ -117,7 +117,7 @@ export function interruptionNote(lng, stops, reason = null) {
 }
 
 /**
- * 依頼元の会話が止められている間に終わった、委譲した子の終了通知（ADR 0352）を、次のターンの始めに渡す文。
+ * 依頼元の会話が止められている間に終わった、委譲した子の終了通知（ADR 0355）を、次のターンの始めに渡す文。
  * 「止めたもの」と同じ印で囲む（履歴でも人の発言にならず、システムの 1 行になる）。notice は completionNotice の本文
  */
 export function heldNoticeNote(lng, notice) {

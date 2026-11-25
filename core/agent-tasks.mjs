@@ -29,7 +29,7 @@ const LOG_MAX = 64 * 1024;
 const NOTICED_MAX = 50;
 // 1 タスクに持つ実行前の拒否（rejections）の上限。超えた分は捨て、rejectionsDropped に数だけ残す
 const MAX_REJECTIONS = 50;
-// 1 タスクに持つ、まだ依頼元へ届けていない出来事（events。回の終わり・人の直接の指示。ADR 0352）の上限。
+// 1 タスクに持つ、まだ依頼元へ届けていない出来事（events。回の終わり・人の直接の指示。ADR 0355）の上限。
 // 超えたら古いものから捨て、eventsDropped に数だけ残す（届けるときの今に近い出来事を残す）
 const MAX_EVENTS = MAX_REJECTIONS;
 // 出来事に残す人の指示の本文・子の返答の長さ（core/redact.mjs で秘密の形を伏せてから切る）
@@ -142,7 +142,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 無ければ null。長い・上限による待ちは status: waiting にし（ply_task_wait を待たずに返す）、待ちの回ごとに 1 回 deliverRetry で依頼元へ知らせる
   retrying = () => null, deliverRetry = async () => 'ok',
   deliverLimitSwitch = async () => 'ok',
-  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0352）。
+  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0355）。
   // 止められている間は、その会話への終了通知でターンを始めない（次のターンの始めに takeHeld で渡す）
   ownerStopped = () => false,
   canStart = () => true, resumeQueued = false,
@@ -180,7 +180,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const retryOf = r => !r.host && r.status === 'running' && r.sessionId ? retrying(r.sessionId) ?? null : null;
   const longRetry = rt => Boolean(rt) && (rt.limit || !Number.isFinite(rt.next) || rt.next - (rt.seenAt ?? rt.since ?? now()) >= RETRY_WAIT_MS);
   const retryWaitOf = r => { const rt = retryOf(r); return longRetry(rt) ? rt : null; };
-  // 依頼元が止められている間の終了通知（ADR 0352）は送らず、依頼元の次のターンの始めに渡す（takeHeld）。
+  // 依頼元が止められている間の終了通知（ADR 0355）は送らず、依頼元の次のターンの始めに渡す（takeHeld）。
   // 依頼元の会話ごと止めた・取り消した子孫の行（ownerStop。依頼元のターンが始まったら ownerResumed が外す）と、
   // 依頼元の会話が中断のままの行（ownerStopped）。ホストに任せた子は決まりの外（今までどおり）
   const heldNotice = r => !r.host && Boolean(r.parentSessionId) && (r.ownerStop === true || ownerStopped(r.parentSessionId) === true);
@@ -240,7 +240,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const instructionSends = new Map(), deferredInstructions = new Set(), settlingInstructions = new Set();
   const noticeRetryAt = new WeakMap(), noticeFailureShown = new Set();
   const live = new Map(), notices = new Set(), noticeOwners = new Set(), waited = new Map(), silenceNotices = new Set(), silenceWaiting = new Map(), listeners = new Set();
-  // 外から起きた子のターン（人の送信・Chrome を戻した続き・再開・別の会話からの送信。ADR 0352）。
+  // 外から起きた子のターン（人の送信・Chrome を戻した続き・再開・別の会話からの送信。ADR 0355）。
   // joiners: 走っている回（結果の確定の前）に合流して走るターンの数（taskId -> 数）。回の結果の確定は、これが 0 になるまで待つ
   // closing: 走っている回が結果の確定に入った（server の finishChild が closeRun を呼んだ）taskId。この後に来たターンは、回が終わるのを待って次の回で受ける
   // waking: 止まった子を起こそうとしている数（taskId -> 数）。起きるか分かるまで、前の回の完了通知を送らない（止まるたびに 1 回の通知にする）
@@ -248,13 +248,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const joiners = new Map(), closing = new Set(), waking = new Map(), runEnds = new Map();
   const bump = (map, id, by) => { const n = (map.get(id) ?? 0) + by; if (n > 0) map.set(id, n); else map.delete(id); };
   const runEnded = id => new Promise(resolve => { const list = runEnds.get(id) ?? []; list.push(resolve); runEnds.set(id, list); });
-  // 止まった子が起きた（依頼元の追加の指示・外から起きたターン）。次の回の終わりの出来事に載せる「再び動いたきっかけ」を行に残す（ADR 0352）。
+  // 止まった子が起きた（依頼元の追加の指示・外から起きたターン）。次の回の終わりの出来事に載せる「再び動いたきっかけ」を行に残す（ADR 0355）。
   // 回の終わりの出来事を作ったら（runEvent）消す。前の完了通知が渡っていれば（NOTICED）数え直す
   const wakeRow = (row, kind) => {
     if (!row.wake || NOTICED.has(row.notification)) row.wake = { kinds: [] };
     if (kind && !row.wake.kinds.includes(kind)) row.wake.kinds.push(kind);
   };
-  // まだ依頼元へ届けていない出来事（ADR 0352）。起きた順に行の events へ足す。上限を超えたら古いものから捨てて数だけ残す
+  // まだ依頼元へ届けていない出来事（ADR 0355）。起きた順に行の events へ足す。上限を超えたら古いものから捨てて数だけ残す
   // （送っている最中の出来事を捨てたときは、その通知に載っているので数えない）
   const pushEvent = (row, event) => {
     const list = row.events ??= [];
@@ -600,7 +600,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   }
   const autoTarget = row => row.routing?.mode === 'auto' && !row.routing.targetPinned && row.routing.changed?.by !== 'parent';
   // adopted: 付け直した子のターン（adopt）の、結果を確定する側（task, signal）=> execute と同じ形の結果。1 回目の実行だけ、実行の開始を書かずにこれを待つ。
-  // external: 外から起きた子のターン（external()。ADR 0352）。1 回目の実行だけ、依頼元の指示の代わりにこのターンを走らせる。
+  // external: 外から起きた子のターン（external()。ADR 0355）。1 回目の実行だけ、依頼元の指示の代わりにこのターンを走らせる。
   // 実行の開始（running）は、そのターンが本当に始まった時に external.began が書く。始まらなかったら行は変えずに終わる
   function run(r, controller, adopted = null, adoptedPrompt, external = null) {
     return runTask(r, controller, adopted, adoptedPrompt, external).finally(() => {
@@ -757,7 +757,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (row.status === 'failed' && result?.outcome === 'limited') row.limit = { resetsAt: result.limit?.resetsAt ?? null, window: result.limit?.window ?? null, ...slotOf(result.limit) };
           else delete row.limit;
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
-          // 回の終わりの出来事（ADR 0352）。止めた側が分からない取り消し（決まりの外の入口）は通知を止めるので残さない
+          // 回の終わりの出来事（ADR 0355）。止めた側が分からない取り消し（決まりの外の入口）は通知を止めるので残さない
           if (row.status !== 'queued' && (row.status !== 'cancelled' || row.stoppedBy)) { runEvent(row, row.status); eventWritten = true; }
           endTurnCommands(row); settleCommands(row);
         }, 'run.result');
@@ -782,7 +782,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; resetNotice(row); }, 'run.queued');
         // 依頼元が結果を先に受け取っていたら（read）通知を送らない。通知は次の指示で走る回のためにまた始まる。
-        // 止められて終わった回も終了通知を 1 つ作る（人が止めた・依頼元が取り消した。stoppedBy。ADR 0352）。
+        // 止められて終わった回も終了通知を 1 つ作る（人が止めた・依頼元が取り消した。stoppedBy。ADR 0355）。
         // 止めた側が分からない取り消し（終了・巻き戻し・ホストの子など、決まりの外の入口）は今までどおり通知を止める。
         // 送っている最中（前の回の出来事）は、送り終えた時に delivered が決める
         else if (!ACTIVE.has(r.status)) await record(r.taskId, row => { if (row.notification === 'delivering') return; row.notification = row.status === 'cancelled' && !row.stoppedBy ? 'suppressed' : row.notification === 'read' ? 'read' : 'pending'; }, 'run.notice');
@@ -1175,7 +1175,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     /**
      * 走っているターンへ渡した完了通知が、読まれないままターンが終わった。まだ同じ回のものなら、空いたときの経路で送り直す
      * （人間の発言と違い、通知は送り直してよい。ADR 0057）。items: [{ taskId, revision, noticeId }]。
-     * 出来事（events。ADR 0352）を載せた通知は、配送 ID で最後に渡した通知（lastNotice）と照らし、その出来事を先頭へ戻して送り直す
+     * 出来事（events。ADR 0355）を載せた通知は、配送 ID で最後に渡した通知（lastNotice）と照らし、その出来事を先頭へ戻して送り直す
      */
     async renotify(items) {
       const back = r => r.lastNotice?.noticeId != null && !['read', 'suppressed'].includes(r.notification) && (r.lastNotice.events ?? []).some(e => e.kind === 'run')
@@ -1346,13 +1346,13 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     },
     instructions(taskId) { const r = records[taskId]; return r ? { taskId, revision: r.instructionRevision ?? 0, instructions: structuredClone(r.instructions) } : null; },
     /**
-     * 委譲の子の会話で、依頼元の指示（execute）でないターンを始める（人の送信・Chrome を戻した続き・再開・別の会話からの送信。送信待ちの start が通す。ADR 0352）。
+     * 委譲の子の会話で、依頼元の指示（execute）でないターンを始める（人の送信・Chrome を戻した続き・再開・別の会話からの送信。送信待ちの start が通す。ADR 0355）。
      * turn(hooks) がそのターンを走らせ、ターンの結果（runTurn の戻り）を返す。hooks が null なら、タスクと結ばずに素のまま走らせる。
      * hooks.began は、送信待ちがそのターンを受け付けた（onStarted が true）直後に呼ぶ。そこでタスクを running にする（ターンが始まる前に通す）。
      * - 止まった子（走っている回が無い）: 新しい回として走らせ、止まったら結果を書いて依頼元へ 1 回知らせる
      * - 走っている回の結果の確定の前（子が孫・裏の作業を待っている）: その回に合流する。回の結果の確定はこのターンの終わりを待つ
      * - 走っている回が結果の確定に入った後: 回が終わるのを待ってから、新しい回として走らせる
-     * kind: 'human' | 'handoff' | 'resume' | 'relay' | null（回の終わりの出来事に載せるきっかけ。ADR 0352）。ホストに任せた子・委譲の子でない会話は素のまま
+     * kind: 'human' | 'handoff' | 'resume' | 'relay' | null（回の終わりの出来事に載せるきっかけ。ADR 0355）。ホストに任せた子・委譲の子でない会話は素のまま
      */
     async external(sessionId, kind, turn) {
       const r = bySession.get(sessionId);
@@ -1431,7 +1431,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     /** 委譲の子（ホストに任せたものを除く）の会話か。人が直接送る入力欄の名札・数え方の分かれ目（ADR 0317） */
     isChild(sessionId) { const r = bySession.get(sessionId); return Boolean(r && !r.host); },
     /**
-     * 人が子の会話へ直接送った指示が子に渡った（モーダルの入力欄・メインでその子を開いた入力欄。ADR 0317・0352）。
+     * 人が子の会話へ直接送った指示が子に渡った（モーダルの入力欄・メインでその子を開いた入力欄。ADR 0317・0355）。
      * 中身（秘密の形を伏せて 300 字まで）と添付の数を、届けていない出来事に足す。これだけでは依頼元を起こさず、次の知らせに載せる。
      * humanInstructions は累計（画面・試験が渡った数を見る）。委譲の子（ホストに任せたものを除く）でなければ何もせず null。足したらタスクの id を返す
      */
@@ -1601,9 +1601,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             ...(args.nextTurn === true ? { nextTurn: true } : {}),
             ...(anchor ? { anchor } : {}) };
           row.instructions.push(instruction); row.instructionRevision = (row.instructionRevision ?? 0) + 1;
-          // 止まった子を起こす指示なら、完了通知に「依頼元の追加の指示」と添える（ADR 0352）。notification を書き換える前に見る
+          // 止まった子を起こす指示なら、完了通知に「依頼元の追加の指示」と添える（ADR 0355）。notification を書き換える前に見る
           if (!ACTIVE.has(row.status)) wakeRow(row, 'parent');
-          // 届けていない前の回の終わり（人が止めたなど）は消さずに先に届ける（resetNotice。ADR 0352）
+          // 届けていない前の回の終わり（人が止めたなど）は消さずに先に届ける（resetNotice。ADR 0355）
           row.queue.push({ instructionId: instruction.id }); resetNotice(row); row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';
         }, 'send', locale);
@@ -1624,7 +1624,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         // ホストに任せた子は決まりの外（今までどおり。終わったタスクの結果はこの戻り値で渡り、同じ結果の完了通知を後から送らない）。
         // 止めたか確かめられていない子も今までどおり
         if (r.host || r.status === 'stopUnconfirmed') { await this.cancel(r.taskId); const out = view(r); await markRead(r); return out; }
-        // 止める合図を送るだけ。止まったことは、ほかの終わり方と同じ終了通知で届く（ADR 0352）。
+        // 止める合図を送るだけ。止まったことは、ほかの終わり方と同じ終了通知で届く（ADR 0355）。
         // 合図が届く前に終わっていれば、その終わり方（完了・失敗）の通知になる
         const stopping = ACTIVE.has(r.status) || live.has(r.taskId) || r.queue.length > 0;
         if (stopping) {
@@ -1645,7 +1645,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // 取り消したとき止まったもの（走っていた・待っていた）なら、止めた時点の状態を返す（無ければ null）。返すのは通知を止めた取り消し
     // （by の無い取り消し・ホストに任せた子）だけ。by のある取り消しは終了通知で依頼元へ伝わるので返さない（server が「止めたもの」に重ねて残さない）。
     // 終わったタスク（止めるものが無い）の届いていない完了通知は止めない。以前は止めていて、依頼元に結果が届かなかった。
-    // by: 止めた側（'human' 人が止めた・'parent' 依頼元が取り消した）。止まったら終了通知を 1 つ作り、終わり方として載せる（ADR 0352）。
+    // by: 止めた側（'human' 人が止めた・'parent' 依頼元が取り消した）。止まったら終了通知を 1 つ作り、終わり方として載せる（ADR 0355）。
     // 子孫（descendant）は依頼元（このタスクの親の会話）ごと止まる。その終了通知は依頼元の次のターンの始めに渡す（ownerStop・takeHeld）。
     // by の無い取り消し（ホストの便りの口など、決まりの外の入口）とホストに任せた子は、今までどおり通知も止める
     async cancel(taskId, { descendant = false, by = null } = {}) {
@@ -1668,7 +1668,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }
         if (ACTIVE.has(row.status)) row.status = live.has(taskId) ? 'cancelling' : 'cancelled';
         // 走る回の無いまま止めた（積まれただけの子）: 回の終わりが無いので、ここで終わりの出来事と終了通知を作る。
-        // 前の回の上限（limit）は外す。残すと通知が上限の一言だけになり、止めたことが伝わらない（積んだ送信も捨てたので、上限の明けを待つものは無い）
+        // 前の回の上限（limit）は外す。残すと通知が上限の一言だけになり、止めたことが伝わらない（積んだ送信も捨てる。ADR 0355 §7）
         if (notice && stopping && row.status === 'cancelled' && !live.has(taskId)) { runEvent(row, 'cancelled', ''); resetNotice(row); delete row.limit; }
       }, 'cancel');
       live.get(taskId)?.abort();
@@ -1687,7 +1687,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // 返すのは [{ taskId, parentSessionId, title, status, unread }]。server が依頼元の会話ごとに「止めたもの」に残し、
     // 次のターンでエージェントへ伝える（docs/design.md「中断と再開」）
     // since（ミリ秒）を渡すと、その時刻以後に作ったタスクだけを対象にする（巻き戻しで消える範囲で生まれた子。core/server.mjs の rewindConversation）
-    // by（'human'）を渡すと、止まった子の終了通知を止めない（ADR 0352）。終わったら終了通知を 1 つ作り、依頼元の会話の次のターンの始めに渡す
+    // by（'human'）を渡すと、止まった子の終了通知を止めない（ADR 0355）。終わったら終了通知を 1 つ作り、依頼元の会話の次のターンの始めに渡す
     // （ownerStop・takeHeld）。そのとき返すのは、決まりの外のホストに任せた子だけ（server が今までどおり「止めたもの」に残す）
     async cancelOwner(owner, { since, by = null } = {}) {
       const targets = [], seen = new Set();
@@ -1730,7 +1730,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       return stopped;
     },
     /**
-     * 依頼元の会話でターンが始まる（server の beginTurn。圧縮のターンを除く）。ADR 0352。
+     * 依頼元の会話でターンが始まる（server の beginTurn。圧縮のターンを除く）。ADR 0355。
      * 依頼元ごと止めた・取り消した子孫の印（ownerStop）を外し、止められている間に貯めた終了通知（pending）を渡す。
      * stopped: その会話がこのターンの直前まで止められていた（中断の印があった）。そのときはその会話宛ての pending をすべて渡す。
      * 渡すものがあれば delivering にして { tasks, settle } を返す。settle('ok') はプロンプトが渡った時（sent）、

@@ -50,7 +50,7 @@ export default async function (t) {
     t.ok('running のターン行に stopping が立つ', c.since(before).some(e => e.type === 'running'
       && e.turns?.some(x => x.sessionId === sessionId && x.stopping === true)));
     const rows = await c.cmd('agentTasks', { sessionId });
-    // 人が会話を止めても子の終了通知は止めない（ADR 0352）。終わって通知も届いた（止めるものも渡すものも無い）子は触らない
+    // 人が会話を止めても子の終了通知は止めない（ADR 0355）。終わって通知も届いた（止めるものも渡すものも無い）子は触らない
     t.ok('終わって通知の済んだ Pleiad タスクの通知はそのまま', rows.length === 40
       && rows.filter(r => r.notification === 'sent').length === 20 && rows.filter(r => r.notification === 'suppressed').length === 20,
       JSON.stringify(rows.map(r => r.notification)));

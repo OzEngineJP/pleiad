@@ -88,7 +88,7 @@ export default async function(t) {
     await manager.call('parent', 'ply_task_send', { taskId: slow.taskId, message: 'stop pending' });
     const sentBefore = notifications.length;
     const cancelOut = await manager.call('parent', 'ply_task_cancel', { taskId: slow.taskId });
-    t.ok('ply_task_cancel は止める合図を送ってすぐ戻り、結果は渡さない（ADR 0352）',
+    t.ok('ply_task_cancel は止める合図を送ってすぐ戻り、結果は渡さない（ADR 0355）',
       ['cancelling', 'cancelled'].includes(cancelOut.status) && typeof cancelOut.message === 'string' && !('result' in cancelOut), JSON.stringify(cancelOut));
     await until(() => manager.get(slow.taskId).status === 'cancelled');
     await until(() => manager.get(slow.taskId).notification === 'sent');

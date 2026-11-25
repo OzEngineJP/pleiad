@@ -95,7 +95,7 @@ export default async function(t) {
     t.ok('子のキャンセルで結果が届かなくても依頼元に一度だけ知らせる',
       c.since(slowMark).filter(e => e.type === 'completionReady' && e.sessionId === sid).length === 1);
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
-    // 人が止めた子の回も終了通知を 1 つ作り、止められていない依頼元へすぐ届けて起こす（ADR 0352）
+    // 人が止めた子の回も終了通知を 1 つ作り、止められていない依頼元へすぐ届けて起こす（ADR 0355）
     await awaitTasks(rows => rows.find(r => r.taskId === slow.taskId)?.notification === 'sent');
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: stopMark, ms: 20000 });
     const stoppedNotice = (await c.cmd('loadSession', { sessionId: sid })).messages.filter(m => m.internalTaskNotice).at(-1)?.text ?? '';

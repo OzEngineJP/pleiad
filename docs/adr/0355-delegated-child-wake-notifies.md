@@ -1,4 +1,4 @@
-# 0352 止まった委譲の子がまた動いたら、誰が起こしたかに関係なくタスクを動かし、止まったら知らせる
+# 0355 止まった委譲の子がまた動いたら、誰が起こしたかに関係なくタスクを動かし、止まったら知らせる
 
 - 状態: 承認（2026-11-25）。実装済み。§7（終了通知と出来事）は 2026-11-25 の追補で、§3 のきっかけの 1 行と 0317 §7 の「人からの指示 N 件」を置き換える。[0317](0317-modal-child-composer-stop-name-tags.md) §4 の後半（「止めた（または終わった）子へ人が直接送ると、会話のターンだけが走り直し、タスクの行の状態は変わらない」）と「影響」の 1 つ目を置き換える
 - 関係: Issue #235。[0317](0317-modal-child-composer-stop-name-tags.md)（子の会話のモーダルの入力欄・名札・「人からの指示 N 件」）・[0148](0148-agent-browser-in-chrome.md)（Chrome を戻したら「続けてください」を送る）・[0168](0168-permission-wait-outlives-turn.md)（人への待ちはターンの後も残る）
@@ -39,7 +39,7 @@
 
 7. **終了通知と出来事**（2026-11-25 追補。プロダクトオーナーの決定）。子の回が終わるたびに、終わり方・止めた人・返答を記録する。人が子へ直接送った指示は、中身と送り手を記録する。届けるときは、まだ届けていない出来事を起きた順に全部載せ、届ける時点の子の状態を添えて 1 通にする。
    - **出来事の一覧**（タスクの行の `events`。DB に保存し、再起動の後も届ける）。形は 2 つ。
-     - 回の終わり: `{ id, at, kind: 'run', status, stoppedBy, cause, result, error? }`。`status` は `completed` / `failed` / `cancelled`。`stoppedBy` は取り消しのときだけ `human`（人が止めた。子の会話の中断・人の取り消し）・`parent`（依頼元の `ply_task_cancel`）・`owner`（依頼元の会話の中断・依頼元ごと止めた子孫）、ほかは `null`。`cause` は §3 のきっかけの種類の並び。`result` / `error` はその回の返答とエラー（失敗の文・完了した回の注意書き。伏せて切ったもの）。走る回の無いまま止めた（積まれただけの）子は、止めたときに回の終わりを 1 つ作る。このとき前の回の上限（`limit`）は外す（残すと通知が上限の一言だけになり、止めたことが伝わらない。積んだ送信も捨てるので、上限の明けを待つものは無い）。
+     - 回の終わり: `{ id, at, kind: 'run', status, stoppedBy, cause, result, error? }`。`status` は `completed` / `failed` / `cancelled`。`stoppedBy` は取り消しのときだけ `human`（人が止めた。子の会話の中断・人の取り消し）・`parent`（依頼元の `ply_task_cancel`）・`owner`（依頼元の会話の中断・依頼元ごと止めた子孫）、ほかは `null`。`cause` は §3 のきっかけの種類の並び。`result` / `error` はその回の返答とエラー（失敗の文・完了した回の注意書き。伏せて切ったもの）。走る回の無いまま止めた（積まれただけで、まだ走り出していない）子は、止めたときに回の終わりを 1 つ作る。このとき前の回の上限（`limit`）は外す（残すと通知が上限の一言だけになり、止めたことが伝わらない。積んだ送信も捨てる）。上限で止まった子へ積んだ指示は解除時刻を待たずに走る（[ADR 0352](0352-no-preemptive-limit-stop.md)）ので、この形になるのは、更新の準備中（`canStart`）などで次の回をまだ始めていない間に止めたときだけ。
      - 人の指示: `{ id, at, kind: 'human', text, attachments }`。人の発言が子に渡った時（`humanSent`。台帳に初めて載った時）に作る。`text` は `redactForPeer` で伏せ、300 字で切って「…」を付ける。添付は数（`attachments`）だけ。「戻す」の続き（`byHandoff`）と「再開」は人の指示ではない（作らない）。
      - 50 件まで（`MAX_EVENTS`）。超えたら古いものから捨て、捨てた数を `eventsDropped` に残す（知らせの先頭に「これより前の出来事 N 件は省きました」）。
    - **届け方**: 依頼元が受け取れるとき、まだ届けていない出来事を起きた順に全部載せて 1 通にする（`agent:delegation.noticeEvents`。各行は `eventRun` / `eventHuman`、2 つ目から「その後、」）。最後に届ける時点の子の状態（`eventStateRunning`「子は動いています。終わったら改めて知らせます。」/ `eventStateStopped`）を添える。止められた回があれば止められた後の扱いの一言（`eventStopHint`）、人の指示があればその一言（`eventHumanHint`）を足す。
@@ -81,4 +81,4 @@
 - 依頼元の会話に、人の送信のたびに（止まるたびに）完了通知が 1 通来る。走っている間に何件送っても、止まったときの 1 通。
 - `ws` の `runTurn` コマンド（送信待ちを通らない。試験と `mobile/scripts/fake-host` だけが使う）は引き取らない。
 - 付け直し（無停止の更新）で外から起きた回を引き継ぐ道は、`ply_task_send` の回と同じ（引き継ぎの間に戻った指示はタスクの待ち行列へ戻る）。
-- 試験: `tests/unit/server-task-wake.mjs`（人の送信・続けて 2 件で 1 回・止めて再開）・`tests/unit/server-chrome-handoff-wake.mjs`（Issue #235 の再現・名札・数えない・二度押し）・`tests/unit/server-worktree.mjs`（片付いた作業場所の作り直し）・`tests/unit/agent-tasks-end-notice.mjs`（§7。人が止めて直後に送る・依頼元が受け取れない間の 3 件・伏せと 300 字・再起動の後に届く・人の送信だけでは起こさない・途中で届いた後の取り直し・結果を書かずに止まった回・上限で積まれた子を人が止めた・完了した回の注意書き）・`tests/unit/task-notice-events.mjs`（§7 の「結果」「エラー」の段落と返答の置き場）・`tests/unit/server-interrupt-stops.mjs`（依頼元の会話の中断の後の次のターンで渡す）・`tests/unit/server-human-sent.mjs`・`tests/unit/stream-messages.mjs`・`tests/unit/conversation-view-child.mjs`・`tests/browser/work-dialog-stop.mjs`（人が止めた子の ID と「人が止めました」が、依頼元を起こす知らせに載る）。
+- 試験: `tests/unit/server-task-wake.mjs`（人の送信・続けて 2 件で 1 回・止めて再開）・`tests/unit/server-chrome-handoff-wake.mjs`（Issue #235 の再現・名札・数えない・二度押し）・`tests/unit/server-worktree.mjs`（片付いた作業場所の作り直し）・`tests/unit/agent-tasks-end-notice.mjs`（§7。人が止めて直後に送る・依頼元が受け取れない間の 3 件・伏せと 300 字・再起動の後に届く・人の送信だけでは起こさない・途中で届いた後の取り直し・結果を書かずに止まった回・上限で終わった後に積まれ、まだ走り出していない子を人が止めた・完了した回の注意書き）・`tests/unit/task-notice-events.mjs`（§7 の「結果」「エラー」の段落と返答の置き場）・`tests/unit/server-interrupt-stops.mjs`（依頼元の会話の中断の後の次のターンで渡す）・`tests/unit/server-human-sent.mjs`・`tests/unit/stream-messages.mjs`・`tests/unit/conversation-view-child.mjs`・`tests/browser/work-dialog-stop.mjs`（人が止めた子の ID と「人が止めました」が、依頼元を起こす知らせに載る）。

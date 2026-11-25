@@ -51,7 +51,7 @@ export default async function (t) {
   const history = async sessionId => (await c.cmd('loadSession', { sessionId })).messages;
   try {
     // ================= 委譲タスク: 取り消したもの・終わっていたのに届いていなかったもの（resume の text で伝える）
-    // 人が会話を止めても子の終了通知は止めない。止められている間は依頼元を起こさず、次のターンの始めに渡す（ADR 0352）
+    // 人が会話を止めても子の終了通知は止めない。止められている間は依頼元を起こさず、次のターンの始めに渡す（ADR 0355）
     const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'ask', title: 'Early' }) })).sessionId;
     await c.runTurn({ sessionId: parent, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow', title: 'Long' }) });
     const tasks = await until(async () => { const rows = await tasksOf(parent); return rows.length === 2 && rows.every(r => r.sessionId) ? rows : null; });

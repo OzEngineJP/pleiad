@@ -1,4 +1,4 @@
-// 子の会話の名札と、親の AI への完了通知に載る人の指示（ADR 0317・0352）。実ブラウザー。
+// 子の会話の名札と、親の AI への完了通知に載る人の指示（ADR 0317・0355）。実ブラウザー。
 //   1. 最初の依頼は「依頼」、モーダルの入力欄から人が送った発言は「あなた」、親の AI が後から送った発言（ply_task_send）は「追加の指示」
 //   2. 閉じて開き直しても（履歴を読み直しても）同じ名札
 //   3. 子の完了通知（親の AI に渡る）に人の指示の中身が 1 回だけ載り、人の送信ごとの通知は無い
@@ -123,7 +123,7 @@ try {
   shot('tags-reopened-1280');
   console.log('PASS: reopened — the same three tags');
 
-  // 親の AI への完了通知に人の指示の中身が 1 回だけ（ADR 0352 の「これまでの出来事」）
+  // 親の AI への完了通知に人の指示の中身が 1 回だけ（ADR 0355 の「これまでの出来事」）
   await wait(() => client.since(0).some(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes(child.taskId)), 'completion notice', 60_000);
   const notices = client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes(child.taskId));
   console.log('notice', JSON.stringify(notices.map(n => n.text.split('\n').filter(l => /人が子に指示しました|状態/.test(l)))));

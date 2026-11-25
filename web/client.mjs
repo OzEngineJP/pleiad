@@ -6147,7 +6147,7 @@ function backgroundItems(scope = null) {
   const nativeKeys = new Set(items.map(i => i.key));
   const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
   for (const { task, depth, rootLive, childCount } of trees) {
-    // 終わった子へ人が直接送った・Chrome を戻した続きのターンも、タスクそのものが running になる（ADR 0352）。状態はタスクの記録どおりに出す
+    // 終わった子へ人が直接送った・Chrome を戻した続きのターンも、タスクそのものが running になる（ADR 0355）。状態はタスクの記録どおりに出す
     const taskStatus = task.status;
     const live = TASK_LIVE.has(taskStatus);
     const waiting = live && taskWaiting(task);
@@ -7295,7 +7295,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const followUp = (text, at) => parentMsg(text, at, t('dialog.work.instruction'));
   // 人が子の会話へ直接送った発言は「あなた」（ADR 0317）。親の AI の追加の指示と見分ける。印は送った時に記録する（履歴は sentByHuman）
   const youNode = (text, at) => parentMsg(text, at, t('chat.message.you'));
-  // 人が Chrome を戻した後の「続けてください」（ADR 0352）。人の発言とも依頼元の指示とも分ける
+  // 人が Chrome を戻した後の「続けてください」（ADR 0355）。人の発言とも依頼元の指示とも分ける
   const handoffNode = (text, at) => parentMsg(text, at, t('dialog.work.handoffContinue'));
   const resumeNode = (text, at) => parentMsg(text, at, t('dialog.work.resumeContinue'));
   const pendingNode = (instruction) => {

@@ -784,7 +784,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
 
   /**
    * 子の会話の履歴の発言者の語。最初の発言は依頼、人が子へ直接送った発言（sentByHuman。ADR 0317）は「あなた」、
-   * 人が Chrome を戻した後の「続けてください」（sentByHandoff。ADR 0352）は「Chrome を戻した続き」、再開の文（sentByResume）は「再開」、それ以外は追加の指示。
+   * 人が Chrome を戻した後の「続けてください」（sentByHandoff。ADR 0355）は「Chrome を戻した続き」、再開の文（sentByResume）は「再開」、それ以外は追加の指示。
    * 古い分を省いた筋（base > 0）の最初の発言は会話の途中なので、依頼ではなく追加の指示。主は null（人の発言の既定のまま）
    */
   function userWord(m, { index = 1, base = 0 } = {}) {

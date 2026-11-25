@@ -1,4 +1,4 @@
-// Issue #235 の再現（ADR 0352）: 委譲の子が hand_to_user を呼んで待ちの切れ目（FAKE_COMPUTER_SLICE_MS）でターンを終え、タスクが終わって依頼元へ知らせた後で、
+// Issue #235 の再現（ADR 0355）: 委譲の子が hand_to_user を呼んで待ちの切れ目（FAKE_COMPUTER_SLICE_MS）でターンを終え、タスクが終わって依頼元へ知らせた後で、
 // 人が Chrome を「戻す」。子は「続けてください」で新しいターンを走らせる。そのターンも
 //   - タスクを running → completed と動かし、最新の返答を結果にして、依頼元へ 1 回知らせる（きっかけ「Chrome を戻した続き」）
 //   - 子の会話の発言は「Chrome を戻した続き」の印（sentByHandoff）。人の指示には数えない（sentByHuman を付けない）

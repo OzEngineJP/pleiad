@@ -195,7 +195,7 @@ export default async function (t) {
     const afterStatus = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const afterReply = (await c.cmd('loadSession', { sessionId: afterStatus.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('片付いた後の ply_task_status は「片付け済み」', /作業場所: worktree pleiad\/ply-[0-9a-f]+（片付け済み）/.test(afterReply), afterReply.slice(0, 400));
-    // 片付いた子へ人が直接送る（ADR 0352）: タスクが動き直し、作業場所を作り直してからターンを走らせ、止まったら依頼元へ知らせる
+    // 片付いた子へ人が直接送る（ADR 0355）: タスクが動き直し、作業場所を作り直してからターンを走らせ、止まったら依頼元へ知らせる
     await quiet();
     const wakeFrom = c.mark();
     await c.cmd('sendMessage', { sessionId: forcedTask.sessionId, messageId: 'wake-cleaned-0001', prompt: 'echo:wake after cleanup' });

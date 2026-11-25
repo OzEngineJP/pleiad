@@ -5290,7 +5290,7 @@ async function recordRelayed(sessionId, prompt, sentBy) {
 // 委譲の子の会話へ「実際に渡った」発言の台帳（sidecar deliveries。ADR 0317）。人が直接送った発言（by: human）と、依頼元の AI の追加の指示
 // （by: ai。ply_task_send）を、渡った順に { id, by, hash, at, nativeId? } で残す。履歴（core/history.mjs の prepareMessages）が
 // 同じ本文の発言を台帳と突き合わせて「あなた」の名札を付ける（本文のハッシュだけで決めると、同じ文面の AI の指示まで「あなた」になる）。
-// 人からの指示（完了通知の「これまでの出来事」に中身と添付の数を載せる。ADR 0352）も、ここで初めて載った id だけを 1 回ずつ記録する
+// 人からの指示（完了通知の「これまでの出来事」に中身と添付の数を載せる。ADR 0355）も、ここで初めて載った id だけを 1 回ずつ記録する
 // （受け付けた時ではなく渡った時。取り消した送信待ちは数えない。同じ messageId の送り直しは台帳に既にあるので数えない）。
 // 古いものから捨てる（DELIVERY_KEEP 件）。書けなかったときは送信そのものは止めず、ログに残す
 const DELIVERY_KEEP = 500;
@@ -5309,7 +5309,7 @@ function recordDelivery(sessionId, { id, by, text, attachments = 0, nativeId = n
       }
       ledger.push({ id, by, hash: sha256(text), at: Date.now(), ...(nativeId ? { nativeId } : {}) });
       await store.setSessionData(sessionId, 'deliveries', ledger.slice(-DELIVERY_KEEP));
-      // 人の指示は中身と添付の数も、依頼元へ届ける出来事に残す（ADR 0352。agent-tasks が伏せて 300 字に切る）
+      // 人の指示は中身と添付の数も、依頼元へ届ける出来事に残す（ADR 0355。agent-tasks が伏せて 300 字に切る）
       if (by === 'human') await agentTasks.humanSent(sessionId, { text, attachments });
       return true;
     } catch (e) {
@@ -5324,7 +5324,7 @@ function recordDelivery(sessionId, { id, by, text, attachments = 0, nativeId = n
 }
 /**
  * 送信待ちの項目が人の送信なら台帳に載せる（渡った時に呼ぶ。項目は sidecar の outbox から引く＝付け直しの後でも分かる）。
- * Chrome を戻した続き（byHandoff。ADR 0352）も 'handoff' で、再開の文（byResume）も 'resume' で載せる。
+ * Chrome を戻した続き（byHandoff。ADR 0355）も 'handoff' で、再開の文（byResume）も 'resume' で載せる。
  * 名札を「Chrome を戻した続き」「再開」にするためで、人の指示には数えない
  */
 async function recordHumanDelivery(sessionId, messageId, nativeId = null, item = null) {
@@ -5334,10 +5334,10 @@ async function recordHumanDelivery(sessionId, messageId, nativeId = null, item =
   if (!by) return false;
   return recordDelivery(sessionId, { id: messageId, by, text: found.args.prompt, attachments: found.args.attachments?.length ?? 0, nativeId });
 }
-/** 子の会話へ渡った発言の名札の印（画面の出来事 userMessage に付ける）。人の送信は「あなた」、Chrome を戻した続き・再開は別の名札（ADR 0352） */
+/** 子の会話へ渡った発言の名札の印（画面の出来事 userMessage に付ける）。人の送信は「あなた」、Chrome を戻した続き・再開は別の名札（ADR 0355） */
 const senderMark = args => args?.byHuman ? { sentByHuman: true } : args?.byHandoff ? { sentByHandoff: true } : args?.byResume ? { sentByResume: true } : {};
 /**
- * 委譲の子の会話で送信待ちから始まるターンの、回の終わりの出来事に載せるきっかけ（ADR 0352）。
+ * 委譲の子の会話で送信待ちから始まるターンの、回の終わりの出来事に載せるきっかけ（ADR 0355）。
  * 人の送信（human）は数で出すので、ここでは種類だけ返す。依頼元の追加の指示（ply_task_send）は送信待ちを通らない
  */
 const wakeKind = args => args?.byHandoff ? 'handoff' : args?.byResume ? 'resume' : args?.byHuman ? 'human' : args?.sentBy ? 'relay' : null;
@@ -7046,7 +7046,7 @@ function opsDeps(lng = currentLocale()) {
       cancel: async (taskId) => {
         const task = agentTasks.get(taskId);
         if (!task) throw new Error(t('delegation.taskNotFound'));
-        // 人が止めた。止まったら終了通知を 1 つ依頼元へ届ける（ADR 0352）
+        // 人が止めた。止まったら終了通知を 1 つ依頼元へ届ける（ADR 0355）
         await agentTasks.cancel(task.taskId, { by: 'human' });
         return agentTasks.get(task.taskId);
       },
@@ -7921,7 +7921,7 @@ const outbox = createMessageQueue({
       } : null };
   },
   // 委譲の子の会話で送信待ちから始まるターン（人の送信・Chrome を戻した続き・再開・別の会話からの送信・送信予定）は、
-  // agentTasks に引き取らせる（タスクを running にして、止まったら結果を書いて依頼元へ知らせる。ADR 0352）。
+  // agentTasks に引き取らせる（タスクを running にして、止まったら結果を書いて依頼元へ知らせる。ADR 0355）。
   // began は送信待ちがターンを受け付けた直後（onStarted が true）に呼ぶ。ターンが始まる前にタスクを動かす
   start: (args, onStarted) => agentTasks?.isChild(args.sessionId)
     ? agentTasks.external(args.sessionId, wakeKind(args), hooks => runTurn(args, async () => {
@@ -8059,7 +8059,7 @@ function completionNotice(lng, tasks) {
   const limit = tasks.length > 1 ? Math.max(2000, Math.floor(16000 / tasks.length)) : 16000;
   const parts = [...tasks].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0)).map(task => ({
     taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-    // 「結果」「エラー」の段落は、子が止まっていて最後の回がその結果を書いたときだけ（ADR 0352 §7）
+    // 「結果」「エラー」の段落は、子が止まっていて最後の回がその結果を書いたときだけ（ADR 0355 §7）
     ...noticeResultParts(lng, task, limit),
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
@@ -8069,7 +8069,7 @@ function completionNotice(lng, tasks) {
       attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
       { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })]).join(''),
     rejections: rejectionNotice(lng, task.rejections),
-    // まだ届けていない出来事（子の回の終わり・人が子へ直接送った指示）を起きた順に並べ、今の子の状態を添える（ADR 0352・0317）
+    // まだ届けていない出来事（子の回の終わり・人が子へ直接送った指示）を起きた順に並べ、今の子の状態を添える（ADR 0355・0317）
     events: eventsNotice(lng, task),
     // 子の worktree の 1 行（ブランチの差・ファイル数。ADR 0089）。worktree を切らない子には何も載せない（ADR 0354）
     workspace: workspaceNotice(lng, task),
@@ -8223,7 +8223,7 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
   // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
   // 外から起きたターン（人の送信・Chrome を戻した続きなど）が合流している間・送信待ちが次のターンを始めようとしている間も待つ。
-  // 待ち終えたら closeRun で回を締める（この後に来たターンは次の回として走り、もう 1 回知らせる。ADR 0352）
+  // 待ち終えたら closeRun で回を締める（この後に来たターンは次の回として走り、もう 1 回知らせる。ADR 0355）
   const free = () => !sessionBusy(task.sessionId) && !agentTasks.joining(task.taskId) && !outbox.busySessions().includes(task.sessionId);
   for (;;) {
     while (!signal.aborted && (!free() || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
@@ -8634,7 +8634,7 @@ agentTasks = await createAgentTasks({
   },
   execute: async (task, prompt, signal, meta = {}) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
-    // 外から起きたターン（meta.external。ADR 0352）は送信待ちが始めるターンなので、忙しいかは runTurn が見る（requeue で送信待ちへ戻る）
+    // 外から起きたターン（meta.external。ADR 0355）は送信待ちが始めるターンなので、忙しいかは runTurn が見る（requeue で送信待ちへ戻る）
     if (!meta.external && sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
     if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
@@ -8662,7 +8662,7 @@ agentTasks = await createAgentTasks({
       return await finishChild(task, signal, execution, outcome, renewed);
     } finally { release(); }
   },
-  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0352）。
+  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0355）。
   // 止められている間は、終了通知でその会話のターンを始めない（次のターンの始めに beginTurn が takeHeld で渡す）
   ownerStopped: owner => !isRemoteOwner(owner) && !runtime.turns.has(owner) && Boolean(interruptedOf(store.peek(owner)?.interrupted)),
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
@@ -9404,7 +9404,7 @@ async function beginTurn(ctx) {
     permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
     resolvedContext, shellHandoff } = ctx;
 
-  // 依頼元が止められている間に終わった子の終了通知（ADR 0352）は、ターンを始めずに貯めてある。このターンの始めに渡す。
+  // 依頼元が止められている間に終わった子の終了通知（ADR 0355）は、ターンを始めずに貯めてある。このターンの始めに渡す。
   // 止められていたか（中断の印）は、印を消す前に読む。圧縮のターンでは渡さない（次の普通のターンで渡す）
   if (sessionId && !hooks.compact && agentTasks) {
     const stopped = Boolean(interruptedOf(store.peek(sessionId)?.interrupted));
@@ -9724,7 +9724,7 @@ async function closeTurn(ctx) {
   if (args.settings && !ctx.initialDelivered) recordSendPhase('sendAgentStartup', sessionId, ctx.dispatchStartedAt, 'error');
   // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
-  // 渡らずに終わった、止められている間の終了通知（ADR 0352）は pending に戻す（普通の配送か、次のターンの始めに渡る）
+  // 渡らずに終わった、止められている間の終了通知（ADR 0355）は pending に戻す（普通の配送か、次のターンの始めに渡る）
   if (ctx.heldNotice && !ctx.heldNoticeTaken) {
     ctx.heldNoticeTaken = true;
     await store.recordTaskNoticeReceipt(sessionId, ctx.heldNotice.tasks, 'undelivered').catch(() => {});
@@ -10751,7 +10751,7 @@ async function abortSessions({ sessionId = null, reason } = {}) {
   if (targets.length) broadcastRunning();
   let cancelled = [];
   try {
-    // 1 つの会話を人が止めた: 子の終了通知は止めず、この会話の次のターンの始めに渡す（ADR 0352）。返るのはホストに任せた子だけ。
+    // 1 つの会話を人が止めた: 子の終了通知は止めず、この会話の次のターンの始めに渡す（ADR 0355）。返るのはホストに任せた子だけ。
     // すべて止める（終了）は今までどおり通知を止め、「止めたもの」に残す
     cancelled = await agentTasks.cancelOwner(sessionId || undefined, sessionId ? { by: 'human' } : {});
   } finally {
@@ -10760,7 +10760,7 @@ async function abortSessions({ sessionId = null, reason } = {}) {
   }
   const ownTask = sessionId ? agentTasks.list().find(r => r.sessionId === sessionId) : null;
   // 子の会話を直接止めたときは、その委譲タスクも取り消す（終わっていれば止めるものは無く、届いていない結果は依頼元へ届く）。
-  // 人が止めた子の回は終了通知を 1 つ作り、依頼元が止められていなければすぐ届けて起こす（ADR 0352。返るのはホストに任せた子だけ）
+  // 人が止めた子の回は終了通知を 1 つ作り、依頼元が止められていなければすぐ届けて起こす（ADR 0355。返るのはホストに任せた子だけ）
   const own = ownTask ? await agentTasks.cancel(ownTask.taskId, { by: 'human' }) : null;
   // 決まりの外（ホストに任せた子・すべて止める）の取り消しと届いていなかった結果を、依頼元の会話ごとに残す（次のターンで伝える）
   await recordTaskStops([...cancelled, ...(own ? [own] : [])], why);
@@ -10799,7 +10799,7 @@ async function continueAfterHandoff(sessionId, kind, messageId) {
   const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
   // i18n-dynamic: browserHandoff.continue.
   const prompt = t(`browserHandoff.continue.${kind === 'connected' ? 'connected' : 'resumed'}`, { lng });
-  // 委譲の子では「Chrome を戻した続き」の名札にし、完了通知のきっかけにする（人の指示には数えない。ADR 0352）
+  // 委譲の子では「Chrome を戻した続き」の名札にし、完了通知のきっかけにする（人の指示には数えない。ADR 0355）
   return outbox.accept(sessionId, messageId, { prompt, ...(agentTasks.isChild(sessionId) ? { byHandoff: true } : {}) });
 }
 
@@ -10843,7 +10843,7 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
     const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
     // i18n-dynamic: resume.prompt.
     const prompt = t(`resume.prompt.${interrupted.reason}`, { lng });
-    // 委譲の子では、完了通知のきっかけを「再開」にする（ADR 0352）
+    // 委譲の子では、完了通知のきっかけを「再開」にする（ADR 0355）
     const item = await outbox.accept(sessionId, crypto.randomUUID(), { prompt, ...(agentTasks.isChild(sessionId) ? { byResume: true } : {}) });
     sent = [item.id];
     return { sent: 'text', count: 1 };

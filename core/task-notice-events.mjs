@@ -1,18 +1,18 @@
-// 委譲の子の完了通知のうち、出来事の行と「結果」「エラー」の段落を組む（ADR 0352 §7）。
+// 委譲の子の完了通知のうち、出来事の行と「結果」「エラー」の段落を組む（ADR 0355 §7）。
 // core/server.mjs の completionNotice が使う。サーバーを立てずに文を確かめられるよう分けている（tests/unit/task-notice-events.mjs）
 import { agentT } from './i18n.mjs';
 
-// 子の回が再び動いたきっかけの文の鍵（ADR 0352）
+// 子の回が再び動いたきっかけの文の鍵（ADR 0355）
 // i18n-dynamic: agent:delegation.wake
 const WAKE_NOTICE_KEYS = { parent: 'delegation.wakeParent', human: 'delegation.wakeHuman', handoff: 'delegation.wakeHandoff', resume: 'delegation.wakeResume', relay: 'delegation.wakeRelay' };
-// 子の回の終わり方の文の鍵（ADR 0352）。止めた側（stoppedBy）が分からない取り消しは「取り消された」
+// 子の回の終わり方の文の鍵（ADR 0355）。止めた側（stoppedBy）が分からない取り消しは「取り消された」
 // i18n-dynamic: agent:delegation.eventEnd
 const EVENT_END_KEYS = { completed: 'delegation.eventEndCompleted', failed: 'delegation.eventEndFailed', human: 'delegation.eventEndHuman', parent: 'delegation.eventEndParent', owner: 'delegation.eventEndOwner', cancelled: 'delegation.eventEndCancelled' };
 const TASK_ACTIVE = new Set(['queued', 'running', 'cancelling']);
 const STOPPERS = new Set(['human', 'parent', 'owner']);
 
 /**
- * 通知に載せる出来事（ADR 0352）。出来事を持たない古い行（版を上げる前に積まれた通知）は、状態と止めた側から回の終わりを 1 つ組み立てる（legacy）
+ * 通知に載せる出来事（ADR 0355）。出来事を持たない古い行（版を上げる前に積まれた通知）は、状態と止めた側から回の終わりを 1 つ組み立てる（legacy）
  */
 export function noticeEvents(task) {
   const active = TASK_ACTIVE.has(task.status);
@@ -24,7 +24,7 @@ export function noticeEvents(task) {
 }
 
 /**
- * 通知の「結果」「エラー」の段落を出すか（ADR 0352 §7）。row.result・row.error は、結果を書いた最後の回のもの。
+ * 通知の「結果」「エラー」の段落を出すか（ADR 0355 §7）。row.result・row.error は、結果を書いた最後の回のもの。
  * - 子が動いている（次の回が始まった）: 出さない。終わった回の返答・エラーは出来事の行に載る（同じ返答を 2 度載せない）
  * - 止まっている: 最後の回の終わりの出来事に返答かエラーがあるときだけ出す。結果を書かずに止まった回（始まる前・取り直しの途中で止めた）に、
  *   前の回の古い結果を今の結果として見せない。出来事の無い古い行・回の終わりが無い行は今までどおり出す
@@ -38,7 +38,7 @@ export function noticeOwnsResult(task) {
 }
 
 /**
- * 完了通知の「これまでの出来事」（ADR 0352）。agent-tasks が残した、まだ届けていない出来事（task.events）を起きた順に 1 行ずつ並べ、
+ * 完了通知の「これまでの出来事」（ADR 0355）。agent-tasks が残した、まだ届けていない出来事（task.events）を起きた順に 1 行ずつ並べ、
  * 届ける時点の子の状態を添える。子が止まっているときの最後の回の返答・エラーは、通知の「結果」「エラー」の段落に載るので行には載せない。
  * 子が動いているときは「結果」の段落を出さないので（noticeOwnsResult）、どの回の返答も行に載せる
  */

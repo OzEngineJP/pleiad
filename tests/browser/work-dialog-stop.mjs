@@ -4,7 +4,7 @@
 //   3. 承認待ちの子: 出る。押すと承認も片づき、子が止まる
 //   4. 順番待ち（queued）の子: 出る。押すと止まる（abort で止まらなければ cancelAgentTask に切り替える根拠をここで測る）
 //   5. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
-//   6. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0352 §7）
+//   6. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0355 §7）
 //   7. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
 // 実行: node tests/browser/work-dialog-stop.mjs   （WORK_DIALOG_STOP_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
@@ -171,13 +171,13 @@ try {
   await wait(() => !stopBtn().shown, 'stop button hidden after the stop', 8000);
   console.log('PASS: running child — one stop button (filled square 34px, no heading 停止); abort stops it; list/heading marks change together', JSON.stringify({ before, after: marks(runT.taskId) }));
 
-  // ---- 2a. 止めた子へ人が直接送ると、タスクそのものが running に戻る（ADR 0352）。
+  // ---- 2a. 止めた子へ人が直接送ると、タスクそのものが running に戻る（ADR 0355）。
   //          詳細の見出し・一覧の行・■ は台帳どおり「実行中」。止めればまた止まった状態に戻る ----
   const stoppedStatus = (await taskOf(runT.taskId)).status;
   const stoppedMark = marks(runT.taskId).head;
   await client.cmd('sendMessage', { sessionId: runChild, messageId: 'stop-rerun-0001', prompt: `steps:@${runFile}` });
   await wait(() => stopBtn().shown, 'stop button on the re-run child', 10_000);
-  await wait(async () => (await taskOf(runT.taskId)).status === 'running', 'the task row itself is running again (ADR 0352)', 10_000);
+  await wait(async () => (await taskOf(runT.taskId)).status === 'running', 'the task row itself is running again (ADR 0355)', 10_000);
   await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head !== stoppedMark; }, 'marks show running again', 8000);
   assert.deepEqual(marks(runT.taskId), { head: '実行中', row: '実行中' }, 'heading and list row both say running');
   shot('2a-rerun-1280');
@@ -236,7 +236,7 @@ try {
   await wait(async () => (await tasks()).filter(r => r.parentSessionId === grChild).every(r => !['queued', 'running', 'cancelling'].includes(r.status)), 'the grandchild stopped too');
   console.log('PASS: child waiting for a grandchild — the button shows; abort stops both');
 
-  // ---- 6. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0352 §7） ----
+  // ---- 6. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0355 §7） ----
   //      知らせは子ごとの節（1 件なら見出しが「[Pleiad タスク完了通知 / <ID>]」、まとめたら「--- <ID> ---」）に分かれる。その子の節だけを見る
   evaluate(() => document.getElementById('workDialog').close());
   const sectionOf = (text, id) => {
