@@ -45,6 +45,13 @@ export default async function (t) {
   t.ok('出来事の sentByHuman が発言に付く（sentBy とは別。ほかの発言には付かない）',
     human.messages.length === 3 && human.messages[0].sentByHuman === true && !human.messages[0].sentBy
     && !human.messages[1].sentByHuman && human.messages[1].sentBy?.sessionId === 'other' && !human.messages[2].sentByHuman, json(human.messages));
+  // Chrome を戻した後の「続けてください」は、出来事の sentByHandoff を発言に引き継ぐ（名札「Chrome を戻した続き」の元。ADR 0352）
+  const handoff = streamMessages(seq([
+    { type: 'userMessage', messageId: 'c1', text: '続けてください', sentByHandoff: true },
+    { type: 'userMessage', messageId: 'p2', text: '印の無い発言' },
+  ]));
+  t.ok('出来事の sentByHandoff が発言に付く（sentByHuman は付けない。ほかの発言には付かない）',
+    handoff.messages.length === 2 && handoff.messages[0].sentByHandoff === true && !handoff.messages[0].sentByHuman && !handoff.messages[1].sentByHandoff, json(handoff.messages));
 
   const split = streamMessages(seq([
     { type: 'text.delta', text: 'A' }, { type: 'text.end', uuid: 'u1' },

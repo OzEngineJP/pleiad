@@ -120,6 +120,7 @@ function fold(events, { backend, model, initialMessageId, foldResult = true, onS
         m.at = at ?? m.at;
         if (ev.sentBy) m.sentBy = ev.sentBy;
         if (ev.sentByHuman) m.sentByHuman = true;
+        if (ev.sentByHandoff) m.sentByHandoff = true;
         if (!known) { messages.push(m); if (ev.messageId) users.set(ev.messageId, m); }
         if (ev.pending && ev.messageId && !deliveredEarly.delete(ev.messageId)) undelivered.add(m);
         else undelivered.delete(m);

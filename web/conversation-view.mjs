@@ -783,13 +783,14 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   }
 
   /**
-   * 子の会話の履歴の発言者の語。最初の発言は依頼、人が子へ直接送った発言（sentByHuman。ADR 0317）は「あなた」、それ以外は追加の指示。
+   * 子の会話の履歴の発言者の語。最初の発言は依頼、人が子へ直接送った発言（sentByHuman。ADR 0317）は「あなた」、
+   * 人が Chrome を戻した後の「続けてください」（sentByHandoff。ADR 0352）は「Chrome を戻した続き」、それ以外は追加の指示。
    * 古い分を省いた筋（base > 0）の最初の発言は会話の途中なので、依頼ではなく追加の指示。主は null（人の発言の既定のまま）
    */
   function userWord(m, { index = 1, base = 0 } = {}) {
     if (!config.nameTags) return null;
     if (index === 0 && !base) return t("dialog.work.request");
-    return m?.sentByHuman ? t("chat.message.you") : t("dialog.work.instruction");
+    return m?.sentByHuman ? t("chat.message.you") : m?.sentByHandoff ? t("dialog.work.handoffContinue") : t("dialog.work.instruction");
   }
 
   /** 履歴の発言 1 件を描くときの historyPane.historyRow への渡し物（読むだけの筋）。user は発言者の語を替えた吹き出しを返す */
@@ -838,6 +839,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
   function liveUserWord(ev) {
     if (!config.nameTags) return null;
     if (ev.sentByHuman) return t("chat.message.you");
+    if (ev.sentByHandoff) return t("dialog.work.handoffContinue");
     return !historyPane.base && !thread.querySelector(".m.user") ? t("dialog.work.request") : t("dialog.work.instruction");
   }
 

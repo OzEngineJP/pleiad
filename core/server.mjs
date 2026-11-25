@@ -5364,13 +5364,24 @@ function recordDelivery(sessionId, { id, by, text, nativeId = null }) {
   next.finally(() => { if (deliveryChains.get(sessionId) === next) deliveryChains.delete(sessionId); }).catch(() => {});
   return next;
 }
-/** 送信待ちの項目が人の送信なら台帳に載せる（渡った時に呼ぶ。項目は sidecar の outbox から引く＝付け直しの後でも分かる） */
+/**
+ * 送信待ちの項目が人の送信なら台帳に載せる（渡った時に呼ぶ。項目は sidecar の outbox から引く＝付け直しの後でも分かる）。
+ * Chrome を戻した続き（byHandoff。ADR 0352）も 'handoff' で載せる。名札を「Chrome を戻した続き」にするためで、人の指示には数えない
+ */
 async function recordHumanDelivery(sessionId, messageId, nativeId = null, item = null) {
   if (!sessionId || !messageId) return false;
   const found = item ?? ((await store.get(sessionId).catch(() => null))?.outbox ?? []).find(m => m.id === messageId);
-  if (!found?.args?.byHuman) return false;
-  return recordDelivery(sessionId, { id: messageId, by: 'human', text: found.args.prompt, nativeId });
+  const by = found?.args?.byHuman ? 'human' : found?.args?.byHandoff ? 'handoff' : null;
+  if (!by) return false;
+  return recordDelivery(sessionId, { id: messageId, by, text: found.args.prompt, nativeId });
 }
+/** 子の会話へ渡った発言の名札の印（画面の出来事 userMessage に付ける）。人の送信は「あなた」、Chrome を戻した続きは別の名札（ADR 0352） */
+const senderMark = args => args?.byHuman ? { sentByHuman: true } : args?.byHandoff ? { sentByHandoff: true } : {};
+/**
+ * 委譲の子の会話で送信待ちから始まるターンの、完了通知に添える「再び動いたきっかけ」（ADR 0352）。
+ * 人の送信（human）は数で出すので、ここでは種類だけ返す。依頼元の追加の指示（ply_task_send）は送信待ちを通らない
+ */
+const wakeKind = args => args?.byHandoff ? 'handoff' : args?.byResume ? 'resume' : args?.byHuman ? 'human' : args?.sentBy ? 'relay' : null;
 /** 画面と履歴に出す送り手（連鎖の数は内部の歯止めなので出さない）。bot の会話は name・icon を足す */
 const publicSender = (sentBy) => {
   if (!sentBy) return null;
@@ -7920,7 +7931,16 @@ const outbox = createMessageQueue({
         }
       } : null };
   },
-  start: runTurn,
+  // 委譲の子の会話で送信待ちから始まるターン（人の送信・Chrome を戻した続き・再開・別の会話からの送信・送信予定）は、
+  // agentTasks に引き取らせる（タスクを running にして、止まったら結果を書いて依頼元へ知らせる。ADR 0352）。
+  // began は送信待ちがターンを受け付けた直後（onStarted が true）に呼ぶ。ターンが始まる前にタスクを動かす
+  start: (args, onStarted) => agentTasks?.isChild(args.sessionId)
+    ? agentTasks.external(args.sessionId, wakeKind(args), hooks => runTurn(args, async () => {
+      if (await onStarted() === false) return false;
+      await hooks?.began?.();
+      return true;
+    }, hooks ? { signal: hooks.signal, taskId: hooks.taskId } : {}))
+    : runTurn(args, onStarted),
   changed: (sessionId, messages) => {
     emitGlobal({ type: 'outbox', sessionId, messages });
     for (const watch of [...(outboxWatchers.get(sessionId) ?? [])]) watch(messages);
@@ -7930,7 +7950,7 @@ const outbox = createMessageQueue({
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
       ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
-      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}), ...(item.args.byHuman ? { sentByHuman: true } : {}) });
+      ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}), ...senderMark(item.args) });
     if (recovered) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: item.id });
     // 渡った合図を出せないバックエンドは受理した時点で渡ったとみなす。合図を後から出すバックエンドは、その合図で台帳に載せる（nativeId も一緒に）
     if (!turn.control.steerConfirms || recovered) await recordHumanDelivery(sessionId, item.id, null, item);
@@ -8063,11 +8083,24 @@ function completionNotice(lng, tasks) {
     rejections: rejectionNotice(lng, task.rejections),
     // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
     human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
+    // 止まった子がまた動いた（ADR 0352）。何がきっかけだったかを 1 行添える
+    wake: wakeNotice(lng, task),
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
     : agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
   return [...stops, completed].join('\n');
+}
+
+// 完了通知の「再び動いたきっかけ」の文の鍵（ADR 0352）。人の指示は数（humanInstructions の増えた分）で出す
+// i18n-dynamic: agent:delegation.wake
+const WAKE_NOTICE_KEYS = { parent: 'delegation.wakeParent', handoff: 'delegation.wakeHandoff', resume: 'delegation.wakeResume', relay: 'delegation.wakeRelay' };
+function wakeNotice(lng, task) {
+  if (!task.wake) return '';
+  const causes = (task.wake.kinds ?? []).filter(kind => WAKE_NOTICE_KEYS[kind]).map(kind => agentT(lng, WAKE_NOTICE_KEYS[kind]));
+  const human = (task.humanInstructions ?? 0) - (task.wake.humanBase ?? 0);
+  if (human > 0) causes.push(agentT(lng, 'delegation.wakeHuman', { count: human }));
+  return causes.length ? agentT(lng, 'delegation.noticeWake', { causes: causes.join(agentT(lng, 'delegation.wakeSeparator')) }) : '';
 }
 
 function limitNotice(lng, limit) {
@@ -8213,7 +8246,16 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   // have been delivered and it has finished responding to them.
   const childrenBusy = () => agentTasks.list(task.sessionId).some(r => ['queued', 'running', 'cancelling'].includes(r.status) || ['pending', 'delivering'].includes(r.notification));
   // ターンの外に残る端末（Codex）は待たない。終わっても main は再開せず、結果は変わらない（awaitedBackground）
-  while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+  // 外から起きたターン（人の送信・Chrome を戻した続きなど）が合流している間・送信待ちが次のターンを始めようとしている間も待つ。
+  // 待ち終えたら closeRun で回を締める（この後に来たターンは次の回として走り、もう 1 回知らせる。ADR 0352）
+  const free = () => !sessionBusy(task.sessionId) && !agentTasks.joining(task.taskId) && !outbox.busySessions().includes(task.sessionId);
+  for (;;) {
+    while (!signal.aborted && (!free() || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
+    if (signal.aborted) break;
+    await new Promise(resolve => setImmediate(resolve));
+    if (!free()) continue;
+    if (agentTasks.closeRun(task.taskId)) break;
+  }
   // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
   // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
   // Codex の履歴が大きすぎる・応答が無い（historyGaveUp）ときも読み直さずに同じく扱う。
@@ -8619,7 +8661,8 @@ agentTasks = await createAgentTasks({
   },
   execute: async (task, prompt, signal, meta = {}) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
-    if (sessionBusy(task.sessionId)) return { requeue: true };
+    // 外から起きたターン（meta.external。ADR 0352）は送信待ちが始めるターンなので、忙しいかは runTurn が見る（requeue で送信待ちへ戻る）
+    if (!meta.external && sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
     if (!(await resolveBackendForSession(task.sessionId))) throw new Error(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.childDeleted'));
     const execution = newExecution();
@@ -8627,6 +8670,12 @@ agentTasks = await createAgentTasks({
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
+      // 外から起きたターン: 作業場所を作り直した後で、送信待ちのターンを走らせる（人の発言なので onAccepted で指示を配送済みにしない）
+      if (meta.external) {
+        const outcome = await meta.external.turn({ signal, taskId: task.taskId });
+        if (outcome === 'requeue' || !meta.external.started) return { requeue: true };
+        return await finishChild(task, signal, execution, outcome, renewed);
+      }
       if (meta.continuing) await store.setSessionData(task.sessionId, 'routing', task.routing);
       // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
       // i18n-dynamic: agent:delegation.continueAfter
@@ -9190,7 +9239,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
       user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id,
         ...(args.messageId ? { messageId: args.messageId } : {}),
         // 送り手の印。文字起こしが書かれる前の最初の発言は、開き直した画面がここから名札（あなた・追加の指示）を描く（履歴の台帳は渡った後に残る）
-        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) },
+        ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...senderMark(args) },
       initialMessageId: args.messageId ?? null,
       events: [],
     },
@@ -9395,7 +9444,7 @@ async function beginTurn(ctx) {
   }
   if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
     ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
-    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...(args.byHuman ? { sentByHuman: true } : {}) });
+    ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...senderMark(args) });
   if (ctx.interruption && !ctx.interruption.hidden) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
   broadcastRunning();
   syncRunningPoll();
@@ -10797,7 +10846,8 @@ async function continueAfterHandoff(sessionId, kind, messageId) {
   const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
   // i18n-dynamic: browserHandoff.continue.
   const prompt = t(`browserHandoff.continue.${kind === 'connected' ? 'connected' : 'resumed'}`, { lng });
-  return outbox.accept(sessionId, messageId, { prompt });
+  // 委譲の子では「Chrome を戻した続き」の名札にし、完了通知のきっかけにする（人の指示には数えない。ADR 0352）
+  return outbox.accept(sessionId, messageId, { prompt, ...(agentTasks.isChild(sessionId) ? { byHandoff: true } : {}) });
 }
 
 // 再開を受け付けている最中の会話（二度押し・別の端末からの再開で二重に送らない）。
@@ -10846,7 +10896,8 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
     const lng = agentLocaleOf(entry.agentLocale) ?? currentLocale();
     // i18n-dynamic: resume.prompt.
     const prompt = t(`resume.prompt.${interrupted.reason}`, { lng });
-    const item = await outbox.accept(sessionId, crypto.randomUUID(), { prompt });
+    // 委譲の子では、完了通知のきっかけを「再開」にする（ADR 0352）
+    const item = await outbox.accept(sessionId, crypto.randomUUID(), { prompt, ...(agentTasks.isChild(sessionId) ? { byResume: true } : {}) });
     sent = [item.id];
     return { sent: 'text', count: 1 };
   } finally {

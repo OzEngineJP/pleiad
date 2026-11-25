@@ -6174,12 +6174,10 @@ function backgroundItems(scope = null) {
   const nativeKeys = new Set(items.map(i => i.key));
   const trees = here ? [...here].flatMap(id => taskTree(allTasks(), id)) : plyTasksHere();
   for (const { task, depth, rootLive, childCount } of trees) {
-    // 終わった（中断した）子へ人が直接送ると、タスクの状態は変わらないまま会話のターンだけが走り直す（メインと同じ）。
-    // そのあいだは一覧の行と見出しも「実行中」にする（■ は runningIds で既に出る）
-    const rerun = !TASK_LIVE.has(task.status) && !task.host && Boolean(task.sessionId) && state.runningIds.has(task.sessionId);
-    const taskStatus = rerun ? 'running' : task.status;
+    // 終わった子へ人が直接送った・Chrome を戻した続きのターンも、タスクそのものが running になる（ADR 0352）。状態はタスクの記録どおりに出す
+    const taskStatus = task.status;
     const live = TASK_LIVE.has(taskStatus);
-    const waiting = live && !rerun && taskWaiting(task);
+    const waiting = live && taskWaiting(task);
     const hostOffline = Boolean(task.host) && live && !hostOnlineNow(task.host.hostId);
     const item = {
       key: `t:${task.taskId}`, group: 'agent', source: 'task', title: backgroundTitle(task), request: task.task,
@@ -7324,6 +7322,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const followUp = (text, at) => parentMsg(text, at, t('dialog.work.instruction'));
   // 人が子の会話へ直接送った発言は「あなた」（ADR 0317）。親の AI の追加の指示と見分ける。印は送った時に記録する（履歴は sentByHuman）
   const youNode = (text, at) => parentMsg(text, at, t('chat.message.you'));
+  // 人が Chrome を戻した後の「続けてください」（ADR 0352）。人の発言とも依頼元の指示とも分ける
+  const handoffNode = (text, at) => parentMsg(text, at, t('dialog.work.handoffContinue'));
   const pendingNode = (instruction) => {
     const m = followUp(instruction.text, instruction.at);
     m.dataset.instructionId = instruction.id;
@@ -7367,7 +7367,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, account: itemAccount(item), sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
-      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : followUp)(m.text, m.at) });
+      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : m.sentByHandoff ? handoffNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
   }

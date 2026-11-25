@@ -195,6 +195,18 @@ export default async function (t) {
     const afterStatus = await parentTurn({ sessionId: first.sessionId, prompt: ply('ply_task_status', { taskId: forcedTask.taskId }) });
     const afterReply = (await c.cmd('loadSession', { sessionId: afterStatus.sessionId })).messages.filter((m) => m.role === 'assistant').at(-1)?.text ?? '';
     t.ok('片付いた後の ply_task_status は「片付け済み」', /作業場所: worktree pleiad\/ply-[0-9a-f]+（片付け済み）/.test(afterReply), afterReply.slice(0, 400));
+    // 片付いた子へ人が直接送る（ADR 0352）: タスクが動き直し、作業場所を作り直してからターンを走らせ、止まったら依頼元へ知らせる
+    await quiet();
+    const wakeFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: forcedTask.sessionId, messageId: 'wake-cleaned-0001', prompt: 'echo:wake after cleanup' });
+    let woke;
+    for (let i = 0; i < 200 && !(woke = (await c.cmd('agentTasks')).find((r) => r.taskId === forcedTask.taskId && r.status === 'completed' && r.notification === 'sent'
+      && c.since(wakeFrom).some((e) => e.type === 'taskNotice' && e.text.includes(forcedTask.taskId)))); i++) await sleep(100);
+    const renewedCwd = c.since(wakeFrom).find((e) => e.type === 'cwd' && e.sessionId === forcedTask.sessionId)?.cwd ?? null;
+    t.ok('片付いた子へ人が送ると、作業場所を作り直してから走り、止まったら知らせる', Boolean(woke) && Boolean(renewedCwd) && slash(renewedCwd) !== repo
+      && woke.worktree?.id && woke.worktree.id !== forcedTask.worktree.id, JSON.stringify({ renewedCwd, worktree: woke?.worktree, status: woke?.status }));
+    for (let i = 0; i < 100 && (await c.cmd('running')).turns.length; i++) await sleep(100);
+    await quiet();
     const creationRequest = { requestId: 'worktree-on-first-send', backend: 'fake', cwd: repo };
     const created = await c.cmd('newSession', creationRequest);
     const initialId = created.sessionId;

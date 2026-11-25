@@ -354,7 +354,14 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 人が子の会話へ直接送った指示があれば、同じ位置（拒否の段落の後）に 1 行足す（`agent:delegation.noticeHuman`。「人からの指示 N 件」。[ADR 0317](adr/0317-modal-child-composer-stop-name-tags.md)）。
 子のダイアログの入力欄から送った発言が子に**渡った**時に、子の会話の sidecar の台帳（`deliveries`）に載せ、載った時だけタスクの行の `humanInstructions` を 1 つ増やす。受け付けただけで取り消した送信待ちと、同じ `messageId` の送り直しは数えない。親の AI の `ply_task_send` は数えない（台帳には `by: ai` で載り、名札の見分けに使う）。
-送るたびには知らせず、完了通知にだけ累計を載せる（既に終わった子へ送ると子は動き直すが、新しい完了通知は出ず、その数は次の完了通知に載る）。送信待ちのまま取り消した指示は数えない。
+送るたびには知らせず、完了通知にだけ累計を載せる。送信待ちのまま取り消した指示は数えない。
+
+止まった子が外から起きたとき（[ADR 0352](adr/0352-delegated-child-wake-notifies.md)）は、誰が起こしたかに関係なく、タスクを running → completed と動かし、最新の返答を結果にして依頼元へ知らせる。
+入口は、人が子へ直接送る（`byHuman`）・Chrome を「戻す」の続き（`continueAfterHandoff`。`byHandoff`）・「再開」（`resumeWritableSession`。`byResume`）・別の会話からの送信（`sessions.send`）・送信予定。
+どれも送信待ち（outbox）の `start` から `agentTasks.external` に渡り、ターンが受け付けられた直後に行を `running` にする（片付いた作業場所はターンの前に作り直す）。
+タスクの回が走っていればその回に合流し、回は合流したターンと送信待ちの次のターンが終わるまで締めない（`closeRun`）。1 回止まったら 1 回知らせる。
+知らせには、振り分けの行の後にきっかけの 1 行を足す（`agent:delegation.noticeWake`。「再び動いたきっかけ: 依頼元の追加の指示／人の指示 N 件／Chrome を戻した続き／再開／別の会話からの送信」）。最初の回には付けない。
+Chrome を戻した続きは、子の会話の名札を「Chrome を戻した続き」（`sentByHandoff`）にし、人の指示には数えない。ホストに任せた子（根）は対象外。試験は `tests/unit/server-task-wake.mjs`・`tests/unit/server-chrome-handoff-wake.mjs`・`tests/unit/server-worktree.mjs`。
 
 ## 追加指示の配送
 
