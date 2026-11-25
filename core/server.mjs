@@ -12,7 +12,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks, delegateReply, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
+import { createAgentTasks, delegateReply, finalReply, workspaceLine } from './agent-tasks.mjs';
 import { historyGaveUp, readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
@@ -1259,15 +1259,8 @@ const peerRejection = r => ({
   kind: ['policy', 'spawn', 'other'].includes(r.kind) ? r.kind : 'other', reason: redactForPeer(r.reason ?? null, REJECTION_TEXT_MAX),
   raw: redactForPeer(r.raw ?? null, REJECTION_TEXT_MAX), approvalRequested: r.approvalRequested === true, callId: pick(r.callId, 200), turnId: pick(r.turnId, 200),
 });
-// 子の作業場所の git の要約（ADR 0085）。会話の間のファイル・コミットが無ければ載せない。完了通知と ply_task_status で依頼元が事実を確かめられる
-async function taskGitNote(task) {
-  const s = task.cwd ? await gitActivity.summary(task.cwd, task.sessionId).catch(() => null) : null;
-  const w = s?.session;
-  if (!w || (!w.files && !w.commits)) return null;
-  return { branch: s.branch, detached: s.detached, head: s.head, linked: s.linked, files: w.files, add: w.add, del: w.del, commits: w.commits };
-}
-const gitNotice = (lng, git) => (git ? gitLine(lng, git) + '\n' : '');
-// 子の worktree の 1 行（ADR 0089）。分けていない子には何も足さない
+// 子の worktree の 1 行（ADR 0089。ブランチの差とファイル数もここに入る）。分けていない子には何も足さない
+// （同じ作業場所の別の会話のコミットまで混ざり当てにならないため、「変更: … N ファイル」の行は ADR 0354 でやめた）
 const workspaceNotice = (lng, task) => (task.worktree ? workspaceLine(lng, task.worktree, task.workspace) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
@@ -3498,7 +3491,7 @@ const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.A
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder,
   // 秘密情報と変数（ADR 0217）。エージェントのシェルと同じく、その行の場所に渡すものを足す
   envFor: async run => (await secrets.envFor(run.cwd)).vars });
-// git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
+// git の動き（ADR 0085・0354）。状態・変更の一覧と差分・履歴・残った隠し ref の片付け。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
 // 会話が作った PR を会話に覚える（親の会話の git パネルが、委譲した子の PR も 1 つの一覧に出すため。ADR 0206）。
 // 作った瞬間（gh pr create の結果が届いたとき）とターンの終わりに呼ぶ。同じ PR は 1 件のまま、変わらなければ書かない。書き込みは順に
@@ -3559,14 +3552,9 @@ async function settleWorktreeAt(cwd) {
   if (entry && entry.state === 'ready') await worktreeHost.worktrees.settle(entry.id).catch(() => {});
 }
 const publicWorktree = entry => ({ id: entry.id, branch: entry.branch, path: entry.path, origin: entry.origin, baseBranch: entry.baseBranch ?? null });
-// ターンの始まりの撮影を待つ上限と、終わりの撮影・要約を待つ上限（超えたらその回の撮影・要約は諦める）
-const GIT_BEGIN_WAIT_MS = 6_000;
-// AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
-const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
 // AGENT_HOST_AGENT_BROWSER_PRESTART=off で agent-browser のデーモンを先に起こさない（ADR 0285）。偽の中継を使うテストのサーバーが、
 // PATH の上の本物の agent-browser を起こして残さないため（tests/lib/server.mjs）。戻し道も兼ねる
 const BROWSER_PRESTART = process.env.AGENT_HOST_AGENT_BROWSER_PRESTART !== 'off';
-const GIT_END_WAIT_MS = 6_000;
 onExit(() => botHost?.stop());
 onExit(() => removeControlFile({ dataDir: store.dataDir }));
 onExit(() => mainLink?.dispose());
@@ -4100,8 +4088,6 @@ function makeEmit(turn) {
       if (connection) { agentConnections.delete(turn.key); connection.key = event.sessionId; connection.sessionId = event.sessionId; agentConnections.set(event.sessionId, connection); }
       turn.key = event.sessionId;
       runtime.turns.set(turn.key, turn);
-      // 新しい会話は id が決まったここで、始まりの撮影の ref を書く（ADR 0085）
-      turn.gitSetup?.then(() => turn.git && gitActivity.attach(turn.git, event.sessionId)).catch(() => {});
       // 実際に使った承認モードとモデル、どのエージェントのものかをセッションに残す。
       // 既定から引き継いだ場合、書かないと一覧の表示と実際の挙動がずれる。
       // backend を書いておかないと、次に開いたときに誰に聞けばよいか分からない。
@@ -5071,7 +5057,7 @@ async function refuseDelete(sessionId, { bot = false } = {}) {
  * 会話を消す（sessions.delete。WS の deleteSession の中身。送った会話も。ADR 0147）。消すのは Pleiad の記録だけで、
  * ネイティブの会話（Claude の transcript・Codex の rollout・Antigravity の控え）は消さない（バックエンドの deleteSession は呼ばない）。
  * 一緒に消す: sidecar（DB の sessions・session_fields・context_entry_refs）・会話の記録（索引・本文・引き継ぎの写し）・提示の記録（presents）・
- * 撮影（computer use）・git の撮影の ref（refs/pleiad/turn/）・内蔵ブラウザーの設定・自動圧縮と上限の再開の予約・設定の変更の承認の結果・まだ知らせていない完了。
+ * 撮影（computer use）・内蔵ブラウザーの設定・自動圧縮と上限の再開の予約・設定の変更の承認の結果・まだ知らせていない完了。
  * 残す: 会話に結び付いた worktree（ユーザーの変更が入っている。worktree の画面から扱う）・使用量の記録・委譲のタスクの記録（履歴）・
  * 添付のファイル（uploads。ネイティブの会話と分岐した会話がパスで指している）
  */
@@ -5085,10 +5071,6 @@ async function deleteSessionOf(sessionId) {
   let deleted = false;
   try {
     settleOutlivingWaits(sessionId);   // ターンの終わった後も残る待ち（ADR 0168）。普通の待ちは上の sessionBusy で無い
-    // git の撮影の ref は会話が使った作業場所ごとのリポジトリにある。sidecar を消す前に集める
-    const meta = await store.get(sessionId);
-    const cwds = new Set([meta.cwd, meta.nextSettings?.cwd, ...(meta.history ?? []).filter(h => h?.field === 'cwd').flatMap(h => [h.from, h.to])]
-      .filter(c => typeof c === 'string' && c));
     compactionScheduler.cancel(sessionId);
     queuedCompactions.delete(sessionId);
     shellRuns.stopSession(sessionId);
@@ -5115,7 +5097,6 @@ async function deleteSessionOf(sessionId) {
       Promise.resolve().then(() => chromeRelay?.forget(sessionId)),
       Promise.resolve().then(() => chromeProfiles?.forget(sessionId)),
       settingApprovals?.forget(sessionId),
-      ...[...cwds].map(cwd => gitActivity.forget(cwd, sessionId)),
     ];
     for (const r of await Promise.allSettled(cleanups)) {
       if (r.status === 'rejected') console.error('  消した会話の記録の片付けに失敗:', String(r.reason?.message ?? r.reason));
@@ -6533,7 +6514,7 @@ const opsGit = {
   status: async (args) => {
     const cwd = await gitCwd(args);
     if (!cwd) return { git: null };
-    return { git: args?.summary ? await gitActivity.summary(cwd, args?.sessionId) : await gitActivity.status(cwd, { fresh: args?.fresh === true }) };
+    return { git: await gitActivity.status(cwd, { fresh: args?.fresh === true }) };
   },
   // 右パネルの git の面。sweep: 開いたときに片付けられる worktree を片付ける（画面だけ）
   panel: async (args, { sweep = false } = {}) => {
@@ -6545,11 +6526,10 @@ const opsGit = {
     // 新しいタブの「変更 N ファイル」だけ。一覧・worktree・会話の記録は読まない（変更のページと同じ定義の件数）
     if (only === 'count') {
       const files = await gitActivity.changeCount(cwd);
-      return { git: state, changes: files == null ? null : { range: 'uncommitted', hasSession: false, total: { files, add: 0, del: 0 }, files: [] }, at: Date.now() };
+      return { git: state, changes: files == null ? null : { range: 'uncommitted', total: { files, add: 0, del: 0 }, files: [] }, at: Date.now() };
     }
-    const range = args?.range === 'session' ? 'session' : 'uncommitted';
-    // 範囲の切り替えは変更の一覧だけで足りる（会話の記録も、worktree の一覧も読まない）
-    if (only === 'changes') return { git: state, changes: await gitActivity.changes(cwd, sessionId, range), at: Date.now() };
+    // 変更の一覧だけで足りるときは、会話の記録も worktree の一覧も読まない
+    if (only === 'changes') return { git: state, changes: await gitActivity.changes(cwd, sessionId), at: Date.now() };
     if (sweep) {
       const repo = await worktreeHost.repoOf(cwd);
       worktreeSweepSoon(repo ? { repoDir: worktreeHost.repoDirOf(repo), throttleMs: WORKTREE_PANEL_SWEEP_MS } : {});
@@ -6557,7 +6537,7 @@ const opsGit = {
     const worktrees = only === 'light' ? { current: null, leftovers: [] } : { current: await worktreeHost.worktrees.byPath(cwd).then(e => (e ? publicWorktree(e) : null)).catch(() => null), leftovers: await worktreeHost.leftovers({ cwd }).catch(() => []) };
     const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
     const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
-    const changes = await gitActivity.changes(cwd, sessionId, range);
+    const changes = await gitActivity.changes(cwd, sessionId);
     return { git: state, timeline, changes, worktrees, at: Date.now() };
   },
   // 会話の PR（会話が作ったもの＋委譲した子の会話が作ったもの）。states: false は gh を呼ばず、覚えている番号・URL だけ（先に番号を出すため）。
@@ -6576,12 +6556,12 @@ const opsGit = {
   diff: async (args) => {
     const cwd = await gitWorktreeCwd(args);
     const opts = { stage: args?.stage, commit: args?.commit, from: args?.from, to: args?.to, orig: args?.orig, context: args?.context, after: args?.after === true };
-    return { diff: cwd ? await gitActivity.diff(cwd, args?.sessionId, args?.range === 'session' ? 'session' : 'uncommitted', String(args?.path ?? ''), opts) : null };
+    return { diff: cwd ? await gitActivity.diff(cwd, args?.sessionId, String(args?.path ?? ''), opts) : null };
   },
   // コミットの履歴（グラフ）の 1 ページ。skip は読み飛ばす件数
   history: async (args) => {
     const cwd = await gitCwd(args);
-    return { history: cwd ? await gitActivity.commits(cwd, args?.sessionId, { limit: args?.limit, skip: args?.skip, through: args?.through === true }) : null };
+    return { history: cwd ? await gitActivity.commits(cwd, { limit: args?.limit, skip: args?.skip }) : null };
   },
   // コミット 1 つの題・本文と変わったファイル
   commit: async (args) => {
@@ -8068,7 +8048,8 @@ function completionNotice(lng, tasks) {
     rejections: rejectionNotice(lng, task.rejections),
     // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
     human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
-    git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
+    // 子の worktree の 1 行（ブランチの差・ファイル数。ADR 0089）。worktree を切らない子には何も載せない（ADR 0354）
+    workspace: workspaceNotice(lng, task),
   }));
   const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
     : agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
@@ -8242,14 +8223,12 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const text = last;
   // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
   const rejections = execution.rejections.map(peerRejection);
-  const nowCwd = (await store.get(task.sessionId).catch(() => null))?.cwd ?? task.cwd;
-  const git = await taskGitNote({ ...task, cwd: nowCwd });
   // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
   const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
   const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
   worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
-  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, touched: Boolean(execution.touched), ...extra };
+  if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, touched: Boolean(execution.touched), ...extra };
   // 上限で止まった（limited）は、解除時刻・枠と、止まった委譲先（エージェント・モデル・アカウント）を結果に添える
   // （台帳の row.limit。失敗と分けて知らせ、自動の振り分けがいつまで選ばないかを添える。ADR 0229、Issue #111）
   const limit = !signal.aborted && execution.outcome === 'limited' && execution.limit
@@ -8258,7 +8237,7 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   // モデルを断られた（pristine）ときは、断りの文面そのものが assistant の発言として流れていても仕事の痕跡に数えない
   const modelRejected = !signal.aborted && execution.outcome === 'error' && Boolean(execution.modelRejected);
   const authFailed = !signal.aborted && execution.outcome === 'error' && execution.authFailed ? execution.authFailed : null;
-  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git,
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections,
     touched: modelRejected && execution.modelRejected.pristine ? false : Boolean(execution.touched),
     ...(modelRejected ? { modelRejected: true } : {}), ...(limit ? { limit } : {}), ...(authFailed ? { authFailed } : {}), ...extra };
 }
@@ -9574,21 +9553,8 @@ function hostInvokeFor(agentLocale) {
 }
 
 async function launchTurn(ctx, dispatch = null) {
-  const { turn, backend, hooks, cwd, permissionMode, runArgs } = ctx;
-  // git の作業場所なら、ターンの始まりの状態を隠し ref に撮る（書き込みの範囲のターンだけ。圧縮では撮らない。ADR 0085）。
-  // 撮影が遅いときは待たずに始める（その回は撮影なし）
-  if (GIT_SNAPSHOTS && !hooks.compact && scopeRank(modePosition(backend.modes()?.[permissionMode]).scope) > scopeRank('readonly')) {
-    turn.gitSetup = gitActivity.begin({ cwd }).then(g => {
-      if (turn.gitLate) return null;
-      turn.git = g;
-      touchCard(turn);
-      return g && turn.info.sessionId ? gitActivity.attach(g, turn.info.sessionId) : null;
-    }).catch(() => {});
-    let began = false;
-    await Promise.race([turn.gitSetup.then(() => { began = true; }), new Promise(resolve => setTimeout(resolve, GIT_BEGIN_WAIT_MS).unref?.())]);
-    // 間に合わなかった。エージェントが動き出した後の撮影は基準にならないので、このターンは撮らない
-    if (!began) { turn.gitLate = true; touchCard(turn); }
-  }
+  // ターンの始まりと終わりの変更の撮影（ADR 0085）は、ADR 0354 でやめた。ここで git は走らせない（遅いファイルシステムでターンの始まりを待たせない）
+  const { turn, backend, hooks, runArgs } = ctx;
   await hooks.beforeDelivery?.();
   if (dispatch) {
     if (await dispatch() === false) return { requeue: true, beforeInvoke: true };
@@ -9716,15 +9682,7 @@ async function closeTurn(ctx) {
     if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
   });
-  // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
-  if (turn.gitSetup && ctx.didStart && turn.outcome !== 'requeue') {
-    const summary = await Promise.race([
-      turn.gitSetup.then(() => (turn.git ? gitActivity.finish(turn.git, turn.info.sessionId, turn.gitCalls.events()) : null)),
-      new Promise(resolve => setTimeout(resolve, GIT_END_WAIT_MS, null).unref?.()),
-    ]).catch(() => null);
-    if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
-  }
-  // 作った PR の覚え書きは、git の撮影が間に合わなかったときも残す（作った瞬間に書いた分は、変わらないので書かない）
+  // 作った PR の覚え書きを残す（作った瞬間に書いた分は、変わらないので書かない。返答の下の変更の行は ADR 0354 でやめた）
   if (turn.gitCalls && turn.info.sessionId) await recordPrs(turn.info.sessionId, turn.gitCalls.events());
   await endTurn(turn, emit, { record: ctx.didStart });
 }
@@ -9969,9 +9927,7 @@ async function restoreTurn(card, source) {
   // 止め始めていたターン（T7）。中断をもう一度送るのは adoptTurn
   if (fields.stopping) turn.info.stopping = true;
   turn.savedHookLeaks = savedHookLeaks(contextRecord?.hooks, startedAtMs);
-  // 始まりの撮影（T33）。撮れていれば終わりの撮影（closeTurn）に渡す
-  if (fields.git?.activity) { turn.git = fields.git.activity; turn.gitSetup = Promise.resolve(fields.git.activity); }
-  if (fields.git?.late) turn.gitLate = true;
+  // 古い版が書いた turn card の fields.git（始まりの撮影。ADR 0085・T33）は読まない（ADR 0354 で撮影をやめた）
   turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
   turn.worktreeId = (await worktreeHost.worktrees.byPath(cwd).catch(() => null))?.id ?? null;
   turn.gitCalls = createCallTracker();

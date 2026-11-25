@@ -55,7 +55,7 @@ function startElectron(name) {
   fs.rmSync(path.join(DIRS.signal, 'quit'), { force: true });
   const env = { ...cleanEnv(), H_APP: path.join(RES[name], 'app'), H_LOG: DIRS.log, H_SIGNAL: DIRS.signal, H_USERDATA: DIRS.user, H_NAME: name,
     AGENT_HOST_HANDOVER: 'on', AGENT_HOST_RUNTIME_RESOURCES: RES[name], AGENT_HOST_RUNTIME_DIR: DIRS.runtime, AGENT_HOST_DATA: DIRS.data, AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_USAGE: '1',
-    AGENT_HOST_LOCALE: 'ja', AGENT_HOST_ROUTING_USAGE: 'off', AGENT_HOST_GIT_SNAPSHOTS: 'off', AGENT_HOST_WORKTREES: 'off', AGENT_HOST_GRACE_MS: '600000',
+    AGENT_HOST_LOCALE: 'ja', AGENT_HOST_ROUTING_USAGE: 'off', AGENT_HOST_WORKTREES: 'off', AGENT_HOST_GRACE_MS: '600000',
     AGENT_HOST_OPENROUTER_API: 'http://127.0.0.1:9', AGENT_HOST_VOICE_API: 'http://127.0.0.1:9' };
   const child = spawn(ELECTRON, [path.join(import.meta.dirname, 'entry.cjs')], { env, stdio: 'ignore', windowsHide: false });
   const exited = new Promise(resolve => child.once('exit', code => resolve(code)));

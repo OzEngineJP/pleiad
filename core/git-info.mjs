@@ -1,10 +1,14 @@
-// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085）。
+// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085・0354）。
 //
 // execFile('git', …) でシェルを通さない。windowsHide・タイムアウト・GIT_OPTIONAL_LOCKS=0・読み取り系だけ。
-// 書くのは隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）と、そのための一時 index・commit オブジェクトだけで、
+// 書くのは隠し ref（worktree を退避する refs/pleiad/archive/…。ターンごとの refs/pleiad/turn/… は ADR 0354 でやめたので、残りを消すだけ）と、
+// そのための一時 index・commit オブジェクトだけで、
 // ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。git が無い・git 管理外・時間切れは、例外にせず ok: false を返す
-// （画面は静かに「情報なし」にする）。子は core/process.mjs の run()（ADR 0270 の規則 ①）
-import { run } from './process.mjs';
+// （画面は静かに「情報なし」にする）。子は core/process.mjs の runBackground()（ADR 0270 の規則 ①。裏の作業なので、止めても終われない子は待たない）。
+// 遅いファイルシステムで積み上げない: 場所（リポジトリ）ごとに、止めても終われない子が生きている間と、時間切れが続いた後の休みの間は、
+// 新しい git を起こさず ok: false（code: 'BUSY' | 'REST'）を返す（ADR 0354。core/place-guard.mjs）
+import { runBackground } from './process.mjs';
+import { createPlaceGuard } from './place-guard.mjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,40 +19,72 @@ const READ = new Set(['rev-parse', 'status', 'log', 'diff', 'diff-tree', 'for-ea
 /** 隠し ref を作る側。read-tree・add・write-tree は GIT_INDEX_FILE が一時 index のときだけ、update-ref は refs/pleiad/ だけ */
 const WRITE = new Set(['read-tree', 'add', 'write-tree', 'commit-tree', 'update-ref']);
 
+/** ターンごとの撮影の隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）。撮影は ADR 0354 でやめた。今は残りを消す（dropTurnRefs）ためだけに持つ */
 export const REF_PREFIX = 'refs/pleiad/turn/';
 /** worktree を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0089） */
 export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
 const READ_TIMEOUT = 4_000;
 const SNAPSHOT_TIMEOUT = 8_000;
+/**
+ * 隠し ref の片付け（dropTurnRefs）用。読みの上限（4 秒）には、数千本の削除が収まらない（Pleiad 自身の開発用リポジトリに 2,182 本あった）。
+ * 数百本ずつに分け、1 回ごとに長い上限を使う。この時間切れは場所の休みに数えない（片付けは利用者の画面に出ない。休みに入ると git タブまで休む）
+ */
+const CLEANUP_TIMEOUT = 30_000;
+const CLEANUP_CHUNK = 300;
+/** 片付け 1 回が使ってよい合計の時間。超えたら残りは次回へ回す（遅い場所で裏の作業を長く握らない） */
+const CLEANUP_BUDGET_MS = 90_000;
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 const IDENT = { GIT_AUTHOR_NAME: 'Pleiad', GIT_AUTHOR_EMAIL: 'pleiad@localhost', GIT_COMMITTER_NAME: 'Pleiad', GIT_COMMITTER_EMAIL: 'pleiad@localhost' };
 
-/** git の実行ファイル。テストが差し替える */
+/** git の実行ファイル。テストが差し替える（args は実行ファイルの後ろに付ける引数。killWith は止める操作の差し込み口で、kill を無視する git を試験で作る） */
 let gitBin = process.env.AGENT_HOST_GIT_BIN || 'git';
-export const setGitBin = (bin) => { gitBin = bin || 'git'; };
+let gitBinArgs = [];
+let gitKillWith = null;
+export const setGitBin = (bin, { args = [], killWith = null } = {}) => { gitBin = bin || 'git'; gitBinArgs = args; gitKillWith = killWith; };
+
+/** 場所ごとの見張り（止めても終われない子の数・時間切れが続いた後の休み・同じ種類の裏の作業を 1 本ずつ）。試験が状態を見る・戻すために出す */
+export const placeGuard = createPlaceGuard();
+/** cwd の場所へ、今は裏の作業を始めない理由（'BUSY' 生きている子がある・'REST' 休み中）か null。cls は 'light'（読み）か 'heavy'（撮影） */
+export const placeBlocked = (cwd, cls = 'light') => placeGuard.blocked(placeGuard.placeOf(cwd), cls);
 
 /**
  * git を 1 回走らせる。例外にしない。
+ * guarded: 場所が BUSY・REST なら起こさず ok: false（code 'BUSY' | 'REST'）を返し、時間切れ・終了を場所の数えに載せる（readGit・writeGit は常に guarded）。
+ *   execGit（worktree の作成・削除など、利用者が頼んだ操作）は guarded にせず、止めても終われない子だけ数える
+ * cls: 'light' | 'heavy'（休みの段を分ける）。signal: 止める口（待つ側が諦めたとき）
+ * counts: false なら、時間切れ・終了を場所の数えに載せない（休みに入る数えにも、数えの戻しにも）。片付けが使う。BUSY・REST のときは起こさない・止めても終われない子は数える、は変わらない
  * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number|string|null, truncated?: boolean }>}
  */
-async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null } = {}) {
-  const result = await run(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', '-c', 'log.showSignature=false', ...args], {
-    cwd, input, windowsHide: true, timeoutMs: timeout, maxOutputChars: maxBuffer,
+async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null, guarded = false, cls = 'light', signal = null, counts = true } = {}) {
+  const place = placeGuard.placeOf(cwd);
+  if (guarded) {
+    const why = placeGuard.blocked(place, cls);
+    if (why) return { ok: false, stdout: '', stderr: '', code: why };
+  }
+  const startedAt = Date.now();
+  const result = await runBackground(gitBin, [...gitBinArgs, '-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', '-c', 'log.showSignature=false', ...args], {
+    cwd, input, windowsHide: true, timeoutMs: timeout, maxOutputChars: maxBuffer, signal,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', ...env },
+    onLeftover: (left) => placeGuard.leftover(place, left),
+    ...(gitKillWith ? { killWith: gitKillWith } : {}),
   });
+  if (guarded && counts) {
+    if (result.timedOut) placeGuard.timedOut(place, cls, startedAt);
+    else if (!result.stopped && !result.startError) placeGuard.completed(place, cls);
+  }
   if (result.startError) return { ok: false, stdout: '', stderr: '', code: result.startCode ?? 'SPAWN' };
   if (result.exitCode === 0) return { ok: true, stdout: result.stdout, stderr: result.stderr, code: 0, ...(result.truncated ? { truncated: true } : {}) };
-  return { ok: false, stdout: result.stdout, stderr: result.stderr, code: result.timedOut ? 'TIMEOUT' : result.exitCode ?? null, ...(result.truncated ? { truncated: true } : {}) };
+  return { ok: false, stdout: result.stdout, stderr: result.stderr, code: result.timedOut ? 'TIMEOUT' : result.stopped ? 'ABORT' : result.exitCode ?? null, ...(result.truncated ? { truncated: true } : {}) };
 }
 
-/** 許可表を通さない git。core/git-worktree.mjs（worktree の作成・削除。ADR 0089）だけが使う */
+/** 許可表を通さない git。core/git-worktree.mjs（worktree の作成・削除。ADR 0089）だけが使う。guarded: true を渡したものだけ、場所の見張りに従う */
 export const execGit = exec;
 
 /** 読み取りだけの git。許可していないサブコマンドは投げる（呼び出す側の誤り） */
 export function readGit(cwd, args, options) {
   if (!READ.has(args[0])) throw new Error(`git: ${args[0]} is not a read-only subcommand`);
-  return exec(cwd, args, options);
+  return exec(cwd, args, { ...options, guarded: true });
 }
 
 /** 隠し ref を作る側の git（一時 index の上の操作と commit-tree・update-ref） */
@@ -60,7 +96,7 @@ function writeGit(cwd, args, options = {}) {
     const deletes = args.includes('--stdin') && (options.input ?? '').split('\n').filter(Boolean).every((line) => line.startsWith('delete ') && ours(line.slice(7)));
     if (!deletes && !args.some(ours)) throw new Error('git: update-ref is only for refs/pleiad/');
   }
-  return exec(cwd, args, options);
+  return exec(cwd, args, { ...options, guarded: true });
 }
 
 const slash = (p) => String(p ?? '').replaceAll('\\', '/');
@@ -71,18 +107,19 @@ export function refSession(sessionId) {
   const safe = String(sessionId ?? '').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_').replace(/\.lock$/i, '_lock');
   return safe || '_';
 }
-export const refName = (sessionId, n, kind) => `${REF_PREFIX}${refSession(sessionId)}/${n}-${kind}`;
 
 /**
  * cwd の git のルートと種類。git 管理外・git が無い・bare は null。
  * linked: worktree（git worktree add で作ったもの。.git が共有の本体を指す）
  */
-export async function repoInfo(cwd) {
+export async function repoInfo(cwd, { signal = null } = {}) {
   if (!cwd) return null;
-  const r = await readGit(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir']);
+  const r = await readGit(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { signal });
   if (!r.ok) return null;
   const [root, gitDir, commonDir] = r.stdout.split('\n').map((s) => s.trim());
   if (!root || !gitDir) return null;
+  // 以後、この cwd（サブフォルダーのこともある）への git は、リポジトリのルートの場所として数える（見張りは場所ごと）
+  placeGuard.alias(cwd, root);
   return { root: slash(root), gitDir: slash(gitDir), commonDir: slash(commonDir || gitDir), linked: Boolean(commonDir) && !sameDir(gitDir, commonDir) };
 }
 
@@ -308,17 +345,29 @@ async function copyIndex(src, dst) {
 /**
  * 今の作業ツリー（未追跡を含む。.gitignore は守る）を tree にする。ユーザーの index は触らない:
  * 本物の index を一時ファイルへ写し、その上で add -A → write-tree。写しなので変更の無いファイルは再計算されない。
- * 失敗・時間切れは null
+ * 失敗・時間切れは null。
+ * 同じ場所の撮影は 1 本ずつ（走っているものの次の 1 回を、待つ側みんなで共有する。走り始めた後に頼んだ側へ前の結果は渡さない）。
+ * 場所が BUSY・REST のときは起こさず null。signal が止まったら（待つ側が諦めた）、その側は null で抜け、待つ側が誰も居なければ走っている git も止める。
+ * 使うのは、利用者が開いた画面（変更の一覧・差分・新しいタブの変更の数）と worktree の退避だけ。ターンごとの撮影は ADR 0354 でやめた
  */
-export async function snapshotTree(root) {
+export async function snapshotTree(root, { signal = null } = {}) {
+  const place = placeGuard.placeOf(root);
+  if (placeGuard.blocked(place, 'heavy')) return null;
+  try {
+    return await placeGuard.coalesce(`snapshot:${place}`, (sig) => takeSnapshot(root, sig), { mode: 'trailing', signal });
+  } catch { return null; }
+}
+
+async function takeSnapshot(root, signal) {
   const tmp = path.join(os.tmpdir(), `pleiad-index-${crypto.randomUUID()}`);
   try {
-    const idx = await readGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index']);
+    const idx = await readGit(root, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], { signal });
+    if (signal.aborted) return null;
     if (idx.ok && idx.stdout.trim()) await copyIndex(idx.stdout.trim(), tmp);
     const env = { GIT_INDEX_FILE: tmp };
-    const added = await writeGit(root, ['add', '-A'], { env, timeout: SNAPSHOT_TIMEOUT });
+    const added = await writeGit(root, ['add', '-A'], { env, timeout: SNAPSHOT_TIMEOUT, cls: 'heavy', signal });
     if (!added.ok) return null;
-    const tree = await writeGit(root, ['write-tree'], { env });
+    const tree = await writeGit(root, ['write-tree'], { env, signal });
     return tree.ok && /^[0-9a-f]{40,64}$/.test(tree.stdout.trim()) ? tree.stdout.trim() : null;
   } catch { return null; } finally { fs.rm(tmp, { force: true }).catch(() => {}); }
 }
@@ -344,11 +393,8 @@ export async function headCommit(root) {
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-/**
- * tree から commit を作る（親は HEAD。start の親が「始めた時の HEAD」になるので、そこからコミット数を数えられる）。
- * ブランチには載らない。失敗は null
- */
-export async function commitTree(root, tree, parent, message = 'pleiad turn snapshot') {
+/** tree から commit を作る（ブランチには載らない。worktree の退避が使う）。失敗は null */
+export async function commitTree(root, tree, parent, message = 'pleiad snapshot') {
   const r = await writeGit(root, ['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', message], { env: IDENT });
   return r.ok && /^[0-9a-f]{40,64}$/.test(r.stdout.trim()) ? r.stdout.trim() : null;
 }
@@ -358,47 +404,35 @@ export async function updateRef(root, ref, commit) {
   return (await writeGit(root, ['update-ref', ref, commit])).ok;
 }
 
-/** 会話の隠し ref の一覧 [{ ref, n, kind: 'start'|'end', commit, at }]（n の小さい順） */
-export async function listTurnRefs(root, sessionId = null) {
-  const pattern = sessionId == null ? REF_PREFIX : `${REF_PREFIX}${refSession(sessionId)}/`;
-  const r = await readGit(root, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(committerdate:unix)', pattern]);
-  if (!r.ok) return [];
-  const out = [];
-  for (const line of r.stdout.split('\n')) {
-    const [ref, commit, at] = line.split('\0');
-    const m = /^refs\/pleiad\/turn\/([^/]+)\/(\d+)-(start|end)$/.exec(ref ?? '');
-    if (m) out.push({ ref, session: m[1], n: Number(m[2]), kind: m[3], commit, at: Number(at) * 1000 });
-  }
-  return out.sort((a, b) => a.n - b.n || (a.kind === 'start' ? -1 : 1));
-}
-
-/** ref を消す（まとめて 1 回）。消した数 */
-export async function deleteRefs(root, refs) {
+/** ref を消す（まとめて 1 回）。消した数。options は git の呼び出しへ渡す（片付けが、長い上限と counts: false を渡す） */
+export async function deleteRefs(root, refs, options = {}) {
   const list = refs.filter((r) => r.startsWith(REF_PREFIX) || r.startsWith(ARCHIVE_PREFIX));
   if (!list.length) return 0;
-  const r = await writeGit(root, ['update-ref', '--stdin'], { input: list.map((ref) => `delete ${ref}\n`).join('') });
+  const r = await writeGit(root, ['update-ref', '--stdin'], { ...options, input: list.map((ref) => `delete ${ref}\n`).join('') });
   return r.ok ? list.length : 0;
 }
 
-/** 古い隠し ref を消す。maxAgeMs より前のもの */
-export async function pruneTurnRefs(root, maxAgeMs, now = Date.now()) {
-  const old = (await listTurnRefs(root)).filter((r) => now - r.at > maxAgeMs).map((r) => r.ref);
-  return deleteRefs(root, old);
-}
-
-/** 会話の隠し ref を全部消す（会話を消したとき） */
-export async function forgetSession(root, sessionId) {
-  return deleteRefs(root, (await listTurnRefs(root, sessionId)).map((r) => r.ref));
-}
-
-/** from の後に増えたコミットの数と、新しい順の先頭 limit 件 [{ hash, subject }]。from が HEAD の祖先でなくても「HEAD にあって from に無い」を数える */
-export async function commitsSince(root, from, limit = 20) {
-  const range = from ? `${from}..HEAD` : 'HEAD';
-  const [count, log] = await Promise.all([
-    readGit(root, ['rev-list', '--count', range]),
-    readGit(root, ['log', `--max-count=${limit}`, '--format=%h%x00%s', range]),
-  ]);
-  if (!count.ok) return { count: 0, commits: [] };
-  const commits = log.ok ? log.stdout.split('\n').filter(Boolean).map((l) => { const [hash, subject] = l.split('\0'); return { hash, subject: subject ?? '' }; }) : [];
-  return { count: Number(count.stdout.trim()) || 0, commits };
+/**
+ * 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）を、全部消す（ADR 0354）。消すのは refs/pleiad/turn/ の ref だけ
+ * （ブランチ・タグ・index・作業ツリー・worktree の退避の ref refs/pleiad/archive/ には触れない）。
+ * 数千本あっても終えられるように: 数百本ずつ（CLEANUP_CHUNK）の削除に分け、1 回ごとに長い上限（CLEANUP_TIMEOUT）を使い、
+ * この時間切れは場所の休みに数えない（counts: false）。全体の時間は CLEANUP_BUDGET_MS まで。
+ * 読めなかった・消せなかった（場所が BUSY・REST のとき、時間切れ、git が断った、時間の上限）ときは null。そこまでに消した分は戻らないので、
+ * 呼び出し側があとでもう 1 回呼べば、残りだけ（for-each-ref で数え直す）から続く。消した数（0 を含む）を返せたら全部済み。
+ * 同じ ref が 1 本も無ければ、for-each-ref 1 回で済む
+ */
+export async function dropTurnRefs(root, { chunk = CLEANUP_CHUNK, budgetMs = CLEANUP_BUDGET_MS, timeout = CLEANUP_TIMEOUT } = {}) {
+  const cleanup = { timeout, counts: false };
+  const startedAt = Date.now();
+  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX], cleanup);
+  if (!r.ok) return null;
+  const refs = r.stdout.split('\n').map((s) => s.trim()).filter((ref) => ref.startsWith(REF_PREFIX));
+  let removed = 0;
+  for (let at = 0; at < refs.length; at += chunk) {
+    if (Date.now() - startedAt >= budgetMs) return null;
+    const part = refs.slice(at, at + chunk);
+    if (await deleteRefs(root, part, cleanup) !== part.length) return null;
+    removed += part.length;
+  }
+  return removed;
 }

@@ -491,13 +491,14 @@ export async function nativeForkPresentContracts() {
   await fs.writeFile(shot, 'SHOT');
   await recordPresent('sdk-source', { kind: 'file', by: 'human', path: 'C:/work/a.png', turnKey: 'k1' });
   await anchorAttachments('sdk-source', 'k1', 'u1');
-  await recordPresent('sdk-source', { kind: 'git', at: '2026-01-01T00:00:00.500Z', git: { files: 1 } });
+  // 時刻を渡せる種類（worktree の印の行）で、切り口の前後に並ぶ提示を作る（kind: 'git' は ADR 0354 で記録をやめた）
+  await recordPresent('sdk-source', { kind: 'worktree', at: '2026-01-01T00:00:00.500Z', worktree: { id: 'w1', branch: 'pleiad/ply-1', origin: 'main', conflicts: [], count: 0 } });
   await recordPresent('sdk-source', { kind: 'chromeClosed', by: 'ai', path: shot, chromeClosed: { by: 'agent' } });
   const kinds = async id => (await wrapped.getPresents(id)).map(p => p.kind);
 
   // 会話全体の分岐（切り口なし）: 全部写す
   const whole = (await wrapped.fork('sdk-source')).sessionId;
-  assert.deepEqual(await kinds(whole), ['file', 'git', 'chromeClosed'], '提示を丸ごと写す');
+  assert.deepEqual(await kinds(whole), ['file', 'worktree', 'chromeClosed'], '提示を丸ごと写す');
   const copied = await wrapped.getPresents(whole);
   assert.equal(copied[0].messageId, `${whole}-u1`, '添付の結び付けを、付け直した UUID へ移す');
   assert.equal(path.dirname(copied[2].path), windowShotFolder(store.dataDir, whole), '閉じた窓の静止画は分岐した会話の置き場を指す');
@@ -507,9 +508,58 @@ export async function nativeForkPresentContracts() {
 
   // ここから分岐（upToMessageId）: 切り口より後の提示は写さない
   const upTo = (await wrapped.fork('sdk-source', { upToMessageId: 'a1' })).sessionId;
-  assert.deepEqual(await kinds(upTo), ['file', 'git'], '切り口までの提示だけを写す');
+  assert.deepEqual(await kinds(upTo), ['file', 'worktree'], '切り口までの提示だけを写す');
   assert.equal((await fs.readdir(windowShotFolder(store.dataDir, upTo)).catch(() => [])).length, 0, '写さない静止画は複製しない');
 
   // 元の会話の提示は変わらない
-  assert.deepEqual(await kinds('sdk-source'), ['file', 'git', 'chromeClosed']);
+  assert.deepEqual(await kinds('sdk-source'), ['file', 'worktree', 'chromeClosed']);
+}
+
+// 返答の下の変更の行（kind: 'git'。ADR 0085）は記録をやめた（ADR 0354）。古い会話のファイルに残った行は、
+// 書き換えずに残し、画面へ返すときと画面で並べるときに黙って省く（壊れた表示や「未知の種類」の表示にしない）
+export async function legacyGitPresentContracts() {
+  const history = await import('../../core/history.mjs');
+  const { buildItems, showsAsCard } = await import('../../web/timeline.mjs');
+  const sid = 'legacy-git-present';
+  const legacy = (at, n) => ({ at, kind: 'git', caption: null, path: null, by: 'ai', git: { files: n, additions: n, deletions: 0, commits: 1, rows: [] } });
+
+  // 新しく記録しようとしても残さない（返り値は null。ファイルも作らない）
+  assert.equal(await history.recordPresent(sid, { kind: 'git', git: { files: 1 } }), null, 'git の present は記録しない');
+  assert.deepEqual(await history.readPresents(sid), [], '記録しなかったので、ファイルも空');
+
+  // 古い版が残した行を、そのままの形でファイルに置く（file・text の並びの間に git が挟まる）
+  await history.seedPresents(sid, [
+    legacy('2026-01-01T00:00:01.000Z', 3),
+    { at: '2026-01-01T00:00:02.000Z', kind: 'text', caption: null, path: null, by: 'ai', content: 'first-body' },
+    legacy('2026-01-01T00:00:03.000Z', 5),
+    { at: '2026-01-01T00:00:04.000Z', kind: 'text', caption: null, path: null, by: 'ai', content: 'second-body' },
+  ]);
+  const raw = await history.readPresents(sid);
+  assert.deepEqual(raw.map(p => p.kind), ['git', 'text', 'git', 'text'], '保存した行は書き換えず、読むときの並びのまま');
+  assert.deepEqual(history.shownPresents(raw).map(p => p.kind), ['text', 'text'], '画面へ返す提示から git を省く');
+  assert.equal(history.shownPresents(undefined), undefined, '配列でないものは触らない');
+
+  // 画面へ返す履歴（loadTranscript）にも git は出ない
+  const loaded = await history.loadTranscript(sid, { getMessages: async () => [] });
+  assert.deepEqual(loaded.presents.map(p => p.kind), ['text', 'text'], '履歴の提示に git は含まれない');
+
+  // 本文を取りに行く口（/present-body）は、画面が持つ並び（git を省いた並び）の通し番号で指す
+  assert.equal(await history.findPresentBody(sid, null, { i: 0, at: '2026-01-01T00:00:02.000Z', field: 'content' }), 'first-body');
+  assert.equal(await history.findPresentBody(sid, null, { i: 1, at: '2026-01-01T00:00:04.000Z', field: 'content' }), 'second-body');
+  assert.equal(await history.findPresentBody(sid, null, { i: 1, at: '2026-01-01T00:00:03.000Z', field: 'content' }), null, 'git の行の本文は取れない');
+
+  // 巻き戻しは記録のままの並び（git を含む）で数えるので、残す添字で git の行も一緒に落ちる・残る
+  await history.keepPresents(sid, new Set([0, 1]));
+  assert.deepEqual((await history.readPresents(sid)).map(p => p.kind), ['git', 'text'], '記録の並びの添字で残す');
+  await history.forgetPresents(sid);
+  assert.deepEqual(await history.readPresents(sid), []);
+
+  // 画面の並べ方（web/timeline.mjs）: 古い git の行は、時刻があっても発言の間に出さない。ほかの提示の通し番号は詰めない
+  const messages = [{ role: 'user', text: 'a', at: '2026-01-01T00:00:00.000Z' }, { role: 'assistant', text: 'b', at: '2026-01-01T00:00:05.000Z' }];
+  const items = buildItems(messages, raw);
+  const presents = items.filter(i => i.kind === 'present');
+  assert.deepEqual(presents.map(i => i.p.kind), ['text', 'text'], '並べた行に git は無い');
+  assert.deepEqual(presents.map(i => i.pi), [1, 3], '通し番号は記録の並びのまま');
+  assert.equal(presents.every(i => showsAsCard(i, new Set())), true, '残った行は別カードで出す');
+  assert.equal(showsAsCard({ p: { kind: 'git' }, anchorMi: -1 }, new Set()), false, '古い git の行は、渡されても別カードで出さない');
 }

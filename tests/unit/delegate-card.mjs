@@ -50,26 +50,27 @@ export default async function(t) {
   assert.equal(card.querySelectorAll('.tc-go').length, 1);
   t.ok('結果が届いたら自分の id を使い、古い結び付きと内訳を残さない', true);
 
-  // Shared workspaces must never be attributed to one delegated child.
-  const gitStart = source.indexOf('async function paintDelegateGit(');
-  const gitCode = source.slice(gitStart, source.indexOf('\n}', gitStart) + 2) + '\npaintDelegateGit';
-  let gitCalls = 0, rendered = 0;
-  const gitTask = { taskId: B, sessionId: 'child' };
-  const paintGit = vm.runInNewContext(gitCode, {
-    taskById: () => gitTask,
-    cmd: async () => { gitCalls++; return { git: {} }; },
-    renderDelegateGit: () => { rendered++; return null; },
+  // 同じ作業場所を使う子には何も出さない（別の会話のコミットまで混ざって当てにならないため。ADR 0354）。
+  // worktree の子だけ「作業場所: worktree <ブランチ>」の行が出る。git は読まない（読む関数・「変更」の行の部品は client.mjs に無い）
+  assert.ok(!source.includes('paintDelegateGit') && !source.includes('renderDelegateGit') && !source.includes('git-delegate'), '「変更」の行の描画は client.mjs に残っていない');
+  const wsStart = source.indexOf('function paintDelegateWorkspace(');
+  const wsCode = source.slice(wsStart, source.indexOf('\n}', wsStart) + 2) + '\npaintDelegateWorkspace';
+  const wsTask = { taskId: B, sessionId: 'child' };
+  const paintWorkspace = vm.runInNewContext(wsCode, {
+    taskById: () => wsTask, el, branchIcon: '<svg></svg>', t: k => k,
   });
-  card.isConnected = true;
-  card.append(el('div', 'git-delegate', 'stale'));
-  await paintGit(card);
-  assert.equal(gitCalls, 0);
-  assert.equal(card.querySelector('.git-delegate'), null);
-  gitTask.worktree = { path: '/isolated', branch: 'work' };
-  await paintGit(card);
-  assert.equal(gitCalls, 1);
-  assert.equal(rendered, 1);
-  t.ok('Only worktree children query and render changes; shared children remove stale changes', true);
+  card.dataset.taskId = B;
+  card.append(el('div', 'rt-where', 'where'));
+  card.append(el('div', 'wt-delegate', 'stale'));
+  paintWorkspace(card);
+  assert.equal(card.querySelector('.wt-delegate'), null);
+  wsTask.worktree = { path: '/isolated', branch: 'work' };
+  paintWorkspace(card);
+  assert.equal(card.querySelectorAll('.wt-delegate').length, 1);
+  assert.ok(card.querySelector('.wt-delegate').textContent.includes('work'));
+  paintWorkspace(card);
+  assert.equal(card.querySelectorAll('.wt-delegate').length, 1, '開き直しても 1 行');
+  t.ok('worktree の子だけ作業場所の行（ブランチ）を出し、同じ作業場所の子は古い行も消して何も出さない', true);
 
   const history = renderToolCall('mcp__ply_agents__ply_delegate', input);
   applyToolResult(history, result);

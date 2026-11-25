@@ -24,9 +24,9 @@ export function parseWorktreeList(text) {
   return list;
 }
 
-/** 登録されている worktree の一覧。失敗は null */
+/** 登録されている worktree の一覧。失敗は null（場所が BUSY・REST のときも。呼び出し側は、分からないものは触らない扱いにしている） */
 export async function worktreeList(root) {
-  const r = await execGit(root, ['worktree', 'list', '--porcelain']);
+  const r = await execGit(root, ['worktree', 'list', '--porcelain'], { guarded: true });
   return r.ok ? parseWorktreeList(r.stdout) : null;
 }
 

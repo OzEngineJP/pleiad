@@ -3,7 +3,7 @@
 // 孫が子の行の下に字下げ（.bg-row.sub）で出て、子の行に「委譲 N」が付く。子が終わっても孫の行は残り（sessions.subagents で読み出す）、
 // 孫を選ぶとその会話が開く。稼働中・完了の数は孫を二重に数えない（docs/design-system.md「バックグラウンド」）。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7461, token grand-test, fresh data dir). Never run against live data.
-//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_GIT_SNAPSHOTS=off AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=grand-test AGENT_HOST_PORT=7461 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
+//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=grand-test AGENT_HOST_PORT=7461 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // 子の台本は fake の "bg <本数> <秒>"（Claude の Agent ツールと同じ形で、本数ぶんのサブエージェントを裏で走らせる。core/backends/fake.mjs）。
 async page => {
   const URL = 'http://127.0.0.1:7461/?token=grand-test';

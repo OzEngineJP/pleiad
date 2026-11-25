@@ -172,7 +172,8 @@ export function createPagesRoutes(deps = {}) {
             // The existing git reader also checks membership in this repository.
             input.worktree = ref.file;
           }
-          if (['changes', 'diff'].includes(kind)) input.range = q.get('range') === 'session' ? 'session' : 'uncommitted';
+          // git.changes / git.diff / git.history take no range or through: the ops input is strict (core/ops/registry.mjs),
+          // so a key the schema does not know is INVALID. Only add keys listed in core/ops/git.mjs.
           if (kind === 'changes') input.only = q.get('only') === 'count' ? 'count' : 'changes';
           if (kind === 'diff') {
             const raw = q.get('path');
@@ -214,7 +215,7 @@ export function createPagesRoutes(deps = {}) {
             }
           }
           if (kind === 'commit') { if (!/^[a-f0-9]{7,64}$/i.test(q.get('hash') ?? '')) throw fault('unsupported'); input.hash = q.get('hash'); }
-          if (kind === 'history') { input.limit = 50; if (q.has('cursor')) input.cursor = q.get('cursor'); if (q.get('through') === 'true') input.through = true; }
+          if (kind === 'history') { input.limit = 50; if (q.has('cursor')) input.cursor = q.get('cursor'); }
           if (kind === 'worktrees' && q.get('only') === 'list') input.only = 'list';
           if (kind === 'worktree' && !input.worktree) throw fault('invalid-path');
           const result = await op(`git.${kind}`, input);
