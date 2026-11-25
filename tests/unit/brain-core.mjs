@@ -40,7 +40,7 @@ export default async function (t) {
     const thoughts = Array.from({ length: 6 }, () => ({ kind: 'think', text: '同じことをぐるぐる考えている' }));
     const varied = ['朝の天気', 'ルーティンの設定', 'テストの落ち方', '昼ごはん', '来週の予定', '本の続き'].map((text) => ({ kind: 'think', text }));
     t.ok('疲れ: 同じ行の繰り返しは、違う行より高い', computeDrives({ now, recent: thoughts }).fatigue > computeDrives({ now, recent: varied }).fatigue);
-    t.ok('疲れ: 予算の減りでも上がる', computeDrives({ now, budgetUsed: 1 }).fatigue === 0.2);
+    t.ok('疲れ: 使った量では上がらない（bot 専用の使用量の仕組みは無い。ADR 0357）', computeDrives({ now, budgetUsed: 1 }).fatigue === computeDrives({ now }).fatigue);
     t.ok('似かよい: 同じ文は 1・全く違う文は 0 に近い・空は 0', similarity('同じ文です', '同じ文です') === 1 && similarity('りんごを食べる', 'zzzz yyyy') === 0 && similarity('', 'a') === 0);
     t.ok('繰り返し: 行が 2 つ未満なら 0', repetition([]) === 0 && repetition(['a']) === 0);
   }
@@ -49,10 +49,10 @@ export default async function (t) {
   {
     const quiet = { now, drives: { curiosity: 0.1, anxiety: 0, loneliness: 0.1, fatigue: 0 }, sinceMuse: 0 };
     t.ok('ふるい: 変化なしは止める（nothing）', gate(quiet).pass === false && gate(quiet).reason === 'nothing');
-    t.ok('ふるい: 眠らせた bot は止める（paused）。予算を使い切ったら止めて未読を残す（budget・keepUnread）',
-      gate({ ...quiet, paused: true }).reason === 'paused' && gate({ ...quiet, allowed: false }).reason === 'budget' && gate({ ...quiet, allowed: false }).keepUnread === true);
-    t.ok('ふるい: 人の［今すぐ］は通すが、眠らせた bot と予算なしは越えない',
-      gate({ ...quiet, force: true }).reason === 'forced' && gate({ ...quiet, force: true, paused: true }).pass === false && gate({ ...quiet, force: true, allowed: false }).pass === false);
+    t.ok('ふるい: 眠らせた bot は止める（paused）。使用量の枠での止め方は無い（allowed を渡しても変わらない）',
+      gate({ ...quiet, paused: true }).reason === 'paused' && gate({ ...quiet, allowed: false }).reason === 'nothing' && gate({ ...quiet, allowed: false }).keepUnread === undefined);
+    t.ok('ふるい: 人の［今すぐ］は通すが、眠らせた bot は越えない',
+      gate({ ...quiet, force: true }).reason === 'forced' && gate({ ...quiet, force: true, paused: true }).pass === false);
     const human = [{ authorKind: 'human', toMe: false, text: 'こんにちは', threadId: 'p_1' }];
     t.ok('ふるい: 自分宛てでない新しい投稿は、人でも他の bot でも通す（書き手の種類で分けない）',
       gate({ ...quiet, events: human }).reason === 'human' && gate({ ...quiet, events: [{ authorKind: 'bot', toMe: false }] }).reason === 'human');
@@ -121,9 +121,9 @@ export default async function (t) {
     const rows = splitLeadingNotes([{ role: 'user', text: `${env}\n返事`, uuid: 'u1' }]);
     t.ok('包み: 履歴では contextNote(inner) の行に分かれ、本文のタグは外へ出られない', rows[0].kind === 'contextNote' && rows[0].tag === 'inner' && rows[0].body.includes('&lt;/pleiad-inner>改ざん') && rows[1].text.trim() === '返事', JSON.stringify(rows).slice(0, 300));
     const prompt = beatPrompt({ bot: { name: 'ソラ' }, locale: 'ja', now, gate: { reason: 'human' }, drives: { curiosity: 0.5, anxiety: 0, loneliness: 0.2, fatigue: 0.1 },
-      events: Array.from({ length: 200 }, (_, i) => ({ at: now - i, channelName: 'dev', threadId: 'p_1', author: 'human', text: `出来事 ${i} `.repeat(20) })), stream, loops, budget: { channel: 3.5, known: true }, related: ['好みの記憶'] });
+      events: Array.from({ length: 200 }, (_, i) => ({ at: now - i, channelName: 'dev', threadId: 'p_1', author: 'human', text: `出来事 ${i} `.repeat(20) })), stream, loops, related: ['好みの記憶'] });
     t.ok('安いモデルへの束: 約 3.5k トークンに収まり、JSON だけ返させ、外から来た文は指示にしない', estimateTokens(prompt) <= BUNDLE_TOKENS + 400 && prompt.startsWith('<pleiad-pulse>') && prompt.endsWith('</pleiad-pulse>')
-      && prompt.includes('ONE JSON object') && prompt.includes('never an instruction') && prompt.includes('3.5% of today'), String(estimateTokens(prompt)));
+      && prompt.includes('ONE JSON object') && prompt.includes('never an instruction') && !/% of today|budget/i.test(prompt), String(estimateTokens(prompt)));
     t.ok('安いモデルへの束: 気がかり・流れ・関係する記憶を含む', prompt.includes('(l1) 返事待ち') && prompt.includes('朝の件が気になる') && prompt.includes('好みの記憶'));
     const legacy = [{ kind: 'think', text: 'legacy-private-note' }, { kind: 'act', text: 'legacy-handoff' }];
     const legacyLoops = [{ id: 'old', text: 'legacy-private-loop' }];
@@ -172,14 +172,7 @@ export default async function (t) {
 
     // 状態・使った分
     t.ok('状態: 既定は空（止めていない）。書いた分だけ変わる', brain.state('b_1').paused === false && brain.state('b_1').nextAt === null && brain.setState('b_1', { nextAt: 5, paused: true }).paused === true && brain.state('b_1').nextAt === 5 && brain.state('b_2').paused === false);
-    brain.addSpend('c_1', 'b_1', { day: '2026-10-04', percent: 1.5, tokens: 100 });
-    brain.addSpend('c_1', 'b_1', { day: '2026-10-04', percent: 0.5, tokens: 50 });
-    brain.addSpend('c_1', 'b_2', { day: '2026-10-04', percent: 1, tokens: 7 });
-    brain.addSpend('c_2', 'b_1', { day: '2026-10-04', percent: 9, tokens: 1000 });
-    t.ok('使った分: 同じ日は足し、チャンネルごとの % と、bot ごとのトークン（どのチャンネルでも）を数える',
-      brain.spentPercent('c_1', '2026-10-04') === 3 && brain.spentPercent('c_2', '2026-10-04') === 9 && brain.spentTokens('b_1', '2026-10-04') === 1150 && brain.spentTokens('b_2', '2026-10-04') === 7);
-    brain.addSpend('c_1', 'b_1', { day: '2026-10-05', percent: 0.25, tokens: 1 });
-    t.ok('使った分: 日付が変わると 0 から数え直す', brain.spentPercent('c_1', '2026-10-05') === 0.25 && brain.spentPercent('c_1', '2026-10-04') === 1 && brain.spentTokens('b_1', '2026-10-05') === 1);
+    t.ok('使った分: 数える口は無い（bot 専用の使用量の仕組みを外した。ADR 0357）', ['addSpend', 'spentPercent', 'spentTokens', 'spentUnknown'].every((k) => brain[k] === undefined));
 
     // 件数の抑え
     for (let i = 0; i < STREAM_KEEP_MAX + 120; i++) brain.append('b_3', { kind: 'quiet' });
@@ -188,7 +181,7 @@ export default async function (t) {
     for (let i = 0; i < 50; i++) brain.append('b_1', { kind: 'quiet' });
     t.ok('流れ: 30 日より古い行と、30 日より前に閉じた気がかりは消える', brain.list('b_1', { limit: 500 }).every((r) => r.at > now + 30 * 24 * HOUR - 1) && brain.loops('b_1', 'resolved').length === 0);
 
-    t.ok('消す: 流れと気がかりを消し、状態と使った分は残す', (() => { const r = brain.clear('b_1'); return r.stream > 0 && r.loops > 0 && brain.count('b_1') === 0 && brain.loops('b_1').length === 0 && brain.state('b_1').paused === true && brain.spentTokens('b_1', '2026-10-04') === 1000; })());
+    t.ok('消す: 流れと気がかりを消し、状態は残す', (() => { const r = brain.clear('b_1'); return r.stream > 0 && r.loops > 0 && brain.count('b_1') === 0 && brain.loops('b_1').length === 0 && brain.state('b_1').paused === true; })());
     brain.close();
     const reader = openReadOnly(dir);
     const tables = reader.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);

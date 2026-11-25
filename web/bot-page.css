@@ -50,7 +50,7 @@
 
 .bp-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
 .bp-col{min-width:0}
-.bp-col>.bp-blk+.bp-blk,.bp-col>.bp-blk+.bp-usage{margin-top:16px}
+.bp-col>.bp-blk+.bp-blk{margin-top:16px}
 .bot-page.is-new .bp-grid{grid-template-columns:minmax(0,1fr);max-width:640px}
 .bp-blk{background:var(--surface-1);border-radius:var(--r-l);padding:14px 16px;min-width:0}
 .bp-blk h4{margin:0 0 8px;font-size:var(--fs-s);color:var(--ink-weak);font-weight:600;display:flex;align-items:center;gap:8px}
@@ -144,12 +144,6 @@
 .mem .mem-kind{display:inline-block;padding:0 6px;margin-right:2px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.6;vertical-align:1px}
 .mem.faded .tx-text{color:var(--ink-weak)}
 
-/* ---- 使用量。静かに */
-.bp-usage{font-size:12px;color:var(--ink-weak);padding:10px 4px 0}
-.bp-usage b{color:var(--ink);font-weight:600}
-.bp-usage b.warn{color:var(--ink-strong)}
-.bp-usage-warn{margin-left:6px}
-.bot-page .bp-mono{font-family:var(--font-mono)}
 
 /* ---- 狭い画面（モックの 360 幅）: 1 列、記憶の［直す］［忘れる］は常に見せて 2 行目へ */
 @media (max-width:900px){

@@ -105,12 +105,7 @@ export function createBrainPanel(host, { update }) {
     if (pulse.on) parts.push(st?.lastBeatAt ? t('channels:bot.brain.status.last', { time: timeLabel(st.lastBeatAt) }) : t('channels:bot.brain.status.never'));
     if (pulse.on && st) {
       if (!st.home) parts.push(t('channels:bot.brain.status.noHome'));
-      else {
-        parts.push(t('channels:bot.brain.status.home', { name: st.home.name }));
-        const b = st.budget;
-        if (b) parts.push(b.daily === null ? t('channels:bot.brain.status.budgetNone') : t('channels:bot.brain.status.budgetLeft', { pct: String(Math.round(b.channel * 100) / 100) }));
-        if (b) parts.push(t('channels:bot.brain.status.tokensLeft', { k: String(Math.round(b.tokensLeft / 1000)) }));
-      }
+      else parts.push(t('channels:bot.brain.status.home', { name: st.home.name }));
     }
     status.textContent = parts.join(' · ');
     sleepBtn.textContent = st?.paused ? t('channels:bot.brain.actions.wake') : t('channels:bot.brain.actions.sleep');

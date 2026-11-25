@@ -60,7 +60,7 @@ async page => {
   check(owl.icon === '' && await page.locator('#botView .bp-av').textContent() === 'O', '新規アイコンは未設定で、名前の先頭文字が出る');
   check(await page.locator('#botView .bp-av .bp-av-edit[aria-hidden="true"]').count() === 1 && await page.locator('#botView .bp-av button').count() === 0, '鉛筆は常時表示する飾りで、アバターが単一のボタン');
   check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), '作った後は、その bot のページ（フォルダーと記憶がある）');
-  check(await page.locator('#botView .bp-usage').innerText().then(s => s.includes('今週')), '今週の使用量を静かに出す');
+  check(await page.locator('#botView .bp-usage').count() === 0 && !(await page.locator('#botView').innerText()).includes('今週'), 'bot 専用の使用量（今週）は出さない（ADR 0357）');
   await shot('02-created');
 
   // ---- 設定の変更: 名前・人格・アイコン・モデル・エフォート・他の会話に送る

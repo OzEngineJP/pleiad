@@ -140,13 +140,6 @@
       "membersHint": "Members are the bots listed here. To wake a bot, @ it in a post.",
       "noBots": "No bots yet.",
       "memo": "House rules (notes)",
-      "budget": "Budget",
-      "budgetDaily": "Per day",
-      "budgetPerThread": "Per thread up to",
-      "budgetDailyLabel": "Daily budget (% of the weekly usage window)",
-      "budgetPerThreadLabel": "Share one thread may use (% of the daily budget)",
-      "budgetHint": "An estimate against the weekly usage window of each bot's backend. Turns started by a person count too; once it runs out, only calls between bots stop (they still answer a person). Leave the daily field empty for no budget.",
-      "budgetToday": "Used today: {{spent}}%",
       "memoHint": "Short rules that every bot working in this channel reads each time.",
       "archive": "Archive",
       "unarchive": "Unarchive",
@@ -202,27 +195,6 @@
       "stopped": "Stopped",
       "tokens": "{{tokens}} tokens in this thread",
       "tokensTitle": "New input {{input}} · output {{output}} (cache read {{cached}} is not counted)"
-    },
-    "budget": {
-      "title": "Today's budget",
-      "label": "Budget",
-      "spoken": "Budget {{pct}}. Open the breakdown",
-      "failed": "Could not load the breakdown.",
-      "thread": "What this thread may use today",
-      "amount": "Used {{spent}} / share {{allowance}} (an estimate against the weekly usage window of each bot's backend)",
-      "derived": "Usage of the thread that started this one is counted together.",
-      "channel": "Whole channel today",
-      "channelAmount": "{{spent}} / {{daily}}",
-      "bots": "Per bot today",
-      "botToday": "New input {{input}} · output {{output}} · cache read {{cached}}",
-      "botNone": "Not used yet today",
-      "botLimit": "Daily limit about {{tokens}} tokens",
-      "botWeek": "Weekly window {{used}} used",
-      "botReset": "Resets {{time}}",
-      "botUnknown": "Usage window unavailable",
-      "resting": "Resting (until about {{time}})",
-      "totals": "This thread in total",
-      "hint": "Once it runs out, only calls between bots stop (a person can still call a bot). Token counts leave out cache reads."
     }
   },
   "bot": {
@@ -292,7 +264,7 @@
         "every": "Heartbeat interval",
         "minutes": "{{n}} min",
         "off": "Off (the bot only runs when called)",
-        "hint": "When on, this bot wakes up briefly at a steady interval, does nothing most of the time, and thinks with a cheap model only when needed. To speak, it wakes again with its smart model. Its budget comes from the channel budget; when it runs out, spontaneous activity stops."
+        "hint": "When on, this bot wakes up briefly at a steady interval, does nothing most of the time, and thinks with a cheap model only when needed. To speak, it wakes again with its smart model."
       },
       "status": {
         "next": "Next around {{time}}",
@@ -300,11 +272,8 @@
         "never": "Has not run yet",
         "paused": "Put to sleep",
         "running": "Thinking…",
-        "home": "Budget: #{{name}}",
-        "budgetLeft": "{{pct}}% of the channel's budget left today",
-        "budgetNone": "No channel budget",
-        "tokensLeft": "{{k}}k tokens left today for this bot",
-        "noHome": "No channel to charge the budget to (add this bot to a channel)"
+        "home": "Home channel: #{{name}}",
+        "noHome": "No home channel (add this bot to a channel)"
       },
       "actions": {
         "sleep": "Put to sleep",
@@ -318,16 +287,10 @@
       "stream": { "title": "Recent stream", "empty": "Nothing yet", "quiet": "Quiet", "quietMany": "Quiet ×{{n}}", "why": "reason: {{reason}}", "tokens": "{{n}} tokens", "taint": "includes text from outside", "total": "{{n}} rows in all" },
       "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
       "reason": {
-        "paused": "put to sleep", "budget": "no budget", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
+        "paused": "put to sleep", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
         "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel", "internalUnavailable": "the pulse agent does not support isolated internal calls"
       },
       "failed": "Could not do that: {{error}}"
-    },
-    "usage": {
-      "week": "This week",
-      "tokens": "tokens",
-      "cache": "cache reads",
-      "low": "(low)"
     },
     "state": {
       "working": "Working",

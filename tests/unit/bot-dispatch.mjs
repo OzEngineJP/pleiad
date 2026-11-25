@@ -906,7 +906,7 @@ export default async function (t) {
         const owlItems = await itemsOf(mention, 's1');
         t.ok('E1-4: 返事が呼んだ bot への @ を含むときは、@ で 1 回だけ起こす（reply の出来事を重ねない）', owlItems.length === 1 && !owlItems[0].reply && owlItems[0].caller === 'b_2', JSON.stringify(owlItems));
 
-        // 呼び合いの回数に上限は置かない: 予算の無いチャンネル（使用枠が読めず数えられない）では、人が書かないまま何往復でも続く（ADR 0119）
+        // 呼び合いの回数に上限は置かない: 人が書かないまま何往復でも続く（ADR 0119・0357）
         const loop = mkWorld();
         await callOwl(loop);
         await tick();
@@ -931,12 +931,11 @@ export default async function (t) {
           return loop.started.length === before + 1;
         })());
 
-        // チャンネルの予算（ADR 0119）: 使った分を週の使用枠の % の目安で数え、使い切ったら bot どうしの呼びかけだけ起こさない。人が呼べば起きる。お知らせは出さない
+        // bot 専用の使用量の仕組み（チャンネルの予算・スレッドの割り当て）は ADR 0357 でやめた。前に保存された budget・spend が残っていても、何も止めず、数えず、渡さない
         {
           const b = mkWorld();
-          b.channel.budget = { daily: 1, perThread: 100 };                    // 1 スレッド 1%
-          b.host.readQuota = async () => ({ windows: [{ label: 'week', minutes: 10080, usedPercent: 10, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }], checkedAt: Date.now() });
-          b.host.usageStore = { tokensSince: async () => 10_000 };            // 週の枠 1% = 1,000 トークン
+          b.channel.budget = { daily: 1, perThread: 100 };                    // 前の版が保存した値（読まれない）
+          b.threads['c_1/p_root'].spend = { day: new Date().toLocaleDateString('sv-SE'), percent: 99 };
           const spend = async (sessionId, text, tokens) => {
             b.host.lastReply = async () => text;
             const turn = { ...turnOf(sessionId), info: { sessionId, backend: 'fake', model: '' } };
@@ -949,42 +948,24 @@ export default async function (t) {
           const lynxRuns = () => b.started.filter((s) => s.args.sessionId === 's_new_b_2').length;
           await callOwl(b);
           await tick();
-          await spend('s_new_b_2', '返事 1', 400);                            // 0.4%: 残りがあるので Owl へ返す
-          t.ok('ADR 0119: 予算が残っている間は、呼んだ bot へ返事を返して起こす', owlRuns() === 1, String(owlRuns()));
-          await spend('s1', '@Lynx もう 1 回', 400);                           // 0.8%: まだ残る → Lynx が起きる
-          t.ok('ADR 0119: 予算が残っている間は、bot の @ で相手が起きる', lynxRuns() === 2, String(lynxRuns()));
-          await spend('s_new_b_2', '返事 2', 400);                            // 1.2%: 使い切った → Owl へは返さない
+          await spend('s_new_b_2', '返事 1', 400_000);
+          t.ok('ADR 0357: 使ったトークンが多くても、呼んだ bot へ返事を返して起こす', owlRuns() === 1, String(owlRuns()));
+          await spend('s1', '@Lynx もう 1 回', 400_000);
+          t.ok('ADR 0357: bot の @ で相手が起きる', lynxRuns() === 2, String(lynxRuns()));
+          await spend('s_new_b_2', '返事 2', 400_000);
           const root = b.threads['c_1/p_root'];
-          t.ok('ADR 0119: 使った分は根のスレッドの spend（今日の日付・%）に足す', root.spend?.day === new Date().toLocaleDateString('sv-SE') && Math.abs(root.spend.percent - 1.2) < 1e-9, JSON.stringify(root.spend));
-          t.ok('ADR 0119: 使い切ったら、呼んだ bot へ返事を返さない（起こさない）', owlRuns() === 1 && !(await b.d.inbox.list({ sessionId: 's1', status: 'pending' })).length, String(owlRuns()));
-          t.ok('ADR 0119: 使い切っても、Pleiad はスレッドにお知らせを出さない', !b.posts.some((p) => p.author?.kind === 'system' || /予算/.test(String(p.text))), JSON.stringify(b.posts.map((p) => p.text)));
-          const again = botPost('p_budget_bot', ['b_2'], { text: '@Lynx まだ？' });
-          b.posts.push(again);
-          await b.d.onPosted(again, b.channel);
-          await tick();
-          t.ok('ADR 0119: 使い切った後の bot の @ も起こさない', lynxRuns() === 2, String(lynxRuns()));
-          const human = botPost('p_budget_human', ['b_2'], { author: { kind: 'human' }, text: '@Lynx お願い' });
-          b.posts.push(human);
-          await b.d.onPosted(human, b.channel);
-          await tick();
-          t.ok('ADR 0119: 使い切っても、人が呼べば bot は起きる', lynxRuns() === 3, String(lynxRuns()));
-          const plain = botPost('p_budget_plain', [], { author: { kind: 'human' }, text: 'みんなはどう思う？' });
+          t.ok('ADR 0357: 使った分をスレッドに足さない（前の版の spend は触らず、新しく書かない）', root.spend?.percent === 99, JSON.stringify(root.spend));
+          t.ok('ADR 0357: 続けて返事を返し、呼んだ bot を起こす', owlRuns() === 2, String(owlRuns()));
+          t.ok('ADR 0357: Pleiad はスレッドにお知らせを出さない', !b.posts.some((p) => p.author?.kind === 'system' || /予算/.test(String(p.text))), JSON.stringify(b.posts.map((p) => p.text)));
+          const plain = botPost('p_plain_human', [], { author: { kind: 'human' }, text: 'みんなはどう思う？' });
           b.posts.push(plain);
           await b.d.onPosted(plain, b.channel);
           await tick();
-          const plainItems = (await b.d.inbox.list({})).filter((i) => i.postId === 'p_budget_plain');
-          t.ok('ADR 0128: 予算を使い切ったら、@ の無い人の投稿は宛先の 1 体だけが受ける（スレッドのほかの bot には聞こえた投稿を届けない）', plainItems.length === 1 && !plainItems[0].heard, JSON.stringify(plainItems));
+          await spend('s1', 'どう思うかへの返事', 400_000);                    // 宛先（最後に話した Owl）のターンが終わると、ほかの bot に聞こえた投稿が届く
+          const plainItems = (await b.d.inbox.list({})).filter((i) => i.postId === 'p_plain_human');
+          t.ok('ADR 0128: @ の無い人の投稿は、宛先の 1 体のターンの後、スレッドのほかの bot（聞こえた投稿）にも届く', plainItems.some((i) => i.botId === 'b_2' && i.heard), JSON.stringify(plainItems));
           const notes = (await b.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
-          t.ok('ADR 0119: 毎ターン、末尾の文脈で予算の残りを渡す（使い切ったら 0）', notes.some((n) => n.startsWith('<pleiad-turn-context>') && n.includes('このスレッドの予算の残り: 0%') && n.includes('チャンネルの今日の残り: 0%')), JSON.stringify(notes));
-        }
-
-        // 予算の残り: 使用枠が読めないバックエンドでは「不明」と渡す。予算なし（daily: null）のチャンネルでは渡さない
-        {
-          const u = mkWorld();
-          const notesOf = async () => (await u.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
-          t.ok('ADR 0119: 使用枠が読めないときは、残りを「不明」として渡す', (await notesOf()).some((n) => n.includes('このスレッドの予算の残り: 不明')));
-          u.channel.budget = { daily: null, perThread: 50 };
-          t.ok('ADR 0119: 予算なしのチャンネルでは、残りを渡さない', !(await notesOf()).some((n) => n.includes('予算の残り')));
+          t.ok('ADR 0357: 毎ターンの末尾の文脈に、予算・使用量の残りを渡さない', !notes.some((n) => /予算|今日の残り|budget/.test(n)), JSON.stringify(notes));
         }
 
         // 黙る自由（ADR 0119）: 文章を書かずに（リアクションだけで）終えたターンは投稿を残さず、呼んだ bot へも返さない

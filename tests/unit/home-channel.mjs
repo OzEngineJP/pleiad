@@ -62,7 +62,7 @@ export default async function (t) {
     const stillHome = await run('channels.get', { channelId: 'home' });
     t.ok('同じ名前のチャンネルができても、channelId home は一時チャットのまま', stillHome.ok && stillHome.result.id === home.id);
 
-    // ---- 家に選ばない（心拍・予約の予算の数え先）
+    // ---- 家に選ばない（心拍・予約の行き先）
     const list = await channels.list();
     const owlHome = pickHome({ id: 'b_owl' }, list);
     t.ok('一時チャットは bot の家に選ばない（ほかに入っているチャンネルが無ければ家は無い）', owlHome === null, JSON.stringify(owlHome));

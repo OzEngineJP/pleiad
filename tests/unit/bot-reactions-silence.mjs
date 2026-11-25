@@ -1,6 +1,6 @@
 // bot の投稿へのリアクションと、黙って終えたターン（ADR 0109・0119 の追記）。本物のチャンネルのサービスに身代わりの会話・バックエンドをつなぐ。LLM は使わない。
 //   リアクション: 問いかけの投稿に 👍 → その bot が起き、包みに reaction="👍"。付けたのが人でも、ほかの bot・Chats の AI でも同じ（付けた者ごとに 1 回）。
-//                 答えでないリアクション・同じ者の 2 度目・予算切れの bot・AI のリアクションは起こさず、次に起きたときに渡す。人のリアクションは予算で止めない。
+//                 答えでないリアクション・同じ者の 2 度目・DM での bot・AI のリアクションは起こさず、次に起きたときに渡す。bot 専用の予算は無い（ADR 0357）。
 //                 外したリアクションは渡さない。自分のリアクションは渡さない。DM の投稿も同じだが、DM では bot のリアクションで起こさない。
 //   黙る: 文章なし・[[no-reply]] だけ・「（なし）」のような括弧だけの一言で終えたターンは投稿を残さない。本当の返事は消さない。
 import fs from 'node:fs/promises';
@@ -14,7 +14,7 @@ import { isSilentReply, stripSilentMark, SILENT_MARK } from '../../core/bots/sil
 import { answerOf, asksQuestion } from '../../core/bots/reactions.mjs';
 
 export const name = 'bot-reactions-silence';
-export const title = 'bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は予算の内・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
+export const title = 'bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす（DM の bot・AI は起こさない）・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
 
 const until = async (fn, { ms = 5000, label = '' } = {}) => {
   const end = Date.now() + ms;
@@ -198,33 +198,28 @@ export default async function (t) {
     await quietWait();
     t.ok('止めたスレッドの問いへの 👍 では起きない', started.length === 8);
 
-    // ---- 人でない者（bot・Chats の AI）のリアクションは、予算が残っている間だけ起こす。人のリアクションは予算で止めない
+    // ---- 人でない者（bot・Chats の AI）のリアクションも、人と同じに起こす（bot 専用の予算・使用量では止めない。ADR 0357）。前の版が保存した budget が残っていても読まない
     const root3 = await channels.post({ channelId: channel.id, text: '@Owl 三つ目' }, human);
     const ninth = await nextStart(8, '@ で Owl が起きる');
     await finish(ninth, ['タグを打ってよいですか？']);
     const [q3] = await turnPosts(channel.id, root3.id);
     const systemPosts = async () => (await channels.read({ channelId: channel.id, limit: 100 })).posts.filter((p) => p.author?.kind === 'system').length
       + (await channels.read({ channelId: channel.id, threadId: root3.id, limit: 100 })).posts.filter((p) => p.author?.kind === 'system').length;
-    await channels.update({ channelId: channel.id, budget: { daily: 0 } }, human);
     const notices = await systemPosts();
     await channels.react({ channelId: channel.id, postId: q3.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
-    await quietWait();
-    t.ok('予算を使い切ったら、ほかの bot の 👍 では起きず、次に渡す（お知らせも出さない）', started.length === 9 && (await systemPosts()) === notices
-      && (await d.inbox.list({ sessionId: ninth.sessionId, status: 'pending' })).some((i) => i.postId === q3.id && i.reaction?.byKey === 'bot:b_lynx' && i.reaction.quiet),
-    JSON.stringify(await d.inbox.list({ sessionId: ninth.sessionId })));
-    await channels.update({ channelId: channel.id, budget: { daily: 5 } }, human);
-    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '✅', on: true }, { kind: 'agent', sessionId: 's_chat' });
-    const tenth = await nextStart(9, 'Chats の AI の ✅ で Owl が起きる');
-    t.ok('予算が残っていれば、Chats の AI の ✅ でも起きる（待っていた bot の 👍 も一緒に渡る）', tenth.sessionId === ninth.sessionId
-      && tenth.prompt.includes('reaction="✅"') && tenth.prompt.includes('reaction="👍"'), tenth.prompt);
+    const tenth = await nextStart(9, 'ほかの bot の 👍 で Owl が起きる');
+    t.ok('ほかの bot の 👍 でも起きる（予算で止めない。お知らせも出さない）', tenth.sessionId === ninth.sessionId && tenth.prompt.includes('reaction="👍"') && tenth.prompt.includes('from="🐺 Lynx (bot)"')
+      && (await systemPosts()) === notices, tenth.prompt);
     await finish(tenth, ['（なし）']);
-    await channels.update({ channelId: channel.id, budget: { daily: 0 } }, human);
-    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '👍', on: true }, human);
-    const eleventh = await nextStart(10, '人の 👍 で Owl が起きる');
-    t.ok('AI の答えが先に起こした投稿でも人の 👍 はまた起こし、予算を使い切っていても止めない', eleventh.sessionId === ninth.sessionId
-      && eleventh.prompt.includes('reaction="👍"') && eleventh.prompt.includes('from="あなた"'), eleventh.prompt);
+    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '✅', on: true }, { kind: 'agent', sessionId: 's_chat' });
+    const eleventh = await nextStart(10, 'Chats の AI の ✅ で Owl が起きる');
+    t.ok('Chats の AI の ✅ でも起きる（付けた者ごとに 1 回）', eleventh.sessionId === ninth.sessionId && eleventh.prompt.includes('reaction="✅"'), eleventh.prompt);
     await finish(eleventh, ['（なし）']);
-    await channels.update({ channelId: channel.id, budget: { daily: 5 } }, human);
+    await channels.react({ channelId: channel.id, postId: q3.id, emoji: '👍', on: true }, human);
+    const twelfth = await nextStart(11, '人の 👍 で Owl が起きる');
+    t.ok('AI の答えが先に起こした投稿でも人の 👍 はまた起こす', twelfth.sessionId === ninth.sessionId
+      && twelfth.prompt.includes('reaction="👍"') && twelfth.prompt.includes('from="あなた"'), twelfth.prompt);
+    await finish(twelfth, ['（なし）']);
 
     // ---- 起こさないリアクションは会話ごとに上限まで
     const s1 = first.sessionId;
@@ -238,13 +233,13 @@ export default async function (t) {
     BOTS[0].dmChannelId = dm.id;
     sessions.s_dm = { bot: { botId: 'b_owl', kind: 'dm', channelId: dm.id, threadId: null, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } };
     const dmQ = await channels.post({ channelId: dm.id, text: '明日の予定を入れておきましょうか？', turn: { botId: 'b_owl', sessionId: 's_dm' }, state: 'done' }, { kind: 'bot', botId: 'b_owl' });
-    // DM には予算の数え先が無いので、ほかの bot の 👍 では起こさず次に渡す
+    // DM では bot・AI の書き込みで起こさないので、ほかの bot の 👍 でも起こさず次に渡す
     await channels.react({ channelId: dm.id, postId: dmQ.id, emoji: '👍', on: true }, { kind: 'bot', botId: 'b_lynx' });
     await quietWait();
-    t.ok('DM の bot の問いかけへのほかの bot の 👍 では起きず、次に渡す', started.length === 11
+    t.ok('DM の bot の問いかけへのほかの bot の 👍 では起きず、次に渡す', started.length === 12
       && (await d.inbox.list({ sessionId: 's_dm', status: 'pending' })).some((i) => i.postId === dmQ.id && i.reaction?.byKey === 'bot:b_lynx' && i.reaction.quiet));
     await channels.react({ channelId: dm.id, postId: dmQ.id, emoji: '🙆', on: true }, human);
-    const dmRun = await nextStart(11, 'DM の 🙆 で Owl が起きる');
+    const dmRun = await nextStart(12, 'DM の 🙆 で Owl が起きる');
     t.ok('DM の bot の問いかけへの人の 🙆 で DM の会話が起きる（待っていた bot の 👍 も一緒に渡る）', dmRun.sessionId === 's_dm' && dmRun.prompt.includes('reaction="🙆"')
       && dmRun.prompt.includes('reaction="👍"'), dmRun.prompt);
     await finish(dmRun, []);

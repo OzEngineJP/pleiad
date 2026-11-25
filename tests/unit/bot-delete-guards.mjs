@@ -50,13 +50,13 @@ export default async function(t) {
     let at = Date.now(); entered = deferred(); unblock = deferred();
     const wakes = createWakes({ dataDir: dir, bots, now: () => at,
       clock: { now: () => at, setTimer: () => null, clearTimer: () => {} },
-      channels: { get: async () => ({ id: 'c', kind: 'channel' }) },
-      budget: { allowsBrain: async () => { entered.resolve(); await unblock.promise; return false; } }, dispatch: {} });
+      channels: { get: async () => { entered.resolve(); await unblock.promise; return { id: 'c', kind: 'channel' }; } },
+      dispatch: { restingUntil: () => at + 3_600_000 } });   // 休憩中 → 待機状態の保存まで進む
     closers.push(() => wakes.close());
     wakes.add({ botId: wakeBot.id, sessionId: 's', channelId: 'c', at: at + 120000, note: 'wake' });
     await wakes.start(); at += 180000;
     const tick = wakes.tick(); await entered.promise;
-    t.ok('予約の予算取得中から待機状態保存まで削除を拒否', await fails(() => bots.remove({ botId: wakeBot.id })));
+    t.ok('予約のチャンネル取得中から待機状態保存まで削除を拒否', await fails(() => bots.remove({ botId: wakeBot.id })));
     unblock.resolve(); await tick;
     host.cleanupBot = async id => { brain.purgeBot(id); wakes.clear(id); };
     await bots.remove({ botId: wakeBot.id }); await wakes.tick();

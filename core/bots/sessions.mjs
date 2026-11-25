@@ -27,7 +27,7 @@ import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
 import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
-/** bot の名前・本人の人格・操作の要点・予算の残りの届き方。区切りは空行 1 つ、末尾の改行なし */
+/** bot の名前・本人の人格・操作の要点。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
   const persona = bot?.plain ? '' : String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
   return [
@@ -36,8 +36,6 @@ export function botInstructions(bot, locale) {
     persona || null,
     // 組み込みの bot（bot なし）は記憶・予約を持たない（memory.write・brain.* を断る）。道具の文もそれを書かない
     bot?.plain ? agentT(locale, 'guide.bot.plainTools') : agentT(locale, 'guide.bot.tools'),
-    // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
-    agentT(locale, 'guide.bot.quiet'),
     // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
     agentT(locale, 'guide.bot.heard'),
     // 黙るときの書き方（ADR 0119 の追記）: 文章なしか、印 [[no-reply]] だけ。印・括弧だけの一言は投稿しない（core/bots/silence.mjs）

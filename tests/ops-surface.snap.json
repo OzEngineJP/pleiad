@@ -1471,30 +1471,6 @@
       "input": "3f31d9d4d283"
     },
     {
-      "id": "channels.threadBudget",
-      "risk": "read",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": {
-          "path": [
-            "channels",
-            "thread-budget"
-          ],
-          "positional": [
-            "channelId",
-            "threadId"
-          ]
-        }
-      },
-      "legacyCommand": null,
-      "input": "a4332e367d65"
-    },
-    {
       "id": "channels.threads",
       "risk": "read",
       "riskOf": false,
@@ -1560,7 +1536,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "0ab4cd8ce86b"
+      "input": "82d73789eaf1"
     },
     {
       "id": "channels.wake",
@@ -6454,14 +6430,6 @@
     {
       "id": "channels.stopThread",
       "path": "channels stop-thread",
-      "positional": [
-        "channelId",
-        "threadId"
-      ]
-    },
-    {
-      "id": "channels.threadBudget",
-      "path": "channels thread-budget",
       "positional": [
         "channelId",
         "threadId"

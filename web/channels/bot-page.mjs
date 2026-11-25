@@ -69,7 +69,7 @@ export function createBotPage(host) {
 
   const S = {
     id: null,             // 見せている bot の id。'new' = 作る画面
-    bot: null,            // bots.get の行（Bot + usage + state）
+    bot: null,            // bots.get の行（Bot + state）
     draft: null,          // 作る画面の下書き（M.newDraft）
     v: null,              // 今の backend の語彙 { modes, models, efforts }
     vocab: new Map(),     // backend → { modes, models, efforts: Map<model, efforts> }
@@ -247,12 +247,11 @@ export function createBotPage(host) {
   memHead.append(memory.route);   // 「自動整理: …」= 設定 › 記憶 への導線（memory-list.mjs が短い状態を出す）
   const memBlk = el('div', 'bp-blk bp-memory');
   memBlk.append(memHead, memory.el);
-  const usage = el('div', 'bp-usage');
 
   const left = el('div', 'bp-col');
   left.append(personaBlk, runBlk);
   const right = el('div', 'bp-col');
-  right.append(brainBlk, memBlk, usage);
+  right.append(brainBlk, memBlk);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
   root.append(head, err, accountWarn, notice, grid, modelPop, modePop, addPop);
@@ -542,17 +541,6 @@ export function createBotPage(host) {
     }
   }
 
-  function paintUsage() {
-    const view = M.usageView(S.bot?.usage);
-    usage.replaceChildren();
-    if (S.draft || !S.bot) return;
-    usage.append(document.createTextNode(`${t('channels:bot.usage.week')} `), el('b', 'bp-mono', view.tokens), document.createTextNode(` ${t('channels:bot.usage.tokens')}`));
-    if (view.cache != null) {
-      usage.append(document.createTextNode(` · ${t('channels:bot.usage.cache')} `), el('b', `bp-mono${view.warn ? ' warn' : ''}`, `${view.cache}%`));
-      if (view.warn) { usage.append(el('span', 'bp-usage-warn', t('channels:bot.usage.low'))); }
-    }
-  }
-
   function paintRun() {
     ensureAccounts();
     paintChips();
@@ -575,7 +563,6 @@ export function createBotPage(host) {
     show(sendTargets, !creating);
     show(memBlk, !creating);
     show(brainBlk, !creating);
-    show(usage, !creating);
     show(notice, S.gone);
     show(grid, !S.gone);
     show(head, !S.gone);
@@ -583,7 +570,6 @@ export function createBotPage(host) {
     if (cur && document.activeElement !== persona) persona.value = cur.persona ?? '';
     growPersona();
     paintRun();
-    paintUsage();
     if (!creating && S.bot) memory.setBot(S.bot);
     else memory.setBot(null);
     brain.setBot(!creating && S.bot ? S.bot : null);

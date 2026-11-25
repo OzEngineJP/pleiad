@@ -27,7 +27,6 @@ import { createConversationNav } from '../conversation-nav-view.mjs';
 import { createConversationRail } from '../conversation-rail.mjs';
 import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
-import { createBudgetMeter, meterOf, tokenSplit } from './thread-budget.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 
 const PAGE = 50;
@@ -48,6 +47,20 @@ export function tokensText(n) {
   if (v < 1000) return String(v);
   const k = v / 1000;
   return `${k >= 100 ? Math.round(k) : (Math.round(k * 10) / 10).toString()}k`;
+}
+
+/**
+ * スレッドのトークンを「新しい入力・出力・キャッシュ読み」に分ける。入力はキャッシュ読みを含む（Claude・Codex・Antigravity とも）ので、
+ * キャッシュ読みを引いたものが新しい入力。キャッシュ読みが入力より大きいのは、キャッシュを入力と分けて数えていた頃の Antigravity の行
+ * （core/usage.mjs の inputWithCache と同じ見方）なので、その入力はキャッシュを含まないものとして読む
+ * @param {{ input?: number, output?: number, cached?: number }} tokens
+ */
+export function tokenSplit(tokens) {
+  const cached = Math.max(0, Number(tokens?.cached) || 0);
+  const raw = Math.max(0, Number(tokens?.input) || 0);
+  const output = Math.max(0, Number(tokens?.output) || 0);
+  const fresh = cached > raw ? raw : raw - cached;
+  return { fresh, output, cached, total: fresh + output };
 }
 
 const stopIcon = () => {
@@ -103,12 +116,6 @@ export function createThread(host) {
   subsButton.setAttribute('aria-controls', 'workDialog');
   subs.append(subsButton);
   const subsChip = createBackgroundChip(subsButton);
-  // 予算のメーター（Chats の文脈のメーターと同じ部品。押すと内訳）。帯を描き直しても要素は使い回し、開いた状態を保つ
-  const meter = createBudgetMeter({
-    load: () => host.invoke('channels.threadBudget', { channelId: S.channelId, threadId: S.threadId }),
-    bots: () => S.bots,
-    lang: () => document.documentElement.lang || undefined,
-  });
   // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。先頭に宛先のチップ
   let voiceView = null;
   const composer = createThreadComposer({
@@ -406,15 +413,14 @@ export function createThread(host) {
     const waiting = !working ? false : (th?.state === 'waiting' || S.posts.some((p) => p.turn && p.state === 'waiting' && !p.deletedAt)) && !S.posts.some((p) => p.turn && p.state === 'working' && !p.deletedAt);
     const stopped = !working && Boolean(th?.stopped);
     const calls = Math.max(0, (th?.calls ?? 0) - 1);
-    const budget = meterOf(S.channel?.kind === 'channel' ? S.channel.budget : null, th);
     // 宛先の bot の、このスレッドの会話の文脈の量（Chats の文脈のメーターと同じ数。会話の一覧の行の contextWindow）
     const destId = composer.dest?.bot?.id;
     const cw = destId ? host.state?.sessions?.find((s) => s.id === S.thread?.sessions?.[destId])?.contextWindow : null;
     const ctxRate = cw?.windowTokens ? Math.min(100, Math.max(0, Math.round(100 * cw.usedTokens / cw.windowTokens))) : null;
-    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, budget, ctxRate, destId]);
+    const sig = JSON.stringify([working, waiting, stopped, total, calls, live.map((b) => b.id), th?.tokens, stopBusy, ctxRate, destId]);
     if (sig === bandSig) return;
     bandSig = sig;
-    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); meter.update(null, null); return; }
+    if (!total && !working && !stopped) { band.hidden = true; band.replaceChildren(); return; }
     band.hidden = false;
     band.classList.toggle('quiet', !working && !stopped);
     const text = el('span', 'th-band-text');
@@ -447,8 +453,7 @@ export function createThread(host) {
       pieces.push(ctx);
     }
     pieces.forEach((p, i) => { if (i) text.append(el('span', 'th-band-dot', '·')); text.append(p); });
-    band.replaceChildren(text, meter.el);
-    meter.update(budget, th?.tokens);
+    band.replaceChildren(text);
     if (working) {
       const stop = el('button', 'btn btn-quiet th-stop');
       stop.type = 'button';

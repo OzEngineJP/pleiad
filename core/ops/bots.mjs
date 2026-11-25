@@ -45,7 +45,6 @@ const botShape = {
 };
 const botRow = z.object({
   ...botShape,
-  usage: z.object({ weekTokens: z.number(), cacheRatio: z.number().nullable() }),
   state: z.enum(['idle', 'working', 'waiting']),
   deletion: z.object({ conversations: z.number(), routines: z.number(), blockedReason: z.string().nullable() }).optional(),
   sendTargetDetails: z.array(z.object({ sessionId: z.string(), title: z.string(), source: z.enum(['shown', 'created', 'manual']) })).optional(),

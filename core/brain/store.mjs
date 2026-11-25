@@ -1,15 +1,14 @@
 // bot の頭の中の保存（ADR 0126）。SQLite の行（core/db.mjs の brainTable・memoryStateTable。ADR 0115）。
 //   brain_stream … 思考の流れ。心拍ごとに 1 行の追記。bot ごとに 30 日・3,000 行まで（それより古い行は追記のたびに落とす）
 //   brain_loops  … 気がかり。1 件 1 行。開いているものは 1 体 12 件まで（超えたら、いちばん長く触っていないものを手放す）。手放した・解決したものは 30 日で消す
-//   memory_state … kind 'brain'（id = botId）= 心拍の状態（カーソル・次に起きる時刻・欲求の前回値・止めた印）と、kind 'brain.spend'（id = channelId/botId）= 今日使った分
+//   memory_state … kind 'brain'（id = botId）= 心拍の状態（カーソル・次に起きる時刻・欲求の前回値・止めた印）
 //
 //   createBrainStore({ dataDir, now, emit }) → BrainStore
 //     append(botId, { kind, text?, refs?, taint?, tokens?, meta? }): Row      … 足した行（seq・at 付き）。kind は STREAM_KINDS
 //     list(botId, { before?, limit? }): Row[]（新しい順）・tail(botId, n): Row[]（古い順）・since(botId, at): Row[]・count(botId): number
 //     loops(botId, status = 'open'): Loop[]（古い順）・applyLoops(botId, ops, { taint? }): { applied, rejected }
 //     state(botId): State・setState(botId, patch): State
-//     addSpend(channelId, botId, { day, percent, tokens }): void・spentPercent(channelId, day): number・spentTokens(botId, day): number
-//     clear(botId): { stream, loops }   … 人が消す（状態と今日の使った分は残す）
+//     clear(botId): { stream, loops }   … 人が消す（状態は残す）
 //     close(): void   … DB の接続を離す
 //   Row: { seq, botId, at, kind, text, refs, taint, tokens, meta }・Loop: { botId, id, status, text, wakeOn, due, taint, createdAt, updatedAt }
 //   emit({ type: 'brainChanged', botId }) を、行・気がかり・状態が変わったときに出す（画面の描き直し）
@@ -127,28 +126,6 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
       return next;
     },
 
-    addSpend(channelId, botId, { day, percent = 0, tokens = 0, unknown = false }) {
-      open();
-      const id = `${channelId}/${botId}`;
-      const cur = states.get('brain.spend', id);
-      const base = cur?.day === day ? cur : { day, percent: 0, tokens: 0, unknown: 0 };
-      // 使用量が測れなかった呼出し（Issue #180）: 0 とは扱わず「不明」の回数を残す（allowsBrain がその日の自発を止める）
-      states.save([['brain.spend', id, { day, percent: base.percent + percent, tokens: base.tokens + tokens, unknown: (base.unknown ?? 0) + (unknown ? 1 : 0) }]]);
-    },
-    /** その日の、使用量が測れなかった内部呼出しの回数 */
-    spentUnknown(botId, day) {
-      open();
-      return Object.entries(states.ofKind('brain.spend')).filter(([id, v]) => id.endsWith(`/${botId}`) && v.day === day).reduce((n, [, v]) => n + (v.unknown ?? 0), 0);
-    },
-    spentPercent(channelId, day) {
-      open();
-      return Object.values(states.ofKind('brain.spend', `${channelId}/`)).filter((v) => v.day === day).reduce((n, v) => n + (v.percent ?? 0), 0);
-    },
-    spentTokens(botId, day) {
-      open();
-      return Object.entries(states.ofKind('brain.spend')).filter(([id, v]) => id.endsWith(`/${botId}`) && v.day === day).reduce((n, [, v]) => n + (v.tokens ?? 0), 0);
-    },
-
     clear(botId) {
       const t = open();
       const out = { stream: t.clearStream(botId), loops: t.clearLoops(botId) };
@@ -158,6 +135,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
     purgeBot(botId) {
       service.clear(botId);
       const changes = [['brain', botId, undefined]];
+      // 使用量の仕組み（ADR 0119）をやめる前に書いた 'brain.spend' の行が残っていれば、bot を消すときに一緒に消す（読み込みには使わない）
       for (const key of Object.keys(states.ofKind('brain.spend'))) if (key.endsWith('/' + botId)) changes.push(['brain.spend', key, undefined]);
       states.save(changes);
     },
