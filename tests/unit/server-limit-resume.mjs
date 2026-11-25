@@ -7,7 +7,7 @@ import { readSessions, writeSessions } from '../lib/data-store.mjs';
 import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-limit-resume';
-export const title = '上限で中断しても自動では再開しない。上限中に送った指示は解除時刻に流れ（解除時刻が分からなければすぐ送る）、人の「再開」は解除の後に効く。古い自動再開の予定と印は読まない';
+export const title = '上限で中断しても先回りで止めない（ADR 0352）。止まった後に送った指示も人の「再開」も、解除時刻の前に普通に送られ、まだ上限なら実際に断られてまた止まる。古い自動再開の予定と印は読まない';
 
 const HOUR = 3_600_000;
 
@@ -27,36 +27,41 @@ export default async function (t) {
   const userTexts = async id => (await c.cmd('loadSession', { sessionId: id })).messages.filter(m => m.role === 'user').map(m => m.text);
   const newSession = async () => (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
   const idle = async id => (await c.cmd('running')).turns.every(x => x.sessionId !== id);
+  const itemOf = async (sessionId, messageId) => (await c.cmd('listMessages', { sessionId })).find(m => m.id === messageId);
   try {
-    // ---- 1. 上限で止まった会話は、予定を置かない。上限中に送った指示は送信待ちで、解除時刻に一度だけ流れる
+    // ---- 1. 上限で止まった会話は、予定を置かず、送信も止めない。解除時刻の前に送った指示は、普通にすぐ送られる
     const sessionId = await newSession();
     t.ok('会話を作成', Boolean(sessionId), sessionId);
-    const resetsAt = Date.now() + 2300;
+    const resetsAt = Date.now() + 3 * HOUR;
     const from = c.mark();
     const result = await c.runTurn({ sessionId, prompt: `limit ${resetsAt}` }, { ms: 3000 })
       .catch(err => { throw new Error(`${err.message}\n${JSON.stringify(c.since(from))}\n${server.tail()}`); });
     const end = c.since(from).find(e => e.type === 'turnEnd' && e.sessionId === sessionId);
     t.ok('上限は完了・失敗ではなく limited', result.outcome === 'limited' && end?.interrupted?.reason === 'limit', JSON.stringify(end));
-    t.ok('解除時刻と枠が会話に残り、自動再開の印は付かない', end.interrupted.resetsAt === resetsAt && end.interrupted.window === 'five_hour' && !('autoResume' in end.interrupted));
+    t.ok('解除時刻と枠が会話に残り（表示だけの情報）、自動再開の印は付かない', end.interrupted.resetsAt === resetsAt && end.interrupted.window === 'five_hour' && !('autoResume' in end.interrupted));
     t.ok('完了通知は出ない', !c.since(from).some(e => e.type === 'completionReady' && e.sessionId === sessionId));
     t.ok('再開の予定を置かない', (await op('sessions.schedules', { sessionId })).length === 0);
     t.ok('上限の会話の自動再開の切り替え（sessions.setAutoResume）は無い', await op('sessions.setAutoResume', { sessionId, enabled: false }).then(() => false, () => true));
-    t.ok('解除の前は、人の再開は断られる', await op('sessions.resume', { sessionId }).then(() => false, e => /解除|reset/i.test(String(e.message))));
 
     const id = 'limitqueued0001';
+    const sendFrom = c.mark();
     await c.cmd('sendMessage', { sessionId, messageId: id, prompt: 'echo:after-reset' });
-    let items = await c.cmd('listMessages', { sessionId });
-    t.ok('解除前は API に渡さず limit で待つ', items.find(m => m.id === id)?.waiting?.reason === 'limit', JSON.stringify(items));
-    await sleep(150);
-    t.ok('解除前に新しい指示を流さない', !c.since(from).some(e => e.type === 'userMessage' && e.messageId === id));
-    const again = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId && e.outcome === 'ok', { from, ms: 10000 });
-    items = await c.cmd('listMessages', { sessionId });
+    const again = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId && e.outcome === 'ok', { from: sendFrom, ms: 10000 });
+    const sentItem = await itemOf(sessionId, id);
     const messages = await userTexts(sessionId);
-    t.ok('解除時刻に、待っていた指示を一度だけ送る', again.interrupted === null && items.find(m => m.id === id)?.status === 'sent'
-      && messages.filter(x => x === 'echo:after-reset').length === 1, JSON.stringify(messages));
+    t.ok('解除時刻の前でも、送った指示は送信待ちにならずすぐ送られる', again.interrupted === null && sentItem?.status === 'sent' && !sentItem.waiting
+      && messages.filter(x => x === 'echo:after-reset').length === 1, JSON.stringify({ sentItem, messages }));
     t.ok('最初の上限を出した指示は送り直さず、続けての文も足さない', messages.length === 2 && messages.filter(x => x === `limit ${resetsAt}`).length === 1, JSON.stringify(messages));
 
-    // ---- 2. 何も送っていない会話は、解除時刻を過ぎても自分では動かない。解除の後は人の「再開」で続く
+    // 送ってもまだ上限なら、実際に断られてまた止まる（先回りでは止めない）
+    const still = await newSession();
+    await c.runTurn({ sessionId: still, prompt: `limit ${Date.now() + 3 * HOUR}` });
+    const stillResetsAt = Date.now() + 4 * HOUR;
+    const stillAgain = await c.runTurn({ sessionId: still, prompt: `limit ${stillResetsAt}` }, { ms: 3000 });
+    t.ok('まだ上限のまま送ると、また limited で止まる（解除時刻は新しい失敗のもの）', stillAgain.outcome === 'limited'
+      && (await info(still)).interrupted?.reason === 'limit' && (await info(still)).interrupted.resetsAt === stillResetsAt);
+
+    // ---- 2. 何も送っていない会話は、解除時刻を過ぎても自分では動かない。人の「再開」で続く
     const manual = await newSession();
     await c.runTurn({ sessionId: manual, prompt: `limit ${Date.now() + 1500}` });
     await sleep(2300);
@@ -68,6 +73,13 @@ export default async function (t) {
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === manual && e.outcome === 'ok', { from: manualFrom, ms: 10000 });
     t.ok('再開すると中断の印が消える', (await info(manual)).interrupted === null);
 
+    const early = await newSession();
+    await c.runTurn({ sessionId: early, prompt: `limit ${Date.now() + 3 * HOUR}` });
+    const earlyFrom = c.mark();
+    t.ok('解除時刻の前でも、人の「再開」は断られず送られる', (await op('sessions.resume', { sessionId: early })).sent === 'text');
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === early && e.outcome === 'ok', { from: earlyFrom, ms: 10000 });
+    t.ok('解除の前に再開しても中断の印は消える', (await info(early)).interrupted === null);
+
     // ---- 3. 解除が遠い先（週の上限など）でも予定は置かず、終了の確認に再開の件数は無い
     const weekly = await newSession();
     const farAt = Date.now() + 3 * 24 * HOUR;
@@ -76,7 +88,7 @@ export default async function (t) {
     t.ok('遠い先の解除でも予定を置かない', (await op('sessions.schedules', { sessionId: weekly })).length === 0);
     t.ok('終了の確認に再開の件数を載せない', !('resume' in (await c.cmd('running')).scheduled));
 
-    // ---- 4. 解除時刻が分からない上限は待たせない。送った指示はすぐ送られ、人の「再開」も断らない
+    // ---- 4. 解除時刻が分からない上限も、同じ。送った指示はすぐ送られ、人の「再開」も断らない
     const unknown = await newSession();
     await c.runTurn({ sessionId: unknown, prompt: 'limit unknown' });
     const stopped = (await info(unknown)).interrupted;
@@ -91,80 +103,36 @@ export default async function (t) {
     await c.runTurn({ sessionId: unknownAgain, prompt: 'limit unknown' });
     t.ok('解除時刻が分からない上限は、人の「再開」を断らない', (await op('sessions.resume', { sessionId: unknownAgain })).sent === 'text');
 
-    // ---- 5. アカウントを替えて送ると、止まった枠の待ちは解ける（解除時刻まで待たない）
+    // ---- 5. アカウントを替えて送ると、替えた先で送られる。替えなくても待たない
     const switched = await newSession();
     await c.runTurn({ sessionId: switched, prompt: `limit ${Date.now() + 3 * HOUR}` });
     const account = { id: await seedClaudeAccount(dataDir, '別のアカウント') };
-    await c.cmd('sendMessage', { sessionId: switched, messageId: 'switchedq00001', prompt: 'echo:before-switch' });
-    t.ok('替える前は、解除時刻まで送信待ち', (await c.cmd('listMessages', { sessionId: switched })).find(m => m.id === 'switchedq00001')?.waiting?.reason === 'limit');
-    const switchedFrom = c.mark();
     await c.cmd('setTurnSettings', { sessionId: switched, account: account.id });
-    t.ok('アカウントを替えると、待っていた指示がすぐ送られる', await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === switched && e.outcome === 'ok', { from: switchedFrom, ms: 10000 }).then(() => true, () => false));
-    t.ok('替えた会話は、解除時刻まで待たずに続く（印は消える）', (await info(switched)).interrupted === null);
+    const switchedFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: switched, messageId: 'switchedq00001', prompt: 'echo:after-switch' });
+    t.ok('アカウントを替えて送ると、すぐ送られる', await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === switched && e.outcome === 'ok', { from: switchedFrom, ms: 10000 }).then(() => true, () => false));
+    t.ok('替えた会話は替えた先で続き、中断の印は消える', (await info(switched)).interrupted === null && (await info(switched)).claudeAccount === account.id);
     const switchedAgain = await newSession();
     await c.runTurn({ sessionId: switchedAgain, prompt: `limit ${Date.now() + 3 * HOUR}` });
     // 新しい会話の既定のアカウントは、さっき選んだ別のアカウント。ログイン中のアカウント（''）へ替える
     await c.cmd('setTurnSettings', { sessionId: switchedAgain, account: '' });
     t.ok('替えた会話の中断の印は残る', (await info(switchedAgain)).interrupted?.reason === 'limit');
-    t.ok('替えた後は、解除時刻の前でも人の「再開」が通る', (await op('sessions.resume', { sessionId: switchedAgain })).sent === 'text');
+    t.ok('替えた後も、解除時刻の前に人の「再開」が通る', (await op('sessions.resume', { sessionId: switchedAgain })).sent === 'text');
 
-    const restored = await newSession();
-    const originalAccount = (await info(restored)).claudeAccount ?? '';
-    const restoredAt = Date.now() + 3000;
-    await c.runTurn({ sessionId: restored, prompt: `limit ${restoredAt}` });
-    await c.cmd('setTurnSettings', { sessionId: restored, backend: 'codex' });
-    await c.cmd('setTurnSettings', { sessionId: restored, cancel: true });
-    t.ok('エージェントの切替を取り消すと再開を再び待たせる',
-      await op('sessions.resume', { sessionId: restored }).then(() => false, e => /解除|reset/i.test(e.message)));
-    await c.cmd('setTurnSettings', { sessionId: restored, account: originalAccount ? '' : account.id });
-    await c.cmd('setTurnSettings', { sessionId: restored, account: originalAccount });
-    const restoredFrom = c.mark();
-    await c.cmd('sendMessage', { sessionId: restored, messageId: 'restoredq00001', prompt: 'echo:restored-timer' });
-    t.ok('元のアカウントを選び直すと待機に戻る', (await c.cmd('listMessages', { sessionId: restored }))[0]?.waiting?.resetsAt === restoredAt);
-    const released = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === restored && e.outcome === 'ok', { from: restoredFrom, ms: 10000 });
-    t.ok('選び直した上限のタイマーが指示を配送する', released.completedAt >= restoredAt);
-
-    // 押した時点の設定（settings。ADR 0347）を持つ送信は、その枠の上限を待つ。上限で待っている間に会話のアカウントを替えたら、替えた先で流す
+    // 押した時点の設定（settings。ADR 0347）を持つ送信も、上限で止まった会話に待たずすぐ、その設定で送られる
     const captured = await newSession();
     const capturedMeta = await info(captured);
-    const capturedReset = Date.now() + 3 * HOUR;
-    await c.runTurn({ sessionId: captured, prompt: `limit ${capturedReset}` });
+    await c.runTurn({ sessionId: captured, prompt: `limit ${Date.now() + 3 * HOUR}` });
     const capturedAccount = (await info(captured)).interrupted?.account ?? '';
     const capturedSettings = { backend: 'fake', cwd: ROOT, model: capturedMeta.model ?? '', effort: '', mode: 'default', account: capturedAccount, endpoint: '', worktreePending: false };
-    const otherAccount = capturedAccount ? '' : account.id;
-    await c.cmd('sendMessage', { sessionId: captured, messageId: 'capturedq00001', prompt: 'echo:captured', settings: capturedSettings });
-    const itemOf = async (sessionId, messageId) => (await c.cmd('listMessages', { sessionId })).find(m => m.id === messageId);
-    t.ok('押した時点のアカウントが止まっていれば、送信待ちで待つ', (await itemOf(captured, 'capturedq00001'))?.waiting?.reason === 'limit');
     const capturedFrom = c.mark();
-    await c.cmd('setTurnSettings', { sessionId: captured, account: otherAccount });
+    await c.cmd('sendMessage', { sessionId: captured, messageId: 'capturedq00001', prompt: 'echo:captured', settings: capturedSettings });
     const capturedEnd = await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === captured && e.outcome === 'ok', { from: capturedFrom, ms: 10000 }).catch(() => null);
     const capturedAfter = await itemOf(captured, 'capturedq00001');
-    t.ok('上限で待つ間に別のアカウントを選ぶと、待っていた発言は替えた先ですぐ送られる', Boolean(capturedEnd) && capturedAfter?.status === 'sent'
-      && (await info(captured)).claudeAccount === otherAccount && (await userTexts(captured)).includes('echo:captured'),
-      JSON.stringify({ capturedAfter, account: (await info(captured)).claudeAccount, events: c.since(capturedFrom).filter(e => e.sessionId === captured).map(e => e.type) }));
-    t.ok('押した時点の設定は受け付けた形のまま残る（同じ id の送り直しの照合）', capturedAfter?.args?.settings?.account === capturedAccount && capturedAfter?.retarget?.account === otherAccount);
-
-    // 替えるのを取り消すと、押した時点の設定の上限の待ちへ戻る
-    const undo = await newSession();
-    const undoMeta = await info(undo);
-    const undoReset = Date.now() + 3 * HOUR;
-    await c.runTurn({ sessionId: undo, prompt: `limit ${undoReset}` });
-    const undoAccount = (await info(undo)).interrupted?.account ?? '';
-    await c.cmd('sendMessage', { sessionId: undo, messageId: 'undoq000000001', prompt: 'echo:undo',
-      settings: { backend: 'fake', cwd: ROOT, model: undoMeta.model ?? '', effort: '', mode: 'default', account: undoAccount, endpoint: '', worktreePending: false } });
-    // 同じアカウントのままモデルだけ替える（上限はアカウントの枠なので、替えた先でも待つ）
-    const undoFrom = c.mark();
-    await c.cmd('setTurnSettings', { sessionId: undo, model: 'fast' });
-    const undoMoved = await itemOf(undo, 'undoq000000001');
-    t.ok('替えた先も上限なら、待っていた発言は替えた先の設定で同じ上限を待つ', undoMoved?.status === 'queued' && undoMoved.retarget?.model === 'fast'
-      && undoMoved.args?.settings?.model === (undoMeta.model ?? '') && undoMoved.waiting?.resetsAt === undoReset, JSON.stringify(undoMoved));
-    await c.cmd('setTurnSettings', { sessionId: undo, cancel: true });
-    await sleep(500);
-    const undoItem = await itemOf(undo, 'undoq000000001');
-    t.ok('替えるのを取り消すと、待っていた発言は押した時点の設定に戻り、元の上限を待つ', undoItem?.status === 'queued' && !undoItem.retarget
-      && undoItem.waiting?.reason === 'limit' && undoItem.waiting.resetsAt === undoReset && !(await info(undo)).nextSettings
-      && !c.since(undoFrom).some(e => e.sessionId === undo && ['turnStart', 'userMessage'].includes(e.type)), JSON.stringify(undoItem));
-    await c.cmd('messageAction', { sessionId: undo, messageId: 'undoq000000001', action: 'cancel' });
+    t.ok('押した時点の設定を持つ送信も、上限で止まった会話にすぐ送られる（待たない）', Boolean(capturedEnd) && capturedAfter?.status === 'sent' && !capturedAfter.waiting
+      && (await info(captured)).claudeAccount === capturedAccount && (await userTexts(captured)).includes('echo:captured'),
+      JSON.stringify({ capturedAfter, account: (await info(captured)).claudeAccount }));
+    t.ok('押した時点の設定は受け付けた形のまま残る（同じ id の送り直しの照合）', capturedAfter?.args?.settings?.account === capturedAccount);
 
     // 上限以外（作業中のターン）で待っている発言は、後から設定を替えても押した時点の設定で届く
     const busy = await newSession();
@@ -178,7 +146,7 @@ export default async function (t) {
     await c.cmd('setTurnSettings', { sessionId: busy, account: busyAccount ? '' : account.id });
     const busyItem = await itemOf(busy, 'busyq000000001');
     t.ok('作業中のターンを待つ発言は、設定を替えても押した時点の設定のまま', busyItem?.status === 'queued' && busyItem.waiting?.reason !== 'limit'
-      && !busyItem.retarget && Object.entries(busySettings).every(([key, value]) => busyItem.args?.settings?.[key] === value), JSON.stringify(busyItem));
+      && Object.entries(busySettings).every(([key, value]) => busyItem.args?.settings?.[key] === value), JSON.stringify(busyItem));
     await fs.writeFile(path.join(scratch, 'busy-hold'), '');
     await busyTurn;
     for (let i = 0; i < 100 && (await itemOf(busy, 'busyq000000001'))?.status !== 'sent'; i++) await sleep(100);
@@ -187,27 +155,24 @@ export default async function (t) {
     t.ok('作業中のターンを待った発言は、押した時点のアカウントで届く', (await itemOf(busy, 'busyq000000001'))?.status === 'sent'
       && (await info(busy)).claudeAccount === busyAccount, JSON.stringify({ item: await itemOf(busy, 'busyq000000001'), account: (await info(busy)).claudeAccount }));
 
-    // 上限で止まったターンの後ろで保留になった発言も、替えた先へ移り、新しく送った発言より先に届く
+    // 上限で止まったターンの後ろで保留になった発言は、新しく送った発言より先に届く（上限そのものは待たない）
     const held = await newSession();
     const heldMeta = await info(held);
     const heldFrom = c.mark();
     const heldTurn = c.runTurn({ sessionId: held, prompt: `limit ${Date.now() + 3 * HOUR} HOLD_TURN:held-limit` });
     await c.waitFor(e => e.type === 'activity' && e.sessionId === held && e.state === 'thinking', { from: heldFrom, ms: 10000 });
     const heldAccount = heldMeta.claudeAccount ?? '';
-    const heldOther = heldAccount ? '' : account.id;
     await c.cmd('sendMessage', { sessionId: held, messageId: 'heldq000000001', prompt: 'echo:held',
       settings: { backend: 'fake', cwd: ROOT, model: heldMeta.model ?? '', effort: '', mode: 'default', account: heldAccount, endpoint: '', worktreePending: false } });
     await fs.writeFile(path.join(scratch, 'held-limit'), '');
     t.ok('上限で止まったターンの後ろの発言は保留になる', (await heldTurn).outcome === 'limited' && (await itemOf(held, 'heldq000000001'))?.status === 'paused');
-    await c.cmd('setTurnSettings', { sessionId: held, account: heldOther });
     const heldSwitch = c.mark();
     await c.cmd('sendMessage', { sessionId: held, messageId: 'heldnew0000001', prompt: 'echo:held-new',
-      settings: { backend: 'fake', cwd: ROOT, model: heldMeta.model ?? '', effort: '', mode: 'default', account: heldOther, endpoint: '', worktreePending: false } });
+      settings: { backend: 'fake', cwd: ROOT, model: heldMeta.model ?? '', effort: '', mode: 'default', account: heldAccount, endpoint: '', worktreePending: false } });
     await c.waitFor(e => e.type === 'userMessage' && e.messageId === 'heldnew0000001', { from: heldSwitch, ms: 20000 })
       .catch(async err => { throw new Error(`${err.message}\n${JSON.stringify(await c.cmd('listMessages', { sessionId: held }))}\n${server.tail()}`); });
-    t.ok('替えた後に送ると、保留していた発言が替えた先で先に届く',
-      c.since(heldSwitch).filter(e => e.type === 'userMessage' && e.sessionId === held).map(e => e.messageId).join() === 'heldq000000001,heldnew0000001'
-      && (await itemOf(held, 'heldq000000001'))?.retarget?.account === heldOther);
+    t.ok('解除の前に新しく送ると、保留していた発言が先に届き、新しい発言が続く',
+      c.since(heldSwitch).filter(e => e.type === 'userMessage' && e.sessionId === held).map(e => e.messageId).join() === 'heldq000000001,heldnew0000001');
 
     const late = await newSession();
     const lateFrom = c.mark();
@@ -218,12 +183,9 @@ export default async function (t) {
     await fs.writeFile(path.join(scratch, 'late-limit'), '');
     t.ok('切替を予約した後で元のターンが上限終了する', (await limitedTurn).outcome === 'limited');
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === late && e.outcome === 'ok', { from: lateFrom, ms: 10000 });
-    t.ok('元のターンの上限を待たずに別エージェントへ配送する', (await info(late)).backend === 'codex');
+    t.ok('元のターンの上限に関わらず別エージェントへ配送する', (await info(late)).backend === 'codex');
 
     // ---- 6. 古いデータ: 保存済みの自動再開の予定（kind: resume）と会話の印は読まない。送信予定は残る
-    const paused = await newSession();
-    await c.runTurn({ sessionId: paused, prompt: `limit ${Date.now() + HOUR}` });
-    await c.cmd('sendMessage', { sessionId: paused, messageId: 'restartheld0001', prompt: 'held across restart' });
     const legacy = await newSession();
     await c.runTurn({ sessionId: legacy, prompt: `limit ${Date.now() + 1000}` });
     const sendRow = { id: 'send:legacy-keep', kind: 'send', sessionId: legacy, at: Date.now() + 24 * HOUR, createdAt: Date.now(), by: 'human',
@@ -247,15 +209,6 @@ export default async function (t) {
     t.ok('古い自動再開の印は読まず、解除時刻を過ぎても会話は動かない', legacyInfo.interrupted?.reason === 'limit' && !('autoResume' in legacyInfo.interrupted)
       && await idle(legacy) && (await userTexts(legacy)).length === 1, JSON.stringify(legacyInfo.interrupted));
     t.ok('古い印の残った会話も、人の「再開」で続く', (await op('sessions.resume', { sessionId: legacy })).sent === 'text');
-    const statuses = async () => (await c.cmd('listMessages', { sessionId: paused })).map(m => m.status);
-    t.ok('再起動後の送信待ちは保留される', (await statuses()).join() === 'paused');
-    await c.cmd('setTurnSettings', { sessionId: paused, backend: 'codex' });
-    const afterRestart = c.mark();
-    await c.cmd('sendMessage', { sessionId: paused, messageId: 'restartnew00001', prompt: 'new after switching' });
-    await c.waitFor(e => e.type === 'userMessage' && e.messageId === 'restartnew00001', { from: afterRestart, ms: 20000 })
-      .catch(async err => { throw new Error(`${err.message}\n${JSON.stringify(await c.cmd('listMessages', { sessionId: paused }))}\n${server.tail()}`); });
-    t.ok('切替後に新規送信すると再起動で保留した指示が先に配送される',
-      c.since(afterRestart).filter(e => e.type === 'userMessage' && e.sessionId === paused).map(e => e.messageId).join() === 'restartheld0001,restartnew00001');
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

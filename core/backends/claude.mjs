@@ -1253,7 +1253,10 @@ export const backend = {
     // （付けると、別タブが新規の id を待っている最中に再開ターンの id を掴んでしまう）。
     let toldModel = false;
     let heldResult = null;
+    // 使用量の上限（ADR 0352）。limit は Claude Code が実際に断った印（assistant の error と result の 429）。
+    // limitInfo は rate_limit_event の知らせ（解除時刻と枠だけ。これだけでは止まったことにしない）
     let limit = null;
+    let limitInfo = null;
     // ログインの期限切れ（401）の印（normalize の authFailed）と、このターンにツールの実行か返答の本文がもう出たか。
     // 失敗の turnResult に kind: 'auth' と pristine（何も出ていない = 最初の API 呼び出しで断られた）を付ける（ADR 0212）
     let authFailed = null;
@@ -1309,14 +1312,21 @@ export const backend = {
         // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
         // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。
         // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
-        // 上限の印は 1 回の上限で 2 度来る。先の rate_limit_event は解除時刻と枠を持ち、後のライブの assistant の error 行は持たない
-        // （SDKAssistantMessage に quotaLimits は載らない）。後の印で上書きすると解除時刻の分からない上限になり、振り分けが外さない（2026-10-21）
-        if (ev.type === 'limit') { limit = mergeLimit(limit, ev); continue; }
+        // 上限の知らせは 1 回の上限で 2 度来る。先の rate_limit_event（limitInfo）は解除時刻と枠を持ち、後のライブの assistant の error 行（limit）は持たない
+        // （SDKAssistantMessage に quotaLimits は載らない）。後の印で上書きすると解除時刻の分からない上限になり、振り分けが外さない（2026-10-21）。
+        // だから失敗の印に、先の知らせの解除時刻と枠を足す。知らせだけでは止まらない（追加の使用量が有効なら CLI は走り続ける）
+        if (ev.type === 'limitInfo') { limitInfo = mergeLimit(limitInfo, ev); continue; }
+        if (ev.type === 'limit') { limit = mergeLimit(limit ?? limitInfo, ev); continue; }
         if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null, ...(authFailed?.connectorsError ? { connectorsError: authFailed.connectorsError } : {}) }; continue; }
         if (ev.type === 'modelRejected') { modelRejected = { message: ev.message ?? modelRejected?.message ?? null }; continue; }
         if (ev.type === 'text.delta' || ev.type === 'tool.start') produced = true;
         if (ev.type === "turnResult" && stop) continue;
-        if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', ...limitFields(limit) }; continue; }
+        if (ev.type === 'turnResult' && limit) {
+          // 断られたターンの result だけを limited にする。成功した result は書き換えない
+          // （同じ query の途中で断られた後に、次の指示が通ったとき、先の印が最後の成功を上書きしない）
+          if (message.is_error === true) { heldResult = { ...ev, outcome: 'limited', ...limitFields(limit) }; continue; }
+          limit = null;
+        }
         if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
         send(ev, replay);
       }

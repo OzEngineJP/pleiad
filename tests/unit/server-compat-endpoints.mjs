@@ -140,8 +140,13 @@ export default async function (t) {
       limited.outcome === "limited" && interruption?.endpoint === id && interruption.resetsAt > Date.now(), JSON.stringify(interruption));
     await cmd("setTurnSettings", { sessionId: limitSession, endpoint: "" });
     await cmd("setTurnSettings", { sessionId: limitSession, endpoint: id });
-    t.ok("元の互換接続先を選び直すと再開を待たせる",
-      /解除|reset/i.test((await rejects(cmd("resume", { sessionId: limitSession })))?.message ?? ''));
+    // 解除の前でも人の再開は断らず、選び直した互換接続先でそのまま送る（上限で先に止めない。まだ断られるなら、そのターンがまた止まる。ADR 0352）
+    const resumeFrom = c.mark();
+    const resumeError = await rejects(cmd("resume", { sessionId: limitSession }));
+    await c.waitFor(e => e.type === "turnEnd" && e.sessionId === limitSession, { from: resumeFrom, ms: 10000 });
+    const resumedTurn = await lastTurn();
+    t.ok("元の互換接続先を選び直しても、解除の前の再開は断らずその接続先で送る",
+      resumeError === null && resumedTurn?.provider?.baseUrl === api.url + "/v1", JSON.stringify({ err: resumeError?.message, provider: resumedTurn?.provider?.baseUrl }));
     await cmd("setTurnSettings", { sessionId: limitSession, endpoint: "" });
     const officialFrom = c.mark();
     await cmd("sendMessage", { sessionId: limitSession, messageId: "endpointlimit01", prompt: "send on official" });

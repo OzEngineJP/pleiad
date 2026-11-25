@@ -2,7 +2,7 @@
 //   1. 上限で止まった子（解除の後）: 中断と同じ位置に「再開」。保留がなければ欄の下の注記は出ない。
 //   2. 字を書くと「再開」は隠れ、一行が見える。消すとまた出る
 //   3. 押すと resume が子の会話へ届く（メインの resumeSession と同じ）
-//   4. 解除の前の子: 押せない時計（字は「◷ H:MM に解除」）
+//   4. 解除の前の子も同じ「再開」（押せる。時計にしない）
 // 実行: node tests/browser/work-dialog-resume.mjs   （WORK_DIALOG_RESUME_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -10,7 +10,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startServer, ROOT } from '../lib/server.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 fs.mkdirSync(path.join(ROOT, 'temporary'), { recursive: true });
@@ -66,7 +65,6 @@ try {
   await wait(async () => (await taskOf(doneT.taskId))?.status === 'completed', 'finished child completed');
   const readyChild = (await taskOf(readyT.taskId)).sessionId;
   const clockChild = (await taskOf(clockT.taskId)).sessionId;
-  const otherAccount = await seedClaudeAccount(path.join(base, 'data'), 'Private');
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   ab('set', 'viewport', '1280', '800');
@@ -106,7 +104,7 @@ try {
     const vis = n => !!n && !n.hidden && n.offsetParent !== null;
     const b = document.getElementById('wkResume'), note = document.getElementById('wkResumeNote'), abort = document.getElementById('wkAbort');
     return {
-      shown: vis(b), disabled: !!b?.disabled, label: b?.getAttribute('aria-label') ?? '', limit: b?.classList.contains('is-limit') ?? false,
+      shown: vis(b), disabled: !!b?.disabled, label: b?.getAttribute('aria-label') ?? '',
       note: vis(note) ? note.textContent : '', noteQuiet: note?.classList.contains('quiet') ?? null, noteVisible: vis(note) && getComputedStyle(note).visibility !== 'hidden',
       placeholder: document.getElementById('wkPrompt')?.placeholder ?? '', abort: vis(abort), send: vis(document.getElementById('wkSend')),
       w: Math.round(b?.getBoundingClientRect().width ?? 0), h: Math.round(b?.getBoundingClientRect().height ?? 0),
@@ -120,7 +118,6 @@ try {
   const s1 = state();
   console.log('ready', JSON.stringify(s1));
   assert.equal(s1.label, '再開', 'plain 再開 label');
-  assert.equal(s1.limit, false);
   assert.equal(s1.disabled, false);
   assert.equal(s1.abort, false, 'no stop button while it is not running');
   assert.equal(s1.note, '', 'ready child has no note without held messages');
@@ -142,28 +139,25 @@ try {
   await wait(() => cmds('resume').some(c => c.sessionId === readyChild), 'resume sent to the child');
   console.log('PASS: pressing 再開 sends resume to the child');
 
-  // ---- 4. 解除の前の子: 押せない時計 ----
+  // ---- 4. 解除の前の子も、普通の「再開」（先回りして待たせない。ADR 0352） ----
   await openCard(clockT.taskId, 'clock');
-  await wait(() => state().shown, 'clock on the not-yet-released child');
+  await wait(() => state().shown, 'resume on the not-yet-released child');
   const s4 = state();
-  console.log('clock', JSON.stringify(s4));
-  assert.equal(s4.limit, true);
-  assert.equal(s4.disabled, true, 'the clock is not pressable');
-  assert.ok(/解除/.test(s4.label), 'label says when the limit is released');
-  shot('4-clock-1280');
+  console.log('before release', JSON.stringify(s4));
+  assert.equal(s4.label, '再開', 'plain 再開 label even before the reset time');
+  assert.equal(s4.disabled, false, 'pressable before the reset time');
+  shot('4-before-release-1280');
   typeInto('解除後に続けてください');
-  await wait(() => state().noteVisible, 'limit note while typing');
-  assert.match(state().note, /上限の解除/);
-  console.log('PASS: before the limit is released — a clock that cannot be pressed');
-
-  const originalAccount = (await client.cmd('listSessions')).find(s => s.id === clockChild).interrupted.account ?? '';
-  await client.cmd('setTurnSettings', { sessionId: clockChild, account: otherAccount });
-  await wait(() => !state().noteVisible, 'no limit note after choosing a different account');
+  await wait(() => !state().shown, 'resume hidden while typing');
+  assert.equal(state().noteVisible, false, 'no limit note while typing');
   typeInto('');
-  await wait(() => state().shown && !state().disabled && state().label === '再開', 'resume enabled after choosing a different account');
-  await client.cmd('setTurnSettings', { sessionId: clockChild, account: originalAccount });
-  await wait(() => state().shown && state().disabled && state().limit, 'clock restored after choosing the original account');
-  console.log('PASS: the account switch and reselection update the work dialog');
+  await wait(() => state().shown && !state().disabled && state().label === '再開', 'resume back after clearing');
+  console.log('PASS: before the reset time — the same pressable 再開, no waiting clock');
+
+  // 押すと、解除の前でも resume が届く（まだ上限なら、もう一度止まるだけ）
+  clickOn('#wkResume', 'resume before release');
+  await wait(() => cmds('resume').some(c => c.sessionId === clockChild), 'resume sent to the child before the reset time');
+  console.log('PASS: pressing 再開 before the reset time sends resume to the child');
 
   // ---- 5. 終わった子には出ない ----
   await openCard(doneT.taskId, 'done');

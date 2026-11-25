@@ -3664,7 +3664,6 @@
     "waitReply": "送信待ち — 今の返答が終わると自動で送信",
     "waitOrder": "送信待ち — 前のメッセージが送られてから送信",
     "preparing": "送信準備中",
-    "waitLimit": "送信待ち — 上限の解除（{{time}}）の後に送信",
     "unknownHint": "会話を確認してください。再送すると同じ指示が2回届くことがあります。",
     "retry": "再送する",
     "cancel": "取り消す"
@@ -4526,9 +4525,6 @@
         "auth": "ログインが切れたため止まりました"
     },
       "resume": "再開",
-      "unknownTime": "解除時刻が不明",
-      "limitSendNote": "送ると、上限の解除（{{time}}）の後にこの指示で続けます",
-      "limitReleaseAt": "{{time}} に解除",
       "limitResetAt": "{{time}} に解除",
       "limitResetUnknown": "解除時刻は分かりません",
       "limitHead": "{{line}}（{{scope}}）",
@@ -5138,8 +5134,7 @@
       "sent": "AI に渡しました",
       "pending": "差し込み待ち · 次の区切りで渡します",
       "queued": "送信待ち · この作業が終わると送ります",
-      "queuedOrder": "送信待ち · 前の発言が送られてから送ります",
-      "queuedLimit": "送信待ち · 上限が解けたら送ります"
+      "queuedOrder": "送信待ち · 前の発言が送られてから送ります"
     },
     "openSettings": "設定を開く",
     "hint": {

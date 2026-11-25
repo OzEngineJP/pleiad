@@ -477,7 +477,7 @@ export function createWorkComposer(h) {
     },
     /**
      * 「▶ 再開」と、欄の下の一行を出し入れする（メインの syncResume と同じ部品・同じ字。出す条件と字は web/interrupt.mjs）。
-     * r: { show（ボタン）, label, short（狭い幅の時計の字）, limit（解除前の時計）, disabled, note（一行。無ければ隠す）, quiet（書いていない間は見えない）, placeholder（中断中の欄の字。無ければ元へ戻す）}
+     * r: { show（ボタン）, label, disabled, note（一行。無ければ隠す）, quiet（書いていない間は見えない）, placeholder（中断中の欄の字。無ければ元へ戻す）}
      */
     setResume(r = {}) {
       const label = r.label ?? '';
@@ -486,8 +486,6 @@ export function createWorkComposer(h) {
         els.resume.title = label;
         els.resume.setAttribute('aria-label', label);
       }
-      els.resumeShort.textContent = r.short ?? '';
-      els.resume.classList.toggle('is-limit', Boolean(r.limit));
       els.resume.disabled = Boolean(r.disabled);
       els.resumeNote.hidden = !r.note;
       if (els.resumeNote.textContent !== (r.note ?? '')) els.resumeNote.textContent = r.note ?? '';

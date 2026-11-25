@@ -4,10 +4,10 @@ import path from 'node:path';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { codexLimitError, codexResetOf } from '../../core/backends/codex-limit.mjs';
 import { createSchedule } from '../../core/schedule.mjs';
-import { activeLimit, limitHolds, limitResetsAt } from '../../core/limit-resume.mjs';
+import { limitResetsAt } from '../../core/limit-resume.mjs';
 
 export const name = 'limit-resume';
-export const title = '使用量の上限の正規化・古い自動再開の予定を戻さない・送信待ちを待たせるかの判断・Codex の解除時刻';
+export const title = '使用量の上限の正規化（実際に断られたときだけ limit）・古い自動再開の予定を戻さない・Codex の解除時刻';
 
 export default async function (t) {
   // 2026-10-02 16:43Z の transcript の assistant 行から、本文と識別子を除いた形。
@@ -16,8 +16,17 @@ export default async function (t) {
       rateLimitType: 'five_hour' }, message: { model: '<synthetic>', content: [{ type: 'text', text: '' }] } };
   const event = normalizeSdkMessage(transcript).find(e => e.type === 'limit');
   t.ok('実例の assistant error から解除時刻と枠が取れる', event?.resetsAt === 1790962200000 && event.window === 'five_hour');
+  // ADR 0352: rate_limit_event（rejected）だけでは上限にしない。ターンが実際に失敗したときだけ limit。
   const live = normalizeSdkMessage({ type: 'rate_limit_event', rate_limit_info: transcript.quotaLimits });
-  t.ok('SDK の rate_limit_event は同じ形になる', live[0]?.type === 'limit' && live[0].resetsAt === event.resetsAt);
+  t.ok('SDK の rate_limit_event（rejected）だけでは limit を出さない（情報の limitInfo だけ）',
+    !live.some(e => e.type === 'limit') && live[0]?.type === 'limitInfo' && live[0].resetsAt === event.resetsAt && live[0].window === 'five_hour', JSON.stringify(live));
+  t.ok('許可の rate_limit_event（allowed）は何も出さない',
+    normalizeSdkMessage({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour' } }).length === 0);
+  const apiError = normalizeSdkMessage({ type: 'result', subtype: 'success', is_error: true, api_error_status: 429,
+    result: 'limit', total_cost_usd: 0, num_turns: 1 });
+  t.ok('結果が 429 で失敗したターンは limit を出す', apiError.some(e => e.type === 'limit'), JSON.stringify(apiError));
+  const okResult = normalizeSdkMessage({ type: 'result', subtype: 'success', is_error: false, result: 'done', total_cost_usd: 0, num_turns: 1 });
+  t.ok('成功した結果は limit を出さない', !okResult.some(e => e.type === 'limit'), JSON.stringify(okResult));
   t.ok('Codex の上限の失敗文だけを拾う', codexLimitError({ message: "You've hit your usage limit" })
     && !codexLimitError({ message: 'Tool failed: invalid argument' }));
 
@@ -43,29 +52,14 @@ export default async function (t) {
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });
   }
 
-  // ---- 解除時刻の判断（自動では再開しない。上限中に送った指示を待たせるかだけ）
+  // ---- 解除時刻と枠の範囲（表示の情報だけ。送信待ちはしない。ADR 0352）
   const base = Date.parse('2026-10-04T10:00:00Z');
-  t.ok('Claude が Opus と Sonnet の週次枠をモデル単体の枠として返す',
+  t.ok('Claude が Opus と Sonnet の週次枠をモデル単体の枠として返す（知らせは limitInfo、実際の失敗は limit）',
     ['seven_day_opus', 'seven_day_sonnet'].every(rateLimitType => normalizeSdkMessage({
       type: 'rate_limit_event', rate_limit_info: { ...transcript.quotaLimits, rateLimitType },
-    }).some(e => e.type === 'limit' && e.scope === 'model')));
-  const interrupted = { reason: 'limit', resetsAt: base + 1000, backend: 'claude', account: 'first', model: 'opus', scope: 'model' };
-  const meta = { backend: 'claude', claudeAccount: 'first', model: 'opus', interrupted };
-  const options = { hasAccounts: true, now: base };
-  t.ok('互換接続先の記録がない保存済み中断は公式の送信先で待つ', activeLimit(meta, options) === interrupted);
-  for (const nextSettings of [{ backend: 'codex' }, { account: '' }, { endpoint: 'proxy' }, { model: 'sonnet' }]) {
-    t.ok(`上限の送信先を離れたら解除を待たない ${JSON.stringify(nextSettings)}`, activeLimit({ ...meta, nextSettings }, options) === null);
-  }
-  t.ok('アカウント全体の枠は別モデルでも待つ', Boolean(activeLimit({ ...meta, nextSettings: { model: 'sonnet' },
-    interrupted: { ...interrupted, scope: 'account' } }, options)));
-  t.ok('枠の名前だけが保存された Claude のモデル単体上限も、別モデルなら待たない', activeLimit({
-    ...meta, nextSettings: { model: 'sonnet' }, interrupted: { ...interrupted, scope: undefined, window: 'seven_day_opus' },
-  }, options) === null);
-  t.ok('同じ互換接続先では公式アカウントの選択に関係なく待つ', Boolean(activeLimit({
-    ...meta, nextSettings: { endpoint: 'proxy', account: '' }, interrupted: { ...interrupted, endpoint: 'proxy' },
-  }, options)));
-  t.ok('解除前は送信待ち。解除時刻を過ぎたら待ちを解く', limitHolds({ resetsAt: base + 1000 }, base) && !limitHolds({ resetsAt: base }, base) && !limitHolds({ resetsAt: base - 1 }, base));
-  t.ok('解除時刻が分からない上限は待たせない（古い自動再開の印が残っていても）', !limitHolds({ resetsAt: null }, base) && !limitHolds({ resetsAt: null, autoResume: true }, base) && !limitHolds(null, base));
+    }).some(e => e.type === 'limitInfo' && e.scope === 'model')
+      && normalizeSdkMessage({ ...transcript, quotaLimits: { ...transcript.quotaLimits, rateLimitType } })
+        .some(e => e.type === 'limit' && e.scope === 'model')));
   t.ok('保存する解除時刻は未来のときだけ。過ぎた・分からないなら null', limitResetsAt(base + 5, base) === base + 5 && limitResetsAt(base, base) === null && limitResetsAt(undefined, base) === null);
 
   // ---- Codex の解除時刻: 使い切った枠のうち最も遅く解ける時刻

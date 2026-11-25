@@ -95,17 +95,21 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
   // 子の中身は「サブエージェント N」の画面（listSubagents / getSubagentMessages）で見る
   if ((m.type === "assistant" || m.type === "user" || m.type === "stream_event") && m.parent_tool_use_id) return out;
 
-  // The SDK's live rate_limit_event and its synthetic assistant transcript row carry
-  // the same quota fields. Keep the protocol shape on this side of the boundary.
-  if (m.type === 'rate_limit_event' || (m.type === 'assistant' && m.error === 'rate_limit')) {
+  // 使用量の上限（ADR 0352）。止まったと数えるのは、Claude Code が実際に断ったときだけ:
+  //   assistant の error: 'rate_limit'（transcript の行は quotaLimits を持つが、ライブの行は持たない）と、
+  //   result の is_error・api_error_status: 429。どちらも `limit`（失敗の印。claude.mjs が失敗の turnResult を limited にする）。
+  // SDK の rate_limit_event は「枠が埋まった」という知らせで、追加の使用量（従量課金）が有効なら Claude Code はそのまま走り続ける。
+  // 止まった印にはせず、解除時刻と枠だけを `limitInfo` で渡す（実際に止まったとき、失敗に添えて見せるため）
+  if (m.type === 'rate_limit_event' || (m.type === 'assistant' && m.error === 'rate_limit')
+    || (m.type === 'result' && m.is_error === true && m.api_error_status === 429)) {
     const quota = m.rate_limit_info ?? m.quotaLimits ?? m.rateLimitInfo ?? m;
-    if (m.error === 'rate_limit' || quota.status === 'rejected') {
+    if (m.type !== 'rate_limit_event' || quota.status === 'rejected') {
       const raw = quota.resetsAt ?? quota.resets_at;
       const number = Number(raw);
       const resetsAt = Number.isFinite(number) && number > 0 ? (number < 1e12 ? number * 1000 : number) : Date.parse(raw);
       const window = quota.rateLimitType ?? quota.rate_limit_type ?? null;
       const scope = claudeLimitScope(window);
-      out.push({ type: 'limit', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null, window,
+      out.push({ type: m.type === 'rate_limit_event' ? 'limitInfo' : 'limit', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null, window,
         ...(scope ? { scope } : {}) });
     }
     if (m.type === 'rate_limit_event') return out;
