@@ -21,17 +21,17 @@ export default async function (t) {
     server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_ROUTING_USAGE: 'on', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
     c = await open({ port: server.port, token: server.token, onEvent: async (e, self) => { if (e.type === 'permission') { permissions.push(e); await self.cmd('resolvePermission', { id: e.id, allow: false }); } } });
     const models = await c.cmd('models', { backend: 'devin', cwd });
-    t.ok('ライブカタログの無料既定と有料候補を返す', models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
+    t.ok('ACP の model の選択肢（既定と他の候補）を返す',models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
     const backends = await c.cmd('backends');
-    t.ok('未実装機能を表示せず、思考は variant ID で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && !('effortInModelId' in backends[0].capabilities) && backends[0].capabilities.approvals === 'interactive');
-    const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-medium', mode: 'accept-edits' });
+    t.ok('未実装機能を表示せず、思考はモデル名ではなく強さの軸で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && !('effortInModelId' in backends[0].capabilities) && backends[0].capabilities.approvals === 'interactive');
+    const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-high', effort: 'medium', mode: 'accept-edits' });
     const sid = first.sessionId, loaded = await c.cmd('loadSession', { sessionId: sid });
     t.ok('承認を Pleiad に渡し、本文・思考・ツールの結果を保存する', first.outcome === 'ok' && permissions.length === 1 && loaded.messages.some(m => m.role === 'assistant' && m.thinking && m.toolCalls?.length));
     const sessionAt = first.events.findIndex(e => e.type === 'session'), thinkAt = first.events.findIndex(e => e.type === 'activity' && e.state === 'thinking'), textAt = first.events.findIndex(e => e.type === 'text.delta');
     t.ok('送ってから最初の応答まで稼働表示が出る（送信準備中→考えている）',
       first.events.find(e => e.type === 'activity')?.state === 'preparing' && sessionAt > -1 && thinkAt > sessionAt && thinkAt < textAt);
     const before = structuredClone(loaded.messages);
-    const next = await c.runTurn({ sessionId: sid, prompt: 'beta', model: 'swe-2-max', mode: 'ask' });
+    const next = await c.runTurn({ sessionId: sid, prompt: 'beta', model: 'swe-2-high', effort: 'max', mode: 'ask' });
     const nextStates = next.events.filter(e => e.type === 'activity').map(e => e.state);
     t.ok('再開の送信でも同じ順で出す', nextStates[0] === 'preparing' && nextStates.includes('thinking'));
     const after = await c.cmd('loadSession', { sessionId: sid });
@@ -157,13 +157,18 @@ export default async function (t) {
     const skillText = skillTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     t.ok('Skill の本文を load_skill で読める', skillTurn.outcome === 'ok' && skillText.includes('DEMO-SKILL-BODY'), skillText.slice(0, 200));
 
-    for (const marker of ['model', 'thought_level', 'speed', 'mode']) {
+    for (const marker of ['model', 'thought_level', 'mode']) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}-drift]`, model: 'swe-2-high' });
       t.ok(`実行中の確認済み設定の変更を拒否する（${marker}）`, turn.outcome === 'error');
     }
+    // speed は Pleiad が選ばず確かめもしない（ADR 0356）。CLI 側で変わっても、欠けても止めない
+    for (const marker of ['speed-drift', 'speed-missing', 'speed-renamed']) {
+      const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}]`, model: 'swe-2-high' });
+      t.ok(`確かめていない speed の変化では止めない（${marker}）`, turn.outcome === 'ok');
+    }
     const valid = await c.runTurn({ backend: 'devin', cwd, prompt: '[config-valid]', model: 'swe-2-high' });
     t.ok('完全な同一設定の通知は受け入れる', valid.outcome === 'ok');
-    for (const marker of ['config-empty', 'config-invalid', ...['mode', 'model', 'thought_level', 'speed'].flatMap(kind => ['missing', 'duplicate', 'renamed'].map(fault => `${kind}-${fault}`))]) {
+    for (const marker of ['config-empty', 'config-invalid', 'speed-duplicate', ...['mode', 'model', 'thought_level'].flatMap(kind => ['missing', 'duplicate', 'renamed'].map(fault => `${kind}-${fault}`))]) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}]`, model: 'swe-2-high' });
       t.ok(`必須設定の不完全な通知を拒否する（${marker}）`, turn.outcome === 'error' && turn.events.filter(e => e.type === 'turnResult').length === 1);
     }
@@ -237,21 +242,19 @@ export default async function (t) {
     assert.ok(restoredEdit.messages.flatMap(m => m.toolCalls ?? []).find(call => call.name === 'Edit file').input.newText.includes('after'));
     t.ok('再起動後も復元するツールの入力は縮小済み', true);
 
-    const catalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] });
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];
-    const liveCatalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: ['high', 'medium'].map(level => ({ model_uid: `swe-2-${level}`, cost_tier: 'Free' })) }] });
     class SlowClient extends DevinAcp { constructor(options) { super({ ...options, env: { ...options.env, FAKE_DEVIN_SLOW_MS: '1800' } }); } }
-    const liveBackend = createDevinBackend({ Acp: SlowClient, catalogue: liveCatalogue, command, dataDir: path.join(root, 'live-settings') });
+    const liveBackend = createDevinBackend({ Acp: SlowClient, command, dataDir: path.join(root, 'live-settings') });
     let liveSessionId, deliveredResolve;
     const deliveredPromise = new Promise(resolve => { deliveredResolve = resolve; });
     const liveRun = liveBackend.runTurn({ cwd, prompt: '[slow] live settings', model: 'swe-2-high', mode: 'ask',
       emit: event => { if (event.type === 'session') liveSessionId = event.sessionId; }, onPromptDelivered: deliveredResolve });
     await deliveredPromise;
     const liveMode = await liveBackend.setModeLive({ sessionId: liveSessionId }, 'plan');
-    const liveModel = await liveBackend.setModelLive({ sessionId: liveSessionId }, 'swe-2-medium');
+    const liveModel = await liveBackend.setModelLive({ sessionId: liveSessionId }, 'glm-5-2');
     const liveResult = await liveRun;
     t.ok('実行中のターンへ承認モードとモデルを送り、設定応答で反映を確かめる', liveMode && liveModel && liveResult.sessionId === liveSessionId);
-    const suggestionBackend = createDevinBackend({ catalogue, command, dataDir: path.join(root, 'suggestions') });
+    const suggestionBackend = createDevinBackend({ command, dataDir: path.join(root, 'suggestions') });
     // Devin は内部呼出しを分離できないので候補の口を持たない。通常会話の runTurn は上の試験のまま
     t.ok('Devin は候補の内部呼出しを持たない（分離できない）',
       typeof suggestionBackend.suggestNext === 'undefined'
@@ -261,7 +264,7 @@ export default async function (t) {
     class DeliveryClient extends DevinAcp {
       async call(method, params, options) { deliveryCalls.push({ method, params }); return super.call(method, params, options); }
     }
-    const deliveryBackend = createDevinBackend({ Acp: DeliveryClient, catalogue, command, dataDir: path.join(root, 'delivery') });
+    const deliveryBackend = createDevinBackend({ Acp: DeliveryClient, command, dataDir: path.join(root, 'delivery') });
     const shellRuntime = { url: 'http://127.0.0.1:1/shell', headers: { Authorization: 'Bearer fixture-shell' }, instructions: 'fixture-shell-instructions' };
     const deliveredShell = await deliveryBackend.runTurn({ cwd, prompt: 'shell first', model: 'swe-2-high', mode: 'ask', shellRuntime, emit: () => {} });
     await deliveryBackend.runTurn({ cwd, sessionId: deliveredShell.sessionId, prompt: 'shell next', model: 'swe-2-high', mode: 'ask', shellRuntime, emit: () => {} });
@@ -273,24 +276,19 @@ export default async function (t) {
     await deliveryBackend.runTurn({ cwd, prompt: 'no shell', model: 'swe-2-high', mode: 'ask', emit: () => {} });
     t.ok('別のターンにply_shellを持ち越さない', deliveryCalls.slice(deliveryMark).find(c => c.method === 'session/new').params.mcpServers.length === 0);
 
-    // カタログにはあるが ACP の model に無い版（2026-10-23、自動の振り分けが選んで始まってすぐ止まった）
-    const wideCatalogue = async () => ({ families: [
-      { family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }, { model_uid: 'swe-2-max-lightning', cost_tier: 'High cost' }] },
-      { family_uid: 'catalogue-only', variants: [{ model_uid: 'catalogue-only', cost_tier: 'High cost' }] },
-    ] });
+    // ACP の model に無い名前（2026-11、古いカタログの名前 swe-2-1-high で委譲が始まってすぐ止まった）は送らずに断る（ADR 0356）
     const runnableCalls = [];
     class RunnableClient extends DevinAcp {
       async call(method, params, options) { runnableCalls.push({ method, params }); return super.call(method, params, options); }
     }
-    const runnable = createDevinBackend({ Acp: RunnableClient, catalogue: wideCatalogue, command, dataDir: path.join(root, 'runnable') });
+    const runnable = createDevinBackend({ Acp: RunnableClient, command, dataDir: path.join(root, 'runnable') });
     t.ok('一覧による振り分けの事前除外は公開しない', runnable.runnableModel === undefined);
-    const unlisted = await runnable.runTurn({ cwd, prompt: 'not runnable', model: 'catalogue-only', mode: 'ask', emit: () => {} }).catch(e => e);
-    t.ok('ACP に無い版も CLI にそのまま渡し、その拒否で止まる', unlisted?.code === -32000 && runnableCalls.some(c => c.method === 'session/set_config_option' && c.params.value === 'catalogue-only') && !runnableCalls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
-    const lightningMark = runnableCalls.length;
-    const lightning = await runnable.runTurn({ cwd, prompt: 'lightning', model: 'swe-2-max-lightning', mode: 'ask', emit: () => {} });
-    const lightningSet = runnableCalls.slice(lightningMark).filter(c => c.method === 'session/set_config_option').map(c => [c.params.configId, c.params.value]);
-    t.ok('Lightning は swe-2-high・思考 max・速さ fast で走る', lightning.outcome !== 'error' && JSON.stringify(lightningSet.slice(1)) === JSON.stringify([['model', 'swe-2-high'], ['thought_level', 'max'], ['speed', 'fast']]),
-      JSON.stringify({ outcome: lightning.outcome, lightningSet }));
+    const unlistedEvents = [];
+    const unlisted = await runnable.runTurn({ cwd, prompt: 'not runnable', model: 'swe-2-1-high', mode: 'ask', emit: e => unlistedEvents.push(e) }).catch(e => e);
+    const unlistedResult = unlistedEvents.findLast(e => e.type === 'turnResult');
+    t.ok('ACP に無い名前は読み替えず・送らずに、未配達の kind: model で断る', unlisted?.undelivered === true && unlistedResult?.kind === 'model' && unlistedResult?.pristine === true
+      && !runnableCalls.some(c => c.method === 'session/set_config_option' && c.params.configId === 'model') && !runnableCalls.some(c => c.method === 'session/prompt'),
+      JSON.stringify({ undelivered: unlisted?.undelivered, unlistedResult }));
 
     let alwaysAnswer, canAlways;
     class AlwaysClient extends DevinAcp {
@@ -301,19 +299,19 @@ export default async function (t) {
         return answer;
       } }); }
     }
-    const alwaysBackend = createDevinBackend({ Acp: AlwaysClient, catalogue, command, dataDir: path.join(root, 'always') });
+    const alwaysBackend = createDevinBackend({ Acp: AlwaysClient, command, dataDir: path.join(root, 'always') });
     await alwaysBackend.runTurn({ cwd, prompt: '[permission]', model: 'swe-2-high', mode: 'ask', emit: () => {},
       askPermission: async request => { canAlways = request.canAlways; return { allow: true, always: true }; } });
     t.ok('Devin: CLIが提示した恒常許可を画面の回答へ対応させる', canAlways && alwaysAnswer.outcome.optionId === 'persistent');
 
     class CloseFailure extends DevinAcp { async close() { await super.close(); throw new Error('fixture close failed'); } }
     const events = [];
-    const backend = createDevinBackend({ Acp: CloseFailure, catalogue, command, dataDir: path.join(root, 'close-data') });
+    const backend = createDevinBackend({ Acp: CloseFailure, command, dataDir: path.join(root, 'close-data') });
     await assert.rejects(backend.runTurn({ cwd, prompt: 'done', model: 'swe-2-high', emit: e => events.push(e) }), /fixture close failed/);
     t.ok('close の失敗を成功にせず、一度だけ失敗として返す', events.filter(e => e.type === 'turnResult').length === 1 && events.find(e => e.type === 'turnResult').outcome === 'error' && events.find(e => e.type === 'turnResult').error.includes('fixture close failed'));
     t.ok('使用量の取得日時は不明を明示する', (await backend.usage()).checkedAt === null);
 
-    const bounded = createDevinBackend({ catalogue, command, dataDir: path.join(root, 'bounded-data'), cancelGraceMs: 100 });
+    const bounded = createDevinBackend({ command, dataDir: path.join(root, 'bounded-data'), cancelGraceMs: 100 });
     const signal = new AbortController(), cancelled = [], started = Date.now();
     await bounded.runTurn({ cwd, prompt: '[stubborn]', model: 'swe-2-high', signal, emit: e => cancelled.push(e), onPromptDelivered: () => setTimeout(() => signal.abort(), 50) });
     t.ok('cancel に応じない CLI も期限内に終了する', Date.now() - started < 5000 && cancelled.filter(e => e.type === 'turnResult').length === 1 && cancelled.find(e => e.type === 'turnResult').outcome === 'aborted');
@@ -321,7 +319,7 @@ export default async function (t) {
     for (const drift of ['after-mode', 'after-config-mode', 'after-model', 'before-mode', 'after-empty', 'after-duplicate', 'before-recovered', 'after-recovered']) {
       class SetupDrift extends DevinAcp { constructor(options) { super({ ...options, env: { ...options.env, FAKE_DEVIN_SETUP_DRIFT: drift } }); } }
       const dataDir = path.join(root, drift), updates = [];
-      const guarded = createDevinBackend({ Acp: SetupDrift, catalogue, command, dataDir });
+      const guarded = createDevinBackend({ Acp: SetupDrift, command, dataDir });
       let delivered = false;
       const turn = guarded.runTurn({ cwd, prompt: 'must use ask and SWE-2 High', model: 'swe-2-high', mode: 'ask', emit: event => updates.push(event), onPromptDelivered: () => { delivered = true; } });
       const recovered = drift.endsWith('recovered');
@@ -339,7 +337,7 @@ export default async function (t) {
           super({ ...options, onResponse: response => { options.onResponse(response); if (response.method === 'session/prompt') decisions.push(response.result.permissionResult); } });
         }
       }
-      const permissionBackend = createDevinBackend({ Acp: PermissionClient, catalogue, command, dataDir: path.join(root, kind) });
+      const permissionBackend = createDevinBackend({ Acp: PermissionClient, command, dataDir: path.join(root, kind) });
       await permissionBackend.runTurn({ cwd, prompt: `[${kind}]`, model: 'swe-2-high', emit() {}, askPermission: request => { requests.push(request); return { allow: false }; } });
       assert.deepEqual(decisions, [{ outcome: { outcome: 'selected', optionId: 'reject_once' } }]);
       if (kind === 'permission-unknown') assert.equal(requests.length, 0);
@@ -364,7 +362,7 @@ export default async function (t) {
     }
     let deliveredBeforeLimit = false;
     const beforeEvents = [];
-    const beforeBackend = createDevinBackend({ Acp: BeforePromptLimit, catalogue, command, dataDir: path.join(root, 'before-limit') });
+    const beforeBackend = createDevinBackend({ Acp: BeforePromptLimit, command, dataDir: path.join(root, 'before-limit') });
     await assert.rejects(beforeBackend.runTurn({ cwd, prompt: 'not delivered', model: 'swe-2-high', emit: e => beforeEvents.push(e), onPromptDelivered: () => { deliveredBeforeLimit = true; } }), e => e.undelivered === true);
     t.ok('送信前の上限は未配送の失敗であり、送信済みや limited に変えない', !deliveredBeforeLimit && beforeEvents.find(e => e.type === 'turnResult')?.outcome === 'error');
 

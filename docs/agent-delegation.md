@@ -182,7 +182,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 - 自動で選ぶ（`backend` を省いた）委譲は、モデルが一覧に無いことを理由に候補を飛ばさない。一覧は正本ではなく、候補を選ぶのと送るのが同時で、間に人がいないので、飛ばし間違えると黙って弱いモデルで走る。使えるかは CLI/API が決める。固定の委譲（`backend` と `model` を書く）と `ply_task_send` のモデル変更も、一覧で拒否せず指定した文字列を渡す（ADR 0343）。
 - 子の最初のターンで CLI/API がモデルを断ったら（まだ仕事が始まっていない子だけ）、ADR 0302 の任せ直しの経路で次の候補で子を作り直す。断られた候補は `routing.skipped` に `model_rejected` で残し、`routing.attempts` の `reason` にも付く。候補が尽きたら理由（`routing.exhausted`）付きで失敗する。モデルを断られたときの任せ直しは 6 回まで（`MODEL_REROUTE_MAX`。ほかの理由の任せ直しは 2 回）。上限に達したら、最後の子の失敗（CLI の断りの文面）がそのまま結果になる。
 - 断られた枠（エージェント・モデル・アカウント）は 30 分だけ選ばない（`core/model-rejects.mjs`。このサーバーの間だけ。何度断られても延ばさない・同じ枠のターンが通れば消す・振り分けの設定を保存すれば忘れる）。外している間は `skipped` に `model_rejected` と期限（`until`）が付く。
-- 断りを見分けて `turnResult` の `kind: 'model'` で渡すのは Claude（`api_error_status: 404` の結果と断りの文面）と Codex（`model_not_found` など）。Antigravity・OpenCode・Grok・Devin は見分けず、理由つきの普通の失敗になる。
+- 断りを見分けて `turnResult` の `kind: 'model'` で渡すのは Claude（`api_error_status: 404` の結果と断りの文面）と Codex（`model_not_found` など）と Devin。Devin は、その会話の ACP の `model`・`thought_level` の選択肢に無い名前・段を送らずに断り、送った値を CLI が `-32602` で断ったときも同じ印（`pristine: true`）にする（CLI がその会話で示した選択肢が答えなので、一覧の控えによる事前除外ではない。[ADR 0356](adr/0356-devin-models-from-acp-options.md)）。Antigravity・OpenCode・Grok は見分けず、理由つきの普通の失敗になる。
 - 設定の警告（`warnings`）と候補の `modelNotListed` は「一覧に見当たらない（使えるかは CLI が決める）」という知らせで、止めない。一覧の照合は候補に書かれたアカウント（`accountModels`、未登録・未取得時はバックエンド共通の一覧）ごとに行い、行の `resolvedModel` に正確に当たる名前（`claude-fable-5-2`）は一覧にあるものとして数える（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）。
 
 ## リモートのホストへ任せる（`host`）
@@ -548,7 +548,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 | Antigravity | agy models。ログイン済みと確認した間、期限切れは裏で取り直し、refresh は取得を待つ。失敗時は前の一覧を保つ |
 | OpenCode | サーバーの /config/providers。共有サーバーの回答は 60 秒覚え、専用サーバーでは毎回聞く。認証変更時はサーバーを閉じる。refresh によるプロセス再起動は行わない |
 | Grok | 新しい ACP 接続の initialize の一覧。通常は 5 分、refresh で新しい接続から取り直す |
-| Devin | 新しい devin models list の families[].variants[].model_uid。通常は 5 分、refresh で取り直し、失敗は覚えず次回に再試行する。GPT などの系列も同じ形で取り込む |
+| Devin | 一覧用の ACP の会話（`session/new`）の `model` の選択肢の値そのまま（名前を読み替えない）。強さは裏でモデルを選び替えて `thought_level` の選択肢を読む（`speed` は扱わない）。強さは CLI の版ごとに覚え、版が変われば読み直す。一覧と強さを読んだ会話は閉じたら置き場ごと消す。通常は 5 分、refresh で取り直し、失敗は覚えず次回に再試行する（[ADR 0356](adr/0356-devin-models-from-acp-options.md)） |
 
 固定の委譲と ply_task_send は未掲載のモデル名と明示した思考の強さを通す。既知のモデルで非対応の段、互換の接続先の機能、モデル名の形、backend の有効性、権限・タスクの所有者・状態、アカウントの登録・トークンは検査する（満杯と分かった使用枠では断らない。ADR 0352）。これらは未掲載による拒否ではなく、指定どおりの強さ・実行先・操作権限を守る検査である。
 

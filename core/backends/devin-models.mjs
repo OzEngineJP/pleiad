@@ -1,141 +1,21 @@
-// The catalogue's variant ID is the user selection. ACP exposes one representative
-// `model` choice per variant family plus separate `thought_level` and `speed` axes
-// whose availability and choices change with the selected model (Devin CLI
-// 3000.11.92, 2026-10-24). A variant uid decomposes into a family base plus an
-// optional thought-level suffix and speed suffixes (-fast / -lightning = speed
-// fast; -priority has no ACP axis). The representative is the same-base family
-// variant advertised as a `model` choice; sibling variants become representative
-// + thought_level + speed. Setting model also resets thought_level to the
-// representative's own suffix. Anything ACP cannot express is refused rather
-// than run as a different model.
+// Devin のモデルと思考の強さは、Devin CLI の ACP が出す選択肢（configOptions）だけに従う（ADR 0356）。
+// - モデルの一覧は `model` の選択肢（値・表示名）。Pleiad は名前を読み替えない・分解しない。
+// - 思考の強さは `thought_level` の選択肢。選んだモデルで有無と選択肢が変わり、model を切り替えると
+//   そのモデルの既定の段に戻る（3000.14.30821 で確認）。Pleiad の共通の「思考の強さ」の軸に載せる。
+// - `speed`（category は model_config）はモデルで有無と値の組が変わり、共通の軸に合わないので触らない。
+// 選択肢に無い名前・段は送らずに断る（kind: 'model' の失敗として扱わせる印 rejected を付ける）。
 import { t } from '../i18n.mjs';
 
 // i18n-dynamic: devin.errors.invalidCatalogue
 // i18n-dynamic: devin.errors.modelUnavailable
-// i18n-dynamic: devin.errors.explicitModelRequired
+// i18n-dynamic: devin.errors.effortUnavailable
 // i18n-dynamic: devin.errors.selectionUnavailable
 // i18n-dynamic: devin.errors.selectionNotAcknowledged
-function fail(code, key, values = {}) {
-  return Object.assign(new Error(t(`devin.errors.${key}`, values)), { code });
+function fail(code, key, values = {}, extra = {}) {
+  return Object.assign(new Error(t(`devin.errors.${key}`, values)), { code, ...extra });
 }
 
-function catalogueRows(raw) {
-  if (raw?.data && Object.hasOwn(raw.data, 'families')) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
-  const families = raw?.families;
-  if (!Array.isArray(families)) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
-  const seen = new Set(), rows = [];
-  for (const family of families) {
-    if (!Array.isArray(family?.variants)) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
-    for (const variant of family.variants) {
-      const id = variant?.model_uid;
-      if (typeof id !== 'string' || !id.trim() || seen.has(id)) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
-      seen.add(id);
-      rows.push({ family, variant, id });
-    }
-  }
-  return rows;
-}
-
-const FREE_FLAGS = new Set(['free', 'isFree', 'is_free']);
-const EXPIRY = new Set(['freeUntil', 'free_until']);
-
-/** Free is an exact live tier, with no conflicting free flag, price or expiry. */
-function freeProof({ variant: row }) {
-  if (row.cost_tier !== 'Free') return false;
-  function clean(object, pricing = false) {
-    return Object.entries(object).every(([key, value]) => {
-      if (FREE_FLAGS.has(key)) return value == null || value === true;
-      if (EXPIRY.has(key)) return value == null || (typeof value === 'string' && Number.isFinite(Date.parse(value)) && Date.parse(value) > Date.now());
-      if (key === 'cost_tier') return value === 'Free';
-      const charge = pricing || /pric|cost|credit|multiplier/i.test(key);
-      if (value && typeof value === 'object') return clean(value, charge);
-      if (!charge || value == null) return true;
-      if (typeof value === 'string' && value.trim() === 'Free') return true;
-      return ['number', 'string'].includes(typeof value) && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) === 0;
-    });
-  }
-  return clean(row);
-}
-
-function liveFree(row) {
-  return freeProof(row) && !/^(adaptive|fusion)(?:$|[-_])/i.test(row.id)
-    && !/^(adaptive|fusion)(?:$|[-_])/i.test(row.family.slug ?? row.family.family_uid ?? '');
-}
-
-const LEVELS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
-const FAST = new Set(['fast', 'lightning']);
-const NO_AXIS = new Set(['priority']);
-
-/**
- * Split a variant uid into the family base, an optional thought level and speed.
- * Fusion uids carry the driver's level/speed before `-sidekick-`; the sidekick
- * stays part of the base. Unmappable shapes (a second level, -priority) are
- * marked so the caller can refuse them instead of guessing.
- */
-function parseDevinUid(uid) {
-  const at = String(uid).indexOf('-sidekick-');
-  const rest = [];
-  const parsed = { level: null, speed: 'standard', unmappable: false };
-  for (const token of (at < 0 ? String(uid) : String(uid).slice(0, at)).split('-')) {
-    if (LEVELS.has(token)) { if (parsed.level) parsed.unmappable = true; else parsed.level = token; }
-    else if (FAST.has(token)) parsed.speed = 'fast';
-    else if (NO_AXIS.has(token)) parsed.unmappable = true;
-    else rest.push(token);
-  }
-  return { ...parsed, base: rest.join('-') + (at < 0 ? '' : String(uid).slice(at)) };
-}
-
-/** The ACP model choice a catalogue ID needs, or null when it cannot be expressed. */
-export function devinAcpModel(modelId, acpChoices) {
-  if (typeof modelId !== 'string' || !Array.isArray(acpChoices)) return null;
-  const target = parseDevinUid(modelId);
-  if (target.unmappable) return null;
-  const reps = acpChoices.filter(choice => parseDevinUid(choice).base === target.base);
-  return reps.length === 1 ? reps[0] : null;
-}
-
-/** Model choices advertised in ACP configOptions, or null when they are not there. */
-export function devinModelChoices(configOptions) {
-  const model = Array.isArray(configOptions) ? configOptions.filter(o => o?.id === 'model' || o?.category === 'model') : [];
-  return model.length === 1 && Array.isArray(model[0].options) ? choices(model[0].options) : null;
-}
-
-const defaultRow = rows => rows.find(row => row.id === 'swe-2-high' && liveFree(row)) ?? rows.find(liveFree) ?? null;
-
-/** Native backend models map. Labels and prices come only from this catalogue. */
-export function buildDevinModels(rawCatalogue) {
-  const rows = catalogueRows(rawCatalogue), preferred = defaultRow(rows);
-  const result = { '': { label: t('models.default'), note: preferred?.variant.label ?? (preferred ? preferred.id : t('devin.errors.explicitModelRequired')),
-    ...(preferred ? { resolvesTo: preferred.id } : {}), efforts: [], defaultEffort: null } };
-  for (const { id, family, variant } of rows) {
-    Object.defineProperty(result, id, { enumerable: true, configurable: true, writable: true, value: {
-      label: typeof variant.label === 'string' && variant.label ? variant.label : id,
-      note: [family.family_label, variant.cost_tier, variant.cost_summary].filter(v => typeof v === 'string' && v).join(' · '),
-      efforts: [], defaultEffort: null,
-    } });
-  }
-  return result;
-}
-
-/** Resolve a new or resumed turn using the current catalogue, never a paid default. */
-export function resolveDevinModel(rawCatalogue, modelId = '') {
-  let rows;
-  try { rows = catalogueRows(rawCatalogue); } catch (error) { if (!modelId) throw error; rows = []; }
-  if (typeof modelId !== 'string') throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: String(modelId) });
-  const row = modelId ? rows.find(row => row.id === modelId) : defaultRow(rows);
-  if (!row) {
-    if (!modelId) throw fail('DEVIN_MODEL_EXPLICIT_REQUIRED', 'explicitModelRequired');
-    return { id: modelId, ...parseDevinUid(modelId), family: [], free: false, label: modelId, maxContextTokens: null };
-  }
-  const parsed = parseDevinUid(row.id);
-  return {
-    id: row.id, base: parsed.base, level: parsed.level, speed: parsed.speed, unmappable: parsed.unmappable,
-    family: rows.filter(r => r.family === row.family).map(r => ({ id: r.id, ...parseDevinUid(r.id) })),
-    free: liveFree(row), label: row.variant.label ?? row.id,
-    maxContextTokens: Number.isFinite(row.variant.max_context_tokens) && row.variant.max_context_tokens > 0 ? row.variant.max_context_tokens : null,
-  };
-}
-
+/** One setting by id or category. Missing or duplicated is unreadable. */
 function setting(options, kind) {
   if (!Array.isArray(options)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
   const matches = options.filter(option => option?.id === kind || option?.category === kind);
@@ -143,7 +23,7 @@ function setting(options, kind) {
   return matches[0];
 }
 
-/** An axis the CLI may omit for some models. Absent is null; duplicated is unreadable. */
+/** An axis the CLI omits for some models. Absent is null; duplicated is unreadable. */
 function optionalSetting(options, kind) {
   if (!Array.isArray(options)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
   const matches = options.filter(option => option?.id === kind || option?.category === kind);
@@ -152,72 +32,104 @@ function optionalSetting(options, kind) {
 }
 
 // ACP select choices may contain arbitrarily nested groups (the groups have no value).
-function choices(options) {
+function entries(options) {
   if (!Array.isArray(options)) return [];
-  return options.flatMap(option => Array.isArray(option?.options) ? choices(option.options) : (typeof option?.value === 'string' ? [option.value] : []));
+  return options.flatMap(option => Array.isArray(option?.options) ? entries(option.options)
+    : (typeof option?.value === 'string' && option.value ? [option] : []));
+}
+const choices = options => entries(options).map(option => option.value);
+
+/** Model choices advertised in ACP configOptions, or null when they are not there. */
+export function devinModelChoices(configOptions) {
+  try { return choices(setting(configOptions, 'model').options); } catch { return null; }
+}
+
+/** The thought_level choices and the current value (the model's default right after a model switch). null = the model has none. */
+export function devinThought(configOptions) {
+  const thought = optionalSetting(configOptions, 'thought_level');
+  if (!thought) return { efforts: [], defaultEffort: null };
+  const values = [...new Set(choices(thought.options))];
+  return { efforts: values, defaultEffort: values.includes(thought.currentValue) ? thought.currentValue : null };
 }
 
 /**
- * The level a suffix-less non-representative variant needs: the single
- * thought_level choice no same-base family variant claims, or null when the
- * remaining choices do not pin down exactly one (nothing is guessed).
+ * The model list read from a metadata session's configOptions: [{ id, label, images }] and the
+ * current (default) model. Throws when the CLI advertised no readable `model` choice.
  */
-function impliedLevel(selection, levelChoices) {
-  const claimed = new Set(selection.family.filter(v => v.base === selection.base && v.level).map(v => v.level));
-  const left = levelChoices.filter(choice => !claimed.has(choice));
-  return left.length === 1 ? left[0] : null;
+export function readDevinList(configOptions) {
+  let model;
+  try { model = setting(configOptions, 'model'); } catch { throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue'); }
+  const seen = new Set(), list = [];
+  for (const option of entries(model.options)) {
+    if (seen.has(option.value)) continue;
+    seen.add(option.value);
+    list.push({ id: option.value, label: typeof option.name === 'string' && option.name.trim() ? option.name : option.value,
+      images: option._meta?.['cognition.ai/supportsImages'] === true });
+  }
+  if (!list.length) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
+  return { models: list, current: seen.has(model.currentValue) ? model.currentValue : null };
 }
 
-/** Apply and acknowledge all requested settings, including after session/load. */
-export async function applyDevinModel(call, sessionId, configOptions, selection) {
-  if (!selection?.id || !selection.base || !Array.isArray(selection.family)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+/**
+ * Native backend models map. efforts は読み終えたモデルの思考の強さ（Map: id → { efforts, defaultEffort }）。
+ * まだ読んでいないモデルは efforts を持たず（強さは選べない扱い）、読んでいる途中であることを理由に載せる。
+ */
+export function buildDevinModels(list, efforts = new Map(), { probing = false } = {}) {
+  const known = id => efforts.get(id) ?? null;
+  const shape = id => {
+    const entry = known(id);
+    if (entry) return { efforts: entry.efforts, defaultEffort: entry.defaultEffort };
+    return probing ? { effortReason: t('devin.effortProbing') } : {};
+  };
+  const current = list.current ? list.models.find(m => m.id === list.current) : null;
+  const result = { '': { label: t('models.default'), note: current?.label ?? '', ...(current ? { resolvesTo: current.id, ...shape(current.id) } : {}) } };
+  for (const { id, label } of list.models) {
+    Object.defineProperty(result, id, { enumerable: true, configurable: true, writable: true, value: { label, note: label === id ? '' : id, ...shape(id) } });
+  }
+  return result;
+}
+
+/**
+ * 選んだモデルと思考の強さを ACP で設定し、応答の currentValue で確かめる（再開した会話でも）。
+ *   model  … '' なら送らない（Devin の既定・会話のモデルのまま）。選択肢に無ければ送らずに断る
+ *   effort … '' なら送らない（モデルの既定の段のまま）。そのモデルの選択肢に無ければ送らずに断る
+ * onModel(model, configOptions) はモデルを切り替えた直後の応答（段はそのモデルの既定）を渡す口（一覧の強さを学ぶ）。
+ * 返り値: { configOptions, verified: Map(kind → { id, value }), model, effort }
+ */
+export async function applyDevinSelection(call, sessionId, configOptions, { model = '', effort = '' } = {}, { onModel } = {}) {
   let latest = configOptions;
   const verified = new Map();
-  const send = async (kind, value, { unlisted = false } = {}) => {
-    const option = setting(latest, kind);
-    if (!unlisted && choices(option.options).filter(choice => choice === value).length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
+  const check = () => {
+    for (const [kind, expected] of verified) {
+      let actual;
+      try { actual = setting(latest, kind); } catch { throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: kind }); }
+      if (actual.id !== expected.id || actual.currentValue !== expected.value) throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: kind });
+    }
+  };
+  const send = async (option, kind, value) => {
     const result = await call('session/set_config_option', { sessionId, configId: option.id, value });
     latest = result?.configOptions;
     verified.set(kind, { id: option.id, value });
-    for (const [checkKind, expected] of verified) {
-      let actual;
-      try { actual = setting(latest, checkKind); } catch { throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: checkKind }); }
-      if (actual.id !== expected.id || actual.currentValue !== expected.value) throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: checkKind });
-    }
+    check();
   };
-  // The representative is the same-base family variant ACP advertises as a model.
-  const modelChoices = choices(setting(latest, 'model').options);
-  const reps = selection.unmappable ? [] : modelChoices.includes(selection.id) ? [selection.id]
-    : selection.family.filter(variant => variant.base === selection.base && !variant.unmappable && modelChoices.includes(variant.id)).map(variant => variant.id);
-  if (reps.length !== 1) {
-    // カタログ・ACP の選択肢に無くても、その名前を CLI に送る。CLI の拒否はそのまま返す。
-    await send('model', selection.id, { unlisted: true });
-    return { configOptions: latest, verified };
+  const modelOption = setting(latest, 'model');
+  if (model) {
+    if (!choices(modelOption.options).includes(model)) throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model }, { rejected: 'model' });
+    await send(modelOption, 'model', model);
+    onModel?.(model, latest);
+  } else {
+    if (typeof modelOption.currentValue !== 'string' || !modelOption.currentValue) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+    verified.set('model', { id: modelOption.id, value: modelOption.currentValue });
   }
-  const rep = reps[0];
-  await send('model', rep);
-
-  // thought_level exists only for some models; the choices also depend on the model.
+  const current = verified.get('model').value;
   const thought = optionalSetting(latest, 'thought_level');
-  if (thought) {
-    if (selection.id === rep && selection.level === null) {
-      // A representative without a level suffix needs no thought setting: the
-      // model choice alone is the variant, so the CLI-derived level is recorded.
-      if (!choices(thought.options).includes(thought.currentValue)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
-      verified.set('thought_level', { id: thought.id, value: thought.currentValue });
-    } else {
-      const level = selection.level ?? impliedLevel(selection, choices(thought.options));
-      if (level === null) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
-      await send('thought_level', level);
-    }
-  } else if (selection.id !== rep) {
-    // A non-representative variant cannot be told apart from its representative
-    // when the model exposes no thought axis.
-    throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
+  if (effort) {
+    if (!thought || !choices(thought.options).includes(effort)) throw fail('DEVIN_EFFORT_UNAVAILABLE', 'effortUnavailable', { effort, model: current }, { rejected: 'thought_level' });
+    await send(thought, 'thought_level', effort);
+  } else if (thought) {
+    // 段を選ばないときは、CLI の今の段（モデルの既定）を確かめた値として覚える（実行中に変われば止める）
+    if (!choices(thought.options).includes(thought.currentValue)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
+    verified.set('thought_level', { id: thought.id, value: thought.currentValue });
   }
-
-  const speedOption = optionalSetting(latest, 'speed');
-  if (speedOption) await send('speed', selection.speed);
-  else if (selection.speed !== 'standard') throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'speed' });
-  return { configOptions: latest, verified };
+  return { configOptions: latest, verified, model: current, effort: verified.get('thought_level')?.value ?? null };
 }

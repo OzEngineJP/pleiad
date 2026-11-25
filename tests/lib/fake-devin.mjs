@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 
-const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
+const argv = process.argv.slice(2), command = argv.find(value => ['auth', 'acp', 'version', '--version'].includes(value));
 const configIndex = argv.indexOf('--config');
 // 本物の Devin CLI は --config を起動の直後ではなく session/new・session/load のときに読む（起動の後に消すと Hooks が載らない。2026-11-15 実機で確認）。
 // 偽物も会話を作るときに読み、そのとき無ければ写さない
@@ -16,9 +16,10 @@ const captureTurnConfig = () => {
 };
 // 呼ばれた回数を試験が数える口（FAKE_DEVIN_LOG のファイルに 1 起動ごとにコマンド名を 1 行足す。fake-codex.mjs の FAKE_CODEX_LOG と同じ）
 if (process.env.FAKE_DEVIN_LOG) fs.appendFileSync(process.env.FAKE_DEVIN_LOG, `${command ?? argv.join(' ')}\n`);
-// 実機（3000.11.92）の形: model の選択肢は系列の代表だけで、thought_level・speed の
-// 有無と選択肢は選んだ model で変わる。model を切り替えると thought_level は代表 uid の接尾辞の段に戻る
-const MODELS = {
+// 実機（3000.14.30821）の形: thought_level・speed の有無と選択肢は選んだ model で変わり、
+// model を切り替えると thought_level はそのモデルの既定の段に戻る。Pleiad はこの選択肢だけに従う（ADR 0356）。
+// FAKE_DEVIN_MODELS（カンマ区切り）で model の選択肢を絞れる（一覧が変わったときの試験用）
+const ALL_MODELS = {
   'swe-2-high': { thought: ['medium', 'high', 'max'], implicit: 'high', speed: ['standard', 'fast'] },
   'deepseek-v4-1-flash-1017-high': { thought: ['none', 'low', 'high', 'max'], implicit: 'high' },
   'glm-5-2': { thought: ['none', 'high', 'max'], implicit: 'high' },
@@ -29,21 +30,17 @@ const MODELS = {
   'kimi-k2-6': {},
   'paid-exact': {},
 };
-const catalogue = { families: [
-  { family_uid: 'swe-2', family_label: 'SWE-2', slug: 'swe-2', variants: ['high', 'medium', 'max'].flatMap(level => [
-    { model_uid: `swe-2-${level}`, label: `SWE-2 ${level}`, cost_tier: 'Free', max_context_tokens: 262000 },
-    { model_uid: `swe-2-${level}-lightning`, label: `SWE-2 ${level} Lightning`, cost_tier: 'High cost', cost_summary: '$1 / 1M Input', max_context_tokens: 262144 },
-  ]) },
-  { family_uid: 'deepseek-v4-1-flash-1017', family_label: 'DeepSeek V4.1 Flash', slug: 'deepseek-v4.1-flash', variants: ['none', 'low', 'high', 'max'].map(level => ({ model_uid: `deepseek-v4-1-flash-1017-${level}`, label: `DeepSeek V4.1 Flash ${level}`, cost_tier: 'Low cost' })) },
-  { family_uid: 'glm-5.2', family_label: 'GLM-5.2', slug: 'glm-5.2', variants: ['glm-5-2', 'glm-5-2-max', 'glm-5-2-none', 'glm-5-2-1m', 'glm-5-2-max-1m', 'glm-5-2-none-1m'].map(id => ({ model_uid: id, label: id, cost_tier: 'Low cost' })) },
-  { family_uid: 'swe-1.7', family_label: 'SWE-1.7', slug: 'swe-1.7', variants: [{ model_uid: 'swe-1-7', label: 'SWE-1.7 Max', cost_tier: 'Low cost' }, { model_uid: 'swe-1-7-medium', label: 'SWE-1.7 Medium', cost_tier: 'Low cost' }] },
-  { family_uid: 'claude-opus-5-5', family_label: 'Claude Opus 5.5', slug: 'claude-opus-5.5', variants: ['low', 'medium', 'high', 'xhigh', 'max'].flatMap(level => [{ model_uid: `claude-opus-5-5-${level}`, cost_tier: 'High cost' }, { model_uid: `claude-opus-5-5-${level}-fast`, cost_tier: 'High cost' }]) },
-  { family_uid: 'gpt-6-astra', family_label: 'GPT-6 Astra', slug: 'gpt-6-astra', variants: ['low', 'medium', 'high', 'xhigh', 'max'].flatMap(level => [{ model_uid: `gpt-6-astra-${level}`, cost_tier: 'High cost' }, { model_uid: `gpt-6-astra-${level}-priority`, cost_tier: 'High cost' }]) },
-  { family_uid: 'kimi-k2.6', family_label: 'Kimi K2.6', slug: 'kimi-k2.6', variants: [{ model_uid: 'kimi-k2-6', label: 'Kimi K2.6', cost_tier: 'Low cost' }] },
-  { family_uid: 'fixture-paid', family_label: 'Fixture paid', slug: 'fixture-paid', variants: [{ model_uid: 'paid-exact', label: 'Fixture paid', cost_tier: 'High cost', cost_summary: '$1 per unit' }] },
-] };
-if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
-if (command === 'models') { console.log(process.env.FAKE_DEVIN_CATALOGUE ? fs.readFileSync(process.env.FAKE_DEVIN_CATALOGUE, 'utf8') : JSON.stringify(catalogue)); process.exit(0); }
+const only = (process.env.FAKE_DEVIN_MODELS ?? '').split(',').filter(Boolean);
+const MODELS = only.length ? Object.fromEntries(only.map(id => [id, ALL_MODELS[id] ?? {}])) : { ...ALL_MODELS };
+// FAKE_DEVIN_THOUGHT（JSON の { モデル: [段…] }）で強さの選択肢を替えられる（CLI の版が上がって選択肢が変わったときの試験用。既定は先頭の段）
+for (const [id, thought] of Object.entries(JSON.parse(process.env.FAKE_DEVIN_THOUGHT || '{}'))) {
+  if (Object.hasOwn(MODELS, id)) MODELS[id] = { ...MODELS[id], thought, implicit: thought.includes(MODELS[id].implicit) ? MODELS[id].implicit : thought[0] };
+}
+// FAKE_DEVIN_VERSION で CLI の版（--version と initialize の agentInfo.version）を替えられる
+const VERSION = process.env.FAKE_DEVIN_VERSION || '3000.11.92';
+const LABELS = { 'swe-2-high': 'SWE-2 High', 'claude-opus-5-5-medium': 'Claude Opus 5.5', 'kimi-k2-6': 'Kimi K2.6' };
+const DEFAULT_MODEL = Object.hasOwn(MODELS, 'swe-2-high') ? 'swe-2-high' : Object.keys(MODELS)[0];
+if (command === '--version' || command === 'version') { console.log(VERSION); process.exit(0); }
 if (command === 'auth') {
   // ログイン状態はファイルに持つ（FAKE_DEVIN_AUTH_FILE。内容は in / out。無ければ in）。`auth login`・`auth logout` で替わる
   const authFile = process.env.FAKE_DEVIN_AUTH_FILE || '';
@@ -80,7 +77,7 @@ const configs = session => {
   const axes = MODELS[session.model] ?? {};
   return [
     { id: 'mode', category: 'mode', type: 'select', currentValue: session.mode, options: ['ask', 'accept-edits', 'smart', 'plan', 'bypass'].map(value => ({ value, name: value })) },
-    { id: 'model', category: 'model', type: 'select', currentValue: session.model, options: [{ group: 'Models', options: Object.keys(MODELS).map(value => ({ value, name: value })) }] },
+    { id: 'model', category: 'model', type: 'select', currentValue: session.model, options: [{ group: 'Models', options: Object.keys(MODELS).map(value => ({ value, name: LABELS[value] ?? value })) }] },
     ...(axes.thought ? [{ id: 'thought_level', category: 'thought_level', type: 'select', currentValue: session.thought_level, options: axes.thought.map(value => ({ value, name: value })) }] : []),
     ...(axes.speed ? [{ id: 'speed', category: 'model_config', type: 'select', currentValue: session.speed, options: axes.speed.map(value => ({ value, name: value })) }] : []),
   ];
@@ -160,10 +157,10 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     const p = request.params ?? {};
     switch (request.method) {
       case 'fixture/no-reply': return;
-      case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
+      case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: VERSION }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
         captureTurnConfig();
-        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast', used: 120000, window: 262000,
+        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: DEFAULT_MODEL, thought_level: MODELS[DEFAULT_MODEL]?.implicit ?? null, speed: 'fast', used: 120000, window: 262000,
           // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
           mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_)/.test(k)) };
         persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
@@ -187,15 +184,17 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/set_config_option': {
         const session = load(p.sessionId), option = configs(session).find(o => o.id === p.configId);
         const flatten = values => values.flatMap(v => v.options ? flatten(v.options) : [v.value]);
-        if (!option || !flatten(option.options).includes(p.value)) throw new Error('Unsupported config value');
+        // 実機は選択肢に無い値を -32602 で断る（3000.14.30821: Invalid value 'swe-2-1-high' for config option 'model'）
+        if (!option || !flatten(option.options).includes(p.value)) throw Object.assign(new Error(`Invalid value '${p.value}' for config option '${p.configId}'`), { code: -32602 });
         session[p.configId] = p.value;
-        // 実機は model の切替で thought_level をその uid の接尾辞の段に戻し、軸の有無・選択肢も model に合わせる
+        // 実機は model の切替で thought_level をそのモデルの既定の段に戻し、軸の有無・選択肢も model に合わせる
         if (p.configId === 'model') { session.thought_level = MODELS[p.value]?.implicit ?? null; session.speed = 'standard'; }
         persist(session);
         const options = configs(session);
         if (process.env.FAKE_DEVIN_BAD_ACK === p.configId) options.find(o => o.id === p.configId).currentValue = 'wrong';
         const drift = process.env.FAKE_DEVIN_SETUP_DRIFT;
-        if (p.configId === 'speed' && drift) {
+        // 揺らぎは Pleiad が最後に送る設定（モデルだけ選んだターンでは model）の応答に重ねる。speed は Pleiad が送らない（ADR 0356）
+        if (p.configId === 'model' && drift) {
           const frames = [];
           const configFrame = values => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'config_option_update', configOptions: values } } });
           const modeFrame = value => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'current_mode_update', currentModeId: value } } });
@@ -378,5 +377,5 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       default: throw new Error(`Unsupported method: ${request.method}`);
     }
     write({ id: request.id, result });
-  } catch (error) { write({ id: request.id, error: { code: -32000, message: error.message } }); }
+  } catch (error) { write({ id: request.id, error: { code: Number.isInteger(error.code) ? error.code : -32000, message: error.message } }); }
 });

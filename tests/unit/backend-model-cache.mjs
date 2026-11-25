@@ -10,17 +10,33 @@ import { createGrokBackend } from '../../core/backends/grok.mjs';
 export const name = 'backend-model-cache';
 export const title = 'Devin・Grok のモデル一覧の置き場: 取りかけの分け合い・TTL・失敗は覚えない・強制の取り直し';
 
-const catalogue = () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', label: 'SWE-2 High', cost_tier: 'Free' }] }] });
+const acpOptions = model => [
+  { id: 'model', category: 'model', currentValue: model, options: [{ value: 'swe-2-high', name: 'SWE-2 High' }, { value: 'glm-5-2', name: 'GLM-5.2' }] },
+  { id: 'thought_level', category: 'thought_level', currentValue: 'high', options: [{ value: 'medium' }, { value: 'high' }] },
+];
 
 export default async function (t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-model-cache-'));
   const dataDir = path.join(root, 'data'), other = path.join(root, 'other');
   const keep = { devin: process.env.AGENT_HOST_DEVIN_MODELS_TTL_MS, grok: process.env.AGENT_HOST_GROK_MODELS_TTL_MS };
   try {
-    // ---- Devin: 一覧の取得は catalogue の注入で数える（CLI は起こさない）
+    // ---- Devin: 一覧は ACP の会話（session/new の model の選択肢）で読む。取得は偽の ACP の session/new で数える（CLI は起こさない）
     let devinCalls = 0, devinFail = false;
-    const devin = createDevinBackend({ command: () => ['devin-fixture'], dataDir,
-      catalogue: async () => { if (devinFail) throw new Error('catalogue down'); devinCalls++; await new Promise(r => setTimeout(r, 20)); return catalogue(); } });
+    class FakeDevinAcp {
+      alive = true;
+      async start() {}
+      async close() { this.alive = false; }
+      async call(method, params) {
+        if (method === 'session/new') {
+          if (devinFail) throw new Error('acp down');
+          devinCalls++; await new Promise(r => setTimeout(r, 20));
+          return { sessionId: 'metadata', configOptions: acpOptions('swe-2-high') };
+        }
+        if (method === 'session/set_config_option') return { configOptions: acpOptions(params.value) };
+        throw new Error(`unexpected ${method}`);
+      }
+    }
+    const devin = createDevinBackend({ Acp: FakeDevinAcp, command: () => ['devin-fixture'], dataDir });
     const [a, b] = await Promise.all([devin.models(), devin.models()]);
     t.ok('Devin: 同時の要求は 1 回の取得を分け合う', devinCalls === 1 && Object.hasOwn(a, 'swe-2-high') && Object.hasOwn(b, 'swe-2-high'));
     await devin.models();
@@ -37,6 +53,9 @@ export default async function (t) {
     await devin.models();
     t.ok('Devin: TTL を 0 にすると毎回取り直す', devinCalls === 4);
     delete process.env.AGENT_HOST_DEVIN_MODELS_TTL_MS;
+    await devin.requireModelCatalog(process.cwd(), 'glm-5-2');
+    const probed = await devin.models();
+    t.ok('Devin: 一覧を読んだ会話でモデルを選んで、強さの選択肢を裏で読む', JSON.stringify(probed['glm-5-2'].efforts) === JSON.stringify(['medium', 'high']) && probed['glm-5-2'].defaultEffort === 'high', JSON.stringify(probed['glm-5-2']));
 
     // ---- Grok: 一覧は ACP の initialize（start の呼ばれる回数で数える）
     let grokStarts = 0, grokFail = false;

@@ -297,6 +297,11 @@ export class DevinAcp {
       // 構造化した安全な印だけを載せる（wire の message/data/trace id はここから外へ出さない）
       const limit = acpTurnLimit(e);
       if (limit) reject.acpLimit = limit;
+      // 設定の値を CLI が断った印（-32602 Invalid params）。どの設定か（configId）だけを載せ、
+      // モデル・思考の強さの断りを kind: 'model' の失敗として扱わせる（ADR 0356）
+      if (e.code === -32602 && pending.method === 'session/set_config_option' && typeof pending.params?.configId === 'string') {
+        reject.configRejected = { option: pending.params.configId };
+      }
       pending.reject(reject);
     } else {
       // Observe ACKs in wire order, before resolving a call can queue its await.
