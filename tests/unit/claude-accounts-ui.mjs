@@ -174,7 +174,7 @@ export default async function test(t) {
     // ============================================================ 流れごとの並び（origin/main と同じ）
     await check('追加（claude.ai にログイン）: claudeLoginStart { kind: usage-login, name, open } → claudeLoginCode → 済んだら claudeAccounts', async () => {
       const s = await mk(); s.reset();
-      await s.click('[data-add]');
+      await s.api.add(); await settle();   // 一覧の［＋ 接続先を追加］→ 公式（web/client.mjs。ADR 0357）
       await s.type('[data-name="new1"]', '新しいアカウント');
       await s.click('[data-account="new1"] [data-fix="new1:lg"]');
       await s.event({ loginId: 'L1', phase: 'url', url: 'https://claude.ai/oauth/x' });
@@ -241,7 +241,7 @@ export default async function test(t) {
       assert.equal(s.card(A).flow, true, '流れのカードも開いたまま');
       assert.equal(s.card(A).body, true);
       assert.equal(s.card(B).edit, true, 'B も開く（流れの間だけの例外）');
-      await s.click('#caClose');
+      s.api.close(); await settle();   // カードの［接続先］で畳む（面の［閉じる］は ADR 0357 で無くなった）
       await s.api.open(); await settle();
       assert.deepEqual(s.cancels(), [], '面を閉じる');
       assert.equal(s.card(A).flow, true, '開き直すと流れの続きが見える（origin: close は flow に触らず、open で drawFlow）');
@@ -384,7 +384,7 @@ export default async function test(t) {
 
     await check('新しいカードの発行の失敗: 名前の誤り（code: bad-name）だけ名前の欄、ほかは流れの所に［やり直す］', async () => {
       const s = await mk();
-      await s.click('[data-add]');
+      await s.api.add(); await settle();   // 一覧の［＋ 接続先を追加］→ 公式（web/client.mjs。ADR 0357）
       await s.type('[data-name="new1"]', 'Z');
       s.fail.claudeLoginStart = Object.assign(new Error(tr('claude.accounts.nameDuplicate')), { code: 'bad-name' });
       await s.click('[data-account="new1"] [data-fix="new1:lg"]');
@@ -398,7 +398,7 @@ export default async function test(t) {
 
     await check('追加のカードが登録されたあとの流れも、その行へフォーカスが行く（札の引き継ぎ）', async () => {
       const s = await mk();
-      await s.click('[data-add]');
+      await s.api.add(); await settle();   // 一覧の［＋ 接続先を追加］→ 公式（web/client.mjs。ADR 0357）
       await s.type('[data-name="new1"]', 'N');
       await s.click('[data-account="new1"] [data-fix="new1:lg"]');
       s.rows.push({ id: 'acct-nnnnnnnnnnnn', name: 'N', usageLogin: false });

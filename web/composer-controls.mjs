@@ -438,10 +438,9 @@ const CUBE = ["M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9"];
 const GAUGE = ["M4 18a8 8 0 1 1 16 0", "M12 18l4-5"];
 const CHART = "M5 19V11M12 19V5M19 19v-6";
 const PLUG = "M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5";
-const PERSON = ["M15.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z", "M5 20a7 7 0 0 1 14 0"];
 const RESET = ["M5 12a7 7 0 1 0 2.1-5", "M5 4v4h4"];
 
-/** 面 -> { view, q }（view は top / bot / agent / endpoint / account / model / mode。q はモデルの検索の字） */
+/** 面 -> { view, q }（view は top / bot / agent / conn / model / mode。q はモデルの検索の字） */
 const views = new WeakMap();
 
 const icon = (node) => { const s = el("span", "ic"); if (node) s.append(node); return s; };
@@ -530,6 +529,31 @@ function skeleton(n, text) {
   return box;
 }
 
+/**
+ * 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先。ADR 0357）。d.accounts（アカウント）と d.endpoint（互換）を 1 つに並べる。
+ * アカウントの節が無い面では、接続先の「公式」の行を CLI のログインとして先頭に置く。key は account:<id> / endpoint:<id>
+ */
+function connOptions(d) {
+  const ep = d.endpoint, out = [];
+  if (d.accounts) {
+    for (const a of d.accounts) {
+      out.push({ key: `account:${a.value}`, kind: "account", value: a.value, label: a.label, note: [a.hint, a.conn?.text].filter(Boolean).join(" · "),
+        warn: Boolean(a.warn || a.conn?.warn), usage: a.usage, isDefault: a.isDefault, gone: a.gone });
+    }
+  } else if (ep) {
+    const o = ep.options.find((x) => x.value === "");
+    if (o) out.push({ key: "account:", kind: "account", value: "", label: o.label, note: o.sub, usage: o.usage, isDefault: o.isDefault });
+  }
+  for (const o of ep?.options ?? []) {
+    if (o.value !== "") out.push({ key: `endpoint:${o.value}`, kind: "endpoint", value: o.value, label: o.label, note: o.sub, warn: Boolean(o.warn), isDefault: o.isDefault, gone: o.gone, title: o.title });
+  }
+  return out;
+}
+/** 選んでいる接続先の key。互換を選んでいればそれ、無ければアカウント（'' = CLI のログイン） */
+const connSelected = (d) => (d.endpoint?.selected ? `endpoint:${d.endpoint.selected}` : `account:${d.accounts ? d.account ?? "" : ""}`);
+/** 1 段目に接続先の行を出すか。選べる先が CLI のログインだけで、それを選んでいれば出さない */
+const connShown = (d) => connOptions(d).length > 1 || connSelected(d) !== "account:";
+
 /** 2 段目に入ったときのフォーカス: 検索の欄 → 選んでいる行 → 最初の行 */
 function focusView(pop) {
   (pop.querySelector(".psearch input") ?? pop.querySelector('.prow.popt[aria-selected="true"]')
@@ -559,10 +583,12 @@ function unusableAgentRow(b, v) {
  * @param {object} o
  * @param {HTMLElement} o.pop 描画先（面の開閉は panel() で呼び出し側が扱う）
  * @param {object} o.target 今の値と候補。backend/backends/backendSwitchable、model/models、effort/efforts/effortDisabled。
- *   endpoint と account/accounts、modes/mode、destination は任意。省けばその行を出さない。
+ *   endpoint と account/accounts、modes/mode、destination は任意。省けばその行を出さない。endpoint と accounts は
+ *   1 つの「接続先」の行にまとめる（connOptions。互換の接続先の無い面は connManage で「接続先を管理…」を出す）。
  *   週の使用量は backendUsage(id)。棒を出す行は composer-labels.mjs の agentRowUsage（アカウントの行・互換の接続先があれば
  *   エージェントの行に出さない。一覧のほかのエージェントは backendHasAccounts(id)）。
- * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account?, mode? }。保存後、更新した target で描き直す。
+ * @param {object} o.on 変更先 { backend, model, effort, endpoint?, account?, conn?, mode? }。保存後、更新した target で描き直す。
+ *   conn({ endpoint: '', account }) は互換から公式のアカウントへ移るとき（無ければ account だけ呼ぶ）。
  *   既定に戻す model/effort は空文字を渡す。
  * @param {(returnFocus?: boolean) => void} o.hide 面の外へ移るとき（接続先の管理・使用量・bot のページ）、面を閉じる
  */
@@ -608,27 +634,23 @@ function topView(ctx) {
     if (dest.openBot) out.push(plist([linkRow({ key: "destination:openBot", ic: botMark(bot), text: t("composer.destination.openBot"), onClick: () => { hide(false); dest.openBot(bot.id); } })]));
     return out;
   }
+  // 接続先（CLI のログイン・アカウント・互換を 1 行。選べる先が CLI のログインだけなら出さない。ADR 0357）。
+  // 週の使用量の棒は公式の枠（CLI のログイン・アカウント）の行だけ。接続先の行が無ければエージェントの行に出す
+  const ep = d.endpoint;
+  const conn = connShown(d);
   if (d.backend) {
     rows.push(navRow({ key: "nav:agent", ic: logo(d.backend), label: t("composer.agent"), value: labelOf(d.backend),
-      meta: weekMeta(agentRowUsage(d, d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));
+      meta: conn ? null : weekMeta(agentRowUsage(d, d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));
   }
-  // 接続先（Claude Code・Codex）。「公式」だけのときは出さない（「接続先を管理…」はエージェントの一覧の下と設定から）
-  const ep = d.endpoint;
-  if (ep && (ep.options.length > 1 || ep.row)) {
-    const cur = ep.options.find((o) => o.value === ep.selected);
-    rows.push(navRow({ key: "nav:endpoint", ic: glyph(PLUG), label: t("composer.endpoint.title"), value: cur?.label ?? ep.selected, title: cur?.title, onClick: () => go("endpoint") }));
-  }
-  // アカウント。互換の接続先では使わない（接続先のキーで送る）。行は残し、理由を出す
-  if (d.accounts) {
-    const off = Boolean(ep?.row);
-    const cur = d.accounts.find((a) => a.value === d.account);
-    rows.push(off
-      ? navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: "", note: t("composer.account.compatOff") })
-      : navRow({ key: "nav:account", ic: glyph(...PERSON), label: t("composer.account.title"), value: cur?.label ?? "", note: cur?.conn?.text, two: Boolean(cur?.conn), warn: cur?.conn?.warn,
-        meta: weekMeta(cur?.usage), onClick: () => go("account") }));
+  if (conn) {
+    const sel = connSelected(d);
+    const cur = connOptions(d).find((o) => o.key === sel);
+    rows.push(navRow({ key: "nav:conn", ic: glyph(PLUG), label: t("composer.endpoint.title"), value: cur?.label ?? "", title: cur?.title,
+      note: cur?.warn ? cur.note : null, two: Boolean(cur?.warn), warn: Boolean(cur?.warn),
+      meta: cur?.kind === "account" ? weekMeta(cur.usage) : null, onClick: () => go("conn") }));
   }
   // モデル
-  const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("chat.model.default")
+  const modelValue = ep?.row ? compatModelLabel(d.model || ep.row.roles?.main || "").text || t("conn.endpointDefault")
     : d.modelsPending ? "…" : resolvedModel(d.models ?? {}, d.model).label;
   rows.push(navRow({ key: "nav:model", ic: glyph(...CUBE), label: t("composer.model.title"), value: modelValue, onClick: () => go("model") }));
   // エフォート（行の中の棒）
@@ -699,28 +721,32 @@ function subView(ctx) {
       }
       const links = [];
       if (d.destination?.openUsage) links.push(linkRow({ key: "agent:usage", ic: glyph(CHART), text: t("composer.usage"), onClick: () => { ctx.hide(false); d.destination.openUsage(); } }));
-      if (d.endpoint) links.push(linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); d.endpoint.manage(); } }));
+      const manage = d.endpoint?.manage ?? d.connManage;
+      if (manage) links.push(linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); manage(); } }));
       const rest = other.length ? plist(other, t("composer.agent")) : null;
       rest?.classList.add("unusable");
       return wrap(t("composer.agent"), [plist(usable, t("composer.agent")), rest, links.length ? plist(links) : null]);
     }
-    case "endpoint": {
-      const ep = d.endpoint;
-      if (!ep) return null;
-      return wrap(t("composer.endpoint.title"), [
-        plist(ep.options.map((o) => optRow({ key: `endpoint:${o.value}`, sel: o.value === ep.selected, ic: o.warn ? glyph(...WARN) : null, name: o.label, note: o.sub,
-          tag: o.isDefault ? DEFAULT_TAG() : "", title: o.title ?? o.label,
-          onPick: () => ctx.pick("endpoint", () => { if (o.value !== ep.selected && !o.gone) ctx.on.endpoint(o.value); }) })), t("composer.endpoint.title")),
-        ep.row && ep.lost ? pnote(t("composer.endpoint.lost", { items: ep.lost })) : null,
-        plist([linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); ep.manage(); } })]),
+    case "conn": {
+      // 接続先（CLI のログイン → アカウント → 互換を 1 つの一覧。棒は公式の枠の行だけ。既定の札は新しい会話の既定の 1 か所。ADR 0357）
+      const opts = connOptions(d);
+      if (!opts.length) return null;
+      const ep = d.endpoint, sel = connSelected(d), title = t("composer.endpoint.title");
+      const choose = (o) => {
+        if (o.key === sel || o.gone) return;
+        if (o.kind === "endpoint") ctx.on.endpoint?.(o.value);
+        else if (ctx.on.conn) ctx.on.conn({ endpoint: "", account: o.value });
+        else ctx.on.account?.(o.value);
+      };
+      const manage = ep?.manage ?? d.connManage;
+      return wrap(title, [
+        plist(opts.map((o) => optRow({ key: o.key, sel: o.key === sel, ic: o.warn ? glyph(...WARN) : null, name: o.label, note: o.note, two: Boolean(o.note), warn: o.warn,
+          tag: o.isDefault ? DEFAULT_TAG() : "", meta: o.kind === "account" ? weekMeta(o.usage) : null, title: o.title,
+          disabledReason: o.kind === "account" && o.key !== sel ? ctx.blocked?.("account", o.value) : null,
+          onPick: () => ctx.pick("conn", () => choose(o)) })), title),
+        ep?.row && ep.lost ? pnote(t("composer.endpoint.lost", { items: ep.lost })) : null,
+        manage ? plist([linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); manage(); } })]) : null,
       ]);
-    }
-    case "account": {
-      if (!d.accounts || d.endpoint?.row) return null;
-      return wrap(t("composer.account.title"), [plist(d.accounts.map((a) => optRow({ key: `account:${a.value}`, sel: a.value === d.account, name: a.label,
-        disabledReason: a.value === d.account ? null : ctx.blocked?.("account", a.value),
-        note: a.conn?.text || (a.usage ? "" : a.hint), two: Boolean(a.conn), warn: a.conn?.warn, tag: a.value === "" ? DEFAULT_TAG() : "", meta: weekMeta(a.usage),
-        onPick: () => ctx.pick("account", () => { if (a.value !== d.account) ctx.on.account?.(a.value); }) })), t("composer.account.title"))]);
     }
     case "model":
       return wrap(t("composer.model.title"), d.endpoint?.row ? compatModelView(ctx) : officialModelView(ctx));

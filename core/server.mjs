@@ -5038,8 +5038,7 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
       if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
       if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
-      // 人が選んだアカウントは、そのエージェントで次に開く新しい会話の既定にする（newSession）
-      if (explicit.account !== undefined) await rememberAccount(target.id, account);
+      // 接続先（アカウントも）の既定は設定のカードの［既定にする］だけで決まる。入力欄で選んだ接続先は覚えない（ADR 0357）
     }
     emitGlobal({ type: "nextSettings", sessionId, nextSettings: next, worktreePending: Boolean(current.unsent && pendingWorktree) });
     return next;
@@ -6194,7 +6193,9 @@ async function accountConnectorsList({ cwd = null, refresh = false, wait = false
   }));
 }
 
-async function enrichClaudeAccountsList(result) {
+async function enrichClaudeAccountsList(rawResult) {
+  // 環境変数 ANTHROPIC_API_KEY があると、どの接続先でもそのキーが使われる（設定の接続先の一覧が 1 行の注意を出す）
+  const result = { ...rawResult, envApiKey: Boolean(process.env.ANTHROPIC_API_KEY) };
   const enabledMap = await claudeAccountConnectors.settings.list();
   const enabledIds = result.accounts.filter(a => enabledMap[a.id]);
   if (!enabledIds.length) return result;
@@ -11463,8 +11464,20 @@ wss.on("connection", (ws, req) => {
           return await viaOp('compatEndpoints.recheck');
         case 'compatEndpointDelete':
           return await viaOp('compatEndpoints.delete', () => compatEndpoints.list());
+        // 設定の接続先の［既定にする］（新しい会話の既定は 1 つ。ADR 0357）。互換の接続先は id。CLI のログイン・登録したアカウントは
+        // account（'' = CLI のログイン）を付け、既定の接続先を公式に戻してから既定のアカウントを書く（データの形は今のまま）
         case 'compatEndpointDefault': {
-          await compatEndpoints.setDefault(String(msg.args?.agent ?? ''), String(msg.args?.id ?? ''));
+          const agentId = String(msg.args?.agent ?? '');
+          const account = msg.args?.account;
+          if (account !== undefined) {
+            const backend = getBackend(agentId);
+            if (!backend || typeof account !== 'string' || (account && !(await accountHas(backend, account)))) throw new Error(t('settings.accountNotRegistered'));
+            if (backend.capabilities?.compatEndpoints) await compatEndpoints.setDefault(agentId, '');
+            await rememberAccount(agentId, account);
+            emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+            return reply(true, await compatEndpoints.list());
+          }
+          await compatEndpoints.setDefault(agentId, String(msg.args?.id ?? ''));
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
           return reply(true, await compatEndpoints.list());
         }

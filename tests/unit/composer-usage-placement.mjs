@@ -1,10 +1,10 @@
-// 入力欄の設定の面: 使用量の棒は、使用枠を決める行に 1 本だけ（承認済み（2026-11-24）。docs/design-system.md「入力欄の設定」）。
+// 入力欄の設定の面: 使用量の棒は、使用枠を決める行に 1 本だけ（承認済み（2026-11-26）。docs/design-system.md「使用量の棒の置き場」。ADR 0357）。
 //
-//   01/02 アカウントの行がある面: エージェントの行は棒を出さず、アカウントの行だけに棒（登録したアカウントを選んでいても「ログイン中」でも）
-//   03    アカウントの行が無い面（未登録・アカウントの無いエージェント・スレッドの面）: エージェントの行に 1 本（今のまま）
+//   01/02 接続先の行がある面: エージェントの行は棒を出さず、接続先の行だけに棒（登録したアカウントを選んでいても「CLI のログイン」でも）
+//   03    接続先の行が無い面（未登録・アカウントの無いエージェント・スレッドの面）: エージェントの行に 1 本（今のまま）
 //   04    互換の接続先: 面に使用量の棒を出さない（アカウントを登録していないエージェントでも）
 //   05    エージェントの一覧: アカウントを登録したエージェントは棒を出さない。登録していないエージェントは今のまま
-//   06    アカウントの一覧: 変えない（行ごとにそのアカウントの値）
+//   06    接続先の一覧: 公式の枠（CLI のログイン・アカウント）の行ごとにその値。互換の行は棒を出さない
 // 描画（web/composer-controls.mjs の renderModel）を DOM の代役の上で動かし、行ごとの棒の有無を読む。
 import { agentRowUsage } from "../../web/composer-labels.mjs";
 
@@ -64,19 +64,19 @@ export default async function (t) {
   {
     const pop = top(target({ accounts: ACCOUNTS, account: "acc-seamth" }));
     t.ok("01: エージェントの行に棒が無い", bars(rowOf(pop, "nav:agent")) === 0);
-    t.ok("01: アカウントの行に 1 本（選んでいるアカウントの値）", bars(rowOf(pop, "nav:account")) === 1 && /1/.test(percent(rowOf(pop, "nav:account"))), percent(rowOf(pop, "nav:account")));
+    t.ok("01: 接続先の行に 1 本（選んでいるアカウントの値）", bars(rowOf(pop, "nav:conn")) === 1 && /1/.test(percent(rowOf(pop, "nav:conn"))), percent(rowOf(pop, "nav:conn")));
     t.ok("01: エージェントの行は › で一覧へ進める（押せる行のまま）", typeof rowOf(pop, "nav:agent").onclick === "function");
   }
-  // 02 「ログイン中」を選んでいる
+  // 02 「CLI のログイン」を選んでいる
   {
     const pop = top(target({ accounts: ACCOUNTS, account: "" }));
-    t.ok("02: エージェントの行に棒が無く、アカウントの行に 1 本（同じ値を 2 回出さない）",
-      bars(rowOf(pop, "nav:agent")) === 0 && bars(rowOf(pop, "nav:account")) === 1 && /3/.test(percent(rowOf(pop, "nav:account"))));
+    t.ok("02: エージェントの行に棒が無く、接続先の行に 1 本（同じ値を 2 回出さない）",
+      bars(rowOf(pop, "nav:agent")) === 0 && bars(rowOf(pop, "nav:conn")) === 1 && /3/.test(percent(rowOf(pop, "nav:conn"))));
   }
   // 03 アカウントの行が無い
   {
     const pop = top(target());
-    t.ok("03: 未登録（アカウントの行が無い）ならエージェントの行に 1 本", bars(rowOf(pop, "nav:agent")) === 1 && !rowOf(pop, "nav:account") && /3/.test(percent(rowOf(pop, "nav:agent"))));
+    t.ok("03: 未登録（接続先の行が無い）ならエージェントの行に 1 本", bars(rowOf(pop, "nav:agent")) === 1 && !rowOf(pop, "nav:conn") && /3/.test(percent(rowOf(pop, "nav:agent"))));
     const agy = top(target({ backend: "antigravity" }));
     t.ok("03: アカウントの無いエージェント（取れた値が無い Antigravity）は棒を出さない（今のまま）", bars(rowOf(agy, "nav:agent")) === 0);
     const withUsage = top(target({ backend: "antigravity", backendUsage: () => usage(20) }));
@@ -85,8 +85,9 @@ export default async function (t) {
   // 04 互換の接続先
   {
     const withAccounts = top(target({ accounts: ACCOUNTS, account: "", endpoint: COMPAT }));
-    t.ok("04: アカウントを登録していても、面に棒が 1 本も無い（アカウントの行は「使いません」）",
-      bars(rowOf(withAccounts, "nav:agent")) === 0 && bars(rowOf(withAccounts, "nav:account")) === 0);
+    t.ok("04: アカウントを登録していても、面に棒が 1 本も無い（接続先の行は互換の名前だけ）",
+      bars(rowOf(withAccounts, "nav:agent")) === 0 && bars(rowOf(withAccounts, "nav:conn")) === 0 && !rowOf(withAccounts, "nav:account")
+      && /OpenRouter/.test(rowOf(withAccounts, "nav:conn").textContent));
     const noAccounts = top(target({ endpoint: COMPAT }));
     t.ok("04: アカウントを登録していないエージェントでも、エージェントの行に棒が無い", bars(rowOf(noAccounts, "nav:agent")) === 0);
   }
@@ -102,11 +103,14 @@ export default async function (t) {
     const compat = list(target({ accounts: ACCOUNTS, account: "", endpoint: COMPAT, backendHasAccounts: (id) => id === "claude" }), "agent");
     t.ok("05: 互換の接続先で動く今のエージェントの行は棒を出さず、ほかのエージェントは規則どおり", bars(rowOf(compat, "backend:claude")) === 0 && bars(rowOf(compat, "backend:codex")) === 1);
   }
-  // 06 アカウントの一覧
+  // 06 接続先の一覧（CLI のログイン → アカウント → 互換を 1 つに）
   {
-    const pop = list(target({ accounts: ACCOUNTS, account: "acc-seamth", backendHasAccounts: (id) => id === "claude" }), "account");
+    const pop = list(target({ accounts: ACCOUNTS, account: "acc-seamth", endpoint: { ...COMPAT, selected: "", row: null }, backendHasAccounts: (id) => id === "claude" }), "conn");
     const rows = ACCOUNTS.map((a) => rowOf(pop, `account:${a.value}`));
-    t.ok("06: アカウントの一覧は行ごとに棒（変えない）", rows.every((r) => bars(r) === 1), rows.map(bars).join());
+    t.ok("06: 公式の枠の行ごとに棒", rows.every((r) => bars(r) === 1), rows.map(bars).join());
     t.ok("06: 値は行ごとのアカウントのもの", ["3", "1", "41"].every((n, i) => percent(rows[i]).includes(n)), rows.map(percent).join(" | "));
+    t.ok("06: 互換の行は棒を出さず、公式の行（endpoint:）は重ねて出さない", bars(rowOf(pop, "endpoint:ep-or")) === 0 && !rowOf(pop, "endpoint:"));
+    const keys = find(pop, (n) => /^(account|endpoint):/.test(n.attrs["data-key"] ?? "")).map((n) => n.attrs["data-key"]);
+    t.ok("06: 並びは CLI のログイン → アカウント → 互換", keys.join() === "account:,account:acc-seamth,account:acc-personal,endpoint:ep-or", keys.join());
   }
 }

@@ -451,11 +451,7 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-meta .path{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 /* 「アカウントと接続先」の節。管理の面（.mp-panel）を節ごとの枠に入れるので、面側の地と見出し・閉じる・冒頭の説明は脱ぐ */
 .agent-conn{margin:12px 0 2px;padding:4px 0 2px 28px}
-.conn-sec + .conn-sec{margin-top:22px}
-.conn-sec > h4{margin:2px 0 8px;font-size:var(--fs-s);font-weight:600}
 .conn-sec .mp-panel{margin-top:0;padding:0;background:transparent;border-radius:0}
-.conn-sec .mp-panel > .mp-row{display:none}
-.conn-sec .mp-panel .mp-intro{display:none}
 /* 「状態を再確認」は一覧の右端に寄せる */
 #refreshAgents{display:flex;width:fit-content;margin:14px 0 0 auto}
 .agent-card > .auth-note{margin:6px 0 0 28px;padding:0}

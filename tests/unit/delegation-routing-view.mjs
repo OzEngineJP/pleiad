@@ -241,7 +241,7 @@ async function accountPanel(t) {
     await wait();
     t.ok('対応する段は同じ順位の新しい候補に引き継ぐ', settings.tiers.t1[1] === 'claude@acct-p:opus'
       && settings.efforts.t1['claude@acct-p:opus'] === 'max' && !Object.hasOwn(settings.efforts.t1, 'claude@acct-p:sonnet'));
-    item('nav:account').onclick();
+    item('nav:conn').onclick();
     t.ok('重複したアカウントは理由を添えて無効、今の組に ✓', item('account:acct-s').disabled
       && item('account:acct-s').textContent.includes('同じレベルに追加済み') && item('account:acct-p').getAttribute('aria-selected') === 'true');
     item('account:acct-w').onclick();

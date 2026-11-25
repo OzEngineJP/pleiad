@@ -176,7 +176,7 @@ export default async function (t) {
         chip.dispatchEvent({ type: 'click' });
         await tick();
         const pop = root.querySelector('.rt-picker');
-        pop.querySelectorAll('.prow').find(b => b.dataset.key === 'nav:account').onclick();
+        pop.querySelectorAll('.prow').find(b => b.dataset.key === 'nav:conn').onclick();
         const accounts = pop.querySelectorAll('.prow').map(b => b.dataset.key);
         assert.ok(accounts.includes('account:verified') && accounts.includes('account:dead'), accounts.join(','));
         assert.ok(!accounts.includes('account:plain') && !accounts.includes('account:'), accounts.join(','));
@@ -293,13 +293,13 @@ export default async function (t) {
       nameIn.dispatchEvent({ type: 'input' });
 
       // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す。
-      // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、アカウントの行から一覧へ進む
+      // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、接続先の行から一覧へ進む
       const popButton = (key) => botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
       botView.querySelector('#botModelChip').click();
       await tick();
       await tick();
-      assert.ok(Boolean(popButton('nav:account')), 'bot ページのモデル面の上の段にアカウントの行が出る');
-      popButton('nav:account').click();
+      assert.ok(Boolean(popButton('nav:conn')), 'bot ページのモデル面の上の段に接続先の行が出る');
+      popButton('nav:conn').click();
       await tick();
       await tick();
       const acctBtn = popButton('account:verified');
@@ -366,9 +366,9 @@ export default async function (t) {
           view.querySelector('#botModelChip').click();
           await tick();
           await tick();
-          // 2 段の面: アカウントの行 → 一覧で選ぶ → 上の段へ戻る → モデルの行 → 一覧で選ぶ
+          // 2 段の面: 接続先の行 → 一覧で選ぶ → 上の段へ戻る → モデルの行 → 一覧で選ぶ
           const pick = (key) => view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
-          pick('nav:account').click();
+          pick('nav:conn').click();
           await tick();
           await tick();
           pick('account:verified').click();
