@@ -60,6 +60,8 @@ import { createThreadStore, emptyThread, threadTitle } from './threads.mjs';
 import { parseMentions } from './mentions.mjs';
 
 export const LIMITS = Object.freeze({ name: 60, purpose: 300, memo: 4000, cwd: 1000, text: 20000, attachments: 50, members: 50, reactionKinds: 30, readDefault: 50, readMax: 100, searchDefault: 20, searchMax: 50 });
+/** 失敗した返事の理由（Post.failure）の長さの上限。返事の場所に 1 行で出す */
+const FAILURE_MAX = 300;
 /** 作業中の投稿の更新を全接続へ配る間隔（ms。ADR 0108。リモートの端末の通信量のため） */
 export const WORKING_EDIT_INTERVAL_MS = 1000;
 /** スレッドの索引（threads）の、チャンネルごとの既定の件数と上限（脇の「最近のスレッド」） */
@@ -421,7 +423,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       });
     },
 
-    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession, to, clientId }, author) {
+    async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession, to, clientId, failure }, author) {
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
@@ -470,7 +472,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       }
       const post = {
         id: newId('post', at), channelId, threadId, author: clone(author), text, mentions: resolved, at,
-        ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(presents ? { presents: clone(presents) } : {}),
+        ...(state !== undefined ? { state } : {}), ...(turn ? { turn: clone(turn) } : {}), ...(turn && typeof failure === 'string' ? { failure: failure.slice(0, FAILURE_MAX) } : {}), ...(presents ? { presents: clone(presents) } : {}),
         ...(files.length ? { attachments: files } : {}), reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
         ...(to ? { to } : {}), ...(clientId ? { clientId } : {}),
       };
@@ -522,7 +524,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { root: clone(root), idMap };
     },
 
-    async edit({ channelId, postId, text, state, presents, attachments, mentions, taint, failedWithBody }, _author) {
+    async edit({ channelId, postId, text, state, presents, attachments, mentions, taint, failedWithBody, failure }, _author) {
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });
       const op = { op: 'edit', id: postId, at: now() };
@@ -539,6 +541,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       if (presents !== undefined) op.presents = clone(presents);
       if (attachments !== undefined) op.attachments = normalizeAttachments(attachments);
       if (failedWithBody === true && post.turn) op.failedWithBody = true;
+      if (typeof failure === 'string' && post.turn) op.failure = failure.slice(0, FAILURE_MAX);
       const saved = await store.append(channelId, op);
       emitEdit(channelId, saved);
       if (text !== undefined && saved.author.kind === 'human') await hooks.edited?.(clone(saved), clone(await need(channelId)));

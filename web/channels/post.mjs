@@ -184,6 +184,12 @@ export function paintChecklist(body, working) {
   }
 }
 
+/**
+ * 返事のない失敗か（bot のターンの投稿が failed で終わり、本文が無い）。返事の場所には本文でなく「✕ 失敗 · 理由」を出す。
+ * 理由（Post.failure）を持たない昔の投稿は、本文の失敗文をそのまま出す
+ */
+export const isTurnFailure = (post) => post.state === 'failed' && Boolean(post.turn) && !post.failedWithBody && typeof post.failure === 'string' && !post.deletedAt;
+
 /** 状態の行（bot のターンの投稿・ルーティンの実行の根）。成功を緑の ✓ で見せない（終了は文字だけ） */
 function stateLine(post) {
   const state = post.state;
@@ -198,6 +204,12 @@ function stateLine(post) {
   const label = t(`channels:feed.state.${softFailure ? 'failedWithBody' : state}`);
   const reason = post.routine?.missed ? t('channels:feed.state.missed') : post.routine?.reason;
   row.append(el('span', 'post-state-text', reason && (state === 'skipped' || post.routine?.missed) ? `${label} · ${reason}` : label));
+  // 返事のない失敗: 理由を同じ行に 1 行で添える（長ければ省く。全文は title）
+  if (isTurnFailure(post) && post.failure) {
+    const why = el('span', 'post-state-reason', post.failure);
+    why.title = post.failure;
+    row.append(why);
+  }
   return row;
 }
 
@@ -288,6 +300,9 @@ export function fillPost(root, post, ctx) {
   const body = el('div', 'post-body');
   if (post.deletedAt) {
     body.append(el('span', 'post-deleted', t('channels:feed.deleted')));
+  } else if (isTurnFailure(post)) {
+    // 本文は出さない（「✕ 失敗 · 理由」の行が返事の場所を占める）
+    body.hidden = true;
   } else if (info.kind === 'human') {
     // あなたの投稿は Chats の自分の発言と同じ描き方（添付をその位置に・長ければ畳む。原文は dataset.raw。web/user-message.mjs）
     paintUserBody(body, post.text ?? '', (post.attachments ?? []).map(presentOf));
@@ -320,6 +335,15 @@ export function fillPost(root, post, ctx) {
   if (!post.deletedAt) {
     const state = stateLine(post);
     if (state) main.append(state);
+    // 返事のない失敗: 返事の場所に［やり直す］（最後の投稿のときだけ。ctx.actions.retry が持ち主）
+    if (isTurnFailure(post) && ctx.actions.canRetry?.(post)) {
+      const retry = el('button', 'btn post-retry', t('channels:feed.retryTurn'));
+      retry.type = 'button';
+      retry.onclick = () => { retry.disabled = true; ctx.actions.retry(post).finally(() => { retry.disabled = false; }); };
+      const retryRow = el('div', 'post-retry-row');
+      retryRow.append(retry);
+      main.append(retryRow);
+    }
     const nameOf = (a) => nameOfAuthor(a, ctx);
     const row = renderReactions(post, { nameOf, onToggle: (emoji, on, had) => ctx.actions.react(post, emoji, on, had) });
     main.append(row);

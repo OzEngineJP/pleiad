@@ -12,6 +12,7 @@ import { el, svgEl } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
+import { retrySource, retryFailed } from './retry.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
 import { feedDraftKey } from './ch-attach-model.mjs';
@@ -81,6 +82,9 @@ export function createFeed(host) {
       quick: (p, emoji) => react(p, emoji, true, false),
       openThread: (p) => openThread(p),
       menu: (p, x, y, anchor) => openMenu(p, x, y, anchor),
+      // 失敗した返事の［やり直す］: bot の返事が流れに並ぶ DM だけ（チャンネルはスレッドの中。web/channels/retry.mjs）
+      canRetry: (p) => S.channel?.kind === 'dm' && !p.home && Boolean(retrySource(S.posts, p)),
+      retry: (p) => retryTurn(p),
     },
   };
 
@@ -210,6 +214,15 @@ export function createFeed(host) {
     node.classList.add('enter');
     postEls.set(p.id, node);
     log.append(node);
+    syncRetry();
+  }
+  /** ［やり直す］は最後の投稿のときだけ。後ろに投稿が増えたら外す */
+  function syncRetry() {
+    for (const b of log.querySelectorAll('.post-retry-row')) {
+      const id = b.closest('.post')?.dataset.postId;
+      const p = id ? S.index.get(id) : null;
+      if (!p || !retrySource(S.posts, p)) b.remove();
+    }
   }
 
   // ---------------------------------------------------------------- 読み込み
@@ -378,6 +391,17 @@ export function createFeed(host) {
     toBottom();
     // bot を @ で呼んだ投稿は新しいスレッドの根になる。ここで書いた人にその返事が見えるよう、スレッドを開く（DM は流れがスレッドの代わり）
     if (made?.id && !dm && (made.mentions ?? []).some((m) => m !== 'you')) host.openThread?.(channelId, made.id);
+  }
+
+  /** 失敗した返事のやり直し（DM）。直前のあなたの投稿の本文を、もう一度 bot へ書く */
+  async function retryTurn(p) {
+    const source = retrySource(S.posts, p);
+    const channelId = S.id;
+    if (!source || S.channel?.kind !== 'dm') return;
+    try {
+      const made = await retryFailed({ host, channel: { id: channelId, kind: 'dm' }, threadId: null, failed: p, source });
+      if (S.id === channelId && made?.id && !S.index.has(made.id) && !made.threadId) { addPost(made); toBottom(); }
+    } catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); }
   }
 
   async function react(p, emoji, on, had) {

@@ -59,6 +59,9 @@
 .post-state.waiting .post-state-text{color:var(--ink-mark)}
 .post-state.failed .post-state-text,.post-state.checking .post-state-text{color:var(--ink-strong);font-weight:700}
 .post-state-mark{font-size:10px;line-height:1}
+/* 返事のない失敗: 「✕ 失敗」の右に理由を 1 行（長ければ省く。全文は title）と、その下に［やり直す］ */
+.post-state-reason{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-weak)}
+.post-retry-row{margin-top:6px}
 
 /* ---- リアクション。札は面の階調（付けた自分の分は一段濃い面と青い数） */
 .reactions{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center}

@@ -307,14 +307,14 @@ export const channelOps = [
       const post = await ctx.channels.getPost(args);
       if (!post) throw new OpError('POST_NOT_FOUND', agentT(ctx.locale, 'ops.errors.POST_NOT_FOUND', { id: args.postId }));
       const channel = await ctx.channels.get({ channelId: args.channelId });
-      const sessions = new Map();
-      if (channel.kind === 'dm') {
+      // 投稿を運んだ会話: スレッドの各 bot の会話。DM の流れの投稿は DM の会話（Bot.dmSessionId）が運ぶ（DM のスレッドの返信は、そのスレッドの会話が運ぶ）
+      const sessions = [];
+      if (channel.kind === 'dm' && !post.threadId) {
         const bot = channel.botId ? await ctx.bots?.get({ botId: channel.botId }) : null;
-        if (bot?.dmSessionId) sessions.set(bot.id, bot.dmSessionId);
-      } else {
-        const th = await ctx.channels.threads.get(args.channelId, post.threadId ?? post.id).catch(() => null);
-        for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) sessions.set(botId, sessionId);
+        if (bot?.dmSessionId) sessions.push([bot.id, bot.dmSessionId]);
       }
+      const th = await ctx.channels.threads.get(args.channelId, post.threadId ?? post.id).catch(() => null);
+      for (const [botId, sessionId] of Object.entries(th?.sessions ?? {})) sessions.push([botId, sessionId]);
       const mark = `post="${post.id}"`;
       const heardRe = new RegExp(`<pleiad-channel\\b[^>]*\\spost="${post.id}"[^>]*\\sheard="true"|<pleiad-channel\\b[^>]*\\sheard="true"[^>]*\\spost="${post.id}"`);
       const deliveries = [];

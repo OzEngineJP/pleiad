@@ -225,6 +225,13 @@ export default async function (t) {
       const softened = await claimSvc.edit({ channelId: ch.id, postId: cturn.id, state: 'failed', failedWithBody: true }, BOT);
       t.ok('本文のある failed の印は編集後も保存され、画面が区別できる', softened.failedWithBody === true
         && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).failedWithBody === true);
+      // ADR 0358: 返事の無い失敗の理由（failure）は、ターンの投稿にだけ付き、編集後も保存され、人の投稿には付かない。上限（300 字）で切る
+      const lost = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '失敗しました: x', state: 'failed', turn: { botId: 'b_owl', sessionId: 's_o' }, failure: 'a'.repeat(400), new: true }, BOT);
+      const editedFail = await claimSvc.edit({ channelId: ch.id, postId: lost.id, failure: '理由を直した' }, BOT);
+      const humanFail = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '人の投稿', failure: '付かない' }, HUMAN);
+      t.ok('ADR 0358: 失敗の理由（failure）はターンの投稿に付き、上限で切れ、編集で直せる。ターンでない投稿には付かない',
+        lost.failure.length === 300 && editedFail.failure === '理由を直した'
+        && (await claimSvc.getPost({ channelId: ch.id, postId: lost.id })).failure === '理由を直した' && humanFail.failure === undefined);
     }
 
     // 作業中の更新は 1 秒に 1 回まで配る

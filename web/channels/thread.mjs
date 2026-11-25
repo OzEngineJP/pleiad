@@ -28,6 +28,7 @@ import { createConversationRail } from '../conversation-rail.mjs';
 import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
+import { retrySource, retryFailed } from './retry.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -284,6 +285,9 @@ export function createThread(host) {
       quick: (p, emoji) => react(p, emoji, true, false),
       openThread: () => composer.focus(),   // スレッドの中の「返信」は入力欄へ
       menu: (p, x, y, anchor) => openMenu(p, x, y, anchor),
+      // 失敗した返事の［やり直す］（最後の投稿のときだけ。web/channels/retry.mjs）
+      canRetry: (p) => !threadReadOnly() && Boolean(retrySource(S.posts, p)),
+      retry: (p) => retryTurn(p),
     },
   };
 
@@ -709,6 +713,22 @@ export function createThread(host) {
     toBottom();
   }
 
+  /** 失敗した返事のやり直し。元の投稿をもう一度 bot に届ける（スレッドの返信は送り直し、根・DM は同じ本文を書き足す） */
+  async function retryTurn(p) {
+    const source = retrySource(S.posts, p);
+    if (!source || threadReadOnly()) return;
+    try { await retryFailed({ host, channel: { id: S.channelId, kind: S.channel?.kind }, threadId: S.threadId, failed: p, source }); }
+    catch (err) { composer.say(t('channels:thread.resend.failed', { error: err?.message ?? String(err) }), true); }
+  }
+  /** ［やり直す］は最後の投稿のときだけ。後ろに投稿が増えたら外す */
+  function syncRetry() {
+    for (const b of log.querySelectorAll('.post-retry-row')) {
+      const id = b.closest('.post')?.dataset.postId;
+      const p = id ? S.index.get(id) : null;
+      if (!p || !retrySource(S.posts, p)) b.remove();
+    }
+  }
+
   async function react(p, emoji, on, had) {
     if (on && had) return;
     const prev = p.reactions;
@@ -994,6 +1014,7 @@ export function createThread(host) {
   /** 投稿が増えた・変わった後に揃えるもの */
   function afterPosts() {
     windows = turnWindows(S.posts);
+    syncRetry();
     paintBand();
     paintPlaceholder();
     composer.refresh();

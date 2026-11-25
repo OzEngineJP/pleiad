@@ -37,6 +37,13 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
     return { ...named, ...(root ? { threadTitle: firstLine(root.text) } : {}) };
   };
 
+  /** 失敗した返事の投稿（そのスレッド・DM の流れの中で、この会話の最後のターンの投稿）。通知を押したとき、その位置まで送って強調するため。引けなければ null */
+  const failedPostOf = async (channelId, threadId, sessionId) => {
+    const page = await getChannels()?.read({ channelId, ...(threadId ? { threadId } : {}), limit: 100 }).catch(() => null);
+    const mine = (page?.posts ?? []).filter((p) => p.turn?.sessionId === sessionId && !p.deletedAt);
+    return mine.at(-1)?.id ?? null;
+  };
+
   /** 会話の通知の「どこで・誰が」。bot の会話はチャンネル・スレッドへ飛ぶ（会話そのものはサイドバーに出ない） */
   async function sessionPlace(sessionId) {
     const meta = await store.get(sessionId).catch(() => null);
@@ -53,10 +60,12 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       const kind = completionKind({ outcome, bot: meta?.bot ?? null, delegation: meta?.delegation ?? null, hiddenKinds });
       if (!kind || !Number.isFinite(completedAt)) return null;
       const place = await sessionPlace(sessionId);
+      // 失敗は、bot の会話（中の会話は人に見せない）でなく、失敗した返事のあるスレッド・DM を開く（postId で返事の位置へ）
+      const postId = kind === 'failed' && place.channelId ? await failedPostOf(place.channelId, place.threadId, sessionId).catch(() => null) : null;
       // 会話の通知は at = completedAt（会話の既読 readAt と同じ時刻で突き合わせる）
       return inbox.add({
         kind, dedupeKey: `${kind === 'failed' ? 'failed' : 'done'}:${sessionId}:${completedAt}`, at: completedAt, sessionId, channelId: place.channelId, viewing: viewing(sessionId),
-        data: { uuid: place.channelId ? null : uuid, threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
+        data: { uuid: place.channelId ? null : uuid, threadId: place.threadId, ...(postId ? { postId } : {}), actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
       });
     }),
 

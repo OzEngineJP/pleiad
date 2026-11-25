@@ -48,6 +48,7 @@
     "loading": "Loading…",
     "loadFailed": "Couldn't load: {{error}}",
     "retry": "Try again",
+    "retryTurn": "Try again",
     "older": "Loading earlier posts…",
     "newer": "↓ New posts",
     "day": {

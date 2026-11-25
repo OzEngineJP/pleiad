@@ -102,11 +102,12 @@ const clip = (s, n) => { const a = [...String(s ?? '').replace(/\s+/g, ' ').trim
 /** その backend の会話に bot のアカウントを写すか（アカウントを選べる backend だけ。capabilities.accounts は 'token' | 'agent' | false） */
 const takesAccount = (backend) => Boolean(backend?.capabilities?.accounts);
 
-/** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」） */
+/** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」、DM のスレッドは「🦉 Owl › <根の投稿の頭>」） */
 export function sessionTitle(bot, channel, rootText) {
   const who = bot.icon ? `${bot.icon} ${bot.name}` : bot.name;
-  if (!channel || channel.kind === 'dm') return who;
+  if (!channel) return who;
   const head = clip(rootText, 40);
+  if (channel.kind === 'dm') return head ? `${who} › ${head}` : who;   // DM の会話は題が bot の名前だけ。DM のスレッドの会話は根の投稿の頭を付けて見分ける
   return `${who} · #${channel.name}${head ? ` › ${head}` : ''}`;
 }
 

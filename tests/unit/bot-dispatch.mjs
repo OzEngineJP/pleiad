@@ -120,8 +120,8 @@ export default async function (t) {
           dir: path.join(tmp, `stub-${steerKind}-${++worlds}`),
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
-          post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
-          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }].filter(Boolean)); return structuredClone(post); },
+          post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
+          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }, typeof a.failure === 'string' && { failure: a.failure }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
@@ -557,6 +557,8 @@ export default async function (t) {
         await sleep(3600);
         t.ok('F-1: 始められなかった後、たまっていた出来事は配り直される（次の @ まで取り残さない）。失敗した 1 通目は結果不明のまま送り直さない', calls.length === 2 && calls[1].prompt.includes('post="p_3"')
           && (await w.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'unknown', JSON.stringify([calls.length, await w.d.inbox.list({})]));
+        const notStartedPost = w.posts.find((p) => p.state === 'failed' && p.turn);
+        t.ok('ADR 0358: 始められなかった失敗も、返事の場所に「失敗」の投稿（理由 failure つき・本文なし）で出る', notStartedPost?.failure === 'cwd missing' && !notStartedPost.failedWithBody && notStartedPost.threadId === 'p_root', JSON.stringify(w.posts.filter((p) => p.turn)));
       }
 
       // F-2: ターンの記録ができた後に始まらず戻された（requeue）とき、delivering のまま固まらず、記録を片付けて配り直す
@@ -876,6 +878,8 @@ export default async function (t) {
         await finish(failedEmpty, 's_new_b_2', '', 'error');
         t.ok('本文のない failed は失敗表示のままで、呼び元へ返さない', !(await itemsOf(failedEmpty, 's1')).length
           && !failedEmpty.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failedWithBody);
+        t.ok('ADR 0358: 本文のない failed には失敗の理由（failure）が付く。本文のある failed には付けない（本文を返事として残す）', typeof failedEmpty.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failure === 'string'
+          && failed.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failure === undefined, JSON.stringify([failedEmpty.posts.filter((p) => p.turn), failed.posts.filter((p) => p.turn)]));
         for (const outcome of ['cancelled', 'limited']) {
           const blocked = mkWorld();
           await callOwl(blocked);
@@ -1328,6 +1332,39 @@ export default async function (t) {
     await sleep(400);
     t.ok('DM の中の他の bot への @ は起こさない（DM は 1 対 1）', (await read(lynx.dmChannelId)).posts.length === 0 && !(await c.cmd('listSessions')).some((s) => s.bot?.botId === lynx.id && s.bot.kind === 'dm'));
 
+    // ---- F2: DM のスレッド返信（ADR 0358）。DM の流れの投稿へ「スレッドで返信」すると、そのスレッドの会話（kind: thread）が受け、返事は同じスレッドに出る。DM の流れには新しい投稿が出ない
+    {
+      const rootDm = (await read(dm.id)).posts.find((p) => p.author.kind === 'human' && p.text === 'echo:DM です');
+      const flowBefore = (await read(dm.id)).posts.length;
+      const mDT = c.mark();
+      const dmReply = await call('channels.post', { channelId: dm.id, threadId: rootDm.id, text: 'echo:スレッドで返す' });
+      const dt = await until(async () => { const r = await read(dm.id, rootDm.id); return botPost(r, owl, 'done')[0] ? r : null; }, { label: 'DM のスレッドの返事' });
+      const threadReply = botPost(dt, owl, 'done')[0];
+      t.ok('DM のスレッドへの返信は、同じスレッドに返事が出る（根は DM の投稿）', threadReply.text === 'スレッドで返す' && threadReply.threadId === rootDm.id, JSON.stringify(threadReply));
+      t.ok('DM の流れには何も増えない（返信の数の行だけが変わる）', (await read(dm.id)).posts.length === flowBefore && (await read(dm.id)).posts.every((x) => x.threadId === null));
+      const sessionDT = dt.threads[0].sessions[owl.id];
+      const metaDT = (await c.cmd('listSessions')).find((x) => x.id === sessionDT);
+      t.ok('スレッドの会話は DM の会話と別の会話（kind: thread・DM のチャンネル・根の投稿）。DM の会話はこのターンを走らせない',
+        typeof sessionDT === 'string' && sessionDT !== dmSession && metaDT?.bot?.kind === 'thread' && metaDT.bot.channelId === dm.id && metaDT.bot.threadId === rootDm.id
+        && turnEnds(dmSession, mDT).length === 0 && turnEnds(sessionDT, mDT).length === 1, JSON.stringify([metaDT, sessionDT, dmSession]));
+      t.ok('会話の題は「🦉 Owl › 根の投稿の頭」（DM の会話の「🦉 Owl」と見分ける）', metaDT.title === '🦉 Owl › echo:DM です', metaDT.title);
+      const histDT = (await history(sessionDT)).filter((m) => m.kind === 'channelEvent');
+      t.ok('会話には返信の投稿が包みで届く（スレッド・DM のチャンネル）', histDT.some((m) => m.postId === dmReply.id && m.threadId === rootDm.id), JSON.stringify(histDT.map((m) => [m.postId, m.threadId, m.history])));
+      // 同じスレッドの 2 回目は同じ会話
+      await call('channels.post', { channelId: dm.id, threadId: rootDm.id, text: 'echo:もう一度' });
+      const dt2 = await until(async () => { const r = await read(dm.id, rootDm.id); return botPost(r, owl, 'done').length === 2 ? r : null; }, { label: 'DM のスレッドの 2 回目' });
+      t.ok('同じ DM のスレッドの 2 回目は同じ会話・DM の流れは増えない', dt2.threads[0].sessions[owl.id] === sessionDT && (await read(dm.id)).posts.length === flowBefore && turnEnds(dmSession, mDT).length === 0);
+
+      // bot の返事（DM の流れの投稿）へ返信しても同じ。根は別の会話のターンの投稿なので、その本文は文脈に入る
+      const botRoot = botPost(await read(dm.id), owl, 'done')[0];
+      await call('channels.post', { channelId: dm.id, threadId: botRoot.id, text: 'echo:この返事について' });
+      const dt3 = await until(async () => { const r = await read(dm.id, botRoot.id); return botPost(r, owl, 'done').some((x) => x.threadId === botRoot.id) ? r : null; }, { label: 'bot の返事へのスレッド返信' });
+      const sessionDT3 = dt3.threads[0].sessions[owl.id];
+      const histDT3 = (await history(sessionDT3)).filter((m) => m.kind === 'channelEvent');
+      t.ok('bot の返事へのスレッド返信も、別の会話（根の本文を文脈に受ける）。DM の流れは増えない',
+        sessionDT3 !== dmSession && sessionDT3 !== sessionDT && histDT3.some((m) => m.history && String(m.body).includes(botRoot.text) && m.threadId === botRoot.id) && (await read(dm.id)).posts.length === flowBefore, JSON.stringify(histDT3.map((m) => [m.postId, m.threadId, m.history, m.body])));
+    }
+
     // ---- G: 末尾（記憶の核の写しは始まりだけ・毎ターン時刻・差分）と圧縮の後の取り直し
     await call('memory.write', { layer: 'user', text: 'PR は小さく、テストを先に書く', sources: [] });
     const rootG = await call('channels.post', { channelId: dev.id, text: '@Lynx notes:' });
@@ -1410,6 +1447,7 @@ export default async function (t) {
     const rootI = await call('channels.post', { channelId: dev.id, text: '@Owl fail' });
     const i1 = await until(async () => { const r = await read(dev.id, rootI.id); return botPost(r, owl, 'failed').length && r.threads[0].state === 'failed' ? r : null; }, { label: '失敗' });
     t.ok('ターンが失敗すると、投稿は failed（理由つき）・スレッドは failed', botPost(i1, owl, 'failed')[0].text.includes('fake: failure') && i1.threads[0].state === 'failed', JSON.stringify(botPost(i1, owl)));
+    t.ok('ADR 0358: 失敗の投稿には失敗の理由（failure・1 行）が付く', typeof botPost(i1, owl, 'failed')[0].failure === 'string' && botPost(i1, owl, 'failed')[0].failure.includes('fake: failure') && !botPost(i1, owl, 'failed')[0].failure.includes('\n'), JSON.stringify(botPost(i1, owl, 'failed')[0]));
 
 
     // ---- K: 独立レビューの指摘をサーバー越しに（S-3・S-2）。bot の会話の AI が ply_control から channels.post を呼ぶ

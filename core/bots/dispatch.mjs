@@ -270,7 +270,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const afterCursor = from >= 0 ? posts.slice(from + 1) : posts;
     const lastTrigger = afterCursor.reduce((at, p, i) => (triggerIds.has(p.id) ? i : at), -1);
     const fresh = heardOnly ? afterCursor : afterCursor.slice(0, lastTrigger + 1);     // いちばん後ろの trigger まで（聞こえた投稿だけなら最後まで）
-    const own = (p) => p.turn?.sessionId === sessionId || (p.author?.kind === 'bot' && p.author.botId === sb?.botId);
+    // 自分の会話の投稿は文脈に入れない。ただし、別の会話（DM の会話）で書いた bot 自身の投稿がスレッドの根なら、このスレッドの会話は初めて見るので文脈に入れる
+    const rootFromElsewhere = (p) => Boolean(threadId) && p.id === threadId && Boolean(p.turn?.sessionId) && p.turn.sessionId !== sessionId;
+    const own = (p) => p.turn?.sessionId === sessionId || (p.author?.kind === 'bot' && p.author.botId === sb?.botId && !rootFromElsewhere(p));
     // 書き途中の他の bot の投稿は文脈に入れず、その手前までしか進めない
     let cut = fresh.findIndex((p) => p.state === 'working' && !own(p) && !triggerIds.has(p.id));
     if (cut < 0) cut = fresh.length;
@@ -420,7 +422,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       let origin = null;
       if (channel.kind === 'dm') {
         if (kind === 'bot') return;
-        threadId = null;
+        // DM の流れへの投稿は DM の会話（1 本）が受ける。DM の投稿の「スレッドで返信」は、そのスレッドの会話が受け、返事もそのスレッドへ出る（チャンネルと同じ。ADR 0358）
+        if (post.threadId && await threadStopped(channel.id, post.threadId)) return;
         targets = channel.botId ? [channel.botId] : [];
       } else {
         // 自分への @ は、書いた会話のスレッドの中では数えない（呼び合いの輪にならない）。別のスレッドへ書いた自分への @ は、そのスレッドの自分の会話を起こす（別の会話なので）
@@ -518,7 +521,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (channel.archivedAt) return { woken: false, reason: 'archived' };
     const asked = channel.kind === 'dm' ? channel.botId === botId : (post.mentions ?? []).includes(botId) || post.to === botId;
     if (!asked) return { woken: false, reason: 'notMentioned' };
-    const threadId = channel.kind === 'dm' ? null : (post.threadId ?? post.id);
+    const threadId = channel.kind === 'dm' ? (post.threadId ?? null) : (post.threadId ?? post.id);
     if (await threadStopped(channel.id, threadId)) return { woken: false, reason: 'stopped' };
     await wake({ botId, channel, threadId, post, approved: true });
     return { woken: true };
@@ -577,7 +580,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
    */
   async function reactionTarget(post, channel) {
     const botId = post.author.botId;
-    if (channel.kind === 'dm') {
+    if (channel.kind === 'dm' && !post.threadId) {
       const bot = await getBot(botId);
       const sessionId = post.turn?.botId === botId ? post.turn.sessionId : bot?.dmSessionId;
       return sessionId && channel.botId === botId ? { sessionId, threadId: null } : null;
@@ -746,7 +749,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
   async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
-    if (channel.kind === 'dm') return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
+    if (channel.kind === 'dm' && !threadId) return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
     const key = `${threadKeyOf(channel.id, threadId)}/${bot.id}`;
     const running = creating.get(key);
     if (running) return running;
@@ -917,7 +920,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         await inbox.mark(ids, 'unknown', { error: errText(err) });
         const failedKey = threadKeyOf(pre.channelId, pre.threadId);
         if (failedKey) failedKeys.add(failedKey);
-        await systemPost(pre.channelId, pre.threadId, agentT(locale(), 'channel.turn.failed', { error: errText(err) }));
+        // 始められなかった失敗も、返事の場所に出す（ターンの投稿の「✕ 失敗」。理由は failure）
+        const reason = errText(err);
+        const failed = await channels.post({ channelId: pre.channelId, threadId: pre.threadId, text: agentT(locale(), 'channel.turn.failed', { error: reason }), state: 'failed',
+          turn: { botId: pre.botId, sessionId }, failure: oneLine(reason, 300), mentions: [], new: true }, botAuthor(pre.botId)).catch((e) => { log('could not write the failed reply:', errText(e)); return null; });
+        if (!failed) await systemPost(pre.channelId, pre.threadId, agentT(locale(), 'channel.turn.failed', { error: reason }));
       }
       // 始められない間にたまった出来事（途中送信できず pending のまま）を取り残さない。止めた・失敗が続くときは配り直さない（次の @ でまとめて渡る）
       if (result !== 'requeue' && (await inbox.list({ sessionId, status: 'pending' })).length) {
@@ -1568,6 +1575,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
     if (state === 'failed' && hasBody) edit.failedWithBody = true;
+    // 返事の無い失敗: 理由は投稿の failure に持つ。画面は本文でなく「✕ 失敗 · 理由」と［やり直す］を返事の場所に出す（本文の失敗文は、画面の外の読み手のために残す）
+    else if (state === 'failed') edit.failure = oneLine(rec.error ?? '', 300);
     // bot がこのターンの投稿に付けた「要確認」（channels.post の state: 'checking'。ルーティンの実行の状態になる）は、終わりで done に戻さない
     if (state === 'done' && current.state === 'checking') edit.state = 'checking';
     if (text) edit.text = text; else if (!bodyByBot && current.text === PLACEHOLDER) edit.text = '';

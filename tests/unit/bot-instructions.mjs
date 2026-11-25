@@ -105,7 +105,7 @@ export default async function (t) {
   ok('フォルダーがなければホーム', pickCwd({ folders: [] }, null, ask) === os.homedir());
   ok('新しい bot の既定のモード: 作業場所に書けて毎回聞くもの（無ければ先頭）', defaultMode({ plan: { scope: 'readonly', autonomy: 'ask' }, default: ask, bypass: yolo }) === 'default'
     && defaultMode({ yolo }) === 'yolo' && defaultMode({}) === 'default');
-  ok('会話の題', sessionTitle(owl, { kind: 'channel', name: 'checkout-perf' }, '遅い\n\nなぜ') === '🦉 Owl · #checkout-perf › 遅い なぜ' && sessionTitle(owl, { kind: 'dm', name: 'Owl' }, 'x') === '🦉 Owl'
+  ok('会話の題', sessionTitle(owl, { kind: 'channel', name: 'checkout-perf' }, '遅い\n\nなぜ') === '🦉 Owl · #checkout-perf › 遅い なぜ' && sessionTitle(owl, { kind: 'dm', name: 'Owl' }) === '🦉 Owl' && sessionTitle(owl, { kind: 'dm', name: 'Owl' }, 'x') === '🦉 Owl › x'   // DM の会話は bot の名前だけ。DM のスレッドの会話は根の投稿の頭を付けて見分ける
     && sessionTitle(owl, { kind: 'channel', name: 'c' }, 'あ'.repeat(60)).endsWith('…'));
 
   // ---- ターンの組み立て: bot の会話だけ人格とフォルダーが付く（bots-host の turnExtras）
