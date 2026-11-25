@@ -5,12 +5,12 @@
 //   コネクターの名前ごとのオフは、同じアカウントの項目に後から足せる（今は読まない。知らない項目は無視する）
 // 入口は gate(account) の 1 か所（core/server.mjs の accountResolve）。オフ・対象外のときは同じ account をそのまま返し、新しい認証の解決へ入らない。
 // オンのときだけ resolveAuth(account) を呼ぶ。既定の resolveAuth（段 1 の authNotAvailableYet）は「まだ使えない」（null）を返し、本物の資格情報を読まず、旧い経路のまま会話を始める。
-// 段 2 の resolveAuth は core/claude-connectors-auth.mjs（server が差す）。使えるときは認証の入った account を返し、使えないときは投げて会話を止める（旧い経路へは戻さない）
+// 本物の resolveAuth は core/claude-connectors-auth.mjs（server が差す。専用フォルダ方式だけ。ADR 0350）。使えるときは認証の入った account を返し、使えないときは投げて会話を止める（旧い経路へは戻さない）。
+// 保存済みの mode（b1 の時代の印）は読まない。オンなら専用フォルダ方式
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { writeAtomic } from './atomic-file.mjs';
-import { OWN_DIR } from './claude-own-dir.mjs';
 
 export const CONNECTORS_FILE = 'claude-account-connectors.json';
 export const CONNECTORS_CACHE_FILE = 'claude-account-connectors-cache.json';
@@ -47,8 +47,8 @@ export function createClaudeConnectorSettings({ dataDir }) {
         const raw = JSON.parse(await fs.readFile(file, 'utf8'));
         if (!validDoc(raw)) return { enabled: false };
         const entry = Object.hasOwn(raw.accounts, accountId) ? raw.accounts[accountId] : null;
-        return entry?.enabled === true && entry.mode === OWN_DIR
-          ? { enabled: true, mode: OWN_DIR } : { enabled: entry?.enabled === true };
+        // 保存済みの mode（b1 の時代の印）は読まない。オンなら専用フォルダ方式（ADR 0350）
+        return { enabled: entry?.enabled === true };
       } catch { return { enabled: false }; }
     },
     async list() {
@@ -62,7 +62,7 @@ export function createClaudeConnectorSettings({ dataDir }) {
       }
       return out;
     },
-    setEnabled(accountId, enabled, mode) {
+    setEnabled(accountId, enabled) {
       if (!ID_RE.test(accountId ?? '')) throw new Error('Invalid Claude account id');
       return serial(async () => {
         const { ok, data } = await readJson(file);
@@ -77,8 +77,8 @@ export function createClaudeConnectorSettings({ dataDir }) {
           ...(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {}),
           enabled: Boolean(enabled),
         };
-        if (!enabled || mode === 'b1') delete doc.accounts[accountId].mode;
-        else if (mode === OWN_DIR) doc.accounts[accountId].mode = OWN_DIR;
+        // b1 の時代の mode の印は、書き直すときに捨てる
+        delete doc.accounts[accountId].mode;
         await writeJson(file, doc);
         return { enabled: Boolean(enabled) };
       });
@@ -176,9 +176,7 @@ export function createClaudeConnectorsGate({ dataDir, resolveAuth = authNotAvail
       if (!account?.id) return account;
       config ??= await settings.read(account.id);
       if (!config.enabled) return account;
-      if (config.mode === OWN_DIR) return (await resolveAuth(account, config))?.account ?? account;
-      const result = await resolveAuth(account);
-      return result?.account ?? account;
+      return (await resolveAuth(account, config))?.account ?? account;
     },
   };
 }

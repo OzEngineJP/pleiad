@@ -293,31 +293,28 @@ export default async function (t) {
         matrix: { agents: [], rows: [], connectorAccounts: [row] },
         scan: {}, cwd: '/example', opened: new Set(),
         work: run => run(), rerender() {}, async reloadMatrix() {},
-        async cmd(command, request) {
-          calls.push([command, request]);
-          row.mode = request.args.mode;
-        },
+        async cmd(command, request) { calls.push([command, request]); },
       };
-      const renderMode = () => {
+      const render = () => {
         host.replaceChildren();
         matrix.reset();
         matrix.render(host, ctx);
-        return host.querySelector('.cx-acct-mode')?.querySelector('button');
+        return host.textContent;
       };
-      t.ok('コネクターがオフの行には専用フォルダ方式を出さない', renderMode() === undefined);
-      row.enabled = true;
-      const off = renderMode();
-      t.ok('コネクターがオンの行では既定の方式が表示される',
-        off?.getAttribute('role') === 'switch' && off.getAttribute('aria-checked') === 'false');
-      off?.click();
-      await settle();
-      const on = renderMode();
-      t.ok('専用フォルダ方式を選ぶとスイッチがオンになる', on?.getAttribute('aria-checked') === 'true');
-      on?.click();
-      await settle();
-      const expected = ['own-dir', 'b1'].map(mode => ['invoke', { op: 'accounts.setConnectors', args: { id: row.id, enabled: true, mode, cwd: ctx.cwd } }]);
-      t.ok('両方向の切り替えをアカウント設定操作に渡す',
-        JSON.stringify(calls) === JSON.stringify(expected) && renderMode()?.getAttribute('aria-checked') === 'false');
+      // 専用フォルダ方式だけ（ADR 0350）。方式を切り替えるスイッチは無い
+      for (const enabled of [false, true]) {
+        row.enabled = enabled;
+        render();
+        t.ok(`方式の切り替えは出さない（コネクター${enabled ? 'オン' : 'オフ'}の行）`, host.querySelector('.cx-acct-mode') === null && calls.length === 0);
+      }
+      // 更新のあとの準備で共有へ移した・退避した項目は、オンの行に出す（移したことを画面で知らせる）
+      row.moved = { shared: ['projects', 'skills'], archived: ['settings.json'] };
+      const shown = render();
+      t.ok('更新のあとの準備で移した項目（共有へ移した・名前が重なって退避した）を行に出す',
+        shown.includes(tr('mcp.accounts.movedShared', { entries: 'projects, skills' })) && shown.includes(tr('mcp.accounts.movedArchived', { entries: 'settings.json' })), shown);
+      row.moved = { shared: [], archived: [] };
+      const quiet = render();
+      t.ok('移した項目が無ければ何も出さない', !quiet.includes('projects') && !quiet.includes('claude-usage'), quiet);
     }
   } finally {
     globalThis.document = saved.document;

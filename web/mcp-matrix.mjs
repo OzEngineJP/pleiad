@@ -365,6 +365,9 @@ export function createMcpMatrix({ section, onCount }) {
     const body = el('span', 't');
     const line = el('span', 'nl'); line.append(el('span', 'nm', r.name));
     body.append(line, el('span', 'p', acctStatusText(r)));
+    // 更新のあとの準備で、専用フォルダーから共有へ移した・名前が重なって退避した項目（ADR 0350。退避は 30 日後に消える）
+    if (r.moved?.shared?.length) body.append(el('span', 'p', t('mcp.accounts.movedShared', { entries: r.moved.shared.join(', ') })));
+    if (r.moved?.archived?.length) body.append(el('span', 'p', t('mcp.accounts.movedArchived', { entries: r.moved.archived.join(', ') })));
     const key = `acct:${r.id}`;
     const foldable = st === 'on' && Array.isArray(r.connectors) && r.connectors.length > 0;
     let head;
@@ -378,20 +381,6 @@ export function createMcpMatrix({ section, onCount }) {
     n.append(head);
     if (act) n.append(act);
     n.append(acctSwitch(ctx, r));
-    if (r.enabled) {
-      const label = t('mcp.accounts.ownDir');
-      const mode = r.mode === 'own-dir' ? 'b1' : 'own-dir';
-      const sw = button('cx-sw');
-      sw.setAttribute('role', 'switch');
-      sw.setAttribute('aria-label', t('mcp.accounts.ownDirAria', { name: r.name }));
-      sw.setAttribute('aria-checked', String(mode === 'b1'));
-      if (acctBusy.has(r.id)) sw.setAttribute('aria-busy', 'true');
-      sw.onclick = () => acctRun(ctx, r, '.cx-acct-mode .cx-sw', () =>
-        ctx.cmd('invoke', { op: 'accounts.setConnectors', args: { id: r.id, enabled: true, mode, cwd: ctx.cwd } }));
-      const modeRow = el('div', 'cx-acct-mode');
-      modeRow.append(el('span', null, label), sw);
-      n.append(modeRow);
-    }
     list.append(n);
     if (foldable && ctx.opened.has(key)) list.append(acctPeek(r));
   }

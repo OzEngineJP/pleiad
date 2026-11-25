@@ -8,9 +8,10 @@
 //   覚えはアカウントごとの覚え（CONNECTORS_CACHE_FILE。名前と要認可だけ）に書き、ログイン中の覚え（claude-connectors.json）は書かない
 //   4. 段 3 のスイッチ（accounts.setConnectors。人だけ）: 止める条件に当たれば入れない（設定を書かない）・使えれば入れる・切れる。
 //      オンで止める条件に当たった会話は、CLI を起こさず発言を「送れませんでした」に戻し、止めた理由（connectorsError）と直す入口（auth.mode connectorsLogin）を渡す
-//   macOS: 今の方式（.credentials.json を読む b1）は OS の理由で止める（ADR 0350。macOS は専用フォルダ方式だけ。ADR 0351）。2・3・4 の代わりに、
-//      オンにしても platform で止まり CLI を起こさないことを確かめる。専用フォルダ方式の通しは本物のキーチェーンを見るので macOS では飛ばす
-//      （偽の security での確かめは tests/unit/claude-own-dir.mjs）
+//   コネクターは専用フォルダ方式だけ（ADR 0350。方式 b1 は無い）。オンのアカウントの CLI は CLAUDE_CONFIG_DIR だけで起動し、トークン・権限の環境変数を持たない
+//   5. 更新のあとの起動（サーバーを止めて起こし直す）: オンの既存のアカウントの専用フォルダを自動で準備し（実体を共有へ移す・名前が重なれば退避する）、一覧の moved に出す
+//   macOS: 専用フォルダのログインは本物のキーチェーンにあるので、2・3・4・5 は Windows・Linux で確かめる（偽の security での確かめは tests/unit/claude-own-dir.mjs）。
+//      macOS では、オンにしてもログインが無ければ止まり（ownDirLogin・keychain）CLI を起こさないことだけ確かめる
 // 一覧の読み取りは 5 分覚える（読めた後は起こさない）ので、オフとオンは別のサーバー・別のデータ置き場で確かめる
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
@@ -22,6 +23,7 @@ import { installFakeClaude } from '../lib/fake-claude.mjs';
 import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
 import { CONNECTORS_FILE, CONNECTORS_CACHE_FILE } from '../../core/claude-connectors.mjs';
 import { VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
+import { unlinkClaudeOwnDirLinks } from '../../core/claude-own-dir.mjs';
 
 export const name = 'server-claude-connectors-list';
 export const title = 'サーバー通し: コネクターの一覧の読み取り — オフは main と同じ・オンは会話と同じ組み立て・止める条件ではログイン中へ戻らず覚えを書かない';
@@ -51,15 +53,13 @@ async function boot(label) {
   await fs.writeFile(modelsFile, JSON.stringify({ labels: { [TOK_REG]: 'registered', [ACCESS]: 'access' }, accounts: { [ACCESS]: { organization: ORG, email: EMAIL, tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty' } } }));
   const cli = await installFakeClaude(path.join(scratch, 'cli'));
   const api = await startFakeAnthropicApi({ [TOK_REG]: ORG });
-  const server = await startServer({
-    dataDir: data,
-    env: {
-      AGENT_HOST_BACKENDS: 'claude,fake', ...cli.env, ...QUIET_ENV,
-      CLAUDE_CONFIG_DIR: claudeConfig, AGENT_HOST_ANTHROPIC_API: api.url,
-      FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, FAKE_CLAUDE_MODELS_FILE: modelsFile, FAKE_CLAUDE_ENV_LOG: envLog, FAKE_CLAUDE_PROBE_LOG: probeLog,
-    },
-  });
-  const c = await open({ port: server.port, token: server.token, autoAllow: true });
+  const serverEnv = {
+    AGENT_HOST_BACKENDS: 'claude,fake', ...cli.env, ...QUIET_ENV,
+    CLAUDE_CONFIG_DIR: claudeConfig, AGENT_HOST_ANTHROPIC_API: api.url,
+    FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, FAKE_CLAUDE_MODELS_FILE: modelsFile, FAKE_CLAUDE_ENV_LOG: envLog, FAKE_CLAUDE_PROBE_LOG: probeLog,
+  };
+  let server = await startServer({ dataDir: data, env: serverEnv });
+  let c = await open({ port: server.port, token: server.token, autoAllow: true });
   const close = async () => {
     try { c.close(); } catch { /* 閉じている */ }
     await server.stop().catch(() => {});
@@ -98,7 +98,17 @@ async function boot(label) {
     // 行の読み直し（設定 › 外部 MCP の［読み直す］。人だけの操作）。読み終えるまで待つ
     const refreshRow = () => c.cmd('invoke', { op: 'accounts.refreshConnectors', args: { id, cwd: work } });
     const accountCache = path.join(data, CONNECTORS_CACHE_FILE);
-    return { c, id, data, work, status, credFile, claudeConfig, envLines, savedList, read, enable, refreshRow, accountCache, probeLog, close };
+    const out = { c, id, data, work, status, credFile, claudeConfig, envLines, savedList, read, enable, refreshRow, accountCache, probeLog, close };
+    // 同じデータ置き場でサーバーを止めて起こし直す（更新のあとの起動）。止めたあと・起こす前に beforeStart を走らせる。out.c を新しい接続に替える
+    out.restart = async beforeStart => {
+      try { c.close(); } catch { /* 閉じている */ }
+      await server.stop();
+      await beforeStart?.();
+      server = await startServer({ dataDir: data, env: serverEnv });
+      c = await open({ port: server.port, token: server.token, autoAllow: true });
+      out.c = c;
+    };
+    return out;
   } catch (error) { await close(); throw error; }
 }
 
@@ -115,7 +125,7 @@ export default async function (t) {
         JSON.stringify({ saw: r.saw, lines, saved: fss.existsSync(s.savedList) }));
     } finally { await s.close(); }
   }
-  // 2・3. オン（macOS は今の方式を OS の理由で止める）
+  // 2・3. オン（macOS はログインが本物のキーチェーンにあるので、止まることだけ確かめる）
   const mac = process.platform === 'darwin';
   if (mac) {
     const s = await boot('on-mac');
@@ -123,34 +133,35 @@ export default async function (t) {
       await s.enable(true);
       const r = await s.read();
       const row = await s.refreshRow();
-      t.ok('オン（macOS・今の方式）: OS の理由（platform）で止め、一覧のための CLI を起こさない・覚えの一覧を書かない',
-        r.state === 'none' && row?.status === 'blocked' && row?.blockKind === 'platform' && row?.connectors === null
+      t.ok('オン（macOS・ログインが無い）: 止め、一覧のための CLI を起こさない・覚えの一覧を書かない',
+        r.state === 'none' && row?.status === 'blocked' && Boolean(row?.blockKind) && row?.connectors === null
           && s.envLines().length === 0 && !fss.existsSync(s.savedList) && !fss.existsSync(s.accountCache),
         JSON.stringify({ r, row: row && { status: row.status, kind: row.blockKind }, lines: s.envLines().length }));
-      t.skip('今の方式（b1）の読み取り・スイッチ・会話の経路（macOS は止めるため。Windows・Linux で確かめる）');
+      t.skip('一覧の読み取り・スイッチ・会話の経路（macOS は本物のキーチェーンを見るため。Windows・Linux で確かめる。偽の security での確かめは claude-own-dir）');
     } finally { await s.close(); }
   } else {
     const s = await boot('on');
     try {
       await s.enable(true);
-      await fs.rm(s.credFile);   // 使用量のログインが無い → connectors-login で止まる
+      await fs.rm(s.credFile);   // 専用フォルダのログインが無い → ownDirLogin で止まる
       const fail = await s.read();
       const failRow = await s.refreshRow();
-      t.ok('オン・止める条件（ログインが無い）: 一覧のための CLI を起こさない（ログイン中のアカウントでも会話用トークンでも読み直さない）・覚えの一覧を書かない・行は止める理由つき',
-        fail.state === 'none' && failRow?.status === 'blocked' && failRow?.blockKind === 'login' && failRow?.connectors === null
+      t.ok('オン・止める条件（ログインが無い）: 一覧のための CLI を起こさない（会話用に登録したトークンでも読み直さない）・覚えの一覧を書かない・行は止める理由つき',
+        fail.state === 'none' && failRow?.status === 'blocked' && failRow?.blockKind === 'ownDirLogin' && failRow?.connectors === null
           && s.envLines().length === 0 && !fss.existsSync(s.savedList) && !fss.existsSync(s.accountCache),
         JSON.stringify({ fail, row: failRow && { status: failRow.status, kind: failRow.blockKind }, lines: s.envLines(), saved: fss.existsSync(s.savedList) }));
       await fs.writeFile(s.credFile, JSON.stringify({ claudeAiOauth: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: Date.now() + 8 * 3600_000, scopes: SCOPES } }));
       const row = await s.refreshRow();
       const lines = s.envLines();
-      t.ok('オン・使える: 会話と同じ組み立て — アクセス用トークン・権限の並び・共有の設定フォルダの 3 つで 1 回読み、アカウントごとの覚えに書く（ログイン中の覚えは書かない）',
-        row?.status === 'ok' && Array.isArray(row?.connectors) && lines.length === 3 && lines.every(line => line.who === 'access' && line.scopes === SCOPES.join(' '))
-          && lines[0].configDir !== s.claudeConfig && lines.slice(1).every(line => line.configDir === s.claudeConfig) && fss.existsSync(s.accountCache) && !fss.existsSync(s.savedList),
+      const ownDir = path.dirname(s.credFile);
+      t.ok('オン・使える: 会話と同じ組み立て — トークン・権限の環境変数なしで、アカウントの専用フォルダ（CLAUDE_CONFIG_DIR）だけで 1 回読み、アカウントごとの覚えに書く（ログイン中の覚えは書かない）',
+        row?.status === 'ok' && Array.isArray(row?.connectors) && lines.length === 1 && lines.every(line => line.who === 'login' && line.scopes === null && line.configDir === ownDir)
+          && fss.existsSync(s.accountCache) && !fss.existsSync(s.savedList),
         JSON.stringify({ row: row && { status: row.status, n: row.connectors?.length }, lines, cache: fss.existsSync(s.accountCache), saved: fss.existsSync(s.savedList) }));
       const cacheText = fss.readFileSync(s.accountCache, 'utf8');
       t.ok('アカウントごとの覚えにトークン・メール・組織の id を書かない', ![ACCESS, REFRESH, TOK_REG, EMAIL, ORG].some(x => cacheText.includes(x)));
       const after = await s.read();
-      t.ok('オン: 上の表（エージェントの設定）のためには読まない（CLI を足さない）', after.state === 'none' && s.envLines().length === 3, JSON.stringify({ after, n: s.envLines().length }));
+      t.ok('オン: 上の表（エージェントの設定）のためには読まない（CLI を足さない）', after.state === 'none' && s.envLines().length === 1, JSON.stringify({ after, n: s.envLines().length }));
 
       // 4. 段 3: スイッチと、送る前に止まった発言
       const { c } = s;
@@ -178,18 +189,19 @@ export default async function (t) {
         throw new Error('connector routing timeout');
       };
       const launches = () => fss.existsSync(s.probeLog) ? fss.readFileSync(s.probeLog, 'utf8').trim().split('\n') : [];
-      const onlyAccessSince = before => launches().length > before && launches().slice(before).every(who => who === 'access');
+      // 会話の CLI は専用フォルダだけで起動する（トークンなし = 'login'）。登録トークンで起きる 'registered' は、モデル一覧の取得（probeCatalog。今回の対象外）
+      const onlyOwnDirSince = before => launches().slice(before).includes('login') && !launches().slice(before).includes('access');
       let start = launches().length;
       const directSession = await c.cmd('newSession', { backend: 'claude', cwd: s.work });
       await c.cmd('setTurnSettings', { sessionId: directSession.sessionId, account: s.id });
       const direct = await c.runTurn({ sessionId: directSession.sessionId, prompt: 'hello' });
-      t.ok('段4: headless サーバーの会話は使用量ログインの認証で起動する', direct.outcome === 'ok' && onlyAccessSince(start), JSON.stringify({ outcome: direct.outcome, launches: launches().slice(start) }));
+      t.ok('段4: headless サーバーの会話は専用フォルダのログインで起動する', direct.outcome === 'ok' && onlyOwnDirSince(start), JSON.stringify({ outcome: direct.outcome, launches: launches().slice(start) }));
       start = launches().length;
       const parent = await c.runTurn({ backend: 'fake', cwd: s.work, prompt: 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'claude', account: s.id, task: 'hello' } }) });
       const made = JSON.parse(parent.events.find(e => e.type === 'tool.result').text);
       const task = await until(async () => (await c.cmd('agentTasks')).find(r => r.taskId === made.taskId && ['completed', 'failed', 'cancelled'].includes(r.status)));
       const child = (await c.cmd('listSessions')).find(r => r.id === made.sessionId);
-      t.ok('段4: 委譲の子はオンのアカウントを保ち、会話用トークン・ログイン中へ戻らない', task.status === 'completed' && child?.claudeAccount === s.id && onlyAccessSince(start));
+      t.ok('段4: 委譲の子はオンのアカウントを保ち、会話用トークン・ログイン中へ戻らない', task.status === 'completed' && child?.claudeAccount === s.id && onlyOwnDirSince(start), JSON.stringify({ status: task.status, launches: launches().slice(start) }));
       const op = (op, args) => c.cmd('invoke', { op, args });
       const bot = await op('bots.create', { name: 'ConnectorCheck', backend: 'claude' });
       await op('bots.setAccount', { botId: bot.id, account: s.id });
@@ -198,7 +210,7 @@ export default async function (t) {
       const botSession = await until(async () => (await op('bots.get', { botId: bot.id })).dmSessionId);
       await until(async () => (await op('channels.read', { channelId: bot.dmChannelId })).posts.some(p => p.author?.botId === bot.id && p.state === 'done'));
       const botRow = (await c.cmd('listSessions')).find(r => r.id === botSession);
-      t.ok('段4: bot の会話もオンのアカウントの認証を使う', botRow?.claudeAccount === s.id && onlyAccessSince(start));
+      t.ok('段4: bot の会話もオンのアカウントの認証を使う', botRow?.claudeAccount === s.id && onlyOwnDirSince(start), JSON.stringify({ launches: launches().slice(start) }));
 
       // オンのまま止める条件に当たる会話
       await fs.rm(s.credFile);
@@ -212,8 +224,8 @@ export default async function (t) {
       // 起動の前（ターンを作る前）に止まるので、知らせは送信待ちの行だけ（画面は発言の下に直す入口を出す）。ターンの途中で止まった
       // ときの失敗の知らせ（turnResult）は、出るなら直す入口と渡っていない印を持つ
       const results = c.since(from).filter(e => e.type === 'turnResult' && e.sessionId === sessionId && e.outcome === 'error');
-      t.ok('止める条件の会話: 発言は送れなかった（failed）に戻り、止めた理由（kind: login・アカウントの id）を持つ',
-        failed?.connectorsError?.kind === 'login' && failed.connectorsError.accountId === s.id, JSON.stringify(failed && { status: failed.status, kind: failed.connectorsError?.kind }));
+      t.ok('止める条件の会話: 発言は送れなかった（failed）に戻り、止めた理由（kind: ownDirLogin・アカウントの id）を持つ',
+        failed?.connectorsError?.kind === 'ownDirLogin' && failed.connectorsError.accountId === s.id, JSON.stringify(failed && { status: failed.status, kind: failed.connectorsError?.kind }));
       t.ok('止める条件の会話: 失敗の知らせを出すなら、直す入口（auth.mode connectorsLogin）と渡っていない印（undelivered・messageId）を持つ（黙って落ちない）',
         results.every(r => r.kind === 'auth' && r.auth?.mode === 'connectorsLogin' && r.auth.accountId === s.id && r.undelivered === true && r.messageId === messageId),
         JSON.stringify(results.map(r => ({ kind: r.kind, mode: r.auth?.mode, undelivered: r.undelivered }))));
@@ -233,22 +245,20 @@ export default async function (t) {
       const { c } = s;
       const dir = path.dirname(s.credFile);
       const file = path.join(s.data, CONNECTORS_FILE);
-      const set = (enabled, mode) => c.cmd('invoke', { op: 'accounts.setConnectors', args: { id: s.id, cwd: s.work, enabled, mode } });
-      const refusedOff = await set(true, 'own-dir').then(() => false, () => true);
-      t.ok('専用フォルダ方式: コネクターがオフの行では方式を変更できない', refusedOff && !fss.existsSync(file));
-      await s.enable(true);
+      const set = enabled => c.cmd('invoke', { op: 'accounts.setConnectors', args: { id: s.id, cwd: s.work, enabled } });
+      const enabledInFile = () => { try { return JSON.parse(fss.readFileSync(file, 'utf8')).accounts?.[s.id]?.enabled === true; } catch { return false; } };
       const credentials = await fs.readFile(s.credFile, 'utf8');
       await fs.unlink(s.credFile);
-      const refusedLogin = await set(true, 'own-dir').then(() => false, () => true);
-      t.ok('専用フォルダ方式: ログイン不足を返し、コネクター方式を保存しない', refusedLogin && !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode);
+      const refusedLogin = await set(true).then(() => false, () => true);
+      t.ok('専用フォルダ方式: ログイン不足なら入れず、設定を保存しない（b1 へは戻さない）', refusedLogin && !enabledInFile());
       const value = JSON.parse(credentials);
       value.claudeAiOauth.expiresAt = 1;
       value.claudeAiOauth.refreshTokenExpiresAt = 1;
       await fs.writeFile(s.credFile, JSON.stringify(value));
       await fs.writeFile(path.join(dir, 'projects'), 'preserve');
-      const refusedLink = await set(true, 'own-dir').then(() => false, () => true);
-      t.ok('専用フォルダ方式: リンクが作れないと設定を保存せず衝突したファイルを残す',
-        refusedLink && !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode && await fs.readFile(path.join(dir, 'projects'), 'utf8') === 'preserve');
+      const refusedLink = await set(true).then(() => false, () => true);
+      t.ok('専用フォルダ方式: リンクが作れないと設定を保存せず衝突したファイルを残す（b1 へは戻さない）',
+        refusedLink && !enabledInFile() && await fs.readFile(path.join(dir, 'projects'), 'utf8') === 'preserve');
       await fs.unlink(path.join(dir, 'projects'));
       await fs.writeFile(path.join(s.claudeConfig, 'test-link-target'), '');
       try { await fs.symlink(path.join(s.claudeConfig, 'test-link-target'), path.join(dir, 'test-link'), 'file'); }
@@ -258,11 +268,13 @@ export default async function (t) {
         return;
       }
       await fs.unlink(path.join(dir, 'test-link'));
-      const settingsRow = await set(true, 'own-dir');
-      const own = settingsRow?.enabled && settingsRow.mode === 'own-dir' && settingsRow.status === 'ok';
+      const settingsRow = await set(true);
       const accounts = (await c.cmd('claudeAccounts')).accounts;
-      t.ok('専用フォルダ方式: 設定の操作とアカウント一覧に選んだ方式が返る',
-        own && accounts.find(a => a.id === s.id)?.connectors?.mode === 'own-dir');
+      t.ok('専用フォルダ方式: 入れると設定に on を書き、行とアカウント一覧が使える状態を返す（方式の選択は無い）',
+        settingsRow?.enabled === true && settingsRow.status === 'ok' && enabledInFile() && !('mode' in settingsRow)
+          && accounts.find(a => a.id === s.id)?.connectors?.enabled === true && !('mode' in accounts.find(a => a.id === s.id).connectors));
+      const linked = ['projects', 'skills', 'plugins', 'settings.json'].every(entry => { try { return fss.lstatSync(path.join(dir, entry)).isSymbolicLink(); } catch { return false; } });
+      t.ok('専用フォルダ方式: 入れるとき、専用フォルダの projects・skills・plugins・settings.json が共有の ~/.claude へのリンクになる', linked);
       await fs.writeFile(path.join(s.data, 'claude-account-secrets.json'), JSON.stringify({ version: 1, entries: {} }));
       const models = () => c.cmd('invoke', { op: 'agents.models', args: { backend: 'claude', cwd: s.work, account: s.id } });
       const modelError = await models().then(() => null, e => e.message);
@@ -293,9 +305,35 @@ export default async function (t) {
       t.ok('専用フォルダ方式: そのアカウントのログインで会話が通ったら、前に付いた期限切れの印（ply-usage-expired.json）を外す（ADR 0351 の M7）',
         markedBefore && cleared, JSON.stringify({ markedBefore, cleared }));
       await set(false);
-      const b1Error = await models().then(() => null, e => e.message);
-      t.ok('コネクターをオフにすると方式の表示が消え、モデル一覧は同じ理由で止まる',
-        !JSON.parse(await fs.readFile(file, 'utf8')).accounts[s.id].mode && Boolean(b1Error) && b1Error === modelError);
+      const offError = await models().then(() => null, e => e.message);
+      t.ok('コネクターをオフにすると設定は off になり、モデル一覧は同じ理由で止まる',
+        !enabledInFile() && Boolean(offError) && offError === modelError);
+
+      // 更新のあとの起動: オンの既存のアカウントの専用フォルダを自動で準備する（共有へ移す・名前が重なれば退避する）。画面（一覧の moved）に出す（ADR 0350）
+      await set(true);
+      const shared = path.join(s.claudeConfig, 'skills');
+      await fs.writeFile(path.join(shared, 'both.md'), 'shared copy');
+      await s.restart(async () => {
+        // 旧い形（リンクではなく実体の skills が専用フォルダにある）を作る
+        await unlinkClaudeOwnDirLinks(dir);
+        await fs.mkdir(path.join(dir, 'skills'));
+        await fs.writeFile(path.join(dir, 'skills', 'only-mine.md'), 'own copy');
+        await fs.writeFile(path.join(dir, 'skills', 'both.md'), 'own copy of both');
+      });
+      let moved = null;
+      for (let i = 0; i < 150 && !moved; i++) {
+        moved = (await s.refreshRow())?.moved ?? null;
+        if (!moved) await sleep(100);
+      }
+      const archives = (await fs.readdir(path.join(s.data, 'claude-usage'))).filter(n => n.startsWith('both.md.pleiad-moved-'));
+      t.ok('起動のとき: オンの既存のアカウントの専用フォルダを自動で準備する — 実体の skills の中身を共有へ移し（名前が重なる both.md は退避し）、リンクに替える・一覧の moved に出す',
+        JSON.stringify(moved) === JSON.stringify({ shared: ['skills'], archived: ['skills'] })
+          && await fs.readFile(path.join(shared, 'only-mine.md'), 'utf8') === 'own copy'
+          && await fs.readFile(path.join(shared, 'both.md'), 'utf8') === 'shared copy'
+          && archives.length === 1 && await fs.readFile(path.join(s.data, 'claude-usage', archives[0]), 'utf8') === 'own copy of both'
+          && fss.lstatSync(path.join(dir, 'skills')).isSymbolicLink(),
+        JSON.stringify({ moved, archives }));
+      t.ok('起動のとき: 入口はオンのまま（方式 b1 へは戻さない）', enabledInFile() && (await s.refreshRow())?.enabled === true);
     } finally { await s.close(); }
   }
 }
