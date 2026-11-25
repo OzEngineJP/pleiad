@@ -8,18 +8,21 @@
 //    impossible('理由')（技術的に無理・該当しない）/ todo('#Issue')（手段はあるが未実装）。
 //    false は書かない。書いていないことを「対応しない」の代わりにしない（tests/unit/backend-contract.mjs が落とす）。
 //    現役のエージェントは NO_CAPABILITIES を使えない（対応を終えたバックエンドだけ）。
-//    印を足すときは、capability-marks.mjs に 1 行足し、全バックエンドに状態を書き、一覧の説明（tests/lib/backend-matrix.mjs の ABOUT）と
-//    印の契約の試験（tests/lib/backend-contracts.mjs）を足す。未実装（todo）は tests/backend-todos.json の基準より増やせない。
+//    required: true の印は、現役のエージェントなら対応の値だけ（impossible・todo は RETIRED のほかは落とす）。
+//    impossible は cause（upstream / design / retired）を持ち、理由に「確かめていない」「#Issue の番号」を書けない
+//    （手段があるのに未確認・未実装は todo('#Issue')）。
+//    印を足すときは、capability-marks.mjs に 1 行足し、全バックエンドに状態を書く（agent-marks.mjs）。
+//    一覧（tests/lib/backend-matrix.mjs）の 1 列目の説明 ABOUT は任意（足さなくても印の名前で出る）。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
 // 2. 性質（TRAITS）: 機能ではなくエージェントの特徴。true / false だけで書き、状態は持たない（ADR 0274）。
 //    server・bot・委譲の振り分けが backend.traits から読み、画面へは出さない。
 // 3. バックエンドが出すイベント（BACKEND_EVENTS）: runTurn の emit・compact の emit・attachHost の host.event に渡してよい種類と、
 //    必ず付けるフィールド。試験のサーバーは PLEIAD_BACKEND_CONTRACT=strict で受け口ごとに確かめ、外れたら [backend-contract] の行を出す
 //    （tests/lib/server.mjs が拾い、stop() で落とす）。
-import { CAPABILITIES, CAPABILITY_KEYS, TRAITS, TRAIT_KEYS, capabilityValue, isCapabilityState } from './capability-marks.mjs';
+import { CAPABILITIES, CAPABILITY_KEYS, IMPOSSIBLE_CAUSES, TRAITS, TRAIT_KEYS, capabilityValue, isCapabilityState } from './capability-marks.mjs';
 
 export {
-  CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, TRAITS, TRAIT_KEYS, NO_TRAITS,
+  CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, TRAITS, TRAIT_KEYS, NO_TRAITS, IMPOSSIBLE_CAUSES,
   covered, impossible, todo, isCapabilityState, capabilityValue, legacyCapabilities,
 } from './capability-marks.mjs';
 
@@ -33,8 +36,14 @@ function expectedOf(spec) {
   return spec.absent === undefined ? spec.hint : `${spec.hint}, or ${states}`;
 }
 
+/** 何も持たない能力（対応を終えたバックエンドだけが使う。core/backends/index.mjs の retiredBackend）。required の印にも書ける唯一の状態 */
+const RETIRED = Object.freeze({ state: 'impossible', reason: '対応を終えた', cause: 'retired' }); // i18n-ignore: 対応を終えたバックエンドの理由（開発者向け。利用者向けの文は #149）
+
+/** impossible の理由に書けない語（手段があるのに確かめていない・Issue 待ちは、todo('#Issue') で書く） */
+const UNVERIFIED_REASON = /確かめていない|口を確かめていない|#\d+/;
+
 /**
- * 印の値の違反（無ければ null）。状態の理由・Issue の形もここで見る。
+ * 印の値の違反（無ければ null）。状態の理由・原因・Issue の形もここで見る。
  * checkBackendShape が id とファイルを添えて出す。
  */
 export function capabilityProblem(key, value) {
@@ -42,9 +51,14 @@ export function capabilityProblem(key, value) {
   if (!spec) return `capability ${key} is not in core/backends/capability-marks.mjs CAPABILITIES`;
   if (isCapabilityState(value)) {
     if (spec.absent === undefined) return `capability ${key} cannot be a state (${spec.hint})`;
-    if (!['covered', 'impossible', 'todo'].includes(value.state)) return `capability ${key} has unknown state ${JSON.stringify(value.state)} (use covered, impossible('reason'), or todo('#Issue'))`;
-    if (value.state === 'covered' && !spec.covered) return `capability ${key} cannot be covered (Pleiad has no common fallback; use impossible('reason') or todo('#Issue'))`;
-    if (value.state === 'impossible' && !(typeof value.reason === 'string' && value.reason.trim())) return `capability ${key} impossible needs a reason (impossible('reason'))`;
+    if (!['covered', 'impossible', 'todo'].includes(value.state)) return `capability ${key} has unknown state ${JSON.stringify(value.state)} (use covered, impossible('reason', cause), or todo('#Issue'))`;
+    if (spec.required && value.state !== 'covered' && value !== RETIRED) return `capability ${key} is required for every active agent (support it; impossible and todo are only for retired backends)`;
+    if (value.state === 'covered' && !spec.covered) return `capability ${key} cannot be covered (Pleiad has no common fallback; use impossible('reason', cause) or todo('#Issue'))`;
+    if (value.state === 'impossible') {
+      if (!(typeof value.reason === 'string' && value.reason.trim())) return `capability ${key} impossible needs a reason (impossible('reason', cause))`;
+      if (!IMPOSSIBLE_CAUSES.includes(value.cause)) return `capability ${key} impossible needs a cause (${IMPOSSIBLE_CAUSES.join(' | ')}): got ${JSON.stringify(value.cause)}`;
+      if (UNVERIFIED_REASON.test(value.reason)) return `capability ${key} impossible reason must not say "not verified" or cite an issue number; if a way may exist, write todo('#Issue') instead: ${JSON.stringify(value.reason)}`;
+    }
     if (value.state === 'todo' && !/^#\d+$/.test(String(value.issue ?? ''))) return `capability ${key} todo needs an issue number (todo('#98'))`;
     return null;
   }
@@ -60,8 +74,7 @@ export function traitProblem(key, value) {
   return typeof value === 'boolean' ? null : `trait ${key} value ${JSON.stringify(value)} is not allowed (true or false)`;
 }
 
-/** 何も持たない能力（対応を終えたバックエンドだけが使う。core/backends/index.mjs の retiredBackend） */
-const RETIRED = Object.freeze({ state: 'impossible', reason: '対応を終えた' }); // i18n-ignore: 対応を終えたバックエンドの理由（開発者向け。利用者向けの文は #149）
+/** 何も持たない能力（対応を終えたバックエンドだけが使う。core/backends/index.mjs の retiredBackend。RETIRED は上） */
 export const NO_CAPABILITIES = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((key) => [key,
   key === 'approvals' ? 'none' : key === 'mcpApproval' ? 'agent' : RETIRED])));
 
@@ -99,6 +112,15 @@ export function checkBackendShape(native) {
     }
   }
   for (const key of Object.keys(caps)) if (!Object.hasOwn(CAPABILITIES, key)) problems.push(`${id}: capability ${key} is not in core/backends/capability-marks.mjs CAPABILITIES (add it to the list or remove it from ${marksFile} (${id}))`);
+  // サブエージェントを持つなら、委譲のツール名を申告するか（subagentTools）、申告できない理由を書く（subagentToolsAbsent）。
+  // 画面の委譲カードと過去の一覧は subagentTools で見分ける。黙って空にしない
+  if (capabilityValue(caps.subagents)) {
+    const tools = native?.subagentTools;
+    const absent = native?.subagentToolsAbsent;
+    const declared = Array.isArray(tools) && tools.length > 0 && tools.every((name) => typeof name === 'string' && name);
+    const explained = typeof absent === 'string' && absent.trim() !== '';
+    if (!declared && !explained) problems.push(`${id}: subagents is supported but neither subagentTools (non-empty array of tool names) nor subagentToolsAbsent (reason string) is declared (${file})`);
+  }
   // 性質は能力ではない。true / false だけを全部書く（状態は持てない。false は未対応ではない）
   const traits = native?.traits ?? {};
   for (const key of TRAIT_KEYS) {

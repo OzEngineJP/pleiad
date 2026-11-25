@@ -268,13 +268,16 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 
 - **対応**: その機能の値（`true`・`'host'`・`'native'`・`'turn'`・`{ images: 'inline' }` など）
 - **`covered`**: Pleiad の共通処理が補う（タイトル・状態タグ・分岐・巻き戻し・`hostTools` など）
-- **`impossible('理由')`**: 技術的に無理・該当しない。理由が必須
-- **`todo('#Issue')`**: 手段はあるが未実装。Issue 番号が必須
+- **`impossible('理由', 原因)`**: 技術的に無理・該当しない。理由と原因が必須。原因は `upstream`（エージェント側の制約）・`design`（Pleiad の設計で持たない）・
+  `retired`（対応を終えた）。理由に「確かめていない」や Issue の番号は書けない（手段があるのに未確認・未実装は次の `todo`）
+- **`todo('#Issue')`**: 手段はあるが未実装・未確認。Issue 番号が必須。数は検査で縛らない（実装したら `todo` を対応に書き換える）
 
 `false` は書かない（対応しない理由を状態で書く）。値の形と、値ごとに要るメソッド（`compact: true` なら `compact()`、`forkMessage: true` なら `fork()` など）も
-`CAPABILITIES` に書いてあり、`npm test` の backend-contract が確かめる。現役のエージェントは `NO_CAPABILITIES`（対応を終えたバックエンド用の
-全部 `impossible` の雛形）を使えない。未実装（`todo`）は `tests/backend-todos.json` の基準より増やせない（減らしたら
-`node tests/lib/backend-todos.mjs --update-baseline`）。server・画面へは、レジストリ（`core/backends/index.mjs`）が状態を今までの値に引いて渡す
+`CAPABILITIES` に書いてあり、`npm test` の backend-contract が確かめる。`required: true` の印（`plyInstructions`・`plyAgents`・`browser`・
+`plyControl`・`secrets`）は、現役のエージェントなら対応の値だけ（`impossible`・`todo` にすると落ちる）。サブエージェントを持つ（`subagents`）なら、
+委譲のツール名を `subagentTools` で申告するか、申告できない理由を `subagentToolsAbsent` に書く。現役のエージェントは `NO_CAPABILITIES`（対応を終えたバックエンド用の
+全部 `impossible` の雛形）を使えない。エージェントごとの表（id → 値）は `definePerAgentMap`（`core/backends/agents.mjs`）で作り、
+エージェントを足して表へ書き忘れたら読み込みで落とす（黙って `?? {}` に落とさない）。server・画面へは、レジストリ（`core/backends/index.mjs`）が状態を今までの値に引いて渡す
 （`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
 （文書の写しは持たない）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
@@ -994,10 +997,9 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 **能力の印を足すとき**は、`capability-marks.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）と
 `CAPABILITY_DOCS` に利用者向けの説明（ja・en の `label`・`summary`・`unavailable`）、全バックエンドの状態（`agent-marks.mjs`）、
-一覧の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）、その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
+その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
 `'conformance'` か既存の suite の名前）を足す。**その印が配達物**（`RUN_ARG_FEATURES` の値）なら、対応・`covered` のエージェントごとに
-`CAPABILITY_CONTRACTS.<印>.agents.<id>` と `DELIVERY_PROBES` も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。未実装（`todo`）は
-`tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。
+`CAPABILITY_CONTRACTS.<印>.agents.<id>` と `DELIVERY_PROBES` も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。
 現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
 **性質を足すとき**は `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS` に足す（性質は能力の表・公開文書に出さない）。
 

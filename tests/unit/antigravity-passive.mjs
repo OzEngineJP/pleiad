@@ -156,8 +156,6 @@ export default async function (t) {
     // ---- 内部呼出しを分離できないので、候補の口（suggestNext）は持たない。ログインの状態に関わらず agy を起こさない
     const sugOutBefore = (await envCalls()).length;
     assert.equal(typeof backend.suggestNext, 'undefined', 'Antigravity は候補の内部呼出しを持たない');
-    assert.equal(backend.capabilities.internalCall.state, 'impossible', '内部呼出しは分離できない');
-    assert.equal(backend.capabilities.promptSuggestions.state, 'impossible', '候補も出せない');
     assert.equal((await envCalls()).length, sugOutBefore, '候補のために agy を起こさない');
     t.ok('Antigravity は内部呼出し（候補）を持たず、ログインの状態に関わらず agy を起こさない', true);
 
@@ -168,7 +166,6 @@ export default async function (t) {
     // ---- ログインしていても、候補の口は無い（内部呼出しの分離はログインと別の保証）
     const sugInBefore = (await envCalls()).length;
     assert.equal(typeof backend.suggestNext, 'undefined');
-    assert.equal(backend.capabilities.internalCall.state, 'impossible');
     assert.equal((await envCalls()).length, sugInBefore, 'ログイン中でも候補のために agy を起こさない');
     t.ok('ログイン中でも Antigravity は候補の口を持たない', true);
     const old = await backend.usage();

@@ -9,6 +9,7 @@
 //   委譲先          … 段の候補を左から、使用量の枠で飛ばしながら選ぶ（route）。無ければ 1 つ上の段へ
 
 import { STALE_MS } from './delegation-usage.mjs';
+import { definePerAgentMap } from './backends/agents.mjs';
 // 思考の強さの語彙と合わせ方は画面と同じもの（web/delegation-effort.mjs）
 import { EFFORT_LEVELS, fitEffort } from '../web/delegation-effort.mjs';
 
@@ -343,21 +344,18 @@ const AGY_GROUP_GENERIC = new Set(['model', 'models', 'and', 'the']);
  *     専用の枠（'Gemini 4 Argon' など）は、系統・汎用の語を除いた名前の語が全部モデルの id に入るときだけ当たる
  *   接続先ごとの枠（provider を持つ枠。OpenCode のつないだ接続先）… モデルの id の接続先（「接続先/モデル」の前半）の枠だけ
  */
-export function windowsFor(backend, model, windows = []) {
-  const list = Array.isArray(windows) ? windows : [];
-  if (list.some(w => w.provider)) {
-    const provider = String(model ?? '').split('/')[0];
-    return list.filter(w => !w.provider || w.provider === provider);
-  }
-  if (backend === 'claude') {
+const WINDOW_MATCHERS = definePerAgentMap('WINDOW_MATCHERS', {
+  claude(model, list) {
     const family = claudeFamily(model);
     return list.filter(w => !w.model || (family && claudeFamily(w.model) === family));
-  }
-  if (backend === 'codex') {
+  },
+  codex(model, list) {
     const matches = name => Boolean(name) && (squash(model).includes(name) || name.includes(squash(model)));
-    return list.filter(w => !w.limitId || w.limitId === 'codex' || matches(squash(w.limitName || w.limitId)));
-  }
-  if (backend === 'antigravity') {
+    // 主の枠の limitId（core/usage.mjs の CODEX_PRIMARY_LIMIT_ID。Codex のプロトコルの値）
+    const primary = w => !w.limitId || w.limitId === 'codex'; // backend-allow: Codex の主の枠の limitId の値で、エージェントの分岐ではない
+    return list.filter(w => primary(w) || matches(squash(w.limitName || w.limitId)));
+  },
+  antigravity(model, list) {
     const modelWords = new Set(words(model));
     const family = AGY_FAMILIES.find(f => modelWords.has(f));
     if (!family) return [];
@@ -372,8 +370,21 @@ export function windowsFor(backend, model, windows = []) {
     const best = Math.max(...scored.map(([, s]) => s));
     const groups = new Set(scored.filter(([, s]) => s === best).map(([g]) => g));
     return list.filter(w => groups.has(w.group));
+  },
+  // 枠をモデルで絞らない（接続先ごとの枠は windowsFor が先に絞る）
+  opencode: (_model, list) => list,
+  devin: (_model, list) => list,
+  grok: (_model, list) => list,
+});
+
+export function windowsFor(backend, model, windows = []) {
+  const list = Array.isArray(windows) ? windows : [];
+  if (list.some(w => w.provider)) {
+    const provider = String(model ?? '').split('/')[0];
+    return list.filter(w => !w.provider || w.provider === provider);
   }
-  return list;
+  // 表の外の id（試験用の fake・設定にある未知の id）は枠を絞らない
+  return Object.hasOwn(WINDOW_MATCHERS, backend) ? WINDOW_MATCHERS[backend](model, list) : list;
 }
 
 /**

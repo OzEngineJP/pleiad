@@ -50,13 +50,10 @@ const runtime = (name) => MARK.runtime(name);
 const instr = (name) => `PLY-DELIVERY-${String(name).toUpperCase()}`;
 
 /**
- * deliveryArgs が渡す runArgs の配達物のキー。`RUN_ARG_FEATURES` にキーを足したら、ここにも足す
- * （backend-contract が、試験で渡していない配達物ができていないかを見る）
+ * deliveryArgs が渡す runArgs の配達物のキー。`RUN_ARG_FEATURES` から作る（手で写さない）。
+ * キーを足したら deliveryArgs にも足す（backend-contract が、deliveryArgs が全部のキーを渡すかを見る）
  */
-export const DELIVERY_ARG_KEYS = Object.freeze([
-  'browserEnv', 'browserInstructions', 'browserRuntime', 'computerRuntime', 'contextRuntime', 'controlRuntime',
-  'hooksRuntime', 'secretsRuntime', 'shellRuntime', 'agentRuntime', 'addedInstructions', 'visualizeInstructions',
-]);
+export const DELIVERY_ARG_KEYS = Object.freeze(Object.keys(RUN_ARG_FEATURES));
 
 /** 1 ターンに渡す配達物。能力の印で絞る（server の gateRunArgs と同じ） */
 export function deliveryArgs(caps, overrides = {}) {

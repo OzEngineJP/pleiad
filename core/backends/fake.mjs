@@ -457,12 +457,12 @@ export const backend = {
     // 同じ会話での巻き戻し（core/conversations.mjs の rewind）。FAKE_REWIND で形を切り替える:
     //   resumeAt（既定）… Claude と同じ。次のターンが drops の手前で切る / reject … 次のターンが拒否する（ホスト管理へ落とす経路） /
     //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
-    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている', 'design') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     subagents: true,
     // FAKE_LIVE=off でターンの途中切り替えの口が無いエージェントにする（Codex・OpenCode と同じ形）
-    get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    get liveEffort() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveEffort() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,
     plyAgents: true,
     plyInstructions: true,
@@ -470,7 +470,7 @@ export const backend = {
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
     // アカウント（Claude の台帳を共有する形）。試験が FAKE_ACCOUNTS=off で「アカウントを持てないエージェント」にする
-    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている', 'design') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
     plyShell: true,
@@ -478,16 +478,16 @@ export const backend = {
     nativeMcpOff: true,
     approvals: 'interactive',
     mcpApproval: 'agent',
-    compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,
     // 内部呼出し（Issue #180。host.internalCall）。FAKE_INTERNAL=off で「分離して呼べないエージェント」にする
-    get internalCall() { return process.env.FAKE_INTERNAL === 'off' ? impossible('試験用に内部呼出しを止めている') : 'ephemeral'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get internalCall() { return process.env.FAKE_INTERNAL === 'off' ? impossible('試験用に内部呼出しを止めている', 'design') : 'ephemeral'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyContext: 'turn',
     steer: true,
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
-      if (process.env.FAKE_COMPUTER_USE === 'off') return impossible('試験用にコンピューターの操作を無効にしている'); // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+      if (process.env.FAKE_COMPUTER_USE === 'off') return impossible('試験用にコンピューターの操作を無効にしている', 'design'); // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
       return { images: process.env.FAKE_COMPUTER_IMAGES === 'path' ? 'path' : 'inline', waitSliceMs: Number(process.env.FAKE_COMPUTER_SLICE_MS) > 0 ? Number(process.env.FAKE_COMPUTER_SLICE_MS) : null };
     },
     // runArgs の配達物は台本で全部確かめられるよう、全部受け取ることにする

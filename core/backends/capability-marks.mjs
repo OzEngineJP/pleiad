@@ -5,8 +5,11 @@
 //    impossible('理由')（技術的に無理・該当しない）/ todo('#Issue')（手段はあるが未実装）。
 //    false は書かない。書いていないことを「対応しない」の代わりにしない（tests/unit/backend-contract.mjs が落とす）。
 //    現役のエージェントは NO_CAPABILITIES を使えない（対応を終えたバックエンドだけ）。
-//    印を足すときは、ここに 1 行足し、全バックエンドに状態を書き、一覧の説明（tests/lib/backend-matrix.mjs の ABOUT）と
-//    印の契約の試験（tests/lib/backend-contracts.mjs）を足す。未実装（todo）は tests/backend-todos.json の基準より増やせない。
+//    required: true の印（plyInstructions・plyAgents・browser・plyControl・secrets）は、現役のエージェントなら対応の値だけ
+//    （impossible・todo にできない。対応を終えたバックエンドの RETIRED だけ許す。capabilityProblem が落とす）。
+//    impossible は cause（upstream / design / retired）を持つ。手段があるのに確かめていない・未実装のものは todo('#Issue') に書く。
+//    印を足すときは、ここに 1 行足し、全バックエンドに状態を書く（agent-marks.mjs）。
+//    一覧（tests/lib/backend-matrix.mjs）の 1 列目の説明 ABOUT は、足さなくても印の名前で出る（任意）。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
 // 2. 性質（TRAITS）: 機能ではなく、そのエージェントの特徴。全エージェントにそろえる対象ではない。
 //    true / false だけで書き、covered・impossible・todo は持たない（「持っていない」は未対応ではなく、そのエージェントの性質）。
@@ -22,14 +25,21 @@ const yes = (v) => v === true;
 
 // ---- 状態（対応しない理由） --------------------------------------------------------------
 //
-// 値は 1 行で読める形にする: `hooks: todo('#98')`・`accounts: impossible('…')`・`fork: covered`。
+// 値は 1 行で読める形にする: `hooks: todo('#98')`・`accounts: impossible('…', 'upstream')`・`fork: covered`。
 // impossible の reason は今は作る人向けの短い日本語。利用者向けの文は CAPABILITY_DOCS の unavailable に持つ。
 
 /** Pleiad の共通処理が補う（タイトル・タグ・分岐・巻き戻しなど） */
 export const covered = Object.freeze({ state: 'covered' });
 
-/** 技術的に無理・該当しない。reason は必須 */
-export const impossible = (reason) => Object.freeze({ state: 'impossible', reason });
+/**
+ * 技術的に無理・該当しない。reason は必須。cause は理由の種類（IMPOSSIBLE_CAUSES）:
+ * upstream = エージェント側（CLI・プロトコル）にその口が無い（確かめた版を reason に書く）/ design = Pleiad が意図して持たない /
+ * retired = 対応を終えた。「確かめていない」「#Issue の番号」を reason に書かない（手段があるのに未確認・未実装は todo('#Issue')）。
+ */
+export const impossible = (reason, cause) => Object.freeze({ state: 'impossible', reason, cause });
+
+/** impossible の cause の取りうる値 */
+export const IMPOSSIBLE_CAUSES = Object.freeze(['upstream', 'design', 'retired']);
 
 /** 手段はあるが未実装。issue は '#98' の形（必須） */
 export const todo = (issue) => Object.freeze({ state: 'todo', issue });
@@ -53,7 +63,8 @@ export function legacyCapabilities(capabilities) {
  * 能力の印。valid は対応のときの値、requires は「この値ならこのメソッドが要る」。
  * absent は状態のときに server・画面へ渡す今までの値（false など）。無ければ状態を持てない（approvals・mcpApproval）。
  * covered は Pleiad の共通処理が補える印だけ true。coveredRequires は covered のときに要るメソッド。
- * hint は落ちたときの文に出す値の形。意味は一覧（node tests/lib/backend-matrix.mjs。説明は ABOUT）
+ * required: true は、現役のエージェントなら対応の値だけ（impossible・todo にできない。contract.mjs の capabilityProblem）。
+ * hint は落ちたときの文に出す値の形。意味は一覧（node tests/lib/backend-matrix.mjs）
  */
 export const CAPABILITIES = {
   // ネイティブにタイトル・状態タグを持つ（無ければ Pleiad の控えが正本）
@@ -93,10 +104,10 @@ export const CAPABILITIES = {
   internalCall: { valid: oneOf('ephemeral', 'isolated'), absent: false, hint: "'ephemeral' or 'isolated'", requires: (v) => (v === 'ephemeral' || v === 'isolated' ? ['internalTurn'] : []) },
   // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
   // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）
-  plyInstructions: { valid: yes, absent: false, hint: 'true' },
+  plyInstructions: { valid: yes, absent: false, required: true, hint: 'true' },
   // ply_agents（委譲の橋）を受け取る。agentRuntime（url・headers・instructions）が渡る。
   // instructions の後ろには Pleiad の指示（plyInstructions の分）も足される
-  plyAgents: { valid: yes, absent: false, hint: 'true' },
+  plyAgents: { valid: yes, absent: false, required: true, hint: 'true' },
   // Pleiad のコンテキスト（ply_context）の受け取り方（turn: ターンごと / conversation: 会話ごとの同じトークン）
   plyContext: { valid: oneOf('turn', 'conversation'), absent: false, hint: "'turn' or 'conversation'" },
   // ply_computer を受け取る（画像の渡し方と待ちの区切り。docs/computer-use.md）
@@ -116,11 +127,11 @@ export const CAPABILITIES = {
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['adoptTurn'] : []) },
   // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
-  browser: { valid: yes, absent: false, hint: 'true' },
+  browser: { valid: yes, absent: false, required: true, hint: 'true' },
   // ply_control（操作の一覧の MCP）と、会話に束縛した CLI の環境変数（PLEIAD_CONTROL_*）を受け取る（ADR 0081）
-  plyControl: { valid: yes, absent: false, hint: 'true' },
+  plyControl: { valid: yes, absent: false, required: true, hint: 'true' },
   // 秘密情報と変数（runArgs.secretsRuntime。会話のシェルの環境変数と一覧の文）を受け取る（ADR 0217）
-  secrets: { valid: yes, absent: false, hint: 'true' },
+  secrets: { valid: yes, absent: false, required: true, hint: 'true' },
   // 可視化の指示（runArgs.visualizeInstructions）を受け取る
   visualize: { valid: yes, absent: false, hint: 'true' },
   // Pleiad がそろえる Hooks（runArgs.hooksRuntime）を受け取る（ADR 0049）

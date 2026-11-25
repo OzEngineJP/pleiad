@@ -181,6 +181,22 @@ export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', '
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
 
+/**
+ * エージェントごとの表（id -> 値）を作る。エージェントを足したのに表へ書き忘れた・知らない id を書いた、を読み込みの時点で落とす
+ * （黙って `?? {}` や `?? true` へ落ちて、足したエージェントだけ動きが違う、を作らない）。
+ * ids は表が持つべき id（既定は fake を除く全部）。extra は ids に足す id（試験用の fake など）。無い・余分なキーは例外。
+ * 値の「無い」は呼び出し側が null・空で明示する（キーを省かない）。
+ */
+export function definePerAgentMap(name, map, { ids = DEFAULT_AGENT_IDS, extra = [] } = {}) {
+  const expected = [...ids, ...extra];
+  const missing = expected.filter((id) => !Object.hasOwn(map, id));
+  const unknown = Object.keys(map).filter((id) => !expected.includes(id));
+  if (missing.length || unknown.length) {
+    throw new Error(`${name}: エージェントごとの表が合わない（足りない: ${missing.join(', ') || '-'} / 知らない: ${unknown.join(', ') || '-'}）。core/backends/agents.mjs の AGENTS に合わせる`); // i18n-ignore: 開発者向けの読み込みエラー（利用者には見えない）
+  }
+  return Object.freeze(map);
+}
+
 /** id の記述。知らない id なら null */
 export const agentOf = (id) => (Object.hasOwn(AGENTS, id) ? AGENTS[id] : null);
 
