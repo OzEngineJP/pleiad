@@ -221,7 +221,7 @@ export default async function (t) {
     notify: { status: async () => ({ pc: { done: true, reply: true, failed: true }, relayConnected: true, devices: [{ id: 'd', platform: 'ios', notify: { muted: true } }], ...secret }) },
     worktrees: { check: async () => ({ git: true, current: null, conflicts: [], canSplit: true, ...secret }) },
     git: { status: async () => ({ git: { branch: 'main', ...secret } }),
-      panel: async () => ({ git: { branch: 'main' }, timeline: [], changes: { range: 'uncommitted', hasSession: false, files: [{ path: 'a', add: 1, del: 0, ...secret }], total: { files: 1, add: 1, del: 0 } }, worktrees: { current: null, leftovers: [] }, at: 0 }),
+      panel: async () => ({ git: { branch: 'main' }, timeline: [], changes: { range: 'uncommitted', files: [{ path: 'a', add: 1, del: 0, ...secret }], total: { files: 1, add: 1, del: 0 } }, worktrees: { current: null, leftovers: [] }, at: 0 }),
       diff: async () => ({ diff: { range: 'uncommitted', path: 'a', hunks: [{ header: '@@', lines: [{ t: '+', s: 'x' }] }], binary: false, truncated: false, ...secret } }),
       history: async () => ({ history: { root: 'C:/r', head: 'abc1234', commits: [{ hash: 'abc1234', short: 'abc1234', parents: [], author: 'a', at: 0, refs: [], subject: 's', ...secret }], next: null, session: null } }),
       commit: async () => ({ commit: { commit: { hash: 'abc1234', subject: 's', ...secret }, merge: false, files: [{ path: 'a', state: 'M', add: 1, del: 0 }], total: { files: 1, add: 1, del: 0 } } }),

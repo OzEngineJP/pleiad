@@ -23,7 +23,6 @@ export const HISTORY_PAGE_MAX = 200;
 
 const sessionId = z.string().max(200).nullable().optional().describe(A('sessionId'));
 const cwd = z.string().max(4096).nullable().optional().describe(A('cwd'));
-const range = z.enum(['uncommitted', 'session']).optional().describe(A('range'));
 const hash = z.string().regex(/^[0-9a-f]{7,64}$/).describe(A('hash'));
 const worktree = z.string().max(4096).optional().describe(A('worktree'));
 
@@ -36,7 +35,7 @@ export const patchText = (hunks) => (hunks ?? []).map((h) => [h.header, ...(h.li
 export const gitOps = [
   defineOp({
     id: 'git.status', summary: 'agent:ops.git.status.summary', risk: 'read',
-    input: z.object({ sessionId, cwd, summary: z.boolean().optional().describe(D('status', 'brief')), fresh: z.boolean().optional().describe(D('status', 'fresh')) }),
+    input: z.object({ sessionId, cwd, fresh: z.boolean().optional().describe(D('status', 'fresh')) }),
     output: z.object({ git: loose.nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'status'] } },
     legacyCommand: 'gitStatus',
@@ -45,7 +44,7 @@ export const gitOps = [
   defineOp({
     id: 'git.changes', summary: 'agent:ops.git.changes.summary', risk: 'read',
     input: z.object({
-      sessionId, cwd, range,
+      sessionId, cwd,
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(A('limit')),
       cursor: z.string().max(400).optional().describe(A('cursor')),
       // 画面だけが使う軽い問い合わせ（changes: 変更の一覧だけ。light: worktree の一覧を計算しない。count: 変更したファイルの数だけ）
@@ -63,7 +62,7 @@ export const gitOps = [
       const timeline = Array.isArray(got.timeline) ? got.timeline : [];
       return maskTree({
         git: got.git, worktrees: got.worktrees ?? null,
-        changes: got.changes ? { range: got.changes.range, hasSession: got.changes.hasSession, total: got.changes.total, failed: got.changes.failed === true, files: page.items, next: page.next } : null,
+        changes: got.changes ? { range: got.changes.range, total: got.changes.total, failed: got.changes.failed === true, files: page.items, next: page.next } : null,
         timeline: timeline.slice(-TIMELINE_MAX), timelineTotal: timeline.length,
       });
     }),
@@ -71,11 +70,11 @@ export const gitOps = [
   defineOp({
     id: 'git.diff', summary: 'agent:ops.git.diff.summary', risk: 'read',
     input: z.object({
-      sessionId, cwd, range,
+      sessionId, cwd,
       // 画面は path が無くても diff: null で返す（今までどおり）。AI・CLI は必須
       path: z.string().max(4096).optional().describe(D('diff', 'path')),
       maxChars: z.number().int().min(100).max(DIFF_CHARS_MAX).optional().describe(A('maxChars')),
-      // 範囲の代わりに、押したコミット・2 つのコミットの間・ステージ済み／変更のどちらかを選べる
+      // 既定はコミットしていない変更。押したコミット・2 つのコミットの間・ステージ済み／変更のどちらかも選べる
       commit: hash.optional().describe(D('diff', 'commit')),
       from: hash.optional().describe(D('diff', 'from')),
       to: hash.optional().describe(D('diff', 'to')),
@@ -104,7 +103,6 @@ export const gitOps = [
       sessionId, cwd,
       limit: z.number().int().min(1).max(HISTORY_PAGE_MAX).optional().describe(A('limit')),
       cursor: z.string().max(400).optional().describe(A('cursor')),
-      through: z.boolean().optional().describe(D('history', 'through')),
     }),
     output: z.object({ history: loose.nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'history'] } },
@@ -157,10 +155,10 @@ export const gitOps = [
 ];
 
 /** git.history の本体（画面も AI も同じ形）。cursor は読み飛ばす件数 */
-async function historyOf(ctx, { limit = HISTORY_PAGE_DEFAULT, cursor, through, ...args }) {
+async function historyOf(ctx, { limit = HISTORY_PAGE_DEFAULT, cursor, ...args }) {
   const skip = cursor === undefined ? 0 : decodeCursor(cursor);
   if (skip === null) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.badCursor'));
-  const got = (await ctx.git.history({ ...args, limit, skip, through: through === true }))?.history;
+  const got = (await ctx.git.history({ ...args, limit, skip }))?.history;
   if (!got) return { history: null };
   const { next, ...rest } = got;
   return { history: { ...rest, next: next == null ? null : encodeCursor(next) } };

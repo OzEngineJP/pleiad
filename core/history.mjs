@@ -84,7 +84,7 @@ export async function loadTranscript(sessionId, backend, options) {
     backend?.getMessages ? backend.getMessages(sessionId, options) : Promise.resolve([]),
     backend?.getPresents ? backend.getPresents(sessionId) : readPresents(sessionId),
   ]);
-  const presents = await withLegacyBundles(stored);
+  const presents = await withLegacyBundles(shownPresents(stored));
   const preparing = performance.now();
   const messages = await prepareMessages(sessionId, raw);
   // 圧縮の要約は発言ではなく区切りの中身。分けて返し、server が区切りに入れる（core/compaction-history.mjs の attachCompactSummaries）
@@ -181,10 +181,12 @@ export async function readPresents(sessionId, { strict = false } = {}) {
  */
 export async function recordPresent(sessionId, payload) {
   if (!sessionId || !payload) return null;
+  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0354）。誰かが渡しても残さない
+  if (payload.kind === 'git') return null;
 
   const record = {
-    // git の要約の行（kind: 'git'。ADR 0085）は、ターンの終わりの時刻を渡されて、その並びで会話に出る
-    at: (payload.kind === 'git' || payload.kind === 'worktree') && typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
+    // worktree で始めた印の行は、渡された時刻の並びで会話に出る
+    at: payload.kind === 'worktree' && typeof payload.at === 'string' ? payload.at : new Date().toISOString(),
     kind: payload.kind ?? "text",
     caption: payload.caption ?? null,
     // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
@@ -200,7 +202,6 @@ export async function recordPresent(sessionId, payload) {
     ...(payload.origin === "host" || payload.origin === "device" ? { origin: payload.origin } : {}),
     ...(Number.isFinite(payload.size) && payload.size >= 0 ? { size: payload.size } : {}),
     ...(payload.turnKey ? { turnKey: payload.turnKey } : {}),
-    ...(payload.kind === 'git' ? { git: payload.git ?? null } : {}),
     // worktree で始めた印の行（ADR 0089）: { id, branch, origin, conflicts: [別の会話の題], count }
     ...(payload.kind === 'worktree' ? { worktree: payload.worktree ?? null } : {}),
     // 引き継いで戻した行（core/chrome/control.mjs）: { seconds }（引き継いでいた秒数）
@@ -231,6 +232,15 @@ export async function recordPresent(sessionId, payload) {
     await fs.appendFile(file, JSON.stringify(record) + "\n", "utf8");
   });
   return record;
+}
+
+/**
+ * 画面へ返す保存済みの提示から、もう出さない種類を除く（ADR 0354）。返答の下の変更の行（kind: 'git'。ADR 0085）は、ターンごとの記録を
+ * やめたので出さない。古い会話のファイルに残った行は書き換えず（keepPresents・巻き戻しの添字は記録のままの並びで数える）、読んで返すときだけ黙って省く。
+ * 画面の側（web/render.mjs・web/client.mjs）も同じ種類を黙って飛ばす（壊れた表示や「未知の種類」の表示にしない）
+ */
+export function shownPresents(presents) {
+  return Array.isArray(presents) ? presents.filter(p => p?.kind !== 'git') : presents;
 }
 
 // 束の無い可視化の行（束を持つ前の版の記録）は、読むときに HTML だけの束を書いて付ける（ADR 0295 の 3 の 4）。
@@ -269,7 +279,7 @@ export async function withLegacyBundles(presents) {
  */
 export async function findPresentBody(sessionId, backend, { i, at, field }) {
   if (!sessionId || (field !== 'content' && field !== 'dataUri')) return null;
-  const presents = backend?.getPresents ? await backend.getPresents(sessionId) : await readPresents(sessionId);
+  const presents = shownPresents(backend?.getPresents ? await backend.getPresents(sessionId) : await readPresents(sessionId));
   const body = (p) => typeof p?.[field] === 'string' ? p[field] : null;
   const direct = Number.isInteger(i) ? presents[i] : null;
   if (direct && body(direct) !== null && (!at || direct.at === at)) return body(direct);

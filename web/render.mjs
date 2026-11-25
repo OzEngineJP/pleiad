@@ -15,7 +15,6 @@ import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
 import { copyIcon, moreIcon, panelIcon, openInBrowserIcon } from './icons.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
-import { renderGitSummary } from './git-view.mjs';
 import { isPlyDelegateToolName } from './delegate-result.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
@@ -554,8 +553,9 @@ function loadWhenNear(hold, ev, place) {
  */
 export function renderPresent(ev) {
   const e = ev ?? {};
-  // git の要約の行（返答の下の 1 行。ADR 0085）。カードではない
-  if (e.kind === 'git') return renderGitSummary(e) ?? el('div', 'git-sum-row');
+  // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0354）。古い保存分はここへ来る前に省く（web/timeline.mjs）が、
+  // 来ても「未知の種類」のカードにせず、何も出さない
+  if (e.kind === 'git') { const none = el('div'); none.hidden = true; return none; }
   // worktree で始めた印の行（ADR 0089）
   if (e.kind === 'worktree') return renderWorktreeLine(e);
   // 引き継いで戻した行（エージェントの Chrome の窓。ADR 0154）

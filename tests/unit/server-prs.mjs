@@ -32,7 +32,7 @@ export default async function (t) {
   ].join('\n'));
   const ghLog = path.join(scratch, 'gh.log');
   await fs.writeFile(ghLog, '');
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_GIT_SNAPSHOTS: 'off', AGENT_HOST_GH: gh, FAKE_GH_LOG: ghLog }, dataDir: path.join(scratch, 'data'), timeoutMs: 30_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_GH: gh, FAKE_GH_LOG: ghLog }, dataDir: path.join(scratch, 'data'), timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   const ghCalls = async () => (await fs.readFile(ghLog, 'utf8')).split('\n').filter(Boolean);
   try {

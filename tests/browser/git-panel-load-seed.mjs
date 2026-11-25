@@ -1,8 +1,7 @@
-// tests/browser/git-panel-load.cjs の種。git パネルの読み込みの 3 つの形を、使い捨てのリポジトリと fake の会話で作る。
-//   gpl-near … 会話の始まりが読んだ範囲の中（⚑ が行に付く。札なし）
-//   gpl-far  … 会話の始まりが最初に読む 50 件より前（札「読み込んだ範囲より前です［始まりまで読む］」）
-//   gpl-lost … 会話の始まりのコミットがどの ref からも辿れない（「見つかりませんでした」）
-// どの会話も cwd は同じリポジトリ。ほかに worktree を 3 つ作る（作業場所のタブの確認）。
+// tests/browser/git-panel-load.cjs の種。git パネルの読み込みの形を、使い捨てのリポジトリと fake の会話で作る。
+//   gpl-far … 80 コミットのリポジトリ（最初に読む 50 件を超える）。履歴の先頭ページと「続きを読む」の確認に使う
+// 会話の cwd はこのリポジトリ。ほかに worktree を 3 つ作る（作業場所のタブの確認）。
+// 「この会話の間」の範囲と会話の始まりの目印（隠し ref の撮影）は ADR 0354 で消したので、種にも作らない。
 // 使い方: node tests/browser/git-panel-load-seed.mjs <空のデータ置き場> <リポジトリを作る空のフォルダー>
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -29,22 +28,9 @@ const commit = (at) => {
   sh(repo, ["commit", "-q", "-m", `${subjects[n % subjects.length]} (${n})`], at);
   return sh(repo, ["rev-parse", "HEAD"]);
 };
-// 会話の始まりの目印は「そのときの HEAD」。隠し ref の start の撮影コミットの親になる
-const snapshot = (sessionId, parent, at) => {
-  const tree = sh(repo, ["rev-parse", `${parent}^{tree}`]);
-  const snap = sh(repo, ["commit-tree", tree, "-p", parent, "-m", "pleiad turn snapshot"], at);
-  sh(repo, ["update-ref", `refs/pleiad/turn/${sessionId}/1-start`, snap]);
-};
 
 const hashes = [];
 for (let i = 0; i < 80; i++) hashes.push(commit(day + i * 20 * 60_000));
-// 孤立したコミット（どのブランチ・タグからも辿れない）。lost の会話の始まりに使う
-const orphanTree = sh(repo, ["rev-parse", "HEAD^{tree}"]);
-const orphan = sh(repo, ["commit-tree", orphanTree, "-m", "unreachable"], day);
-
-snapshot("gpl-near", hashes[hashes.length - 4], day + 79 * 20 * 60_000);   // 先頭から 3 つ前（最初の 50 件の中）
-snapshot("gpl-far", hashes[9], day + 10 * 20 * 60_000);                  // 先頭から 70 番目（最初の 50 件より前）
-snapshot("gpl-lost", orphan, day + 5 * 60_000);
 
 // 作業場所（作業場所のタブ用）。1 つは未コミットの変更つき
 for (const [i, name] of ["ui-polish", "perf-spike", "docs-pass"].entries()) {
@@ -69,9 +55,7 @@ const make = (id, title, at) => {
   conversations[id] = { segments: [{ backend: "claude", nativeId: `n-${id}` }], info, backend: "fake", nativeId: null, base: messages.length };
   sessions[id] = { backend: "fake", title, cwd: repo, createdAt: at, lastModified: at + 60_000 };
 };
-make("gpl-near", "Near start", day + 79 * 20 * 60_000);
 make("gpl-far", "Far start", day + 10 * 20 * 60_000);
-make("gpl-lost", "Lost start", day + 5 * 60_000);
 fs.writeFileSync(path.join(dir, "conversations.json"), JSON.stringify(conversations));
 fs.writeFileSync(path.join(dir, "sessions.json"), JSON.stringify(sessions));
-console.log(`seeded 3 sessions in ${repo} (${hashes.length} commits, 3 worktrees)`);
+console.log(`seeded 1 session in ${repo} (${hashes.length} commits, 3 worktrees)`);
