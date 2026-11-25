@@ -10,10 +10,14 @@
 // `result` の形から取っている。**推測で足していない**。
 //
 // 使い方: AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs" で antigravity-cli.mjs から起動される。
+//
+// `agy acp`（argv[0] が acp）は ACP（stdio の 1 行 1 JSON の JSON-RPC 2.0）の口になる。stream-json と同じ台本（slow / fail / gated: / partial など）と
+// 環境変数（FAKE_AGY_*）を ACP のフレームに写す。実装は下の「ACP モード」（runAcp）。受け取った依頼は FAKE_AGY_ACP_LOG に 1 行 1 JSON で控える。
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import readline from "node:readline";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 
@@ -104,6 +108,28 @@ if (flag('--print') === '/usage') {
 const needsAuth = process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn();
 let authorized = !needsAuth;
 
+// 身代わりのモデル（id と表示名）。`agy models` の一覧と、ACP の session/new が返す選択肢の元。
+// FAKE_AGY_EXTRA_MODELS（カンマ区切りの id）で足す。委譲の振り分けのテストが、本物の名前（gemini-…）の候補を選ばせるのに使う
+const MODEL_ROWS = () => [
+  ["fake-antigravity-1", "Fake Antigravity 1"],
+  ["fake-antigravity-2", "Fake Antigravity 2 (Thinking)"],
+  ["fake-flash-high", "Fake Flash (High)"],
+  ["fake-flash-low", "Fake Flash (Low)"],
+  ...String(process.env.FAKE_AGY_EXTRA_MODELS ?? "").split(",").filter(Boolean).map((id) => [id, id]),
+];
+// 既定のモデルの表示名。FAKE_AGY_DEFAULT_LABEL_FILE があれば、その中身を既定にする（起動後に agy 側の既定が変わった場合の再現。tests/unit/server-agy-default-model.mjs）。
+// FAKE_AGY_DEFAULT_LABEL が空なら空（既定が分からない場合の再現）
+function defaultLabel() {
+  const labelFile = process.env.FAKE_AGY_DEFAULT_LABEL_FILE;
+  return (labelFile && fs.existsSync(labelFile) ? fs.readFileSync(labelFile, "utf8").trim() : null) ?? process.env.FAKE_AGY_DEFAULT_LABEL ?? "Fake Flash (High)";
+}
+// 本物は起動のたびにログへ選ばれているモデルの表示名を書く（Pleiad はここから既定を読む）。表示名が空なら書かない
+function writeDefaultLabelLog() {
+  const logFile = flag("--log-file");
+  const label = defaultLabel();
+  if (logFile && label) fs.writeFileSync(logFile, `I0923 03:02:52.462073       1 model_config_manager.go:327] Propagating selected model override to backend: label="${label}"` + NL);
+}
+
 // `agy models` は別のサブコマンド（ヘッドレスではない）。ログイン判定がここを通る。
 // 本物は未ログインだと「Please sign in …」で落ち、ログイン済みなら 1 行 1 モデルを出す
 if (argv.includes("models")) {
@@ -118,27 +144,14 @@ if (argv.includes("models")) {
   }
   // 本物（1.2.8）は `id<TAB>表示名`。段違いは別の id で並ぶ（core/backends/antigravity-models.mjs）
   const TAB = String.fromCharCode(9);
-  process.stdout.write(["Fetching available models...",
-    "fake-antigravity-1" + TAB + "Fake Antigravity 1",
-    "fake-antigravity-2" + TAB + "Fake Antigravity 2 (Thinking)",
-    "fake-flash-high" + TAB + "Fake Flash (High)",
-    "fake-flash-low" + TAB + "Fake Flash (Low)",
-    // 足すモデルの id（カンマ区切り）。委譲の振り分けのテストが、本物の名前（gemini-…）の候補を選ばせるのに使う
-    ...String(process.env.FAKE_AGY_EXTRA_MODELS ?? "").split(",").filter(Boolean).map((id) => id + TAB + id),
-  ].join(NL) + NL);
-  // 本物は起動のたびにログへ選ばれているモデルの表示名を書く（Pleiad はここから既定を読む）。
-  // FAKE_AGY_DEFAULT_LABEL が空なら書かない（既定が分からない場合の再現）
-  const logFile = flag("--log-file");
-  // FAKE_AGY_DEFAULT_LABEL_FILE があれば、その中身を既定にする（起動後に agy 側の既定が変わった場合の再現。tests/unit/server-agy-default-model.mjs）
-  const labelFile = process.env.FAKE_AGY_DEFAULT_LABEL_FILE;
-  const label = (labelFile && fs.existsSync(labelFile) ? fs.readFileSync(labelFile, "utf8").trim() : null) ?? process.env.FAKE_AGY_DEFAULT_LABEL ?? "Fake Flash (High)";
-  if (logFile && label) fs.writeFileSync(logFile, `I0923 03:02:52.462073       1 model_config_manager.go:327] Propagating selected model override to backend: label="${label}"` + NL);
+  process.stdout.write(["Fetching available models...", ...MODEL_ROWS().map(([id, name]) => id + TAB + name)].join(NL) + NL);
+  writeDefaultLabelLog();
   process.exit(0);
 }
 
 // 本物は `--print=`（空値）を要る。`--print` 単体だと次のフラグを prompt として飲み込む。
-// 身代わりでも同じ約束を守らせて、呼び出し側の組み立てが崩れたら気づけるようにする
-if (!argv.includes("--print=")) {
+// 身代わりでも同じ約束を守らせて、呼び出し側の組み立てが崩れたら気づけるようにする（`agy acp` は --print を使わない）
+if (argv[0] !== "acp" && !argv.includes("--print=")) {
   process.stderr.write(`Error: --print took "${argv[0] ?? ""}" as its prompt.` + NL);
   process.exit(2);
 }
@@ -153,6 +166,10 @@ let pendingPrompt = null;
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/auth?client_id=fake&code_challenge=fake&state=fake";
 
+// 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査）は skip より勝つ（実機 1.5 系で確認）。FAKE_AGY_ADMIN_REVIEW=1 で真似る。
+// FAKE_AGY_PERMISSION_MODE は任意の値（「サンドボックスで続行」など、確認が要るか分からない値）を返す。stream-json の init と ACP の現在のモードが同じ値を使う
+const permissionMode = () => process.env.FAKE_AGY_ADMIN_REVIEW === "1" ? "request-review" : process.env.FAKE_AGY_PERMISSION_MODE ? process.env.FAKE_AGY_PERMISSION_MODE : has("--dangerously-skip-permissions") ? "skip" : (flag("--mode") ?? "default");
+
 function emitInit() {
   if (started) return;
   started = true;
@@ -162,9 +179,7 @@ function emitInit() {
     init: {
       cwd: process.cwd(),
       tools: ["run_command", "read_file"],
-      // 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査）は skip より勝つ（実機 1.5 系で確認）。FAKE_AGY_ADMIN_REVIEW=1 で真似る。
-      // FAKE_AGY_PERMISSION_MODE は任意の値（「サンドボックスで続行」など、確認が要るか分からない値）を返す
-      permission_mode: process.env.FAKE_AGY_ADMIN_REVIEW === "1" ? "request-review" : process.env.FAKE_AGY_PERMISSION_MODE ? process.env.FAKE_AGY_PERMISSION_MODE : has("--dangerously-skip-permissions") ? "skip" : (flag("--mode") ?? "default"),
+      permission_mode: permissionMode(),
       model: flag("--model") ?? "fake-antigravity-1",
       agent: flag("--agent") ?? "default",
     },
@@ -176,12 +191,12 @@ const step = (body) => send({ event: "step_update", step_update: { conversation_
 let stepIndex = 0;
 // usage は agy の会話ごとの累計で、本物は --conversation で起こし直した別のプロセスでも続きから数える（1.5.2 で実測）。
 // ここでも会話 id ごとにファイルでターンの数を持つ。会話の agy のホーム（HOME）は試験でも利用者の本物なので、置き場は試験のデータ置き場の下
-const usageFile = () => path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-usage", `${conversationId}.json`);
-function usageTurns() {
-  try { return JSON.parse(fs.readFileSync(usageFile(), "utf8")).turns ?? 0; } catch { return 0; }
+const usageFile = (id = conversationId) => path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-usage", `${id}.json`);
+function usageTurns(id = conversationId) {
+  try { return JSON.parse(fs.readFileSync(usageFile(id), "utf8")).turns ?? 0; } catch { return 0; }
 }
-function setUsageTurns(turns) {
-  try { fs.mkdirSync(path.dirname(usageFile()), { recursive: true }); fs.writeFileSync(usageFile(), JSON.stringify({ turns })); } catch {}
+function setUsageTurns(turns, id = conversationId) {
+  try { fs.mkdirSync(path.dirname(usageFile(id)), { recursive: true }); fs.writeFileSync(usageFile(id), JSON.stringify({ turns })); } catch {}
 }
 
 // ---- カスタムエージェント（`--agent`）--------------------------------------
@@ -228,16 +243,15 @@ if (process.env.FAKE_AGY_AGENT_FILE) {
  * 起動した MCP。{ name, call(method, params) }。最初のプロンプトで 1 回だけ起こす（runTurn）。
  * FAKE_AGY_MCP_DISABLED=1 なら起こさない（組織の管理ポリシーで「MCP サーバー」が無効の agy。実機 1.5 系では中継に initialize も来なかった）
  */
-let mcpServers = null;
 let mcpStart = null;
 function startMcp() {
-  mcpStart ??= process.env.FAKE_AGY_MCP_DISABLED === "1" ? Promise.resolve([]) : launchMcp();
+  mcpStart ??= process.env.FAKE_AGY_MCP_DISABLED === "1" ? Promise.resolve([]) : connectMcp(Array.isArray(customAgent?.front?.mcpServers) ? customAgent.front.mcpServers : []);
   return mcpStart;
 }
-async function launchMcp() {
-  mcpServers = [];
-  const { spawn } = await import("node:child_process");
-  for (const spec of Array.isArray(customAgent?.front?.mcpServers) ? customAgent.front.mcpServers : []) {
+/** 渡された MCP（{ serverName, command, args, env }）を起こして握手する。stream-json はカスタムエージェントの分、ACP は session/new の mcpServers の分 */
+async function connectMcp(specs) {
+  const mcpServers = [];
+  for (const spec of specs) {
     const child = spawn(spec.command, spec.args ?? [], { env: { ...process.env, ...(spec.env ?? {}) }, stdio: ["pipe", "pipe", "ignore"] });
     children.push(child);
     const waiting = new Map();
@@ -273,7 +287,7 @@ process.on("exit", () => { for (const child of children) { try { child.kill(); }
  * 読むのはユーザー（HOME の .gemini/config/hooks.json）・作業場所（cwd）と --add-dir の .agents/hooks.json。
  * どこかで { enabled: false } の名前はスコープをまたいで止まる。hook は <その場所>/.agents で動く（実機で確認。2026-09-27・28）
  */
-function agyHooksScript() {
+function agyHooksScript(id = conversationId) {
   const files = [path.join(process.env.HOME || process.env.USERPROFILE || '', '.gemini', 'config', 'hooks.json'),
     ...[process.cwd(), ...addDirs].map((d) => path.join(d, '.agents', 'hooks.json'))];
   const defs = [];
@@ -287,7 +301,7 @@ function agyHooksScript() {
   for (const d of defs) {
     if (off.has(d.name)) continue;
     for (const g of d.spec?.PreToolUse ?? []) for (const h of g.hooks ?? []) {
-      const input = JSON.stringify({ conversationId, workspacePaths: [process.cwd().replace(/\\/g, '/')], stepIdx: 1, toolCall: { name: 'run_command', args: { CommandLine: 'echo hi' } } });
+      const input = JSON.stringify({ conversationId: id, workspacePaths: [process.cwd().replace(/\\/g, '/')], stepIdx: 1, toolCall: { name: 'run_command', args: { CommandLine: 'echo hi' } } });
       const r = spawnSync(h.command, { cwd: d.dir, shell: true, input, encoding: 'utf8', timeout: 20_000 });
       let decision = 'deny';
       try { decision = JSON.parse(r.stdout || '{}').decision ?? 'deny'; } catch {}
@@ -297,29 +311,49 @@ function agyHooksScript() {
   return `hooks:${ran.join(',') || 'none'}`;
 }
 
+/** mcp-tools の答え（起こした MCP のツールの一覧） */
+const mcpToolList = (servers) => JSON.stringify(servers.flatMap((s) => s.tools.map((t) => ({ server: s.name, name: t.name, description: t.description ?? "" }))));
+/** mcp-call:<ツール名または説明の一部> [JSON の引数] を読んで、呼ぶ MCP とツールを選ぶ */
+function pickMcpTool(servers, text) {
+  const [, key, json] = /^mcp-call:(\S+(?: \/ \S+)?)(?: (\{.*\}))?$/.exec(text) ?? [];
+  const server = servers.find((s) => s.tools.some((t) => t.name === key || (t.description ?? "").includes(`[${key}]`)));
+  const tool = server?.tools.find((t) => t.name === key || (t.description ?? "").includes(`[${key}]`));
+  return { key, server, tool, args: json ? JSON.parse(json) : {} };
+}
+/** 本物（agy 1.2.14）は ServerName を空のまま出し、引数は Arguments に入る（stream-json の tool_info.parameters と ACP の rawInput が同じ形） */
+const mcpCallParameters = (tool, args) => ({ ServerName: "", ToolName: tool.name, Arguments: args });
+/** ツールの出力。画像はファイルに退避して、出力の末尾に退避先の行を足す（2026-10-01 実測） */
+function mcpCallOutput(reply, id, index) {
+  const content = reply.result?.content ?? [];
+  const offloaded = content.filter((c) => c.type === "image").map((c, i) => `${NL}[Resource offloaded to file:///C:/fake-agy/brain/${id}/.system_generated/steps/${index}/media_${i}.jpg]`).join("");
+  return reply.error ? `error:${reply.error.message}` : content.map((c) => c.text ?? "").join("") + offloaded;
+}
+
 /** カスタムエージェントの確認用の台本。返事の本文を返す。該当しなければ null */
 async function agentScript(text) {
   if (text === "agent-body") return customAgent?.body ?? "(no agent)";
   if (text === "agy-hooks") return agyHooksScript();
   if (!/^mcp-(tools|call:)/.test(text)) return null;
   const servers = await startMcp();
-  if (text === "mcp-tools") return JSON.stringify(servers.flatMap((s) => s.tools.map((t) => ({ server: s.name, name: t.name, description: t.description ?? "" }))));
-  // mcp-call:<ツール名または説明の一部> [JSON の引数]
-  const [, key, json] = /^mcp-call:(\S+(?: \/ \S+)?)(?: (\{.*\}))?$/.exec(text) ?? [];
-  const server = servers.find((s) => s.tools.some((t) => t.name === key || (t.description ?? "").includes(`[${key}]`)));
-  const tool = server?.tools.find((t) => t.name === key || (t.description ?? "").includes(`[${key}]`));
+  if (text === "mcp-tools") return mcpToolList(servers);
+  const { key, server, tool, args } = pickMcpTool(servers, text);
   if (!tool) return `no-tool:${key}`;
   const index = ++stepIndex;
-  // 本物（agy 1.2.14）は ServerName を空のまま出し、引数は Arguments に入る。画像はファイルに退避して、出力の末尾に退避先の行を足す（2026-10-01 実測）
-  const args = json ? JSON.parse(json) : {};
-  const parameters = { ServerName: "", ToolName: tool.name, Arguments: args };
+  const parameters = mcpCallParameters(tool, args);
   step({ step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters } });
   const reply = await server.call("tools/call", { name: tool.name, arguments: args });
-  const content = reply.result?.content ?? [];
-  const offloaded = content.filter((c) => c.type === "image").map((c, i) => `${NL}[Resource offloaded to file:///C:/fake-agy/brain/${conversationId}/.system_generated/steps/${index}/media_${i}.jpg]`).join("");
-  const output = reply.error ? `error:${reply.error.message}` : content.map((c) => c.text ?? "").join("") + offloaded;
+  const output = mcpCallOutput(reply, conversationId, index);
   step({ step_index: index, state: "DONE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters, output } });
   return `mcp:${output}`;
+}
+
+/**
+ * 前置き（ply_agents の説明・Pleiad の指示・注入したネイティブの指示）が付いた発言だけ末尾の段落へ切る。
+ * 前置きの無い複数段落のプロンプト（候補作りなどの別経路）はそのまま
+ */
+function lastParagraph(wire) {
+  const hasPreamble = /Pleiad が追加した指示|Pleiad の委譲ツール|の指示（適用範囲[:：]|instructions \(|Pleiad instructions/.test(wire.slice(0, wire.lastIndexOf("\n\n")));
+  return hasPreamble && wire.includes("\n\n") ? wire.slice(wire.lastIndexOf("\n\n") + 2) : wire;
 }
 
 async function runTurn(text) {
@@ -338,10 +372,7 @@ async function runTurn(text) {
   if (text.endsWith("wire-dump")) return answer(JSON.stringify({ paragraphs: wire.split("\n\n").length, head: wire.slice(0, 800), tail: wire.slice(-800) }));
   // 届いた本文を丸ごと返す（配達物の試験が、発言の前に足された指示を全部読む）
   if (text.endsWith("wire-all")) return answer(JSON.stringify({ wire }));
-  // 前置き（ply_agents の説明・Pleiad の指示・注入したネイティブの指示）が付いた発言だけ末尾の段落へ切る。
-  // 前置きの無い複数段落のプロンプト（候補作りなどの別経路）はそのまま
-  const hasPreamble = /Pleiad が追加した指示|Pleiad の委譲ツール|の指示（適用範囲[:：]|instructions \(|Pleiad instructions/.test(wire.slice(0, wire.lastIndexOf("\n\n")));
-  if (hasPreamble && wire.includes("\n\n")) text = wire.slice(wire.lastIndexOf("\n\n") + 2);
+  text = lastParagraph(wire);
 
   // 思考の署名が通らなくなった会話（docs/multi-backend.md §2.8「思考の署名が通らない会話」）。実機の記録と同じく、
   // step を 1 つも出さずに INVALID_ARGUMENT の ERROR だけを返す。FAKE_AGY_SIGNATURE_DIR に会話の id の印（poison-signature で置く）か
@@ -603,6 +634,494 @@ async function runTurn(text) {
       usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n },
     },
   });
+}
+
+// ---- ACP モード（`agy acp`）---------------------------------------------------
+//
+// 本物（agy 1.5.17）で測った ACP の口を、stream-json と同じ台本・環境変数で動かす。測ったのは次のとおり:
+//   - initialize: protocolVersion 1・agentCapabilities（loadSession・promptCapabilities・sessionCapabilities・auth.logout・_meta.antigravity）・authMethods が 4 つ
+//   - session/new: UUID の sessionId・models・modes（4 つ）・configOptions（model / thought_level / mode）、続けて available_commands_update と usage_update の通知
+//   - session/prompt: agent_message_chunk・tool_call・tool_call_update・usage_update、stopReason は end_turn / cancelled
+// **モードの id と認証方式の id は数（4 つずつ）しか測っていない**ので、名前は仮（Pleiad の側はこの名前に頼らない）。
+// 会話（session）はデータ置き場（AGENT_HOST_DATA）のファイルに残す。session/load は別のプロセスでも、残した会話を読み直して再生する。
+const ACP_MODES = [
+  { id: "default", name: "Default", description: "Ask before running tools" },
+  { id: "accept-edits", name: "Accept Edits", description: "Apply edits without asking" },
+  { id: "plan", name: "Plan", description: "Plan before acting" },
+  { id: "skip", name: "Skip Permissions", description: "Never ask for permission" },
+];
+const ACP_THOUGHT_LEVELS = ["low", "medium", "high"];
+const ACP_AUTH_METHODS = [
+  { id: "oauth-personal", name: "Log in with Google", description: "Sign in with a Google account" },
+  { id: "gemini-api-key", name: "Gemini API key", description: "Use a Gemini API key" },
+  { id: "vertex-ai", name: "Vertex AI", description: "Use Vertex AI credentials" },
+  { id: "compute-default-credentials", name: "Application default credentials", description: "Use application default credentials" },
+];
+const ACP_WINDOW = 1_000_000;
+const SIGNATURE_ERROR = "INVALID_ARGUMENT (code 400): Invalid thought signature.";
+const acpError = (code, message, data) => Object.assign(new Error(message), { code, ...(data ? { data } : {}) });
+
+async function runAcp() {
+  const out = (frame, onFlushed) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...frame }) + NL, onFlushed);
+  const update = (sessionId, value) => out({ method: "session/update", params: { sessionId, update: value } });
+  const acpLog = (frame) => {
+    if (process.env.FAKE_AGY_ACP_LOG) { try { fs.appendFileSync(process.env.FAKE_AGY_ACP_LOG, JSON.stringify(frame) + NL); } catch {} }
+  };
+
+  // クライアントへの依頼（session/request_permission）。答えが来るまで待つ
+  const asks = new Map();
+  let askSeq = 0;
+  const ask = (method, params) => new Promise((resolve) => {
+    const id = `fake-agy-ask-${++askSeq}`;
+    asks.set(id, resolve);
+    out({ id, method, params });
+  });
+
+  // ---- 会話の置き場 ----
+  const dir = path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-acp");
+  const sessions = new Map();
+  const save = (data) => {
+    data.updatedAt = new Date().toISOString();
+    try { fs.mkdirSync(dir, { recursive: true }); writeList(path.join(dir, `${data.sessionId}.json`), data); } catch {}
+  };
+  const read = (sessionId) => {
+    try {
+      if (!/^[\w-]+$/.test(String(sessionId))) throw new Error("bad id");
+      return JSON.parse(fs.readFileSync(path.join(dir, `${sessionId}.json`), "utf8"));
+    } catch { throw acpError(-32002, `Session not found: ${sessionId}`); }
+  };
+  const need = (params) => {
+    const session = sessions.get(params?.sessionId);
+    if (!session || session.closed) throw acpError(-32602, `Unknown session: ${params?.sessionId}`);
+    return session;
+  };
+  // ACP の mcpServers（stdio は { name, command, args, env: [{ name, value }] }）を、connectMcp の形へ直す
+  const mcpSpecs = (mcpServers) => (Array.isArray(mcpServers) ? mcpServers : []).filter((s) => s && typeof s.command === "string").map((s) => ({
+    serverName: s.name, command: s.command, args: s.args ?? [],
+    env: Array.isArray(s.env) ? Object.fromEntries(s.env.filter((e) => e?.name).map((e) => [e.name, e.value ?? ""])) : (s.env ?? {}),
+  }));
+  // 会話を預かる。mcpServers が渡されたら、返事を待たずに裏で起こして握手する（最初のプロンプトで待つ）
+  const attach = (data, mcpServers) => {
+    let session = sessions.get(data.sessionId);
+    if (!session) {
+      session = { data, tail: Promise.resolve(), epoch: 0, token: null, closed: false, toolSeq: 0, mcpStart: null };
+      sessions.set(data.sessionId, session);
+    }
+    const specs = mcpSpecs(mcpServers);
+    if (specs.length && !session.mcpStart && process.env.FAKE_AGY_MCP_DISABLED !== "1") session.mcpStart = connectMcp(specs).catch(() => []);
+    return session;
+  };
+
+  // ---- session の見せ方 ----
+  const initialModel = () => {
+    const rows = MODEL_ROWS();
+    const asked = rows.find(([id]) => id === flag("--model"));
+    const label = defaultLabel();
+    const byLabel = label ? (rows.find(([, name]) => name === label) ?? rows[0]) : null;
+    return (asked ?? byLabel)?.[0] ?? null;
+  };
+  const configOptions = (data) => [
+    { id: "model", name: "Model", category: "model", type: "select", currentValue: data.model ?? "", options: MODEL_ROWS().map(([value, name]) => ({ value, name })) },
+    { id: "thought_level", name: "Thinking", category: "thought_level", type: "select", currentValue: data.thought, options: ACP_THOUGHT_LEVELS.map((value) => ({ value, name: value })) },
+    { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: data.mode, options: ACP_MODES.map((m) => ({ value: m.id, name: m.name })) },
+  ];
+  const sessionSetup = (data) => ({
+    models: { ...(data.model ? { currentModelId: data.model } : {}), availableModels: MODEL_ROWS().map(([modelId, name]) => ({ modelId, name })) },
+    modes: { currentModeId: data.mode, availableModes: ACP_MODES },
+    configOptions: configOptions(data),
+    _meta: { antigravity: { tier: { name: "Fake Tier" } } },
+  });
+  const usage = (sessionId, n) => update(sessionId, {
+    sessionUpdate: "usage_update", used: 21 * n, size: ACP_WINDOW,
+    // 本物の usage の中身は stream-json の result.usage（入力・出力・思考・キャッシュ読み）。ACP の側の形は測っていないので、身代わりの置き場として _meta に置く
+    _meta: { antigravity: { usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n } } },
+  });
+  // session/new・load・resume の返事の後に、コマンドの一覧と usage を通知する（usage は FAKE_AGY_USAGE_DELAY_MS だけ遅れる）
+  const announce = (session, ctx) => ctx.afterFlush.push(() => {
+    const id = session.data.sessionId;
+    update(id, { sessionUpdate: "available_commands_update", availableCommands: [
+      { name: "usage", description: "Show usage" }, { name: "compact", description: "Compact the conversation" },
+    ] });
+    setTimeout(() => { if (!session.closed) usage(id, usageTurns(id)); }, Number(process.env.FAKE_AGY_USAGE_DELAY_MS ?? 0));
+  });
+  const requireAuth = () => {
+    if (!authorized && !signedIn()) throw acpError(-32000, "Authentication required");
+  };
+  const appendedPrompt = (meta) => meta?.antigravity?.systemPrompt?.append ?? meta?.systemPrompt?.append ?? null;
+
+  // ---- 中断 ----
+  // 走っているターンの札（cancelled・wake）。待ちは hold（中断まで）と pause（時間か中断まで）で、どちらも session/cancel で起きる
+  const hold = (token) => new Promise((resolve) => { if (token.cancelled) return resolve(); token.wake = resolve; });
+  const pause = (token, ms) => new Promise((resolve) => {
+    if (token.cancelled) return resolve();
+    const timer = setTimeout(resolve, ms);
+    token.wake = () => { clearTimeout(timer); resolve(); };
+  });
+  const cancel = (sessionId) => {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    session.epoch++;   // 順番待ちの prompt（まだ始まっていないもの）は、始まる前に cancelled で答える
+    if (session.token) { session.token.cancelled = true; session.token.wake?.(); }
+  };
+
+  // ---- 1 ターン ----
+  async function turn(session, wire, ctx) {
+    const { data } = session;
+    const id = data.sessionId;
+    const token = { cancelled: false, wake: null };
+    session.token = token;
+    let reply = "";
+    const say = (text) => { reply += text; update(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text } }); };
+    const startTool = (title, rawInput) => {
+      const toolCallId = `fake-agy-tool-${++session.toolSeq}`;
+      update(id, { sessionUpdate: "tool_call", toolCallId, title, kind: "execute", status: "in_progress", rawInput });
+      return toolCallId;
+    };
+    const endTool = (toolCallId, status, output) => update(id, {
+      sessionUpdate: "tool_call_update", toolCallId, status,
+      ...(output === undefined ? {} : { content: [{ type: "content", content: { type: "text", text: output } }], rawOutput: { output } }),
+    });
+    const finish = (extra = {}) => ({ stopReason: token.cancelled ? "cancelled" : "end_turn", ...extra });
+    const text = lastParagraph(wire);
+    data.messages.push({ role: "user", text });
+    data.title ??= text.slice(0, 40);
+
+    const script = async () => {
+      // 届いた本文を確かめる台本（前置きを含めて）
+      if (wire.endsWith("wire-dump")) { say(JSON.stringify({ paragraphs: wire.split("\n\n").length, head: wire.slice(0, 800), tail: wire.slice(-800) })); return finish(); }
+      if (wire.endsWith("wire-all")) { say(JSON.stringify({ wire })); return finish(); }
+      // session/new の _meta で足したシステムプロンプトが届いたかを返す
+      if (text === "system-prompt") { say(data.systemPrompt ?? "(none)"); return finish(); }
+
+      // 思考の署名が通らなくなった会話（stream-json と同じ印のファイル）。step を 1 つも出さずに断る
+      const signatureDir = process.env.FAKE_AGY_SIGNATURE_DIR;
+      if (signatureDir && (fs.existsSync(path.join(signatureDir, id)) || fs.existsSync(path.join(signatureDir, "all")))) throw acpError(-32000, SIGNATURE_ERROR);
+      if (signatureDir && (text === "poison-signature" || text === "poison-signature-all")) {
+        fs.mkdirSync(signatureDir, { recursive: true });
+        fs.writeFileSync(path.join(signatureDir, text === "poison-signature" ? id : "all"), "");
+        say(`署名を壊した: ${text}`);
+        return finish();
+      }
+      if (text === "signature-after-step") { startTool("read_file", { path: "x" }); throw acpError(-32000, SIGNATURE_ERROR); }
+      if (text.startsWith("wire-has:")) { say(wire.includes(text.slice("wire-has:".length)) ? "wire-has:yes" : "wire-has:no"); return finish(); }
+
+      // 返事を返した直後にプロセスが終わる agy（応答を書き切ってから終える）
+      if (text === "result-then-exit") {
+        say("完了した返事");
+        ctx.afterFlush.push(() => process.exit(0));
+        return finish();
+      }
+
+      // カスタムエージェント・hooks・MCP の確認（agent-body / agy-hooks / mcp-tools / mcp-call:…）。本文だけ返して終える
+      if (text === "agent-body" || text === "agy-hooks" || /^mcp-(tools|call:)/.test(text)) {
+        let body;
+        if (text === "agent-body") body = customAgent?.body ?? "(no agent)";
+        else if (text === "agy-hooks") body = agyHooksScript(id);
+        else {
+          const servers = session.mcpStart ? await session.mcpStart : [];
+          if (text === "mcp-tools") body = mcpToolList(servers);
+          else {
+            const { key, server, tool, args } = pickMcpTool(servers, text);
+            if (!tool) body = `no-tool:${key}`;
+            else {
+              const parameters = mcpCallParameters(tool, args);
+              const toolCallId = startTool("call_mcp_tool", parameters);
+              const result = await server.call("tools/call", { name: tool.name, arguments: args });
+              const output = mcpCallOutput(result, id, session.toolSeq);
+              endTool(toolCallId, "completed", output);
+              body = `mcp:${output}`;
+            }
+          }
+        }
+        say(body);
+        return finish();
+      }
+
+      // ゲートで止める台本（gated:<名前>）: 前置き → ツールの実行中でゲート（FAKE_AGY_GATE_DIR/<名前>）が開くまで待つ → 完了 → 本文。
+      // 応答を書き出した後に <ゲート>.done の印を置く（読む側が居ない間に agy が終わったことを、テストが見るのに使う）
+      const gated = /^gated:(\S+)/.exec(text);
+      if (gated) {
+        say("前置き。");
+        const toolCallId = startTool("run_command", { CommandLine: `echo ${gated[1]}` });
+        const gate = path.join(process.env.FAKE_AGY_GATE_DIR ?? "", gated[1]);
+        while (!fs.existsSync(gate) && !token.cancelled) await pause(token, 20);
+        if (token.cancelled) return finish();
+        endTool(toolCallId, "completed", `out-${gated[1]}`);
+        say(`終わり: ${gated[1]}`);
+        ctx.afterFlush.push(() => fs.writeFileSync(`${gate}.done`, ""));
+        return finish();
+      }
+
+      // ターンの途中の控えを測る台本（partial は中断まで待つ。-fail は ERROR、-exit はプロセスごと落ち、-ok は続きを足して終わる）
+      const partial = /^partial(?:-(fail|exit|ok))?/.exec(text);
+      if (partial) {
+        say("途中まで");
+        endTool(startTool("run_command", { CommandLine: "echo partial" }), "completed", "partial-out");
+        if (!partial[1]) { await hold(token); return finish(); }
+        await pause(token, Number(process.env.FAKE_AGY_PARTIAL_HOLD_MS ?? 400));
+        if (token.cancelled) return finish();
+        if (partial[1] === "exit") process.exit(3);
+        if (partial[1] === "ok") { say("。続き"); return finish(); }
+        throw acpError(-32000, "agy が途中で失敗した");
+      }
+
+      // 終わらないコマンド（hang-command）。コマンドはシェルの子（agy の直下）で走る。中断は応答を cancelled で返すが、コマンドは止めない（裏のコマンドを止める試験）
+      if (text.startsWith("hang-command")) {
+        const command = 'node -e "setInterval(()=>{},1000)"';
+        const toolCallId = startTool("run_command", { CommandLine: command, Cwd: data.cwd, WaitMsBeforeAsync: 20000 });
+        const child = spawn(command, { shell: true, stdio: "ignore", windowsHide: true });
+        if (process.env.FAKE_AGY_COMMAND_PID_FILE) fs.writeFileSync(process.env.FAKE_AGY_COMMAND_PID_FILE, String(child.pid));
+        const ended = await new Promise((resolve) => {
+          child.once("exit", (code, signal) => resolve(signal ?? code));
+          token.wake = () => resolve(null);
+          if (token.cancelled) resolve(null);
+        });
+        if (token.cancelled) return finish();
+        endTool(toolCallId, "completed", `exited: ${ended}`);
+        say("コマンドが終わった");
+        return finish();
+      }
+
+      // 何も出さずに中断まで待つターン（quiet）と、本文を 1 つ出して中断まで待つターン（slow）
+      if (text.startsWith("quiet")) { await hold(token); return finish(); }
+      if (text.startsWith("slow") || text.includes("[slow]")) { say("待つ"); await hold(token); return finish(); }
+
+      // 送信と完了で時刻が変わることを測るための、少しかかるターン（delay / delay500）
+      const slowly = /^delay(\d+)?/.exec(text);
+      if (slowly) { await pause(token, Number(slowly[1] ?? 300)); if (token.cancelled) return finish(); }
+
+      if (text === "error-body") { say("本文は届いた"); throw acpError(-32000, "結果は失敗"); }
+      const noReplyLimit = text === "limit-no-reply" || text.endsWith("\nlimit-no-reply");
+      if (text === "error-after-reply" || text === "limit-after-reply" || noReplyLimit || text === "error-after-tool") {
+        if (!noReplyLimit) say("完成した返事");
+        if (text === "error-after-tool") startTool("read_file", { path: "x" });
+        throw acpError(-32000, text === "error-after-reply" || text === "error-after-tool" ? "後続処理が失敗" : "Individual quota reached. Resets in 3h.");
+      }
+
+      // 組織の管理ポリシーで確認の要るコマンドを、ヘッドレスの agy が黙って拒否したターン（ツールは失敗で終わり、拒否は _meta に載る）
+      if (text === "admin-denied" || text === "admin-denied-reply") {
+        const toolCallId = startTool("run_command", { CommandLine: "echo hi" });
+        endTool(toolCallId, "failed", `permission check failed for command "echo hi": user denied permission to run command:${NL}echo hi`);
+        if (text === "admin-denied-reply") say("コマンドを実行できませんでした");
+        return finish({ _meta: { antigravity: { deniedActions: [{ action: "command", display_name: "RunCommand" }] } } });
+      }
+
+      // クライアントに許可を求める台本（[permission]）。選ばれた選択肢を返事に書く
+      if (text.includes("[permission]")) {
+        const rawInput = { CommandLine: "echo permission" };
+        const toolCallId = startTool("run_command", rawInput);
+        const answer = await Promise.race([
+          ask("session/request_permission", { sessionId: id, toolCall: { toolCallId, title: "run_command", rawInput }, options: [
+            { optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "reject_once", kind: "reject_once", name: "Reject once" },
+          ] }),
+          hold(token).then(() => null),
+        ]);
+        if (!answer) return finish();
+        const outcome = answer.error ? "error" : answer.result?.outcome?.outcome === "selected" ? answer.result.outcome.optionId : (answer.result?.outcome?.outcome ?? "none");
+        endTool(toolCallId, outcome === "allow_once" ? "completed" : "failed", outcome === "allow_once" ? "permitted" : "not permitted");
+        say(`permission:${outcome}`);
+        return finish();
+      }
+
+      if (text.startsWith("fail") || text.includes("[fail]")) {
+        // fail-400 は思考の署名ではない INVALID_ARGUMENT（作り直さない側の確かめ）
+        throw acpError(-32603, text === "fail-400" ? "INVALID_ARGUMENT (code 400): Request contains an invalid argument." : "agy が失敗した");
+      }
+
+      // 次の発言の候補の指示（core/prompt-suggestions.mjs）には JSON で答え、本物と同じく会話の置き場をホームの下に作る
+      if (text.includes("Return only JSON matching this schema")) {
+        const base = path.join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".gemini", "antigravity-cli");
+        try {
+          fs.mkdirSync(path.join(base, "conversations"), { recursive: true });
+          fs.mkdirSync(path.join(base, "brain", id), { recursive: true });
+          fs.writeFileSync(path.join(base, "conversations", `${id}.db`), "");
+        } catch {}
+        say(JSON.stringify({ suggestion: "テストを流して" }));
+        return finish();
+      }
+
+      // 本文は 4 文字ずつのデルタで流れ、ツールは tool_call（実行中）→ tool_call_update（完了と出力）の 2 回で来る
+      for (const chunk of `了解: ${text}`.match(/[\s\S]{1,4}/g) ?? []) {
+        if (token.cancelled) return finish();
+        say(chunk);
+        await pause(token, 1);
+      }
+      const toolCallId = startTool("run_command", { CommandLine: "echo hello" });
+      await pause(token, 1);
+      endTool(toolCallId, "completed", "hello\r\n");
+      // 本物と同じく、usage は会話の累計（stream-json と同じ数え方。usage-reset は数え直す）
+      const n = text.startsWith("usage-reset") ? 1 : usageTurns(id) + 1;
+      setUsageTurns(n, id);
+      usage(id, n);
+      return finish();
+    };
+
+    try {
+      // 本物は MCP を最初のプロンプトで待つ。返事を待たない MCP で止まらないよう上限を置く
+      if (session.mcpStart) await Promise.race([session.mcpStart, new Promise((r) => setTimeout(r, 10_000).unref())]);
+      return await script();
+    } finally {
+      // 返す前に会話を残す（session/load が、止まった後でも途中までの本文を再生できる）
+      if (reply) data.messages.push({ role: "assistant", text: reply });
+      save(data);
+      if (session.token === token) session.token = null;
+    }
+  }
+
+  // ---- 依頼の表 ----
+  const methods = {
+    initialize: async () => ({
+      protocolVersion: 1,
+      agentInfo: { name: "agy", title: "Antigravity CLI", version: process.env.FAKE_AGY_VERSION || "1.2.5" },
+      agentCapabilities: {
+        loadSession: true, load_session: true,
+        promptCapabilities: { image: true, embeddedContext: true },
+        sessionCapabilities: { resume: {}, close: {}, load: {}, list: {}, additionalDirectories: {} },
+        auth: { logout: {} },
+        _meta: { antigravity: { tier: true, systemPrompt: { append: true } } },
+      },
+      authMethods: ACP_AUTH_METHODS,
+    }),
+    authenticate: async (params) => {
+      if (!ACP_AUTH_METHODS.some((m) => m.id === params.methodId)) throw acpError(-32602, `Unknown auth method: ${params.methodId}`);
+      authorized = true;
+      // 資格情報が残った、の印。次に起きるプロセス（`agy models` など）から見える
+      if (authFile) { try { fs.mkdirSync(path.dirname(authFile), { recursive: true }); fs.writeFileSync(authFile, "ok"); } catch {} }
+      return {};
+    },
+    logout: async () => {
+      if (authFile) fs.rmSync(authFile, { force: true });
+      authorized = false;
+      return {};
+    },
+    "session/new": async (params, ctx) => {
+      requireAuth();
+      // 一覧が取れない agy の再現（本物は session/new の返事にモデルの一覧を載せる）
+      if (process.env.FAKE_AGY_MODELS_FAIL === "1") throw acpError(-32603, "agy internal failure while listing models");
+      const data = {
+        sessionId: randomUUID(), cwd: params.cwd ?? process.cwd(), model: initialModel(), thought: "medium", mode: permissionMode(),
+        messages: [], systemPrompt: appendedPrompt(params._meta),
+        additionalDirectories: Array.isArray(params.additionalDirectories) ? params.additionalDirectories : [], title: null,
+      };
+      save(data);
+      const session = attach(data, params.mcpServers);
+      announce(session, ctx);
+      return { sessionId: data.sessionId, ...sessionSetup(data) };
+    },
+    "session/load": async (params, ctx) => {
+      requireAuth();
+      const data = read(params.sessionId);
+      if (params.cwd) data.cwd = params.cwd;
+      const session = attach(data, params.mcpServers);
+      // load は残した会話を返事の前に再生する（resume は再生しない）
+      for (const message of session.data.messages) {
+        update(data.sessionId, { sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk", content: { type: "text", text: message.text } });
+      }
+      announce(session, ctx);
+      return sessionSetup(session.data);
+    },
+    "session/resume": async (params, ctx) => {
+      requireAuth();
+      const data = read(params.sessionId);
+      if (params.cwd) data.cwd = params.cwd;
+      const session = attach(data, params.mcpServers);
+      announce(session, ctx);
+      return sessionSetup(session.data);
+    },
+    "session/list": async (params) => {
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch {}
+      const found = [];
+      for (const name of names.filter((n) => n.endsWith(".json"))) {
+        try { found.push(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))); } catch {}
+      }
+      return {
+        sessions: found.filter((d) => !params.cwd || d.cwd === params.cwd)
+          .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+          .map((d) => ({ sessionId: d.sessionId, cwd: d.cwd, title: d.title, updatedAt: d.updatedAt })),
+      };
+    },
+    "session/close": async (params) => {
+      const session = need(params);
+      cancel(params.sessionId);
+      session.closed = true;
+      sessions.delete(params.sessionId);
+      session.mcpStart?.then((servers) => { for (const s of servers) { try { s.child.kill(); } catch {} } });
+      return {};
+    },
+    "session/prompt": async (params, ctx) => {
+      requireAuth();
+      const session = need(params);
+      const wire = (Array.isArray(params.prompt) ? params.prompt : []).filter((b) => b?.type === "text").map((b) => b.text).join("");
+      // 受け取ったプロンプトを 1 行ずつ控える（再送で二重に届かないことを数える試験用）
+      if (process.env.FAKE_AGY_PROMPT_LOG) { try { fs.appendFileSync(process.env.FAKE_AGY_PROMPT_LOG, `${wire.replaceAll("\n", " ")}\n`); } catch {} }
+      // 1 つの会話の prompt は 1 つずつ。走っている間に来たものは順番を待ち、中断されたら始まる前に cancelled で答える
+      const epoch = session.epoch;
+      const run = session.tail.then(() => (session.epoch !== epoch || session.closed ? { stopReason: "cancelled" } : turn(session, wire, ctx)));
+      session.tail = run.catch(() => {});
+      return run;
+    },
+    "session/set_config_option": async (params) => {
+      const session = need(params);
+      const option = configOptions(session.data).find((o) => o.id === params.configId);
+      if (!option) throw acpError(-32602, `Unknown config option: ${params.configId}`);
+      if (!option.options.some((o) => o.value === params.value)) throw acpError(-32602, `Invalid value '${params.value}' for config option '${params.configId}'`);
+      session.data[{ model: "model", thought_level: "thought", mode: "mode" }[option.id]] = params.value;
+      save(session.data);
+      const options = configOptions(session.data);
+      update(params.sessionId, { sessionUpdate: "config_option_update", configOptions: options });
+      return { configOptions: options };
+    },
+    "session/set_mode": async (params) => {
+      const session = need(params);
+      if (!ACP_MODES.some((m) => m.id === params.modeId)) throw acpError(-32602, `Invalid mode: ${params.modeId}`);
+      session.data.mode = params.modeId;
+      save(session.data);
+      update(params.sessionId, { sessionUpdate: "current_mode_update", currentModeId: params.modeId });
+      return {};
+    },
+  };
+
+  // 1 行ごとに非同期で処理する（止まっている prompt が、ほかの依頼や session/cancel を止めない）
+  const handle = async (line) => {
+    let frame;
+    try { frame = JSON.parse(line); } catch { return; }
+    if (!frame || typeof frame !== "object") return;
+    if (typeof frame.method === "string") acpLog(frame);
+    // クライアントへの依頼への答え
+    if (frame.method === undefined && frame.id !== undefined) {
+      const waiting = asks.get(frame.id);
+      if (waiting) { asks.delete(frame.id); waiting(frame); }
+      return;
+    }
+    if (typeof frame.method !== "string") return;
+    // session/cancel は通知。id 確認の前に処理する（id 付きで来たら空の答えを返す）
+    if (frame.method === "session/cancel") {
+      cancel(frame.params?.sessionId);
+      if (frame.id !== undefined) out({ id: frame.id, result: {} });
+      return;
+    }
+    if (frame.id === undefined) return;   // 知らない通知は捨てる
+    const ctx = { afterFlush: [] };
+    try {
+      if (!Object.hasOwn(methods, frame.method)) throw acpError(-32601, `Method not found: ${frame.method}`);
+      const result = await methods[frame.method](frame.params ?? {}, ctx);
+      out({ id: frame.id, result: result ?? {} }, () => { for (const fn of ctx.afterFlush) { try { fn(); } catch {} } });
+    } catch (error) {
+      out({ id: frame.id, error: { code: Number.isInteger(error.code) ? error.code : -32000, message: String(error.message), ...(error.data ? { data: error.data } : {}) } });
+    }
+  };
+
+  writeDefaultLabelLog();
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  rl.on("line", (line) => { if (line.trim()) handle(line).catch(() => {}); });
+  // 親が消えたら道連れになる。stdin が閉じたことを終了の合図にする
+  await new Promise((resolve) => rl.on("close", resolve));
+}
+
+if (argv[0] === "acp") {
+  await runAcp();
+  process.exit(0);
 }
 
 // ---- stdin -----------------------------------------------------------------

@@ -272,6 +272,7 @@ const SUITES = [
   './unit/process-tree.mjs',
   './unit/acp-client.mjs',
   './unit/acp-held-conversation.mjs',
+  './unit/fake-agy-acp.mjs',
   './unit/devin-variants.mjs',
   './unit/devin-metadata-sessions.mjs',
   './unit/devin-config.mjs',
