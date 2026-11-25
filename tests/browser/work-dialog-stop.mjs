@@ -2,10 +2,11 @@
 //   1. 見出しに「停止」は無い。止めるのは入力欄の中断ボタン 1 つ（塗りの四角・34×34・字なし・名前は「中断」）
 //   2. 走っている子: 押すと abort が子の会話へ届き、子が止まる。一覧の印・見出しの印が同時に「中止」へ変わる
 //   3. 承認待ちの子: 出る。押すと承認も片づき、子が止まる
-//   4. 順番待ち（queued）の子: 出る。押すと止まる（abort で止まらなければ cancelAgentTask に切り替える根拠をここで測る）
-//   5. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
-//   6. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0355 §7）
-//   7. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
+//   4. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
+//   5. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0355 §7）
+//   6. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
+// 順番待ち（queued）のまま留まる子は、上限の子へ積んだ指示も待たずに走る（ADR 0352）ので画面の操作だけでは作れない。
+// 順番待ちの子を止めたときの動き（止めた通知・上限を外す）は tests/unit/agent-tasks-end-notice.mjs が更新の準備中（canStart）に止める形で見る
 // 実行: node tests/browser/work-dialog-stop.mjs   （WORK_DIALOG_STOP_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -72,13 +73,6 @@ try {
   const askChildId = (await taskOf(askT.taskId)).sessionId;
   const askPerm = await client.waitFor(e => e.type === 'permission' && e.sessionId === askChildId, { from: 0, ms: 30_000 });
   console.log('ask permission', askPerm.id, askPerm.toolName ?? askPerm.tool);
-  const resetsAt = Date.now() + 3 * 3600_000;
-  const limT = await delegate('順番待ちの子', `limit ${resetsAt}`);
-  await wait(async () => (await taskOf(limT.taskId))?.status === 'failed', 'limit child failed');
-  const sent = await callParent('ply_task_send', { taskId: limT.taskId, message: 'echo:続き' });
-  assert.equal(sent.status, 'queued', 'the limited child holds a queued send');
-  await sleep(1500);
-  assert.equal((await taskOf(limT.taskId)).status, 'queued', 'the limited child is a stable queued task');
   const grandArgs = { backend: 'fake', kind: 'mechanical', title: '孫', task: 'slow' };
   const grT = await delegate('孫を待つ子', ply('ply_delegate', grandArgs));
   await wait(async () => { const all = await tasks(); return all.some(r => r.parentSessionId === (all.find(x => x.taskId === grT.taskId)?.sessionId ?? '-') && ['running', 'queued'].includes(r.status)); }, 'grandchild running');
@@ -209,34 +203,20 @@ try {
   await wait(() => !stopBtn().shown, 'stop button hidden after the stop', 8000);
   console.log('PASS: approval-waiting child — the button shows; pressing stops the child and clears the approval');
 
-  // ---- 4. 順番待ち（queued）の子 ----
-  await openCard(limT.taskId, 'queued');
-  const limChild = await childIdOf(limT.taskId);
-  await wait(() => stopBtn().shown, 'stop button on the queued child');
-  assert.equal((await taskOf(limT.taskId)).status, 'queued');
-  shot('4-queued-1280');
-  pressStop();
-  await wait(() => cmds('abort').some(c => c.sessionId === limChild), 'abort sent for the queued child');
-  let queuedStopped = false;
-  try { await wait(async () => ['cancelled', 'interrupted'].includes((await taskOf(limT.taskId)).status), 'queued task stopped', 8000); queuedStopped = true; } catch { /* 下で切り替える */ }
-  console.log('queued: abort alone stopped it =', queuedStopped, '(status', (await taskOf(limT.taskId)).status + ')');
-  assert.ok(queuedStopped, 'abort stops a queued child (otherwise the queued case must send cancelAgentTask)');
-  console.log('PASS: queued child — the button shows and abort stops it');
-
-  // ---- 5. 孫を待っている子（ターンの外） ----
+  // ---- 4. 孫を待っている子（ターンの外） ----
   await openCard(grT.taskId, 'grandchild wait');
   const grChild = await childIdOf(grT.taskId);
   const grBefore = await taskOf(grT.taskId);
   console.log('grand-wait child task', grBefore.status);
   await wait(() => stopBtn().shown, 'stop button on the child waiting for a grandchild');
-  shot('5-grandchild-1280');
+  shot('4-grandchild-1280');
   pressStop();
   await wait(() => cmds('abort').some(c => c.sessionId === grChild), 'abort sent for the child waiting on a grandchild');
   await wait(async () => ['cancelled', 'interrupted'].includes((await taskOf(grT.taskId)).status), 'waiting child stopped');
   await wait(async () => (await tasks()).filter(r => r.parentSessionId === grChild).every(r => !['queued', 'running', 'cancelling'].includes(r.status)), 'the grandchild stopped too');
   console.log('PASS: child waiting for a grandchild — the button shows; abort stops both');
 
-  // ---- 6. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0355 §7） ----
+  // ---- 5. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0355 §7） ----
   //      知らせは子ごとの節（1 件なら見出しが「[Pleiad タスク完了通知 / <ID>]」、まとめたら「--- <ID> ---」）に分かれる。その子の節だけを見る
   evaluate(() => document.getElementById('workDialog').close());
   const sectionOf = (text, id) => {
@@ -247,7 +227,7 @@ try {
   };
   const stoppedNotice = id => client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent)
     .map(e => sectionOf(String(e.text), id)).find(s => s && s.includes('人が止めました'));
-  for (const [id, label] of [[runT.taskId, 'running'], [askT.taskId, 'approval'], [limT.taskId, 'queued'], [grT.taskId, 'grandchild wait']]) {
+  for (const [id, label] of [[runT.taskId, 'running'], [askT.taskId, 'approval'], [grT.taskId, 'grandchild wait']]) {
     try { await wait(() => !!stoppedNotice(id), `the notice that wakes the parent says a person stopped ${label} (${id})`); }
     catch (e) {
       // 届かなかったときの手がかり（行の通知の状態と、その子の ID を含む節）
@@ -259,7 +239,7 @@ try {
   }
   console.log('PASS: the notice that wakes the parent carries each stopped child id and 「人が止めました」');
 
-  // ---- 7. メインの中断ボタンも同じ形 ----
+  // ---- 6. メインの中断ボタンも同じ形 ----
   const known = new Set([parent, first.sessionId, ...(await tasks()).flatMap(r => [r.sessionId, r.parentSessionId])]);
   const slowMark = client.mark();
   await client.cmd('runTurn', { backend: 'fake', cwd: work, prompt: 'slow' });
@@ -274,7 +254,7 @@ try {
   });
   console.log('main stop', JSON.stringify(m));
   assert.deepEqual([m.w, m.h, m.svgW, m.svgH, m.text, m.label, m.title], [34, 34, 15, 15, '', '中断', '中断'], 'the main stop button has the same shape');
-  shot('7-main-1280');
+  shot('6-main-1280');
   clickOn('#abort', 'main stop');
   await wait(() => cmds('abort').some(c => c.sessionId === slowSession), 'main stop sends abort');
   console.log('PASS: the main stop button has the same shape and still sends abort');
