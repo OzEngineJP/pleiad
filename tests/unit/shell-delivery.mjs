@@ -46,12 +46,15 @@ export default async function (t) {
     try {
       const shellRuntime = { url: 'http://127.0.0.1:1/mcp/shell', headers: { Authorization: 'Bearer x' }, nativeOff: true, instructions: 'use ply_shell' };
       await claude.runTurn({ prompt: 'hello', sessionId: null, cwd: scratch, mode: 'default', emit() {}, signal: new AbortController(), shellRuntime });
-      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run より長い）', mcpConf.ply_shell?.url === shellRuntime.url && mcpConf.ply_shell.timeout > 600_000 && !options?.mcpServers?.ply_shell);
+      const nativeOffConf = mcpConf;
+      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run の最長の待ち・承認待ちより長い）', mcpConf.ply_shell?.url === shellRuntime.url && mcpConf.ply_shell.timeout > 600_000 && !options?.mcpServers?.ply_shell);
       t.ok('Claude: 切る会話は Bash・PowerShell を外し、使い方の指示を足す', ['Bash', 'PowerShell'].every((n) => options?.disallowedTools?.includes(n)) && options?.systemPrompt?.append?.includes('use ply_shell'));
       const decided = await options.canUseTool('mcp__ply_shell__run', { command: 'echo' }, { signal: new AbortController().signal, suggestions: [] });
       t.ok('Claude: ply_shell は聞かない（承認は橋）', decided?.behavior === 'allow', JSON.stringify(decided));
       await claude.runTurn({ prompt: 'hello', sessionId: null, cwd: scratch, mode: 'default', emit() {}, signal: new AbortController(), shellRuntime: { ...shellRuntime, nativeOff: false, instructions: null } });
       t.ok('Claude: 切らない会話は Bash を残す', !(options?.disallowedTools ?? []).includes('Bash'));
+      // ply_shell が唯一のシェルになる会話は、ツール検索の後ろに回さず最初から読み込む（スキーマを読む前の呼び出しは 1 回失敗する）。切らない会話は今までどおり
+      t.ok('Claude: 切る会話の ply_shell は alwaysLoad で最初から読み込む。切らない会話は付けない', nativeOffConf?.ply_shell?.alwaysLoad === true && mcpConf.ply_shell?.alwaysLoad === undefined, JSON.stringify({ nativeOffConf, mcpConf }));
     } finally { restore(); await fs.rm(scratch, { recursive: true, force: true, maxRetries: 5 }); }
   }
 
