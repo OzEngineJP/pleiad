@@ -1,16 +1,13 @@
 // antigravity バックエンドを server 越しに通すテスト。**本物の agy は起動しない。**
 //
 // AGENT_HOST_AGY_BIN に `node tests/lib/fake-agy.mjs` を渡すと、
-// core/backends/antigravity-cli.mjs は「ヘッドレスの stream-json を真似た子プロセス」と話す。
-// つまり測っているのは NDJSON の張り方と、step_update -> 正規化イベントの写し替えと、
+// core/backends/antigravity.mjs は「ACP（agy acp）を真似た子プロセス」と話す。
+// つまり測っているのは JSON-RPC の張り方と、session/update -> 正規化イベントの写し替えと、
 // 控えの書き出しであって、agy そのものではない。
 //
-// このバックエンドは**持てないものが多い**ので、持てないことも測る:
-// 対話承認が無い / 思考が流れない。
-//
 // 実機で踏んだ穴（docs/multi-backend.md §2.8）もここで塞いだままにする:
-// ツールの ACTIVE / DONE を分けること、出力の打ち切りを成功と取り違えないこと、
-// 打ち切った agy を残さないこと、`--print-timeout` を渡すこと。
+// ツールの開始・終了を分けること、出力の打ち切りを成功と取り違えないこと、
+// 打ち切った agy を残さないこと。
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -150,7 +147,7 @@ export default async function (t) {
     // 持てないもの
     t.ok("思考は流れない（agy は逐次の reasoning を出さない）",
       first.events.every((e) => e.type !== "thinking.start" && e.type !== "thinking.delta"));
-    t.ok("承認は聞かれない（agy に対話承認が無い）", asked.length === 0, `${asked.length} 件`);
+    t.ok("承認は聞かれない（yolo のターンは agy が許可を求めない。聞かれる側は server-agent-tasks・backend-contract が確かめる）", asked.length === 0, `${asked.length} 件`);
 
     // ツールは同じ step_index で ACTIVE -> DONE の 2 回来る。**分けて 1 件にする**
     t.ok("tool_name が tool.start になる", first.tools.join(",") === "run_command",

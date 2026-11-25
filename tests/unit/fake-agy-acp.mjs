@@ -1,5 +1,5 @@
 // fake-agy の ACP モード（`agy acp`）。本物（agy 1.5.17）で測った口を、AcpClient（core/backends/acp-client.mjs）で実際に繋いで確かめる。
-// 先に、既存の stream-json の側（--version・models・--print /usage・--print= の約束・1 ターン）が崩れていないことを見る。
+// 先に、ACP でない口（--version・models・--print /usage・--print= の約束・候補づくりが使う 1 回呼び出し）が崩れていないことを見る。
 // 続けて ACP: initialize・session/new の見せ方・prompt の流れ（本文→ツール→usage）・設定の変更・中断・失敗・load / resume / list / close・
 // MCP（mcpServers を実際に起こして握手）・認証・環境変数の台本・クライアントへの許可の依頼・stdin を閉じたときの終了。
 import { spawn, spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { AcpClient } from '../../core/backends/acp-client.mjs';
 
 export const name = 'fake-agy-acp';
-export const title = 'fake-agy の ACP モード（agy acp）: stream-json は無傷・initialize・session・prompt・中断・load・MCP・認証・環境変数の台本';
+export const title = 'fake-agy の ACP モード（agy acp）: ACP でない口（--version・models・usage・1 回呼び出し）・initialize・session・prompt・中断・load・MCP・認証・環境変数の台本';
 
 const fake = fileURLToPath(new URL('../lib/fake-agy.mjs', import.meta.url));
 const mcpFixture = fileURLToPath(new URL('../lib/stdio-mcp.mjs', import.meta.url));
@@ -68,7 +68,7 @@ export default async function test(t) {
   });
 
   try {
-    // ---- stream-json の側は無傷
+    // ---- ACP でない口
     t.ok('--version は FAKE_AGY_VERSION を返し、既定は 1.5.15', sync(['--version'], { FAKE_AGY_VERSION: '9.9.9' }).stdout.trim() === '9.9.9' && sync(['--version']).stdout.trim() === '1.5.15');
     const models = sync(['models'], { FAKE_AGY_EXTRA_MODELS: 'gemini-x,gemini-y' });
     const rows = models.stdout.split(/\r?\n/).filter(line => line.includes('\t')).map(line => line.split('\t'));
@@ -80,8 +80,8 @@ export default async function test(t) {
     const bare = sync(['--model', 'x']);
     t.ok('--print= の無い起動は 2 で落ちる（agy acp だけがこの約束の外）', bare.status === 2 && /--print took/.test(bare.stderr), bare.stderr);
     const turn = await streamTurn('hi');
-    t.ok('stream-json の 1 ターンは今までどおり了解 + 本文を返し、累計の usage が付く',
-      turn.status === 'SUCCESS' && turn.response === '了解: hi' && turn.usage?.total_tokens === 21, JSON.stringify(turn));
+    t.ok('1 回呼び出し（--print=）は stream-json で 1 回だけ了解 + 本文を返す（候補づくりが使う口。会話の起こしではない）',
+      turn.status === 'SUCCESS' && turn.response === '了解: hi' && turn.usage?.total_tokens === 2, JSON.stringify(turn));
 
     // ---- initialize
     const { client, seen, init } = await open({ env: { FAKE_AGY_VERSION: '1.5.17' } });

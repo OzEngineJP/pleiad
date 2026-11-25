@@ -4,6 +4,7 @@
 ## Connecting
 
 1. Install the Antigravity CLI (`agy`) ([install guide](https://antigravity.google/docs/cli/install/)).
+   - Pleiad runs `agy acp`, so `agy` must be version 1.5.15 or later. If yours is older, run `agy update` in a terminal.
 2. In Pleiad, open Settings › "Agents" and press "Recheck status" on the Antigravity row.
    - On Windows, the installer places `agy` under `%LOCALAPPDATA%\agy\bin`, then `agy install` updates PATH. If Pleiad does not find it, press "Recheck status" or restart Pleiad.
 3. Press "Sign in". Pleiad shows a command to run in a terminal. Press "Copy", run it, and follow the prompts to sign in with your Google account (Antigravity sign-in can only be done from a terminal).

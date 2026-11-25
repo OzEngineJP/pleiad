@@ -7,7 +7,7 @@
 //   bots.update          write。権限を広げる向き（フォルダーを足す・rw にする・送る先を足す・他の会話へ送るを ON にする・backend を変えて承認モードが強くなる）と、
 //                        agent が人格を変える（bot 自身の人格を含む。外から来た文に押された bot が人格を書き換える足場になる）のは riskOf で guarded。
 //                        名前・アイコン・人の人格の変更・モデル・エフォート・狭める向きは write
-//   bots.setMode         human-only。承認モード（Antigravity の bot は yolo だけ）。AI には存在しないのと同じに見える
+//   bots.setMode         human-only。承認モード。AI には存在しないのと同じに見える
 //   bots.setAccount      human-only。bot のエージェントのアカウント（ADR 0224）。bots.update では変えられない。AI には存在しないのと同じに見える
 //   bots.delete          guarded（消す操作）。bot の会話は残り（Chats の一覧に戻る）、DM のチャンネルは archive
 import { z } from 'zod';
@@ -155,7 +155,7 @@ export const botOps = [
     }),
   }),
 
-  // 承認モードは人だけが決める（ADR 0082）。agent の一覧・list_ops・呼び出しのどれにも無い。Antigravity の bot は yolo だけ
+  // 承認モードは人だけが決める（ADR 0082）。agent の一覧・list_ops・呼び出しのどれにも無い
   defineOp({
     id: 'bots.setMode',
     summary: 'agent:ops.bots.setMode.summary',

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
-import { killTree, listProcesses } from "../../core/backends/antigravity-background.mjs";
+import { killTree, listProcesses } from "../../core/process-tree.mjs";
 
 export const name = "server-antigravity-background";
 export const title = "agy の裏へ回ったコマンドを一覧に出し、そのコマンドだけを止める";
@@ -100,7 +100,7 @@ export default async function (t) {
     if (shell) await until(async () => (inner = (await listProcesses({ parent: shell }).catch(() => [])).map((p) => p.pid)).length > 0, 3_000);
     if (shell) leftovers.add(shell);
     for (const pid of inner) leftovers.add(pid);
-    // 会話の agy の pid（控えには送信の関所・裏の一覧取得も残る。会話の起こしは --input-format を持つ）
+    // 会話の agy の pid（控えには送信の関所・裏の一覧取得も残る。会話の起こしは先頭の引数が acp）
     const agyPids = JSON.parse(await fs.readFile(pidFile, "utf8"));
     const agyArgs = JSON.parse(await fs.readFile(argsFile, "utf8"));
     const agyPid = agyPids.filter((_, i) => agyArgs[i]?.[0] === "acp").at(-1);

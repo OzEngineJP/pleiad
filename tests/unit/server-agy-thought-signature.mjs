@@ -1,6 +1,6 @@
 // 思考の署名が通らなくなった Antigravity の会話（docs/multi-backend.md §2.8「思考の署名が通らない会話」）を server 越しに通す。
 // **本物の agy は起動しない。** 身代わり（tests/lib/fake-agy.mjs）の poison-signature で、会話の id ごと（または全部）に
-// step を出さない INVALID_ARGUMENT の ERROR を返させる。
+// step を出さない INVALID_ARGUMENT の ERROR（ACP の JSON-RPC エラー）を返させる。
 //
 // 確かめること: 再開した会話が何も実行せずに断られたら、記録を新しい会話へ引き継いで一度だけ送り直す・
 // 引き継いだ記録で続く・発言が二重に入らない・当たらない 400 や step の始まった後の失敗では作り直さない・
@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
-import { rejectedBeforeRun } from "../../core/backends/antigravity.mjs";
+import { SIGNATURE_RE } from "../../core/backends/antigravity-acp.mjs";
 
 export const name = "server-agy-thought-signature";
 export const title = "思考の署名が通らない agy の会話を、記録を引き継いだ新しい会話で一度だけ送り直す";
@@ -18,17 +18,12 @@ export const title = "思考の署名が通らない agy の会話を、記録�
 const SIGNATURE_ERROR = "INVALID_ARGUMENT (code 400): Invalid thought signature.";
 
 export default async function (t) {
-  // ---- 当たり判定。ERROR・署名の文言・step 無し・本文無しが揃ったときだけ
-  const hit = { status: "ERROR", error: SIGNATURE_ERROR, response: "" };
-  t.ok("署名の断りで、step も本文も無いときだけ当たる",
-    rejectedBeforeRun(hit)
-      && rejectedBeforeRun({ ...hit, status: "error", error: "invalid THOUGHT signature" })
-      && !rejectedBeforeRun({ ...hit, status: "SUCCESS" })
-      && !rejectedBeforeRun({ ...hit, error: "INVALID_ARGUMENT (code 400): Request contains an invalid argument." })
-      && !rejectedBeforeRun(hit, { steps: 1 })
-      && !rejectedBeforeRun(hit, { sawText: true })
-      && !rejectedBeforeRun({ ...hit, response: "返事" })
-      && !rejectedBeforeRun(null));
+  // ---- 見分け方。署名の文言（大小文字は見ない）だけに当たる。step・本文が無いことは、下の server 越しの試験（3. 4.）で確かめる
+  t.ok("署名の断りの文言だけに当たる（署名でない 400 は当てない）",
+    SIGNATURE_RE.test(SIGNATURE_ERROR)
+      && SIGNATURE_RE.test("invalid THOUGHT signature")
+      && !SIGNATURE_RE.test("INVALID_ARGUMENT (code 400): Request contains an invalid argument.")
+      && !SIGNATURE_RE.test(""));
 
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-agy-sig-")));
   const fake = path.join(ROOT, "tests", "lib", "fake-agy.mjs");

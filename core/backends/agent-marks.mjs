@@ -114,16 +114,16 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
     subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
     liveModel: true,        // session/set_config_option（model）で走らせたまま替える
-    liveMode: true,         // session/set_mode で替える（yolo との行き来だけは起こし直し）
+    liveMode: true,         // session/set_config_option（mode）で替える（yolo は起動の引数なので、yolo との行き来だけは起こし直し）
     liveEffort: true,       // session/set_config_option（thought_level）で替える
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
-    // Pleiad 担当のコンテキスト（ply_context）は、Pleiad の置き場に作ったカスタムエージェント経由で渡す（antigravity-context.mjs）。
+    // Pleiad 担当のコンテキスト（ply_context）は、session/new の mcpServers に束ねた中継で渡す（制限した会話だけ、さらに Pleiad の置き場に作ったカスタムエージェントで指示を渡す。antigravity-context.mjs）。
     // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
     plyContext: "conversation",
     alwaysAllow: true,      // session/request_permission の allow_always を使う
     login: true,
-    // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
-    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
+    // ply_computer は束ねた 1 本の中継に載せて渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
+    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びなかった（stream-json で 1.2.14 の実測。ACP でも同じとみなして据え置く）ので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
     forkMessage: covered,
     rewind: covered,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
@@ -134,20 +134,20 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     compact: true,          // /compact を session/prompt で送る
     autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 次の発言の候補も内部呼出しで作る。agy の --print は会話を履歴に残し、道具・フックを止める保証も無いので、
-    // 分離できるか確かめるまで出さない（Issue #180）
+    // 分離できるか確かめるまで出さない（Issue #180。ACP の口に替えても、この呼び出しは --print のまま）
     promptSuggestions: todo('#180'),
     // 使い捨てのホームでも agy の --print は会話を履歴に残し、CLI 内蔵の道具・フックを止める保証が無いので、
     // 分離できるか確かめるまで内部呼出しは持たない（Issue #180）
     internalCall: todo('#180'),
-    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
-    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
-    // 継続した会話でもそのターンの設定が届き、記録と実際が一致する）。カスタムエージェントが読まない作業場所の
-    // 指示ファイル（AGENTS.md・GEMINI.md）は、担当がエージェント任せの会話では Pleiad が読んで agent.md の本文へ足す
+    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じく session/new の mcpServers に束ねた中継で渡す。
+    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（継続した会話でもそのターンの設定が届き、記録と実際が一致する）。
+    // 制限した会話（Pleiad が Skills・MCP の担当）はカスタムエージェントで走るので、それが読まない作業場所の
+    // 指示ファイル（AGENTS.md・GEMINI.md）は Pleiad が読んで agent.md の本文へ足す
     // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
     plyAgents: true,
     plyInstructions: true,
     shell: 'host',          // Pleiad が実行し、その結果を次のターンの発言に含める（ADR 0054）
-    // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
+    // ply_shell はまだ渡さない（ADR 0227 の理由は stream-json の口のもので、ACP の mcpServers なら渡せる見込み。再判定は ADR 0358 の残る課題。それまで印は据え置く）
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
@@ -291,7 +291,7 @@ export const AGENT_TRAITS = definePerAgentMap('AGENT_TRAITS', {
   // 秘密情報は CLAUDE_ENV_FILE（値ファイルを読むスクリプト）で Bash のシェルにだけ届く。PowerShell ツールには渡らない（ADR 0284）
   claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: true },
   codex: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
-  // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡った合図は出せない
+  // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡ったかは session/prompt を書く前後で区別できる
   antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
   devin: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },

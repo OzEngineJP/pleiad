@@ -1,5 +1,5 @@
 // bots.* の操作（registry 越し。サーバーの道具は身代わり）: 作成と DM のチャンネル・AI から見える操作と見えない操作（承認モードは人だけ）・
-// 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
+// 範囲を広げる向きの update は承認・狭める向きは通る・モードが 1 つだけのバックエンドの bot・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
 // bot のアカウント（bots.setAccount。人だけ・bot のエージェントに登録の無い id と使えないアカウントは断る・会話に写す（送った Codex の会話は次のターンの予約）・バックエンドを替えると ''。ADR 0224）
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { registry } from '../../core/ops/index.mjs';
 import { createBotService } from '../../core/bots/service.mjs';
 
 export const name = 'ops-bots';
-export const title = 'bots.* の操作: 作成と DM・human-only は承認モードとアカウント・広げる向きは承認・Antigravity は yolo だけ・削除・一覧の使用量';
+export const title = 'bots.* の操作: 作成と DM・human-only は承認モードとアカウント・広げる向きは承認・モードが 1 つだけのバックエンド・削除・一覧の使用量';
 
 const human = { by: 'human', via: 'ui', local: true };
 const agent = (sessionId, via = 'mcp') => ({ by: 'agent', via, sessionId });
@@ -29,6 +29,8 @@ function fake(dataDir, { usage = [], dmFails = false } = {}) {
   const backends = {
     claude: { id: 'claude', modes: () => CLAUDE_MODES, capabilities: { accounts: 'token' } },
     codex: { id: 'codex', capabilities: { accounts: 'agent' }, modes: () => ({ ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'workspace', autonomy: 'never' }, yolo: { scope: 'full', autonomy: 'never' } }) },
+    // 身代わりの antigravity はモードが 1 つ（yolo）だけ。実物は ACP で 5 つ持つ（ADR 0358。既定が default になるのは tests/unit/bot-instructions.mjs）。
+    // ここでは「モードが 1 つだけのバックエンド」の経路（既定・他を断る・強くなる向きの承認）を確かめるために 1 つのままにする
     antigravity: { id: 'antigravity', modes: () => ({ yolo: { scope: 'full', autonomy: 'never' } }) },
   };
   const calls = { dm: [], archive: [], update: [], conversations: [], events: [], reserved: [] };
@@ -275,7 +277,7 @@ export default async function (t) {
     t.ok('送れる会話を外す向きは承認なし', (await call(asking, 'bots.update', { botId: owl, sendTargets: ['sess-9'] })).ok && approvals.length === sizeBefore);
 
     const swap = await call(asking, 'bots.update', { botId: owl, backend: 'antigravity' });
-    t.ok('承認モードが強くなるバックエンドへの変更（Antigravity は yolo だけ）は承認', swap.pending === true, JSON.stringify(swap));
+    t.ok('承認モードが強くなるバックエンドへの変更（身代わりの Antigravity は yolo だけ）は承認', swap.pending === true, JSON.stringify(swap));
     const swapped = await call(human, 'bots.update', { botId: owl, backend: 'antigravity' });
     t.ok('人が変えるとモードは yolo・モデルとエフォートは既定に戻る', swapped.ok && swapped.result.mode === 'yolo' && swapped.result.model === '' && swapped.result.effort === '');
     t.ok('バックエンドを変えても今の会話はそのまま（次の新しい会話から）', sessions[sess.sessionId].backend === 'claude');

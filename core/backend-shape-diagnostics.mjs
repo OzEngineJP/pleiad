@@ -3,17 +3,16 @@ import path from 'node:path';
 import { definePerAgentMap } from './backends/agents.mjs';
 
 const MAX_BYTES = 64 * 1024;
-// 会話ログの形を読む実装があるのは claude・codex・antigravity だけ。ほかのエージェントは、空（null・空の集合）を明示する
+// 会話ログの形を読む実装があるのは claude・codex だけ。ほかのエージェントは、空（null・空の集合）を明示する（antigravity は ACP の口に替えて、読む非公開ファイルが無くなった）
 const VERIFIED = definePerAgentMap('VERIFIED', {
-  codex: '0.160.0', claude: '2.1.303', antigravity: '1.4.5',
-  opencode: null, devin: null, grok: null,
+  codex: '0.160.0', claude: '2.1.303',
+  antigravity: null, opencode: null, devin: null, grok: null,
 });
 const KINDS = definePerAgentMap('KINDS', {
   codex: new Set(['rollout-unreadable', 'rollout-session-meta', 'rollout-turn-id']),
   // cost-state-*: 使用量の開始時点（transcript の cost-state。core/backends/claude-cost-state.mjs）が読めない
   claude: new Set(['transcript-shape', 'transcript-unreadable', 'transcript-slim-leak', 'subagent-shape', 'subagent-unreadable', 'subagent-slim-leak', 'subagent-meta', 'cost-state-shape', 'cost-state-missing']),
-  antigravity: new Set(['stream-json-shape']),
-  opencode: new Set(), devin: new Set(), grok: new Set(),
+  antigravity: new Set(), opencode: new Set(), devin: new Set(), grok: new Set(),
 });
 const queues = new Map();
 const versions = value => typeof value === 'string' && /^\d{1,5}\.\d{1,5}\.\d{1,5}(?:-(?:alpha|beta|rc)\.\d{1,5})?$/.test(value) ? value : 'unknown';

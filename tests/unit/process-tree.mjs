@@ -2,24 +2,25 @@
 //
 // 前半は一覧（{ pid, ppid, command }）と差し替えた exec だけで測る純粋な部品（プロセスを起こさない）。
 // 後半は本物の孫つきの子を起こして、一覧に孫が見え、killTree が木ごと落とすことを確かめる。
-// 移行の間は core/backends/antigravity-background.mjs からも同じ関数を出す（既存の参照を壊さない）ので、同一の関数であることも見る。
+// agy の裏のコマンドを選ぶ部品（core/backends/antigravity-background.mjs）は木の部品を再 export せず、ここへ直接 import する。
 import { spawn } from "node:child_process";
 import * as tree from "../../core/process-tree.mjs";
 import * as background from "../../core/backends/antigravity-background.mjs";
 import { systemTool } from "../../core/win-system.mjs";
 
 export const name = "process-tree";
-export const title = "プロセスの木（一覧・子孫・祖先・木ごと落とす）の中立の部品と、antigravity-background からの再 export";
+export const title = "プロセスの木（一覧・子孫・祖先・木ごと落とす）の中立の部品";
 
 const { ancestorsOf, descendantsOf, killTree, listProcesses } = tree;
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err?.code === "EPERM"; } };
 const until = async (fn, ms) => { for (const end = Date.now() + ms; Date.now() < end;) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
 
 export default async function (t) {
-  // ---- 再 export（C5 まで、antigravity-background の既存の参照を壊さない）
-  t.ok("antigravity-background は同じ関数を再 export する（別の実装を持たない）",
-    ["ancestorsOf", "descendantsOf", "killTree", "listProcesses"].every((key) => typeof tree[key] === "function" && background[key] === tree[key]),
-    JSON.stringify(["ancestorsOf", "descendantsOf", "killTree", "listProcesses"].map((key) => background[key] === tree[key])));
+  // ---- 分担（木の部品は antigravity-background から再 export しない。pick・札・比べる形は木の部品に混ぜない）
+  t.ok("木の部品は 4 つの関数を出す",
+    ["ancestorsOf", "descendantsOf", "killTree", "listProcesses"].every((key) => typeof tree[key] === "function"));
+  t.ok("antigravity-background は木の部品を再 export しない（別の窓口を持たない）",
+    ["ancestorsOf", "descendantsOf", "killTree", "listProcesses"].every((key) => !(key in background)));
   t.ok("pick・札・比べる形は antigravity-background に残る（木の部品に混ぜない）",
     ["pickCommandProcess", "pickHeldAgy", "commandLabel", "commandKey"].every((key) => typeof background[key] === "function" && !(key in tree)));
 

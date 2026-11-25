@@ -82,9 +82,6 @@ export const DATA_WRITES = [
   { file: 'core/backends/opencode-migration.mjs', sites: 1, targets: [
     { name: '<OpenCode DB>.pleiad-before-v2.db', limit: '移行元 DB ごとに 1 つ。元の DB と同じ大きさ', reason: '公式 v1 移行前の一貫した SQLite バックアップ。元のデータと資格情報を含むため 0600 で保持する' },
   ] },
-  { file: 'core/backends/antigravity-pids.mjs', sites: 1, targets: [
-    { name: 'antigravity/pids.json', limit: '同時に動く agy の数', reason: '生きているプロセスの控え' },
-  ] },
   { file: 'core/backends/antigravity-context.mjs', sites: 3, targets: [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
   ] },

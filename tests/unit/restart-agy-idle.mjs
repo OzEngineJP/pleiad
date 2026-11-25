@@ -1,10 +1,10 @@
 // 途中でサーバーを止めて起こし直す（tests/lib/restart.mjs）: 保持役に載せた、次の発言を待つ agy（idle の子）が残らない。
 //
 // 待つ agy を止めるタイマー（core/backends/antigravity.mjs の armIdle）は前のサーバーのメモリにあり、ターンの終わりに札と印も外れているので、
-// 新しいサーバーは付け直さず、使い回しもしない。起動で止める（core/backends/antigravity-held.mjs の sweepIdleAtStart。docs/zero-downtime-update/stage3-agy.md）。
+// 新しいサーバーは付け直さず、使い回しもしない。起動で止める（core/backends/antigravity.mjs の sweepIdleAtStart・core/backends/acp-held.mjs の sweepIdleAcp。docs/zero-downtime-update/stage3-agy.md）。
 //   1. 待っている agy（I）を持ったまま普通に止めて起こし直すと、agy のターンを始めなくても子が止まり、エージェント定義の置き場（held-*）も消える
 //   2. 同じ起こし直しで、ターン中の agy（R。札と印がある）は止めずに付け直し、ターンは 1 回だけ ok で締まる。次のターンも同じ agy を使う
-//   3. 止めた I の次のターンは `--conversation` で起こし直して続く
+//   3. 止めた I の次のターンは `session/resume` で起こし直して続く
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -41,7 +41,7 @@ export default async function (t) {
   await fs.mkdir(work, { recursive: true });
   const gates = await createFakeGates(scratch);
   const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]'));
-  // 起こされた pid・引数のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは --input-format を持つ）
+  // 起こされた pid・引数のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは先頭の引数が acp）
   const convPids = async () => {
     const [pids, args] = await Promise.all([readJson(pidFile), readJson(argsFile)]);
     return pids.filter((_, i) => args[i]?.[0] === 'acp');

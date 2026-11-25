@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { ROOT } from '../lib/server.mjs';
 import { backend as claude, setClaudeSdkForTest, readOnlyDenyRules } from '../../core/backends/claude.mjs';
 import { backend as codex, sandboxForTurn } from '../../core/backends/codex.mjs';
+import { backend as antigravity } from '../../core/backends/antigravity.mjs';
 import { rpc } from '../../core/backends/codex-rpc.mjs';
 import { botInstructions, folderPlan, pickCwd, defaultMode, unrestrictedMode, botTurnSetup, sessionTitle } from '../../core/bots/sessions.mjs';
 import { createBotHost } from '../../core/bots-host.mjs';
@@ -105,6 +106,8 @@ export default async function (t) {
   ok('フォルダーがなければホーム', pickCwd({ folders: [] }, null, ask) === os.homedir());
   ok('新しい bot の既定のモード: 作業場所に書けて毎回聞くもの（無ければ先頭）', defaultMode({ plan: { scope: 'readonly', autonomy: 'ask' }, default: ask, bypass: yolo }) === 'default'
     && defaultMode({ yolo }) === 'yolo' && defaultMode({}) === 'default');
+  ok('新しい bot の既定のモード: Antigravity（ACP で 5 つ。ADR 0358）は作業場所に限るモードが無いので先頭の default（yolo ではない）', defaultMode(antigravity.modes()) === 'default'
+    && defaultMode(claude.modes()) === 'default' && defaultMode(codex.modes()) === 'ask', JSON.stringify([defaultMode(antigravity.modes()), defaultMode(claude.modes()), defaultMode(codex.modes())]));
   ok('会話の題', sessionTitle(owl, { kind: 'channel', name: 'checkout-perf' }, '遅い\n\nなぜ') === '🦉 Owl · #checkout-perf › 遅い なぜ' && sessionTitle(owl, { kind: 'dm', name: 'Owl' }, 'x') === '🦉 Owl'
     && sessionTitle(owl, { kind: 'channel', name: 'c' }, 'あ'.repeat(60)).endsWith('…'));
 

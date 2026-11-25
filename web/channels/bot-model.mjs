@@ -12,7 +12,7 @@ export function validMode(modes, id) {
   return ids.includes('default') ? 'default' : ids[0] ?? '';
 }
 
-/** 承認モードが 1 つしか選べないバックエンドか（Antigravity は全部自動だけ）。その 1 つの id を返す。複数あれば null */
+/** 承認モードが 1 つしか選べないバックエンドか（今の Antigravity は 5 つ持つので該当しない）。その 1 つの id を返す。複数あれば null */
 export function onlyMode(modes) {
   const ids = Object.keys(modes ?? {});
   return ids.length === 1 ? ids[0] : null;

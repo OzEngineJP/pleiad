@@ -1,5 +1,7 @@
 # 無停止の更新 段階 3（agy）: 実測と実装のメモ
 
+> **2026-11-26 追記（[ADR 0358](../adr/0358-antigravity-on-acp.md)）**: agy の本体は ACP（`agy acp`）に替えた。以下の `antigravity-cli.mjs`（`AgySession`）・`antigravity-held.mjs`（`heldPlan`・`heldEnabled`・`adoptTurn` の再生）・`antigravity-pids.mjs`（孤児の掃除）は無くなった。保持役への載せ方は共通の `core/backends/acp-held.mjs`（`createHeldAcp`・`heldAcpPlan`。子は policy `jsonrpc`・寿命 `lifetime: 'conversation'`・id の接頭辞 `acp-agy-`）で、idle の子は起動で `sweepIdleAcp` が止める。孤児の掃除は、`agy acp` が stdin を閉じると約 21 ms で終わる（実測）ため廃止した。付け直しの確かめは `scripts/zero-downtime/agy/{held-server,held-swap,relay-retry,acp-probe}.mjs`・`scripts/zero-downtime/codex/{60,61,62}-agy-*.mjs`（ACP の呼び出し。身代わりの agy での通しのみで、本物の LLM では測り直していない）と、単体の `tests/unit/acp-held-conversation.mjs`・`server-antigravity-background-held.mjs`。以下は旧い口（stream-json）での記録。
+
 [plan.md](plan.md) の「段階 3」のうち agy（Antigravity）の部分。段階 0 の実測（[stage0-codex-agy.md](stage0-codex-agy.md) §3）は保持役の身代わり（`holder-sim`）で測ったので、ここでは**本物の保持役（`core/holder/`）に本物の agy を載せて**測り直し、そのうえで実装した。Codex と `!` の行は別の作業（この文書の範囲外）。
 
 - 印: **実測** = 動かして確かめた。**テスト** = `tests/unit/` の試験が通る。**未確認** = 動かしていない

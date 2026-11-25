@@ -3,7 +3,8 @@
 // プロセスは起こさない。一覧（{ pid, ppid, command }）を渡して、純粋な部品として測る。
 // 守ること: agy の直下の子でコマンドを走らせているものだけを選ぶ。agy 自身・中継・孫・会話の外は選ばない。
 // 見つからない・あいまいなら選ばない。コマンドラインの形は実機（Windows の agy 1.3.4）の木に合わせた。
-import { ancestorsOf, commandKey, commandLabel, descendantsOf, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
+import { commandKey, commandLabel, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
+import { ancestorsOf, descendantsOf, killTree, listProcesses } from "../../core/process-tree.mjs";
 import { systemTool } from "../../core/win-system.mjs";
 
 export const name = "antigravity-background";

@@ -36,7 +36,7 @@ export default async function (t) {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
     FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-lite-high', AGENT_HOST_ROUTING_USAGE: 'on',
     AGENT_HOST_OPENROUTER_API: `http://127.0.0.1:${jev.address().port}/api`, ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')) } });
-  // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
+  // 承認カード（子の承認の中継・親より強い子の引き上げの確認）が出たら許して進める。引き上げは server-agent-tasks・server-delegation-settings が数える
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
     if (ev.type === 'permission') await api.cmd('resolvePermission', { id: ev.id, allow: true }).catch(() => {});
   } });

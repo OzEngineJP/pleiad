@@ -996,8 +996,6 @@ const SUITES = [
   './unit/server-computer-delivery.mjs',
   // インストールからログインまでの導線（未インストール -> 再起動なしで発見 -> 認可コード）
   './unit/antigravity-onboarding.mjs',
-  // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
-  './unit/antigravity-pids.mjs',
   './unit/antigravity-idle.mjs',
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
@@ -1155,7 +1153,7 @@ const SUITES = [
   './unit/bots-store.mjs',
   // 起動の読み込みと書き込みの競合（ルーティン・bot）と、agy の控えの rename の再試行
   './unit/store-load-races.mjs',
-  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
+  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・モードが 1 つだけのバックエンド・削除
   './unit/ops-bots.mjs',
   './unit/bot-delete.mjs',
   './unit/bot-delete-guards.mjs',

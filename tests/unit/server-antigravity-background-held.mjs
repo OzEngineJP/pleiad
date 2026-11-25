@@ -9,7 +9,7 @@ import path from "node:path";
 import { startServer, ROOT } from "../lib/server.mjs";
 import { open } from "../lib/ws-client.mjs";
 import { ensureHolder, connectHolder } from "../../core/holder/client.mjs";
-import { killTree, listProcesses } from "../../core/backends/antigravity-background.mjs";
+import { killTree, listProcesses } from "../../core/process-tree.mjs";
 
 export const name = "server-antigravity-background-held";
 export const title = "保持役に載せた agy でも、裏へ回ったコマンドだけを止める";

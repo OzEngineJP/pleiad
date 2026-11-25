@@ -60,7 +60,7 @@ export function canDelegate(entry) {
 /**
  * 隠れた会話（心拍の安いモデル・夜の記憶の整理）に使う、いちばん狭いモード。範囲が readonly 以下（none を含む）のうち、
  * 範囲 → 自律の順でいちばん弱いもの。無ければ null（その会話は作らない）。
- * Claude は読むだけのモードを持たず plan（none）がいちばん狭い。Codex は readonly。Antigravity は全部自動だけなので無い。
+ * Claude は読むだけのモードを持たず plan（none）がいちばん狭い。Codex は readonly。Antigravity は plan（readonly）。
  */
 export function narrowestMode(modes) {
   const limit = scopeRank('readonly');

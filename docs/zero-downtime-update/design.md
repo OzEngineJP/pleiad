@@ -1,5 +1,7 @@
 # 更新で走っているターンを止めない（無停止の更新）— 設計
 
+> **2026-11-26 追記（[ADR 0358](../adr/0358-antigravity-on-acp.md)）**: agy は ACP（`agy acp`）に替わり、`antigravity-pids.mjs`（孤児の掃除）は廃止した（`agy acp` は stdin を閉じると終わる）。保持役の載せ方は `core/backends/acp-held.mjs`。下の agy の記述は旧い口（stream-json）の設計。
+
 > 履歴資料: ここにある設計・計画は旧 handover 方式の記録で、現行実装ではない。更新と復元の規則は [ADR 0270](../adr/0270-server-may-die-anytime.md) 段 4b を参照する。
 
 

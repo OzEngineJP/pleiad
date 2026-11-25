@@ -7,9 +7,7 @@
 // **落としてよいのは、その会話の agy の直下の子で、コマンドを走らせているシェル（とその子孫）だけ。**
 // agy 自身・中継（agy-context-relay）・会話の外のプロセスは落とさない。見つからない・あいまいなときは何も落とさない。
 // 実機（Windows）の木: agy.exe → powershell -Command "<コマンド>" → node.exe・chrome.exe …
-// プロセスの木の部品（一覧・子孫・祖先・木ごと落とす）は core/process-tree.mjs。移行の間はここからも出す（既存の参照を壊さない）
-import { descendantsOf, ancestorsOf, killTree, listProcesses } from "../process-tree.mjs";
-export { descendantsOf, ancestorsOf, killTree, listProcesses };
+// プロセスの木の部品（一覧・子孫・祖先・木ごと落とす）は core/process-tree.mjs。ここには agy の裏のコマンドを選ぶ部品だけを置く
 
 /** 一覧の札に出すコマンドの長さ */
 const LABEL_MAX = 80;

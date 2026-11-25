@@ -14,7 +14,7 @@ const mode = arg('--mode') || 'running';
 if (!['claude', 'codex', 'antigravity'].includes(backend) || !['running', 'approval'].includes(mode)) throw new Error('--backend claude|codex|antigravity --mode running|approval');
 const model = arg('--model') || (backend === 'claude' ? 'haiku' : null);
 const sleepSeconds = Number(arg('--sleep') || (mode === 'running' ? 110 : 20));
-// 承認の確認は、そのエージェントの「都度確認」のモード（Claude は default・Codex は ask）で走らせる。agy は承認のモードが無い（yolo だけ）ので対象の外
+// 承認の確認は、そのエージェントの「都度確認」のモード（Claude は default・Codex は ask）で走らせる。agy は旧い口（stream-json）では承認のモードが無く（yolo だけ）対象の外だった（ACP では 5 つ持つが、この確かめは agy を測り直していない）
 const permMode = mode === 'approval' ? { claude: 'default', codex: 'ask' }[backend] : undefined;
 if (mode === 'approval' && !permMode) { console.log(`N/A: ${backend} has no approval mode`); process.exit(0); }
 const out = path.resolve(arg('--out') || path.join(BUILDS, `s5-${backend}-${mode}`));

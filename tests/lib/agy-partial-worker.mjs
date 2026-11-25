@@ -1,5 +1,5 @@
 // antigravity の控えをターンの途中から書くこと（core/backends/antigravity.mjs の runTurn）を、別プロセスで確かめる。
-// バックエンドを読み込むだけで置き場（AGENT_HOST_DATA）の孤児の掃除が走るので、置き場を一時ディレクトリにしてから読み込む。
+// バックエンドは置き場（AGENT_HOST_DATA）に控えを書くので、置き場を一時ディレクトリにしてから読み込む。
 // 判定は { label, pass, detail } の配列を JSON で stdout に出す（tests/unit/antigravity-partial-transcript.mjs が t.ok にする）
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -24,14 +24,6 @@ const pids = async () => JSON.parse(await fs.readFile(process.env.FAKE_AGY_PID_F
 const gone = async (pid) => {
   for (let i = 0; i < 100; i++) {
     try { process.kill(pid, 0); } catch { return true; }
-    await sleep(20);
-  }
-  return false;
-};
-const released = async (pid) => {
-  for (let i = 0; i < 100; i++) {
-    const live = JSON.parse(await fs.readFile(path.join(scratch, "antigravity", "pids.json"), "utf8").catch(() => "[]"));
-    if (!live.some((entry) => entry.pid === pid)) return true;
     await sleep(20);
   }
   return false;
@@ -122,10 +114,7 @@ try {
   // ---- 4. SUCCESS の result を返してからプロセスが終了しても、完了済みのターンは成功のまま
   const completed = await turn({ prompt: "result-then-exit", sessionId: sid }).done;
   const completedPid = (await pids()).at(-1);
-  const exitedAfterResult = await gone(completedPid);
-  // pid の控えが外れた時点で onExit の判定も済んでいる。
-  const exitHandled = await released(completedPid);
-  ok("SUCCESS の後に agy が終了する台本が動く", exitedAfterResult && exitHandled, String(completedPid));
+  ok("SUCCESS の後に agy が終了する台本が動く", await gone(completedPid), String(completedPid));
   ok("完了後の終了で成功ターンを失敗に変えない",
     !completed.error && completed.events.filter((e) => e.type === "turnResult").map((e) => e.outcome).join() === "ok",
     JSON.stringify({ error: completed.error?.message, results: completed.events.filter((e) => e.type === "turnResult") }));

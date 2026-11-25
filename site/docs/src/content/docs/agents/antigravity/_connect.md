@@ -4,6 +4,7 @@
 ## つなぎ方
 
 1. Antigravity CLI（`agy`）をインストールします（[導入の案内](https://antigravity.google/docs/cli/install/)）。
+   - Pleiad は `agy acp` で動かすので、`agy` は 1.5.15 以降が必要です。古いときは端末で `agy update` を実行してください。
 2. Pleiad の 設定 ›「エージェント設定」で、Antigravity の行の「状態を再確認」を押します。
    - Windows では、インストーラーが `%LOCALAPPDATA%\agy\bin` に置き、そのあと `agy install` が PATH を書きます。見つからないときは「状態を再確認」を押すか、Pleiad を起動し直してください。
 3. 「ログイン」を押すと、端末で実行するコマンドが出ます。「コピー」して端末で実行し、画面の案内に沿って Google のアカウントでログインします（Antigravity のログインは端末からしか行えません）。

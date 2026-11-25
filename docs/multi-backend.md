@@ -5,7 +5,7 @@
 
 作成 2026-09-11。`design.md` §3「やらない: マルチプロバイダ」を**改訂する**（[ADR 0004](adr/0004-multiple-agent-backends.md)）。
 Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-server）をバックエンドとして駆動できるようにする。
-2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。
+2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。2026-11 に口を stream-json から ACP（`agy acp`）へ替えた（[ADR 0358](adr/0358-antigravity-on-acp.md)）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
 ## 外部エージェントと操作ツールの版
@@ -18,7 +18,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.160.0 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）、`thread/shellCommand` の `userShell` の item の `command` の包み方と止めたときの `exitCode: -1`・`command aborted by user`、`!` のターンの間の `turn/start` の扱い（[ADR 0054](adr/0054-shell-from-composer.md)） |
 | Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.288、CLI 2.1.303（2026-10-22、承認待ちの A → B 付け直し・履歴・使用量） | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
-| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.4.5（Gemini 3.8 Flash Low・`gemini-3.8-flash-low`。会話・履歴・サーバー再起動後の再開、2026-10-23）。CLI 1.4.2（Pleiad 指示・委譲の実機検証）。CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| Antigravity | `agy acp`（ACP） | CLI 1.5.17（Windows x64。`initialize`・`session/new`・`session/prompt` の `stopReason`・stdin を閉じたときの終了。2026-11-26。[ADR 0358](adr/0358-antigravity-on-acp.md)）。旧い口（stream-json）では CLI 1.4.5・1.4.2・1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.5.15（未満は更新を促す） | ACP の `_meta.antigravity`（`systemPrompt`・`permissionMode`・`deniedActions`・`usage`）と、モデルの一覧を取る `agy models`・`agy --print /usage` の出力 |
 | OpenCode | `opencode serve`（v2 HTTP/SSE・plugin） | CLI 2.0.32（v2 の接続・MCP・承認・Hooks・指示分離。[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)） | 2.0.32（v2） | v2 のイベント形と plugin の hook、停止中の履歴・v1 移行の確認に読む `opencode.db` の `session_message`・旧 `message` / `part` 等 |
 | Grok Build | `grok`（ACP） | CLI 1.0.62（ACP・途中送信・画像ファイルの読み取り。機能の範囲は [backends.md](backends.md#grok-build)） | なし | ACP のイベント・`_x.ai/session/usage` の応答の形。ネイティブの会話ファイルは直接読まない |
 | Devin | `devin`（ACP） | CLI 3000.11.92（Pleiad 指示・委譲・ACP 接続の実機検証。[ADR 0223](adr/0223-devin-acp-backend.md)） | なし | ACP のイベント形と、圧縮区切りの取得における `devin/sessions/cli/sessions.db`（`sessions` 表の `main_chain_id`、`message_nodes` 表のノード鎖・継続ノードと `metadata.summarized_from` 等） |
@@ -26,9 +26,11 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 
 2026-10-22 に Windows x64 の手元の版を見直した。Codex 0.160.0・OpenCode 2.0.32・Devin 3000.11.92・Grok 1.0.62 は記録の版と同じ。Claude 2.1.303 / SDK 0.3.288 は実サービスで承認待ちを A → B に付け直し、同じ承認 ID が 1 回だけ戻り、許可後の完了・使用量が 1 回だけ保存され、履歴が読めることを確認した。CLI のログインは変更していない。保持役に載せる下限は 2.1.284 のまま。
 
-Antigravity 1.4.5 は、2026-10-23 に Windows x64 で Gemini 3.8 Flash Low（`gemini-3.8-flash-low`）の会話・履歴と、サーバー再起動後に同じ会話 ID で続けられることを確認した。モデル一覧の取得後に ID を指定し、再起動の前後とも同じモデルが CLI へ渡ることを確かめた。
+Antigravity 1.4.5（旧い stream-json の口）は、2026-10-23 に Windows x64 で Gemini 3.8 Flash Low（`gemini-3.8-flash-low`）の会話・履歴と、サーバー再起動後に同じ会話 ID で続けられることを確認した。モデル一覧の取得後に ID を指定し、再起動の前後とも同じモデルが CLI へ渡ることを確かめた。
 
-非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
+Antigravity 1.5.17 は、2026-11-26 に Windows x64 で `agy acp` の `initialize`・`session/new`・`session/prompt` の応答の形と、stdin を閉じたときの終了（21 ms・終了コード 0）を測った（[ADR 0358](adr/0358-antigravity-on-acp.md)）。実物のモデルでの会話・途中送信・承認・使用量の再測定は、ログインの済んだ環境で別に流す（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りまで確かめた）。
+
+非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity は診断の対象にしていない（ACP の標準の呼び出しで、Pleiad が頼る非公開の行の形を持たない。`core/backend-shape-diagnostics.mjs`）。
 
 ---
 
@@ -91,7 +93,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
-| `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable?, outputFile? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表）。`outputFile` = 裏のシェルの出力ファイル（Claude だけ。委譲の裏待ちの通知が大きさと mtime を読む） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は ACTIVE のまま残った `run_command`（§2.8「裏へ回ったコマンド」） |
+| `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable?, outputFile? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表）。`outputFile` = 裏のシェルの出力ファイル（Claude だけ。委譲の裏待ちの通知が大きさと mtime を読む） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は完了しないまま残った `run_command` の `tool_call`（§2.8「裏へ回ったコマンド」） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
 | `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`。ACP の 2 つ（Devin・Grok）は、受理した呼び出しが cancelled 以外で決着したときに出す） |
 | `userMessage.dropped` | `{ messageId, unknown? }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す。`unknown: true` は「読まれたか分からない」決着（読んで動いてから止められた可能性。ACP の 2 つは cancelled・接続断を区別できないのでこれを出す）で、既に実行された可能性があるため自動では送り直さない（委譲の指示は待機へ戻さず dropped にする。人の途中送信は保留に戻り、送り直すかは人が決める） | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
@@ -114,7 +116,7 @@ main が動いている間（`active`）に送ったら、`core/message-queue.mj
 ［今すぐ変える］（`sessions.applyTurnSettings`）は同じ判定で、止めたときは `settingsResumePrompt`（`<pleiad-interruption reason="settings">`。履歴では見えない行）の内部のターンで続けさせる。
 効かせた変更は presents の `settingsChange`（`{ live, changes: [{ field, from, to }] }`）に残り、画面の跡の行になる。
 
-途中送信の口は `control.steer`（`core/backends/acp-steer.mjs` は ACP の 2 バックエンドの共通部品）。
+途中送信の口は `control.steer`（`core/backends/acp-steer.mjs` は ACP の 3 バックエンド（Devin・Grok・Antigravity）の共通部品）。
 ACP の `session/prompt` を走っているターンへ重ねると、**Devin は同じ回に折り込み**（実測 3000.11.92）、
 **Grok は内蔵の待ち行列に積んで今の回の直後に続けて回す**（実測 1.0.62）。どちらも応答は回の決着まで返らないので、
 「受理」は書き込みが直ぐに断られなかったこと。受理した分は `steerConfirms` の約束どおり呼び出しの決着で合図を出す
@@ -123,7 +125,7 @@ Grok のように次の回として回る分は、runTurn が drain で決着ま
 書いた直後に積み（受理の判定を待つ間に今の回が終わり、次の回の出力が始まることがある）、`turn_completed` の後に次の回の出力が始まる直前に送った順で置く。早期のプロトコル拒否（次のターンで送り直す）だけは取り消し、回られずに残った分は記録の末尾に置く。
 Devin は折り込んだ途中送信をライブの `user_message_chunk` で流さない（2026-11-09 実機。折り込みの位置は transcript に交互で残るが、ライブでは応答の行が分かれず、途中送信は回の末尾にまとめて立つ）。
 mapper は自分で行を置かず、再生（`session/load`）との併合で直す（`core/conversations.mjs` の `alignPositional` が、連結されたライブの行を再生の並びに分解して重ねる）。
-Antigravity は途中送信を持たない（送ると `reason: 'turn'` で送信待ちになる）。
+Antigravity も走っているターンへ `session/prompt` を重ねて途中送信にする（2026-11。[ADR 0358](adr/0358-antigravity-on-acp.md)）。受理は書き込みが断られなかったことで、`steerConfirms` の約束どおり呼び出しの決着で合図を出す。折り込みか待ち行列かは、実物の agy では測っていない。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
 届かない送信を切り分けるときは、`~/.agent-host/pleiad.db` の会話の `outbox`（受理の `at`。`session_fields` の行。`tests/lib/data-store.mjs` の `readSessions` で組み直して読める）と、Claude の transcript の
@@ -421,7 +423,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 - ツール: `run`（少し待つ。待ちは既定 30 秒・`timeoutMs` で最大 4 分。終わらなければ止めずに裏のジョブへ移し、ジョブの id・ここまでの出力・「まだ走っています」を返す。`timeoutMs` は止める上限ではなく、移すまでの待ち。ADR 0227 の 2026-11-25 の追記）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む。任意の `waitMs`（最大 4 分）を付けると、走っているジョブが終わるか `waitMs` が過ぎるまで待ってから返す。新しい出力だけでは戻らない。人が止めたらすぐ戻って「人が止めた」と返し、ターンが止まった・呼び出した側が切れたら待つのをやめるだけでジョブは止めない。省けばすぐ戻る）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す（`canAlways: true`）。「常に許可」を選んだ会話には `shellAlwaysAllow: true` を保存し（再起動・無停止の更新をまたいで残り、委譲の子・分岐には引き継がない）、以後はカードを出さずに通す（読み取りだけのモードへ変わったら印があっても断る）。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
 - ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。`start` のジョブ・裏へ移った `run`・3 秒以上待っている `run` は会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブ（裏へ移った `run` を含む）は、その会話へ知らせる（`shell.jobDone`）。待っている `run` を人が止めたときは、知らせではなく `run` の戻り（`shell.stoppedByHuman`）でエージェントへ返す（ターンは続く）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
-- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せず、Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control・ply_context は ACP の `session/new` の `mcpServers` で渡す）
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity と Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control・ply_context は ACP の `session/new` の `mcpServers` で渡す。Antigravity は `mcpServers` で MCP を渡せるようになったので、ply_shell を中継の束ねに足せるかは [ADR 0358](adr/0358-antigravity-on-acp.md) の残る課題）
 - **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足し、Claude は ply_shell の MCP の設定に `alwaysLoad: true` を付けて、ツール検索の後ろに回さず最初から読み込む（2026-11-25）
 - シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
@@ -483,6 +485,10 @@ sidecar 側の `setMode` / `setModel` は `exclusive()` を通す（既存の re
 | Codex | `full` | workspace | never | ✓ |
 | Codex | `yolo` | full | never | – |
 | Codex | `readonly` | readonly | judge | ✓ |
+| Antigravity | `default` | full | ask | – |
+| Antigravity | `accept-edits` | full | ask | – |
+| Antigravity | `auto` | full | judge | – |
+| Antigravity | `plan` | readonly | ask | – |
 | Antigravity | `yolo` | full | never | – |
 
 強制できるのは sandbox を持つ Codex だけ。Claude・Antigravity の範囲は宣言であり、
@@ -569,7 +575,7 @@ Pleiad はターンの後で rollout を読んで拾う（`core/backends/codex-r
 
 **codex の実行ファイル**は `AGENT_HOST_CODEX_BIN`（既定 `codex`）。
 **agy の実行ファイル**は `AGENT_HOST_AGY_BIN`（既定 `agy`）。
-**agy の `--print-timeout`** は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。Go の duration 文字列。§2.8）。
+**agy の起動の待ち**は `AGENT_HOST_AGY_START_MS`（既定 120 秒）、**中断の猶予**は `AGENT_HOST_AGY_CANCEL_MS`（既定 5 秒。§2.8）。
 **agy のモデル一覧を古いとみなすまで**は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分。§2.8）。
 **次の発言を待つ agy を止めるまで**は `AGENT_HOST_AGY_IDLE_MS`（既定 30 分。`0` で止めない。§2.8「待っている agy を時間で止める」）。
 
@@ -700,29 +706,28 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   （[antigravity-sdk-python#20] が OAuth 対応の要望として open）
 - そこで一度入れた gemini-cli（ACP）バックエンドは**廃止した**
 
-**接続口**は `agy --print= --input-format stream-json --output-format stream-json`。
-行区切り JSON（NDJSON）を stdin から受け、stdout へ流す。ACP は話さない
-（[antigravity-cli#31] が要望のまま）。
+**接続口**は `agy acp`（ACP。JSON-RPC 2.0 を stdio で、1 行 1 JSON。2026-11 に stream-json から替えた。[ADR 0358](adr/0358-antigravity-on-acp.md)）。
+共通の口 `AcpClient`（`core/backends/acp-client.mjs`）に agy 固有の差（`core/backends/antigravity-acp.mjs`）を載せ、保持役は `core/backends/acp-held.mjs`（会話の寿命 `lifetime: 'conversation'`）。
+最低の版は 1.5.15（`MIN_ACP_VERSION`）。それ未満は古い口へ落とさず、「`agy update` で更新してください」と返す（送信・圧縮・ログイン状態の確認のどれでも同じ文）。
+旧い口 `agy --print= --input-format stream-json --output-format stream-json` は廃止した。`agy --print` は `/usage`（`antigravity-usage.mjs`）と、使っていない提案（`antigravity-suggest.mjs`）にだけ残る。
 
-実機（agy 1.2.4 / windows-x64）で確かめたこと:
+実機で確かめたこと（1.2.x は旧い口、1.5.17 は ACP。項ごとに版を書く）:
 
-- **`--print` は次のフラグを prompt として飲み込む。** `--print` と書くと `--input-format` が
-  prompt 扱いになり、agy 自身がそう警告する。**`--print=`（空値）が正しい**
-- 未ログインだと stderr に OAuth の URL を出し「Or, paste the authorization code here and press
+- 未ログインだと（1.2.4 の `--print` の口。`agy acp` では未確認）stderr に OAuth の URL を出し「Or, paste the authorization code here and press
   Enter:」と促す。**ただしその入力は端末からしか読まない。** パイプした stdin に認可コードを
   書いても完全に無視され、60 秒で `authentication failed or timed out` になる（実測）。
   公式も同じことを書いている: *Headless mode uses your cached credentials. Authenticate once
   with an interactive `agy` session first.*
   **だから Pleiad はログインを自分で回さない**（§下）
-- 認証に失敗しても `result` は必ず出る（下の形は実機の観測）
+- 認証が要るとき、`sign in`・`authentication required` を含むエラーで落ちる。Pleiad はこれを未ログインの確定（`authGuess = 'out'`。`AUTH_REQUIRED`）にして、端末で叩くコマンドの案内を出す。`agy acp` が実物で返す文面は未確認（旧い口では `result` の `status: "ERROR"` で必ず出た）
 - `agy models` は未ログインだと `Please sign in to view available models` で落ちる。
   資格情報は **OS の資格情報ストア**（macOS のキーチェーン: service `gemini` / account `antigravity`）に
   あってファイルとして読めないので、**ログイン判定は `agy models` に聞く**
 - `agy models` は `agy --print …` 系と違って **headless の公式保証が無い**（実機では「Please sign in」で落ちたが、
   環境によっては認証待ちになり得る）。**だから、このプロセスでログイン済みと確かめられた所でだけ起こす**:
   - 人の明示（`authStatus` の probe・ログインの見張り）で引き、その一覧を控える
-  - 認証を通ったターンの `result` でも確かめる（このプロセスが受けた・本文のある `SUCCESS` だけ。
-    保持役の付け直しが再生した過去の行・打ち切りと見分けがつかない本文の無い `SUCCESS` は証拠にしない）
+  - 認証を通ったターンの `session/prompt` の応答でも確かめる（このプロセスが受けた・本文のある `stopReason: 'end_turn'` だけ。
+    保持役の付け直しが再生した過去の行・本文の無い完了は証拠にしない）
   - 一覧が無いのに送信が覚えたエフォートを要るときは、公式の読み取り専用 `/usage`（1.1.11+。
     未認証なら `authentication required` で落ちて OAuth を始めない）でログインを確かめてから自分で引く。
     引けなければ、別の強さで黙って走らないようその送信を止める（`requireModelCatalog`）。
@@ -738,109 +743,121 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 - `agy models` の出力は `id<TAB>表示名`（例 `gemini-3.8-flash-high<TAB>Gemini 3.8 Flash (High)`）。段違いは別の id で並ぶ（1.2.8 で確認）。agy 1.5.7 で `gemini-4-hydrogen-{low,medium,high,xhigh}` が増え、xhigh は Hydrogen の系統の 4 つ目の段になった（ほかの系統は 3 段のまま）。
   既定のモデルは設定ファイルに出ない。agy は起動のたびにログへ `Propagating selected model override to backend: label="…"` を書くので、
   Pleiad は `agy --log-file <一時ファイル> models` で呼び、その label を既定として読む（公開の口ではないので、取れなければ「既定（agy の設定）」）
-- 「既定」（モデル `''`）のターンでも、読んだ既定のモデル（`models[""].resolvesTo`）を `--model` で明示する（`agyTarget`）。
+- 「既定」（モデル `''`）のターンでも、読んだ既定のモデル（`models[""].resolvesTo`）を `session/set_config_option`（`model`）で明示する（`agyTarget`・`applyTarget`）。
   省くと agy はその時点の自分の既定を使い、Pleiad が読んだ後に agy 側で既定が変わると、画面の「既定（モデル名）」・使用量の枠と別のモデルで走って別の枠が減る（issue #161）。
   既定が読めていなければ何も渡さない。読んだ一覧は `AGENT_HOST_AGY_MODELS_TTL_MS`（既定 5 分）を過ぎると、**ログイン済み（'in'）の間だけ**、一覧を読んだとき（`models()`）に裏で `agy models` を引き直す。
-  失敗したら前の一覧を残し、TTL まで試さない。写しから戻しただけ（'unknown'）では起こさない。`--model` は起動時にしか渡せないので、渡すモデルが変われば同じ会話の agy を起こし直す（`--conversation` で続く）
-- 1.2.8 では `agy -p "/model"` などの slash コマンドは**通常のプロンプトとして LLM に送られる**（changelog 1.1.11 の「quota を使わずに答える」は当てはまらなかった。実測）。調べるのに使わない
+  失敗したら前の一覧を残し、TTL まで試さない。写しから戻しただけ（'unknown'）では起こさない。モデルは走らせたままでも替わる（`session/set_config_option`。今のモデルと違うときだけ呼ぶ）ので、agy は起こし直さない
+- 1.2.8 では `agy -p "/model"` などの slash コマンドは**通常のプロンプトとして LLM に送られる**（changelog 1.1.11 の「quota を使わずに答える」は当てはまらなかった。実測）。調べるのに使わない（ACP の `/compact` は、`available_commands_update` に載っているときだけ `session/prompt` で送る。下の「圧縮と文脈の量」）
 - サブコマンドは `agent(s)` / `models` / `mcp` / `plugin` / `remote-control` / `update` /
-  `changelog` / `install` / `help`。**会話を列挙するものが無い**
-- **`--print-timeout`（既定 5m0s）がターンを打ち切る**（2026-09-16 に実測）。5 分を超えたターンは
-  stderr に `[agy] print timeout after 5m0s with turn in progress; returning partial output` を出し、
-  **`status:"SUCCESS"` / `response:""` / `usage` 全 0 の `result` を吐いて出力を止める**。
-  SUCCESS をそのまま信じると「本文が空のまま正常に終わった」ターンになり、会話が途中で止まって見える。
-  **しかも agy 本体は打ち切りの後も裏で走り続ける**（打ち切り後も `streamGenerateContent` を
-  叩き続けるのをログで確認。3 時間動き続けた実例あり）。Pleiad が見ていない間もファイルは書き換えられ、
-  Google の枠も減る。→ **Pleiad は `--print-timeout` を明示的に長く渡し**（既定 `24h`。
-  `AGENT_HOST_AGY_PRINT_TIMEOUT` で上書き）、**それでも打ち切られたら失敗として畳み、その agy を落とす**。
-  打ち切りは stderr の上の文言で見分ける（`duration_seconds: 0` / `usage` 全 0 も同じ印だが、
-  短いターンと区別が付かない）。落とすのは、Pleiad が見ていない所で走り続けさせないため。
-  会話は `--conversation <id>` で拾い直せるので失われない
-- **MCP のツールは `tool_name: "call_mcp_tool"`、`tool_info.parameters = { ServerName, ToolName, Arguments }` で出る**（1.2.14 で実測）。
+  `changelog` / `install` / `help`。**会話を列挙するサブコマンドが無い**（ACP の `session/list` で取り込むかは決めていない。ADR 0358）
+- **`session/prompt` には時間切れを付けない**（`timeoutMs: 0`）。旧い口の `--print-timeout`（既定 5m0s。5 分を超えたターンを
+  `status:"SUCCESS"` / `response:""` / `usage` 全 0 の `result` で打ち切り、agy 本体は裏で走り続けた。2026-09-16 に実測）は ACP には無い
+  （`AGENT_HOST_AGY_PRINT_TIMEOUT` も無くなった）。ターンの終わりは `stopReason`（`end_turn`・`cancelled`・`max_tokens`・`max_turn_requests`）で決まる。
+  止めるのは、中断（`session/cancel`。`CANCEL_GRACE_MS` の 5 秒待っても終わらなければ agy を止める）と、会話ごとの待ちの時間切れ（`IDLE_MS`。下）だけ
+- **MCP のツールは `call_mcp_tool` の名前で、`{ ServerName, ToolName, Arguments }` の引数で出る**（stream-json の `tool_info` で 1.2.14 に実測。ACP では `tool_call` の `title`（無ければ `kind`）と `rawInput` から同じに読む。実物の `agy acp` での形は未確認）。
   `ServerName` はモデルが埋めず空のことが多いので、`ToolName` で見分ける。ツールの定義はサーバー名の階層なしで
   `~/.gemini/antigravity-cli/mcp/<ツール>.json` に書かれるので、一般的な名前は他のサーバーと衝突しうる（`ply_computer` は中継で `ply_computer_` を付けて見せる）。
   `output` は text ブロックをつないだもので、画像はファイルに退避して末尾に `[Resource offloaded to file:///…]` を足す（モデルは `view_file` で開く）。
-  **1 回の MCP の呼び出しは 3 分で切れ**、agent.md の `mcpServers` に何を書いても伸びない（computer-use.md「エージェントごとの値」）
-- **ツールの `step_update` は同じ `step_index` で `state: "ACTIVE"` → `"DONE"` の 2 回来る。**
-  ACTIVE 側には `tool_info.output` が無い。両方を同じに扱うとツールが二重に並び、1 つ目は結果が空になる。
-  → **ACTIVE を `tool.start`・DONE を `tool.result` に分ける**。
-  他のバックエンドと同じく「実行中」も出る。`state` が未知・欠落のときは
-  `tool_info.output` の有無で開始／完了を決める（取りこぼさないため）
-- 調べるときのログは `~/.gemini/antigravity-cli/log/cli-<日時>.log`（`cli.log` が最新への symlink）。
-  打ち切りは `poll.go:204] Print mode: print timeout` で引ける
+  **旧い口では、1 回の MCP の呼び出しは 3 分で切れ**、agent.md の `mcpServers` に何を書いても伸びない（computer-use.md「エージェントごとの値」）。ACP の口での上限は未確認
+- **ツールは `tool_call`（開始）と `tool_call_update`（完了）の通知で来る。** `status` が `completed`・`failed` のものを `tool.result`、それ以外の初出を `tool.start` にする。
+  同じ `toolCallId` は 1 つのツールとして畳み、結果は 1 度だけ出す（`finished`）。結果の本文は `rawOutput.output`（無ければ `content` の text）。
+  旧い口の `step_update` が同じ `step_index` で `ACTIVE` → `DONE` の 2 回来て、両方を同じに扱うとツールが二重に並んだ問題に当たる
+- 調べるときのログは `~/.gemini/antigravity-cli/log/cli-<日時>.log`（`cli.log` が最新への symlink）
 
 | | Antigravity CLI |
 |---|---|
-| プロセス | `agy` のヘッドレス。**1 プロセス = 1 会話**（codex / claude の共有 1 プロセスとは違う） |
-| 新規 | 引数なしで起動 → `init` の `conversation_id` |
-| 再開 | `--conversation <id>` |
-| 本文 | `step_update` の `step_type: "agent_response"` + `text_delta`（**真のデルタ**） |
-| 思考 | **無し**（`thinking_tokens` は完了時の集計だけ） |
-| ツール | `step_type: "tool"` + `tool_info{name,parameters,output}`。**`state` が ACTIVE / DONE の 2 回**（上の実測。開始と完了に分ける） |
-| 承認 | **無し**（§下） |
-| 中断 | **無し** → プロセスを落とす。会話は `--conversation` で拾い直せる |
-| 完了 | `result` の `status`（SUCCESS / ERROR / CANCELED / INTERRUPTED / INVALID / WAITING / RUNNING） |
-| 使用量 | `result.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`input_tokens` はキャッシュ読みを含まず、`total_tokens` = input + output + thinking。agy 1.5.2 で実測）。**値は agy の会話の始まりからの累計**で、`--conversation` で起こし直した別のプロセスでも続きから数える。Pleiad はそのターンの生の累計を控えのターンの記録（`turnResults` の `usage`。`core/backends/antigravity-store.mjs`）に残し、次のターンは控えにある前のターン（送信の時刻が前で最も新しいもの）の累計との差をそのターンの使用量にする。控えから読むので、サーバーの再起動・保持役の付け直し・プロセスの入れ替えを挟んでも基準が残り、同じ result を読み直しても差は変わらない。新しい agy の会話は 0 を基準にする。基準の無い再開（控えに累計を残す前から続く会話の、最初の 1 ターン）は多めに数えないよう使用量を出さず、累計だけを控えて次のターンの基準にする。どれかの値が前のターンの累計より減っていたら、agy が数え直したとみなし、その累計をそのままそのターンの分にする。全部 0 の result（打ち切りなど）は使用量を出さず、再開では基準にもしない（`core/backends/antigravity.mjs` の `usageDelta`・`usageBaseOf`）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
-| 一覧・履歴 | **無し** → Pleiad が控える（§下） |
+| プロセス | `agy acp`。**1 プロセス = 1 会話**（codex / claude の共有 1 プロセスとは違う）。保持役の `lifetime: 'conversation'`（`acp-held.mjs`） |
+| 新規 | `initialize` → `session/new { cwd, mcpServers, _meta }`。`sessionId`（agy が決める UUID）をそのまま Pleiad の会話 id にする |
+| 再開 | `session/resume` → `session/load`（どちらにも `cwd`・`mcpServers`・`_meta` を渡す）。会話が無い（`notFound`。-32002）ときだけ `session/new` で新しい会話にする |
+| 本文 | `session/update` の `agent_message_chunk`（**真のデルタ**） |
+| 思考 | **流さない**（thought chunk は出さない。`thinking_tokens` は `usage_update` の集計だけ） |
+| ツール | `tool_call` / `tool_call_update`（上の実測と読み方。開始と完了に分ける） |
+| 承認 | **あり**。`session/request_permission`（`allow_once`・`reject_once`・`allow_always`）を承認カードへ繋ぐ（§下。`approvals: 'interactive'`・`alwaysAllow`） |
+| 中断 | `session/cancel`（通知）。`CANCEL_GRACE_MS`（5 秒）待って終わらなければ agy を止める。会話は agy 側に残るので、次の発言は同じ会話の続き |
+| 途中送信 | **あり**。走っているターンへ `session/prompt` を重ねる（`acp-steer.mjs`。`steer`・`steerConfirms`） |
+| 完了 | `session/prompt` の応答の `stopReason`（`end_turn` → ok、`cancelled` → 中断、`max_tokens`・`max_turn_requests` → limited、ほかは失敗）。拒否された操作は応答の `_meta.antigravity.deniedActions` |
+| 使用量 | `usage_update` の `_meta.antigravity.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`input_tokens` はキャッシュ読みを含まず、`total_tokens` = input + output + thinking。形と累計の性質は agy 1.5.2 の stream-json の `result.usage` で実測したもの。ACP の `usage_update` が同じ累計かは、実物ではまだ確かめていない）。**値は agy の会話の始まりからの累計**と見て、`session/resume` で起こし直した別のプロセスでも続きから数える。Pleiad はそのターンの生の累計を控えのターンの記録（`turnResults` の `usage`。`core/backends/antigravity-store.mjs`）に残し、次のターンは控えにある前のターン（送信の時刻が前で最も新しいもの）の累計との差をそのターンの使用量にする。控えから読むので、サーバーの再起動・保持役の付け直し・プロセスの入れ替えを挟んでも基準が残り、同じターンを読み直しても差は変わらない。新しい agy の会話は 0 を基準にする。基準の無い再開（控えに累計を残す前から続く会話の、最初の 1 ターン）は多めに数えないよう使用量を出さず、累計だけを控えて次のターンの基準にする。どれかの値が前のターンの累計より減っていたら、agy が数え直したとみなし、その累計をそのままそのターンの分にする。全部 0 の累計（打ち切りなど）は使用量を出さず、再開では基準にもしない（`core/backends/antigravity.mjs` の `usageDelta`・`usageBaseOf`）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
+| 文脈の量 | `usage_update` の `used` / `size`（`contextWindow`） |
+| 一覧・履歴 | **無し**（agy 側の会話の一覧は取り込まない）→ Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
-| モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
-| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveEffort / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`、Hydrogen は `-xhigh` も）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（`--effort xhigh` を agy に渡す経路は無い。agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
+| モード | `default`（都度確認）・`accept-edits`・`auto`・`plan`（`session/set_config_option` の `mode`。走らせたままでも替わる）と、`yolo`（起動の旗 `--dangerously-skip-permissions`。起動の時にしか決まらない）。新しい会話の既定は `yolo`（§下） |
+| モデル・effort | `session/set_config_option`（`model`）。走らせたままでも替わる（liveModel / liveEffort / liveMode は `true`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`、Hydrogen は `-xhigh` も）を選ぶことと同じなので、段は同じ系統の id に解決して `model` に載せる（`agyTarget`。`core/backends/antigravity-models.mjs`）。`thought_level` を設定するのは、モデルの id が分からず段だけ決まっているときの最後の手で、実機では確かめていない |
 | 認証 | **端末でのサインインが要る**（Pleiad からは回せない。§下） |
 
-イベントの形:
+呼び出しと通知の形（`agy acp` が話す ACP。1 行 1 JSON。値は抜粋）:
 
 ```jsonc
-{"event":"init","conversation_id":"…","init":{"cwd","tools","permission_mode","model","agent"}}
-{"event":"step_update","step_update":{"conversation_id","step_index","state":"ACTIVE|DONE|ERROR","step_type","text_delta","tool_info":{"name","parameters","output","error"}}}
-{"event":"result","result":{"conversation_id","status","response","error","duration_seconds","num_turns","usage","denied_actions"}}
+// Pleiad → agy（要求）
+{"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false}}}
+{"method":"session/new","params":{"cwd","mcpServers":[…],"_meta":{"antigravity":{"systemPrompt":{"append"}}}}}
+{"method":"session/set_config_option","params":{"sessionId","configId":"mode|model|thought_level","value"}}
+{"method":"session/prompt","params":{"sessionId","prompt":[{"type":"text","text"}]}}
+// Pleiad → agy（通知）
+{"method":"session/cancel","params":{"sessionId"}}
+// agy → Pleiad（通知）
+{"method":"session/update","params":{"sessionId","update":{"sessionUpdate":"agent_message_chunk|tool_call|tool_call_update|usage_update|available_commands_update|current_mode_update|config_option_update"}}}
+// agy → Pleiad（要求）
+{"method":"session/request_permission","params":{"sessionId","toolCall":{"toolCallId","title","rawInput"},"options":[{"optionId","kind":"allow_once|reject_once|allow_always"}]}}
+// session/prompt の応答
+{"result":{"stopReason":"end_turn|cancelled|max_tokens|max_turn_requests","_meta":{"antigravity":{"deniedActions":[{"action","display_name"}]}}}}
 ```
 
-**承認を持てない**: ターン中の対話承認は**公式に非対応**。許可が取れないツールは soft-deny され
-（ターンは止まらず、stderr に通知が出るだけ）。そのため:
+**承認は `session/request_permission` で受ける**（`approvals: 'interactive'`。2026-11。旧い口では対話承認が無く、`approvals: 'none'`・`alwaysAllow` は不可能だった）:
 
-- `capabilities.alwaysAllow` は `impossible('対話の承認そのものが無い')`（画面へは今までどおり `false` が渡る）。askPermission を一度も呼ばない
-- **選べる承認モードは「全部自動」（`--dangerously-skip-permissions`）の 1 つだけ。**
+- agy が出すツールの確認（`allow_once`・`reject_once`・`allow_always`）を、Pleiad の承認カード（`askPermission`）へ繋ぐ。「常に許可」（`alwaysAllow`）が使える。
+  `askPermission` が無い呼び出しと題の無い要求は拒否で返し、ターンの中断のときは `cancelled` で返す
+- モード（`MODES`。`core/backends/antigravity.mjs`）:
 
-`agy --help` には `--mode plan` と `--mode accept-edits` もあるが、**ヘッドレスでは選ばせない**。
-`--dangerously-skip-permissions` を付けない限りツールは soft-deny されるうえ、
-`--print` モードは settings.json の `permissions.allow` を見ない（[antigravity-cli#548]）ので
-事前付与で埋めることもできない。並べると「モードを選んだのにエージェントが黙って何もできない」
-だけになる。「都度確認」を出さないのも同じ理由（聞くと言って聞かないものを作らない）。
+  | モード | 範囲 | 自律 | 渡し方 |
+  |---|---|---|---|
+  | `default`（都度確認） | full | ask | `session/set_config_option`（`mode`） |
+  | `accept-edits` | full | ask | 同上 |
+  | `auto` | full | judge | 同上 |
+  | `plan` | readonly | ask | 同上 |
+  | `yolo`（確認しない） | full | never | 起動の旗 `--dangerously-skip-permissions` |
 
-[antigravity-cli#548]: https://github.com/google-antigravity/antigravity-cli/issues/548
+- **`yolo` は起動の時にしか決まらない**。`yolo` とそれ以外の行き来は agy を起こし直す（`session/resume` で会話は続く。`setModeLive` が false）。それ以外どうしは走らせたままで替わる
+- **新しい会話の既定は今までどおり `yolo`**（確認しない利用を黙って変えない。既定を `default` にするかは [ADR 0358](adr/0358-antigravity-on-acp.md) の残る課題）
+- `session/set_config_option` は、返ってきた `configOptions` の `currentValue` が頼んだ値と違えば断られたと見なして失敗にする（`configRejected`）
+- 範囲（`scope`）は宣言で、機械的には強制できない（`enforced: false`）
 
-**ただし「ツールを呼ばない」の原因は承認とは限らない**: Pleiad 担当のコンテキストを渡す会話は
-`--agent ply-context` で走る。agy のカスタムエージェントは frontmatter に `tools` を書かないと
-書き込み系ツールを一切持たず、`--dangerously-skip-permissions` を付けても（`permission_mode` は
-always-proceed のまま）読むだけになる。そこで定義に `tools` を明示する。
+**制限した会話だけカスタムエージェント**: Pleiad 担当の Skills または MCP で agy 自身の分を止める会話（`agyRestricted`）だけ、`--agent ply-context` で走る。
+agy のカスタムエージェントは frontmatter に `tools` を書かないと書き込み系ツールを一切持たず、`--dangerously-skip-permissions` を付けても（`permission_mode` は
+always-proceed のまま）読むだけになる（旧い口で観測）。そこで定義に `tools` を明示する。
 名前を書ける範囲と、`tools: "*"` を採らない理由は `core/backends/antigravity-context.mjs` の `TOOLS`。
+**それ以外の会話は既定のエージェントのまま**で、Pleiad の指示は `session/new` の `_meta.antigravity.systemPrompt.append`、
+MCP は `mcpServers`（1 本に束ねた stdio の中継 `ply_<先頭の種類>`。env は `[{ name, value }]`）で渡す。既定のツールと、作業場所の `AGENTS.md` の読み込みはそのまま持つ。
+渡すものの鍵が前のターンと変われば、起動の時にしか渡せないので agy を起こし直す（`keysOf`）。
 
 **組織の管理ポリシー**（issue #169）: 組織のアカウント（Gemini Enterprise）でログインした agy では、
 管理者の設定（Gemini Enterprise › 設定 › AI デベロッパー ツール › セキュリティ。英語の画面は Settings › AI developer tools › Security）が
-`--dangerously-skip-permissions` より優先される。実機（agy 1.5 系）で確かめた形:
+`--dangerously-skip-permissions` より優先される。実機（agy 1.5 系）の旧い口で確かめた形。ACP の口は同じ意味の値を別の場所から読む（組織のアカウントでの ACP の実測はまだ）:
 
-- 「ターミナル自動実行モード」（値は「要審査」「サンドボックスで続行」「常に続行」）が「要審査」だと、`init` の `permission_mode` が `request-review` になる
-  （skip のときは `always-proceed`。「サンドボックスで続行」のときの値は見ていない）
-- 確認の要るツールは、確認を出せないまま拒否される。段は `ACTIVE` の後に output 無しの `ERROR` と
-  `tool_info.error`（`type: "TOOL_ERROR"`、文面は `permission check failed … user denied permission …`）で来る
-- ターンの `result` は `status: "SUCCESS"`・`response: ""`・`denied_actions: [{ action, display_name }]`
+- 「ターミナル自動実行モード」（値は「要審査」「サンドボックスで続行」「常に続行」）が「要審査」だと、`permission_mode` が `request-review` になる
+  （skip のときは `always-proceed`。「サンドボックスで続行」のときの値は見ていない）。旧い口は `init` の行、ACP は `session/new` の応答の `_meta.antigravity.permissionMode`（無ければ `modes.currentModeId`）から読む
+- 確認の要るツールは、確認を出せないまま拒否される。旧い口では `ACTIVE` の後に output 無しの `ERROR` と
+  `tool_info.error`（`type: "TOOL_ERROR"`、文面は `permission check failed … user denied permission …`）で来た。
+  ACP では、失敗したツール（`tool_call_update` の `status: 'failed'`）の出力が同じ文面（`DENIED_RE`）のときに拒否とみなす。ACP での文面は未確認
+- ターンの終わりは、旧い口が `result` の `status: "SUCCESS"`・`response: ""`・`denied_actions: [{ action, display_name }]`。
+  ACP は `stopReason: 'end_turn'`・本文なし・応答の `_meta.antigravity.deniedActions: [{ action, display_name }]`
 - 「ファイル アクセス ポリシーの外部」（値は「許可しない」「常に確認する」「許可」）が「常に確認する」だと、作業場所の外のファイルの操作も確認を出せないまま拒否されると見ている（実機では確かめていない）
-- 「MCP サーバー」が無効のとき、カスタムエージェントに書いた中継（ply_context・ply_agents など）が起動されない。
-  stream-json には何も出ない（理由がこの設定だというのは推測。許可するサーバーの構成に中継が無いときも同じになると見ている）
+- 「MCP サーバー」が無効のとき、Pleiad の中継（ply_context・ply_agents など。制限した会話はカスタムエージェント、それ以外は `mcpServers` に渡したもの）が起動されない。
+  旧い口の stream-json には何も出なかった（理由がこの設定だというのは推測。許可するサーバーの構成に中継が無いときも同じになると見ている）。ACP でも同じ形と見て、接続の有無で知らせる（下）
 
 Pleiad は黙って普通の完了にせず、次のように出す（`core/backends/antigravity.mjs`）:
 
-- `ERROR`（または `tool_info.error` のある完了）の段は、失敗したツール（`isError`）として画面と控えに出す。
+- 失敗したツール（`tool_call_update` の `status: 'failed'`）は、失敗したツール（`isError`）として画面と控えに出す。
   拒否の文面なら、管理者に頼む設定と値（「ターミナル自動実行モード」を「常に続行」、「ファイル アクセス ポリシーの外部」を「許可」）を添え、
   `rejection`（`kind: "policy"`・`via: "antigravity"`）を付けて委譲の結果に集める
-- 返答が空のまま `denied_actions` のある `SUCCESS` は、失敗のターンにする。理由に拒否された操作と頼む設定を書く
-- その agy の最初の成功した `result` で 1 度だけ、確認なしで渡したのに `permission_mode` が確認の要ると分かっている値（`request-review`）のとき、
+- 返答が空のまま `deniedActions` のある `end_turn` は、失敗のターンにする。理由に拒否された操作と頼む設定を書く
+- その agy の最初の `end_turn` で 1 度だけ、確認なしで渡したのに `permissionMode` が確認の要ると分かっている値（`request-review`）のとき、
   または中継に渡したトークンで Pleiad の MCP の口へ 1 度も接続が来ていないとき（`core/mcp-contact.mjs`）、
   返答の後ろに「Pleiad からの知らせ」を引用の段落で足す。本文に入るので控えと委譲の結果にも残る。
   保持役から付け直した agy（サーバーの入れ替え）と、口を持たないプロセス（`core/server.mjs` を読まずにバックエンドだけを使う試験など）では
   MCP の接続を見ない（前のサーバーが受けた接続・ほかのプロセスの口に来た接続は分からない）
 
-要審査のツールを Pleiad の承認カードへ出す道（ACP など）は issue #170 で調べる。
+要審査（`request-review`）のとき、確認の要るツールが `session/request_permission` として届いて承認カードに出るのか、届かずに拒否されるのかは、組織のアカウントで確かめていない（issue #170）。
+届かずに拒否されるなら、上のとおり失敗として出す。
 
 **一覧と履歴を Pleiad が控える**（`core/backends/antigravity-store.mjs`）:
 gemini では本体が書いた記録を**読んだ**が、agy には読めるものが無い
@@ -852,16 +869,16 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
 終わりで完了の時刻に打ち直す。失敗・中断・打ち切り・途中で落ちたターンも、そこまでのツールと本文が残る
 （中断の印は sidecar の `interrupted`）。書き込みは会話ごとに 1 本ずつで、`runTurn` は積んだ分を書き終えてから返る。
 再開した会話の途中と失敗の書き込みは、控えが無ければ作らない（forget した控えを作り直さない）。
-控えなので agy 側で消えた会話が残りうる。`--conversation` が撥ねられた時点で落とす。
+控えなので agy 側で消えた会話が残りうる。`session/resume`・`session/load` が `notFound` を返したら、`session/new` で新しい会話（新しい id）にして続ける（控えは落とさない。使用量は 0 から数え直す）。
 
-**思考の署名が通らない会話**（2026-11）: 再開した会話が、step を 1 つも出さず本文も無いまま `result` の
-`status: "ERROR"`・`error: "INVALID_ARGUMENT (code 400): Invalid thought signature."` で終わり、何度送っても同じ失敗を繰り返すことがある（agy 1.5 系で観測）。
+**思考の署名が通らない会話**（2026-11）: 再開した会話が、ツールを 1 つも出さず本文も無いまま、`INVALID_ARGUMENT (code 400): Invalid thought signature.` のエラーで終わり、何度送っても同じ失敗を繰り返すことがある
+（agy 1.5 系の旧い口で観測。ACP の口は同じ文面で同じに判定する）。
 会話の中に残る思考の署名（thought signature）が、送り先の検証に通らなくなったもの。会話を作ってから再開するまでに agy の認証の方式
 （個人の Google アカウントと Google Cloud の認証）が変わったことが最も考えやすい原因（推論）。同じ認証のままモデルの段・系統を変えて再開しても起きないことは実機で確かめた。
 一度こうなった会話は同じ会話のままでは戻らないので:
 
-- **見分け方は狭くする**（`rejectedBeforeRun`。`core/backends/antigravity.mjs`）: `status` が ERROR・`error` に `Invalid thought signature`（大小文字は見ない）・
-  そのターンに step が 1 つも始まっていない・本文が無い、が全部揃ったときだけ。ほかの 400（モデルの id の誤りなど）や step の後の同じ失敗では、
+- **見分け方は狭くする**（`SIGNATURE_RE` と `decorateError` の `thoughtSignature`。`core/backends/antigravity-acp.mjs`。判定は `core/backends/antigravity.mjs`）: エラーの文面に `Invalid thought signature`（大小文字は見ない）・
+  そのターンにツールが 1 つも始まっていない・本文が無い、が全部揃ったときだけ。ほかの 400（モデルの id の誤りなど）やツールの後の同じ失敗では、
   agy の中の文脈を黙って捨てないよう、今までどおりの失敗にする（渡った合図が無ければ結果不明）
 - **当たったら、そのターンの発言を控えから外す**（`appendMessages` の `drop`）。agy を落として手を離し、error の `turnResult` は出さずに
   `undelivered`・`retracted`（外した発言の uuid）、再開した会話なら `nativeUnusable` の印を付けたエラーを投げる
@@ -902,22 +919,17 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   findExecutable はこの置き場を直接見る。見ないと「入れたのに未インストールのまま」になり、
   Pleiad の再起動が要る。Unix 版（`install.sh`）は `$HOME/.local/bin` なので元から見ている
 
-**孤児の `agy` を残さない**（`core/backends/antigravity-pids.mjs`）:
-1 プロセス = 1 会話なので、Pleiad が落ちると agy が裏に取り残される（前の起動のものが走り続けていた実例あり）。
+**孤児の `agy` を残さない**（2026-11 に ACP へ替えて、pid の控え `antigravity-pids.mjs` は廃止した。[ADR 0358](adr/0358-antigravity-on-acp.md)）:
+1 プロセス = 1 会話なので、Pleiad が落ちると agy が裏に取り残される（旧い口では前の起動のものが走り続けていた実例あり）。
 
-- サーバ終了時に、生かしている AgySession を全部落とす（`process.once("exit")`）。
+- **`agy acp` は stdin を閉じると自分で終わる**（1.5.17・Windows x64 の実測。`initialize` に答えたあと stdin を閉じて 21 ms 後に終了コード 0）。
+  サーバーが強制終了・クラッシュしても OS が子の stdin を閉じるので、直下の子は残らない。pid の控え（`AGENT_HOST_DATA/antigravity/pids.json`）と、
+  次の起動で生き残りを落とす掃除は要らない。以前の版が置いた `pids.json` が残っていても、一覧は拾わない
+- サーバ終了時に、生かしている直下の agy（保持役に載っていないもの）を全部落とす（`process.once("exit")`）。
   **`SIGINT` / `SIGTERM` のハンドラは足さない**（server はワーカースレッドでも動くので、既定の終了挙動を変えない）
-- それでは強制終了・クラッシュで取り残されるので、生かしている pid を
-  `AGENT_HOST_DATA/antigravity/pids.json` に控え、**次の起動で生き残りを落とす**
-- **pid は使い回される。** 落とす前にその pid の実行ファイル名を引き（win32 は `tasklist`、
-  posix は `ps -p`）、起動に使う実行ファイルと同じ名前だと確かめる。
-  確かめられなければ落とさない（無関係のプロセスを殺さないため）
-- **他の Pleiad が使っているものは孤児ではない。** 控えは `AGENT_HOST_DATA` ごとに 1 つなので、
-  Pleiad を 2 つ動かす（worktree ごとの開発サーバなど）と、後から起きた方が先の agy を落としかねない。
-  控えには起こした Pleiad の pid（`owner`）も残し、**それが生きているうちは触らない**
-- **保持役に載せた agy は、この掃除の対象に入らない**（無停止の更新 段階 3。`core/backends/antigravity-held.mjs`・[stage3-agy.md](zero-downtime-update/stage3-agy.md)）。
-  `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
-  保持役の子は pid を控えず、終了時（`process.once("exit")`）は止めない（アプリの終了だけが止める）。ターンの間の子（idle）は、
+- **保持役に載せた agy は、stdin の終了では終わらない**（保持役が持つ。無停止の更新 段階 3。`core/backends/acp-held.mjs`・[stage3-agy.md](zero-downtime-update/stage3-agy.md)）。
+  `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子（`lifetime: 'conversation'`。子の id は `acp-agy-…`）になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
+  保持役の子は終了時（`process.once("exit")`）は止めない（アプリの終了だけが止める）。ターンの間の子（idle）は、
   サーバーを止めた・更新した・落ちた後の次の起動が止める（`restoreAdoptedTurns` の後の `sweepIdleAtStart`。付け直すターンの子は残す）
 
 **待っている agy を時間で止める**（2026-11、`core/backends/antigravity.mjs` の `armIdle`）:
@@ -927,7 +939,7 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   約 1 時間ごとに更新して**キーチェーンへ書き戻す**。走っている間に読み直さない。切り替える前から生きている agy が、
   切り替えた後のログインを古い方の資格情報で上書きし、次に起きた agy は古い方で動く（agy の不具合。Pleiad からは直せない）
 - そこで、ターンの終わりに `AGENT_HOST_AGY_IDLE_MS`（既定 30 分）のタイマーを付け、次のターンがその agy を取ったら外す。
-  過ぎたら落とし、エージェント定義の置き場も片付ける（`releaseConversation` と同じ道）。次のターンは `--conversation` で起こし直す（会話は続く）。ターンの間は止めない
+  過ぎたら落とし、エージェント定義の置き場も片付ける（`releaseConversation` と同じ道）。次のターンは `session/resume` で起こし直す（会話は続く）。ターンの間は止めない
 - 値は setTimeout の上限（2^31−1 ms。約 24.8 日）まで。超える値・`Infinity` は `0` と同じく止めない（そのまま渡すと 1 ms になり、ターンのたびに止まる。`idleDelay`）
 - タイマーはサーバーのメモリにある。保持役に載せた idle の agy は、サーバーを止めた・更新した後に誰のタイマーも持たないので、次の起動が止める（上。[stage3-agy.md](zero-downtime-update/stage3-agy.md) §3.3）
 - **既定を 30 分にした理由**: 拾いたいのは、数時間〜数日待ったままの agy だけで、書き戻しの間隔（約 1 時間）より短ければ足りる。
@@ -938,18 +950,18 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
 
 **裏へ回ったコマンド**（2026-10、`core/backends/antigravity-background.mjs`）:
 agy 1.3.4 の `run_command` は、`WaitMsBeforeAsync`（20 秒）たっても終わらないコマンドを裏へ回し、モデルは終わるまで待ち続ける
-（`npm run dev`・`node -e "setInterval(()=>{},1000)"` のような終わらないものは、ターンごと永久に止まる）。stream には ACTIVE が出たままで、
-DONE はコマンドが本当に終わったときにしか来ない。裏へ回ったことを示す行は無い。そこで:
+（`npm run dev`・`node -e "setInterval(()=>{},1000)"` のような終わらないものは、ターンごと永久に止まる）。旧い口の stream には ACTIVE が出たままで、
+DONE はコマンドが本当に終わったときにしか来なかった。裏へ回ったことを示す行は無い。ACP の口でも、`tool_call` が完了しないまま残ることで同じに見分ける
+（実物の `agy acp` での形は未確認）。そこで:
 
-- `run_command` の ACTIVE から `AGENT_HOST_AGY_BACKGROUND_MS`（既定 30 秒）たっても DONE が来なければ、§2.2 の `background` を出す。
-  形は `{ id, kind: "shell", label }`（`id` はツールの id = `<conversation_id>:<step_index>`、`label` はコマンドラインを 80 文字で切ったもの）。
-  `waitable` は付けない（終わりの合図はコマンドの終わりだけで、待つ印にならない）。毎回全量を出し、DONE・ターンの終わり・中断で外す（空の一覧で流す）
-- **`phase` は出さない（`active` のまま）。** 理由: agy は途中送信（`control.steer`）を持たないので、`waiting` にして outbox を流し直しても届かない。
-  agy の main もコマンドの終わりを待ってツールを呼んだままで、Claude の「返答を終えて止まっている」とは違う。`waiting` にすると委譲の子では
-  依頼元へ裏作業の通知（ADR 0170）が飛び、子が終わったかのように見える
+- `run_command` の `tool_call` から `AGENT_HOST_AGY_BACKGROUND_MS`（既定 30 秒）たっても完了（`tool_call_update` の `completed`・`failed`）が来なければ、§2.2 の `background` を出す。
+  形は `{ id, kind: "shell", label }`（`id` はツールの id = `<会話の id>:<toolCallId>`、`label` はコマンドラインを 80 文字で切ったもの）。
+  `waitable` は付けない（終わりの合図はコマンドの終わりだけで、待つ印にならない）。毎回全量を出し、完了・ターンの終わり・中断で外す（空の一覧で流す）
+- **`phase` は出さない（`active` のまま）。** 理由: agy の main はコマンドの終わりを待ってツールを呼んだままで、Claude の「返答を終えて止まっている」とは違う。
+  `waiting` にすると委譲の子では依頼元へ裏作業の通知（ADR 0170）が飛び、子が終わったかのように見える（今は途中送信を持つが、この理由は変わらない）
 - **止める口**（`stopBackground(sessionId, taskId)`。作業ダイアログの停止ボタン）は、そのコマンドを走らせているシェルの木だけを落とす:
-  1. その会話の agy の pid を引く。直に起こしたものは `session.pid`。保持役に載せたもの（pid を持たない）は、保持役の直下の子から
-     agent の置き場（`--add-dir`）か `--conversation <id>` が入っているものを 1 つだけ選ぶ（`pickHeldAgy`）
+  1. その会話の agy の pid を引く。直に起こしたものは `entry.pid`。保持役に載せたもの（pid を持たない）は、保持役の子の状態（付け直しの答え・起動時の一覧）の pid か、
+     保持役の直下の子から agent の置き場（`entry.home`）が入っているものを 1 つだけ選ぶ（`pickHeldAgy`）
   2. **agy の直下の子**だけを見て、コマンドラインにそのコマンドが入っているものを選ぶ（`pickCommandProcess`。引用符・`\`・空白の違いは
      `commandKey` でならす。実機の 1.3.4 / Windows は `powershell -Command "<コマンド>"`）。agy 自身・中継（`agy-context-relay`）・孫・会話の外は選ばない。
      プロセスの一覧は win32 が `Get-CimInstance Win32_Process`（`ParentProcessId` で絞る）、posix が `ps -A -o pid=,ppid=,args=`
@@ -957,16 +969,16 @@ DONE はコマンドが本当に終わったときにしか来ない。裏へ回
   4. 木ごと落とす（win32 は `taskkill /PID <pid> /T /F`、posix は子孫を引いて SIGKILL）。agy 自身は落とさない。
      taskkill /T は子を落としてから根を落とすので、子が終わると自分も終わるシェルは taskkill が根に届く前に終わりかけ、
      「実行中のタスクのインスタンスがありません」「実行しようとした操作はサポートされていません」で失敗が返る。根が 2 秒以内に消えれば落とせたとみなす
-  5. agy の DONE（`AGENT_HOST_AGY_STOP_WAIT_MS`、既定 15 秒まで）を待ってから `{ stopped: true }` を返す。実機（1.3.4）では止めて 2 秒ほどで出力の空の DONE が来て、モデルはコマンドが終わったとして続け、ターンは `result`（SUCCESS）で終わった
-- 中断・打ち切りは今までどおり agy を落とすだけで、コマンドのシェルを狙っては落とさない（agy と一緒に落ちるかは実機で確かめていない）
+  5. agy の完了の通知（`AGENT_HOST_AGY_STOP_WAIT_MS`、既定 15 秒まで）を待ってから `{ stopped: true }` を返す。旧い口の実機（1.3.4）では止めて 2 秒ほどで出力の空の DONE が来て、
+     モデルはコマンドが終わったとして続け、ターンは `result`（SUCCESS）で終わった
+- 中断は `session/cancel`（5 秒待って終わらなければ agy を止める）で、コマンドのシェルを狙っては落とさない（agy と一緒に落ちるかは実機で確かめていない）
 
-実行ファイルは `AGENT_HOST_AGY_BIN`（既定 `agy`）。
-`--print-timeout` の値は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。**Go の duration 文字列**）。
+実行ファイルは `AGENT_HOST_AGY_BIN`（既定 `agy`）。起動の待ちは `AGENT_HOST_AGY_START_MS`（既定 120 秒）、中断の猶予は `AGENT_HOST_AGY_CANCEL_MS`（既定 5 秒）。
 
-**まだ確かめていないこと**: `step_update` は `agent_response` と `tool` と `user_input` しか
-実機で見ていない。知らない `step_type` と `event` は黙って落とす作りにしてある。
+**まだ確かめていないこと**（ACP の口。[ADR 0358](adr/0358-antigravity-on-acp.md)）: 実物の agy・実際のモデルでの、`usage_update` の累計の性質、途中送信が折り込みか待ち行列か、
+`thought_level` の振る舞い、未ログインのときの `agy acp` の挙動、組織の管理ポリシー下の `session/new`・`session/request_permission`・`tool_call_update` の形、
+`call_mcp_tool` の `rawInput` の形。知らない `sessionUpdate` は黙って落とす作りにしてある。
 
-[antigravity-cli#31]: https://github.com/google-antigravity/antigravity-cli/issues/31
 [antigravity-sdk-python#20]: https://github.com/google-antigravity/antigravity-sdk-python/issues/20
 
 ### 2.6 host ツールの非対称（v3 の既知の穴）
@@ -1086,7 +1098,7 @@ Claude のモデルの一覧は、アカウント（組織）で変わる（承�
 |---|---|---|---|
 | Claude Code | SDK の `status.compacting`・`compact_result`・`compact_boundary`、PreCompact / PostCompact。手動は `/compact` | `getContextUsage()` の `total_tokens` / `raw_max_tokens` | PostCompact |
 | Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
-| Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
+| Antigravity | 内部の自動圧縮の通知は正規化しない（`checkpoint` の意味は未確認）。手動は `/compact` を prompt の本文として送る（ACP のスラッシュコマンドの形。`available_commands_update` に `compact` が出ているときだけ） | `usage_update` の `used` / `size` | 取得しない |
 | Devin | 内部の自動圧縮は `_cognition.ai/compaction` 通知（`ext_notification`）で拾って区切りに載せる。手動は `/compact` を prompt の本文として送る（ACP のスラッシュコマンドの形） | `usage_update` の `used` / `size` | 通知の `summary` と、transcript（sessions.db の継続ノード）の `<summary>` |
 | Grok | 正規化しない（自動の圧縮は Grok 自身が `config.toml` の `[session] auto_compact_threshold_percent` で決める） | `usage_update` の `used` / `size`（2026-10-19 の実機では届かなかった）。`turn_completed` の `usage` は使わない: ターンのモデル呼び出しの合計（課金の量）で、複数のモデル呼び出しでは同じ文脈を繰り返し数えるため、文脈の占有量に使えない。`_x.ai/session/usage` も同じ合計を返し、使用枠の残り・リセットの時刻は返さない | 取得しない |
 

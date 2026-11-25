@@ -41,7 +41,7 @@ export default async function (t) {
 
   const cases = [['保持役に載せない', false], ['保持役に載せる', true]];
   const dataDirs = [];
-  // 起こされた pid のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは --input-format を持つ）
+  // 起こされた pid のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは先頭の引数が acp）
   const convPids = async (pidFile, argsFile) => {
     const [pids, args] = await Promise.all([readJson(pidFile), readJson(argsFile)]);
     return pids.filter((_, i) => args[i]?.[0] === 'acp');

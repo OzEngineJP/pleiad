@@ -86,7 +86,7 @@ export default async function (t) {
     const body = first.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     t.ok('指示と Skills の一覧が agy のシステムプロンプト（エージェントの本文）に入る', first.outcome === 'ok' && body.includes('PROJECT-RULE-AGY') && /demo: Demo skill/.test(body), body.slice(0, 400));
     const agent = JSON.parse(await fs.readFile(agentFile, 'utf8'));
-    // 引数の控えには会話の起こし（--input-format）のほか、送信の関所・裏の一覧取得（--version・/usage・agy models）も残る
+    // 引数の控えには会話の起こし（先頭の引数が acp）のほか、送信の関所・裏の一覧取得（--version・/usage・agy models）も残る
     const allArgs = JSON.parse(await fs.readFile(argsFile, 'utf8'));
     const convArgs = allArgs.filter((a) => a[0] === 'acp');
     const args = convArgs[0] ?? allArgs[0];

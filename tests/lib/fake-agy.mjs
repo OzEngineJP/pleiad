@@ -1,17 +1,14 @@
-// `agy` の身代わり。ヘッドレスの stream-json（NDJSON）を話す。
+// `agy` の身代わり。ACP（`agy acp`）と、`agy models`・`--version`・`--print /usage`、候補づくりの 1 回呼び出し（`--print=`）を話す。
 //
 // 本物の `agy` は 190MB の単一バイナリで、Google のサブスクへのログインが要る。
-// テストで測りたいのは **core/backends/antigravity.mjs の写し替え**（step_update -> 正規化
-// イベント、ツールの ACTIVE / DONE、出力の打ち切り、result の status、控えの書き出し、
-// 認可コードの受け渡し）なので、
-// プロトコルの形だけを真似た台本を返す。
+// テストで測りたいのは **core/backends/antigravity.mjs の写し替え**（ACP の通知 -> 正規化イベント、ツールの開始・終了、
+// 出力の打ち切り、stopReason、認証の受け渡し、会話の保持と再開）なので、プロトコルの形だけを真似た台本を返す。
 //
-// イベントの形は公式ドキュメントと、実機（agy 1.2.4 / windows-x64）で観測した
-// `result` の形から取っている。**推測で足していない**。
+// ACP の口は、実機（agy 1.5.17 / windows-x64）で測った形から取っている。**推測で足していない**（測っていない名前は仮と書く）。
 //
-// 使い方: AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs" で antigravity-cli.mjs から起動される。
+// 使い方: AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs" で core/backends/agents.mjs の起動の口から呼ばれる（agy の実行ファイルの代わり）。
 //
-// `agy acp`（argv[0] が acp）は ACP（stdio の 1 行 1 JSON の JSON-RPC 2.0）の口になる。stream-json と同じ台本（slow / fail / gated: / partial など）と
+// `agy acp`（argv[0] が acp）は ACP（stdio の 1 行 1 JSON の JSON-RPC 2.0）の口になる。台本（slow / fail / gated: / partial など）と
 // 環境変数（FAKE_AGY_*）を ACP のフレームに写す。実装は下の「ACP モード」（runAcp）。受け取った依頼は FAKE_AGY_ACP_LOG に 1 行 1 JSON で控える。
 import fs from "node:fs";
 import os from "node:os";
@@ -156,46 +153,17 @@ if (argv[0] !== "acp" && !argv.includes("--print=")) {
   process.exit(2);
 }
 
-const send = (obj) => process.stdout.write(JSON.stringify(obj) + NL);
-
-// 既存会話の再開なら id を引き継ぐ。新規なら採番する（本物はサーバ側が決める）
-let conversationId = flag("--conversation") ?? randomUUID();
-let started = false;
-
-let pendingPrompt = null;
-
-const AUTH_URL = "https://accounts.google.com/o/oauth2/auth?client_id=fake&code_challenge=fake&state=fake";
-
 // 組織の管理ポリシー（Gemini Enterprise の「ターミナル自動実行モード」が要審査）は skip より勝つ（実機 1.5 系で確認）。FAKE_AGY_ADMIN_REVIEW=1 で真似る。
-// FAKE_AGY_PERMISSION_MODE は任意の値（「サンドボックスで続行」など、確認が要るか分からない値）を返す。stream-json の init と ACP の現在のモードが同じ値を使う
+// FAKE_AGY_PERMISSION_MODE は任意の値（「サンドボックスで続行」など、確認が要るか分からない値）を返す。ACP の現在のモードがこの値を使う
 const permissionMode = () => process.env.FAKE_AGY_ADMIN_REVIEW === "1" ? "request-review" : process.env.FAKE_AGY_PERMISSION_MODE ? process.env.FAKE_AGY_PERMISSION_MODE : has("--dangerously-skip-permissions") ? "skip" : (flag("--mode") ?? "default");
 
-function emitInit() {
-  if (started) return;
-  started = true;
-  send({
-    event: "init",
-    conversation_id: conversationId,
-    init: {
-      cwd: process.cwd(),
-      tools: ["run_command", "read_file"],
-      permission_mode: permissionMode(),
-      model: flag("--model") ?? "fake-antigravity-1",
-      agent: flag("--agent") ?? "default",
-    },
-  });
-}
-
-const step = (body) => send({ event: "step_update", step_update: { conversation_id: conversationId, ...body } });
-
-let stepIndex = 0;
 // usage は agy の会話ごとの累計で、本物は --conversation で起こし直した別のプロセスでも続きから数える（1.5.2 で実測）。
 // ここでも会話 id ごとにファイルでターンの数を持つ。会話の agy のホーム（HOME）は試験でも利用者の本物なので、置き場は試験のデータ置き場の下
-const usageFile = (id = conversationId) => path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-usage", `${id}.json`);
-function usageTurns(id = conversationId) {
+const usageFile = (id) => path.join(process.env.AGENT_HOST_DATA || os.tmpdir(), "fake-agy-usage", `${id}.json`);
+function usageTurns(id) {
   try { return JSON.parse(fs.readFileSync(usageFile(id), "utf8")).turns ?? 0; } catch { return 0; }
 }
-function setUsageTurns(turns, id = conversationId) {
+function setUsageTurns(turns, id) {
   try { fs.mkdirSync(path.dirname(usageFile(id)), { recursive: true }); fs.writeFileSync(usageFile(id), JSON.stringify({ turns })); } catch {}
 }
 
@@ -240,16 +208,7 @@ if (process.env.FAKE_AGY_AGENT_FILE && argv[0] === "acp") {
   } catch {}
 }
 
-/**
- * 起動した MCP。{ name, call(method, params) }。最初のプロンプトで 1 回だけ起こす（runTurn）。
- * FAKE_AGY_MCP_DISABLED=1 なら起こさない（組織の管理ポリシーで「MCP サーバー」が無効の agy。実機 1.5 系では中継に initialize も来なかった）
- */
-let mcpStart = null;
-function startMcp() {
-  mcpStart ??= process.env.FAKE_AGY_MCP_DISABLED === "1" ? Promise.resolve([]) : connectMcp(Array.isArray(customAgent?.front?.mcpServers) ? customAgent.front.mcpServers : []);
-  return mcpStart;
-}
-/** 渡された MCP（{ serverName, command, args, env }）を起こして握手する。stream-json はカスタムエージェントの分、ACP は session/new の mcpServers の分 */
+/** 渡された MCP（{ serverName, command, args, env }）を起こして握手する。ACP は session/new の mcpServers の分、カスタムエージェントは frontmatter の mcpServers の分 */
 async function connectMcp(specs) {
   const mcpServers = [];
   for (const spec of specs) {
@@ -288,7 +247,7 @@ process.on("exit", () => { for (const child of children) { try { child.kill(); }
  * 読むのはユーザー（HOME の .gemini/config/hooks.json）・作業場所（cwd）と --add-dir の .agents/hooks.json。
  * どこかで { enabled: false } の名前はスコープをまたいで止まる。hook は <その場所>/.agents で動く（実機で確認。2026-09-27・28）
  */
-function agyHooksScript(id = conversationId) {
+function agyHooksScript(id) {
   const files = [path.join(process.env.HOME || process.env.USERPROFILE || '', '.gemini', 'config', 'hooks.json'),
     ...[process.cwd(), ...addDirs].map((d) => path.join(d, '.agents', 'hooks.json'))];
   const defs = [];
@@ -321,31 +280,13 @@ function pickMcpTool(servers, text) {
   const tool = server?.tools.find((t) => t.name === key || (t.description ?? "").includes(`[${key}]`));
   return { key, server, tool, args: json ? JSON.parse(json) : {} };
 }
-/** 本物（agy 1.2.14）は ServerName を空のまま出し、引数は Arguments に入る（stream-json の tool_info.parameters と ACP の rawInput が同じ形） */
+/** 本物（agy 1.2.14）は ServerName を空のまま出し、引数は Arguments に入る（ACP の rawInput の形） */
 const mcpCallParameters = (tool, args) => ({ ServerName: "", ToolName: tool.name, Arguments: args });
 /** ツールの出力。画像はファイルに退避して、出力の末尾に退避先の行を足す（2026-10-01 実測） */
 function mcpCallOutput(reply, id, index) {
   const content = reply.result?.content ?? [];
   const offloaded = content.filter((c) => c.type === "image").map((c, i) => `${NL}[Resource offloaded to file:///C:/fake-agy/brain/${id}/.system_generated/steps/${index}/media_${i}.jpg]`).join("");
   return reply.error ? `error:${reply.error.message}` : content.map((c) => c.text ?? "").join("") + offloaded;
-}
-
-/** カスタムエージェントの確認用の台本。返事の本文を返す。該当しなければ null */
-async function agentScript(text) {
-  if (text === "agent-body") return customAgent?.body ?? "(no agent)";
-  if (text === "agy-hooks") return agyHooksScript();
-  if (!/^mcp-(tools|call:)/.test(text)) return null;
-  const servers = await startMcp();
-  if (text === "mcp-tools") return mcpToolList(servers);
-  const { key, server, tool, args } = pickMcpTool(servers, text);
-  if (!tool) return `no-tool:${key}`;
-  const index = ++stepIndex;
-  const parameters = mcpCallParameters(tool, args);
-  step({ step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters } });
-  const reply = await server.call("tools/call", { name: tool.name, arguments: args });
-  const output = mcpCallOutput(reply, conversationId, index);
-  step({ step_index: index, state: "DONE", step_type: "tool", tool_name: "call_mcp_tool", tool_info: { name: "call_mcp_tool", parameters, output } });
-  return `mcp:${output}`;
 }
 
 /**
@@ -357,289 +298,60 @@ function lastParagraph(wire) {
   return hasPreamble && wire.includes("\n\n") ? wire.slice(wire.lastIndexOf("\n\n") + 2) : wire;
 }
 
-async function runTurn(text) {
-  emitInit();
-  // 本物はカスタムエージェントの MCP を最初のプロンプトで起こす（ツールを使わないターンでも）。返事を待たない MCP で止まらないよう上限を置く
-  if (customAgent) await Promise.race([startMcp(), new Promise((r) => setTimeout(r, 10_000).unref())]);
-
-  // Pleiad は ply_agents の説明・Pleiad の指示・（カスタムエージェントでは読めない分の）ネイティブの指示ファイルを、
-  // 発言の本文の前に空行区切りで足す（issue #107）。台本と返事は末尾の段落（利用者のプロンプト）で動く。
-  // 届いた本文全体を確かめる台本は wire-dump
-  const wire = text;
-  // 発言の本文として出す（result イベントの response だけでは、委譲された子の result に乗らない）
-  const answer = (answerText) => { step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: answerText });
-    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: answerText, duration_seconds: 0.1, num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } }); };
-  if (text.endsWith("wire-dump")) return answer(JSON.stringify({ paragraphs: wire.split("\n\n").length, head: wire.slice(0, 800), tail: wire.slice(-800) }));
-  // 届いた本文を丸ごと返す（配達物の試験が、発言の前に足された指示を全部読む）
-  if (text.endsWith("wire-all")) return answer(JSON.stringify({ wire }));
-  text = lastParagraph(wire);
-
-  // 思考の署名が通らなくなった会話（docs/multi-backend.md §2.8「思考の署名が通らない会話」）。実機の記録と同じく、
-  // step を 1 つも出さずに INVALID_ARGUMENT の ERROR だけを返す。FAKE_AGY_SIGNATURE_DIR に会話の id の印（poison-signature で置く）か
-  // all の印（poison-signature-all。新しい会話も含めて全部）があれば、どの発言にもそう返す
-  const signatureDir = process.env.FAKE_AGY_SIGNATURE_DIR;
-  if (signatureDir && (fs.existsSync(path.join(signatureDir, conversationId)) || fs.existsSync(path.join(signatureDir, "all")))) {
-    return send({ event: "result", result: {
-      conversation_id: conversationId, status: "ERROR", response: "", error: "INVALID_ARGUMENT (code 400): Invalid thought signature.",
-      duration_seconds: 0, num_turns: 0,
-      usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
-    } });
+// ---- 1 回呼び出し（`agy --print=`）------------------------------------------------
+//
+// 本体の会話は ACP（agy acp）に移った。ここに残すのは core/backends/antigravity-suggest.mjs（次の発言の候補づくり）が使う 1 回呼び出しだけ。
+// stdin の 1 行（{ event: "user", message: { content } }）に stream-json で 1 回答えて、stdin が閉じたら落ちる。
+function runPrintOnce() {
+  if (!authorized) {
+    process.stderr.write("Error: authentication required. Run agy to sign in." + NL);
+    process.exit(1);
   }
-  if (signatureDir && (text === "poison-signature" || text === "poison-signature-all")) {
-    fs.mkdirSync(signatureDir, { recursive: true });
-    fs.writeFileSync(path.join(signatureDir, text === "poison-signature" ? conversationId : "all"), "");
-    return answer(`署名を壊した: ${text}`);
-  }
-  // 同じ断りが step の始まった後に来る形（作り直さない側の確かめ）
-  if (text === "signature-after-step") {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { parameters: { path: "x" } } });
-    return send({ event: "result", result: {
-      conversation_id: conversationId, status: "ERROR", response: "", error: "INVALID_ARGUMENT (code 400): Invalid thought signature.",
-      duration_seconds: 0.1, num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 1 },
-    } });
-  }
-  // wire-has:<探す文字列> は、前置きを含む届いた本文にその文字列があるかを返す（返答の切り詰めで落ちないように 1 語だけ返す）
-  if (text.startsWith("wire-has:")) return answer(wire.includes(text.slice("wire-has:".length)) ? "wire-has:yes" : "wire-has:no");
-
-  // 結果を返した直後にプロセスが終わる agy の再現。stdout を書き切ってから終了する。
-  if (text === "result-then-exit") {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完了した返事" });
-    process.stdout.write(JSON.stringify({
-      event: "result",
-      result: { conversation_id: conversationId, status: "SUCCESS", response: "完了した返事", num_turns: 1 },
-    }) + NL, () => process.exit(0));
-    return;
-  }
-
-  // カスタムエージェントの確認（agent-body / mcp-tools / mcp-call:…）。本文だけ返して終える
-  const scripted = await agentScript(text);
-  if (scripted !== null) {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: scripted });
-    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    return send({
-      event: "result",
-      result: {
-        conversation_id: conversationId, status: "SUCCESS", response: scripted, duration_seconds: 0.1, num_turns: 1,
-        usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
-      },
-    });
-  }
-
-  // ゲートで止める台本（gated:<名前>。無停止の更新 段階 3 の付け直しの試験）: 前置きの本文 → ツールの実行中（ACTIVE）で、ゲートが開くまで待つ →
-  // ツールの完了 → 本文 → result。実時間でなく、テストがゲートのファイル（FAKE_AGY_GATE_DIR/<名前>）を作ったときに進む
-  const gated = /^gated:(\S+)/.exec(text);
-  if (gated) {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "前置き。" });
-    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    const toolStep = ++stepIndex;
-    const tool = { name: "run_command", parameters: { CommandLine: `echo ${gated[1]}` } };
-    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
-    const gate = path.join(process.env.FAKE_AGY_GATE_DIR ?? "", gated[1]);
-    while (!fs.existsSync(gate)) await new Promise((r) => setTimeout(r, 20));
-    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: `out-${gated[1]}` } });
-    const body = `終わり: ${gated[1]}`;
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: body });
-    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    // result を書き出した後に印を置く（テストが、読む側が居ない間に agy が終わったことを見るのに使う）
-    process.stdout.write(JSON.stringify({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: body, duration_seconds: 0.2, num_turns: 1,
-      usage: { input_tokens: 11, output_tokens: 7, thinking_tokens: 3, cache_read_tokens: 2, total_tokens: 23 } } }) + NL, () => fs.writeFileSync(`${gate}.done`, ""));
-    return;
-  }
-
-  // ターンの途中の控えを測る台本（partial / partial-fail / partial-exit / partial-ok）。本文とツールを 1 つずつ出した後、
-  // partial は result を出さない（中断を待つ）。ほかは FAKE_AGY_PARTIAL_HOLD_MS だけ待ってから、
-  // -fail は ERROR、-exit はプロセスごと落ち、-ok は本文を足して SUCCESS で終わる
-  const partial = /^partial(?:-(fail|exit|ok))?/.exec(text);
-  if (partial) {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "途中まで" });
-    const toolStep = ++stepIndex;
-    const tool = { name: "run_command", parameters: { CommandLine: "echo partial" } };
-    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
-    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: "partial-out" } });
-    if (!partial[1]) return;
-    await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_PARTIAL_HOLD_MS ?? 400)));
-    if (partial[1] === "exit") process.exit(3);
-    const ok = partial[1] === "ok";
-    if (ok) step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "。続き" });
-    return send({
-      event: "result",
-      result: {
-        conversation_id: conversationId, status: ok ? "SUCCESS" : "ERROR", response: ok ? "途中まで。続き" : "",
-        ...(ok ? {} : { error: "agy が途中で失敗した" }), duration_seconds: 0.4, num_turns: 1,
-        usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
-      },
-    });
-  }
-
-  // 終わらないコマンド（hang-command）。本物（1.3.4）は WaitMsBeforeAsync（20 秒）で裏のタスクへ回し、AI は wait で待ち続ける。
-  // stream には ACTIVE が出たまま、DONE はコマンドが本当に終わったときにだけ来る。本物と同じく、コマンドはシェルの子（agy の直下）で走らせ、
-  // それが終わったら DONE・本文・result を出す（裏のコマンドを止める試験）。子の pid は FAKE_AGY_COMMAND_PID_FILE に書く
-  if (text.startsWith("hang-command")) {
-    const toolStep = ++stepIndex;
-    const command = 'node -e "setInterval(()=>{},1000)"';
-    const tool = { name: "run_command", parameters: { CommandLine: command, Cwd: process.cwd(), WaitMsBeforeAsync: 20000 } };
-    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
-    const child = spawn(command, { shell: true, stdio: "ignore", windowsHide: true });
-    if (process.env.FAKE_AGY_COMMAND_PID_FILE) fs.writeFileSync(process.env.FAKE_AGY_COMMAND_PID_FILE, String(child.pid));
-    const ended = await new Promise((r) => child.once("exit", (code, signal) => r(signal ?? code)));
-    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: `exited: ${ended}` } });
-    const body = "コマンドが終わった";
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: body });
-    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: body, duration_seconds: 1, num_turns: 1,
+  const conversationId = flag("--conversation") ?? randomUUID();
+  const send = (obj) => process.stdout.write(JSON.stringify(obj) + NL);
+  const step = (body) => send({ event: "step_update", step_update: { conversation_id: conversationId, ...body } });
+  const answer = (text) => {
+    step({ step_index: 1, state: "ACTIVE", step_type: "agent_response", text_delta: text });
+    step({ step_index: 1, state: "DONE", step_type: "agent_response" });
+    send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: text, duration_seconds: 0.1, num_turns: 1,
       usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
-  }
-
-  // 何も出さずに終わるまで待つターン（quiet）。プロンプトは受け取るが、本文・ツール・result を一切出さない。
-  // 「渡った」合図を出せない backend（agy）が、受け取ったまま無出力で終わる形を作る。呼び出し側の中断（kill）で終わる
-  if (text.startsWith("quiet")) return;
-
-  // 中断を測るための、終わらないターン
-  if (text.startsWith("slow")) {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "待つ" });
-    return;   // result を出さない。呼び出し側は kill するしかない
-  }
-
-  // **出力の打ち切り**（`--print-timeout`、既定 5m0s）。実機の観測どおり、
-  // stderr に文言を出し、**本文が空のまま status:"SUCCESS"** / usage 全 0 の result を吐く。
-  // そして**ターンは裏で続く**ので、ここでは落ちない（呼び出し側が落とすのが正しい）
-  // 実機は印を先に書くが、stderr と stdout は別のパイプなので、読む側に着く順は保証されない
-  // （Linux の CI では result が先に読まれて落ちた）。**遅い側の順（result が先）**で出し、
-  // 印が遅れて着いても空の SUCCESS を ok にしないことを確かめる
-  if (text.startsWith("timeout")) {
-    send({
-      event: "result",
-      result: {
-        conversation_id: conversationId, status: "SUCCESS", response: "",
-        duration_seconds: 0, num_turns: 1,
-        usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
-      },
-    });
-    await new Promise((r) => setTimeout(r, 100));
-    process.stderr.write("[agy] print timeout after 5m0s with turn in progress; returning partial output" + NL);
-    return;
-  }
-
-  // 送信と完了で時刻が変わることを測るための、少しかかるターン（delay / delay500）
-  const slowly = /^delay(\d+)?/.exec(text);
-  if (slowly) await new Promise((r) => setTimeout(r, Number(slowly[1] ?? 300)));
-
-  if (text === "error-body") {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "本文は届いた" });
-    return send({ event: "result", result: {
-      conversation_id: conversationId, status: "ERROR", response: "本文は届いた", error: "結果は失敗",
-      duration_seconds: 0.1, num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
-    } });
-  }
-
-  const noReplyLimit = text === "limit-no-reply" || text.endsWith("\nlimit-no-reply");
-  if (text === "error-after-reply" || text === "limit-after-reply" || noReplyLimit || text === "error-after-tool") {
-    if (!noReplyLimit) {
-      step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完成した返事" });
-      step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+  };
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf(NL)) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      let msg = null;
+      try { msg = JSON.parse(line); } catch {}
+      if (msg?.event !== "user") continue;
+      const content = msg.message?.content;
+      const text = typeof content === "string" ? content : (content ?? []).filter((b) => b?.type === "text").map((b) => b.text).join("");
+      // 次の発言の候補の指示（core/prompt-suggestions.mjs）には JSON で答え、本物と同じく会話の置き場をホームの下に作る
+      if (text.includes("Return only JSON matching this schema")) {
+        const base = path.join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".gemini", "antigravity-cli");
+        try {
+          fs.mkdirSync(path.join(base, "conversations"), { recursive: true });
+          fs.mkdirSync(path.join(base, "brain", conversationId), { recursive: true });
+          fs.writeFileSync(path.join(base, "conversations", `${conversationId}.db`), "");
+        } catch {}
+        answer(JSON.stringify({ suggestion: "テストを流して" }));
+      } else {
+        answer(`了解: ${text}`);
+      }
     }
-    if (text === "error-after-tool") step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "read_file", tool_info: { parameters: { path: "x" } } });
-    return send({ event: "result", result: {
-      conversation_id: conversationId, status: "ERROR", response: noReplyLimit ? "" : "完成した返事",
-      error: text === "error-after-reply" || text === "error-after-tool" ? "後続処理が失敗" : "Individual quota reached. Resets in 3h.",
-      num_turns: 1,
-    } });
-  }
-
-  // 組織の管理ポリシーで確認の要るコマンドを、ヘッドレスの agy が黙って拒否したターン（実機 1.5 系で観測した形）。
-  // ツールは ACTIVE → output 無しの ERROR と tool_info.error、result は SUCCESS・空の response・denied_actions。admin-denied-reply は拒否の後に返事を書く
-  if (text === "admin-denied" || text === "admin-denied-reply") {
-    const index = ++stepIndex, parameters = { CommandLine: "echo hi" };
-    step({ step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters } });
-    step({ step_index: index, state: "ERROR", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters,
-      error: { type: "TOOL_ERROR", message: `permission check failed for command "echo hi": user denied permission to run command:${NL}echo hi` } } });
-    const reply = text === "admin-denied-reply" ? "コマンドを実行できませんでした" : "";
-    if (reply) {
-      step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: reply });
-      step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    }
-    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: reply, duration_seconds: 0.1, num_turns: 1,
-      denied_actions: [{ action: "command", display_name: "RunCommand" }],
-      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
-  }
-
-  if (text.startsWith("fail")) {
-    return send({
-      event: "result",
-      result: {
-        conversation_id: conversationId, status: "ERROR", response: "",
-        // fail-400 は思考の署名ではない INVALID_ARGUMENT（作り直さない側の確かめ）
-        error: text === "fail-400" ? "INVALID_ARGUMENT (code 400): Request contains an invalid argument." : "agy が失敗した",
-        duration_seconds: 0, num_turns: 1,
-        usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
-      },
-    });
-  }
-
-  // 次の発言の候補の指示（core/prompt-suggestions.mjs）には JSON で答え、本物と同じく会話の置き場をホームの下に作る
-  if (text.includes("Return only JSON matching this schema")) {
-    const base = path.join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".gemini", "antigravity-cli");
-    try {
-      fs.mkdirSync(path.join(base, "conversations"), { recursive: true });
-      fs.mkdirSync(path.join(base, "brain", conversationId), { recursive: true });
-      fs.writeFileSync(path.join(base, "conversations", `${conversationId}.db`), "");
-    } catch {}
-    const reply = JSON.stringify({ suggestion: "テストを流して" });
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: reply });
-    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: reply, duration_seconds: 0.1, num_turns: 1,
-      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
-  }
-
-  // 本文は**真のデルタ**で流れる（state: ACTIVE を繰り返し、最後に DONE）
-  const body = `了解: ${text}`;
-  for (const chunk of body.match(/[\s\S]{1,4}/g) ?? []) {
-    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: chunk });
-    await new Promise((r) => setTimeout(r, 1));
-  }
-  step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
-
-  // **ツールは同じ step_index で 2 回来る**（実機の観測）。
-  // 1 回目 ACTIVE は `tool_info.output` を持たず、2 回目 DONE で出力が入る
-  const toolStep = ++stepIndex;
-  step({
-    step_index: toolStep, state: "ACTIVE", step_type: "tool",
-    tool_name: "run_command",
-    tool_info: { name: "run_command", parameters: { CommandLine: "echo hello" } },
   });
-  await new Promise((r) => setTimeout(r, 1));
-  step({
-    step_index: toolStep, state: "DONE", step_type: "tool",
-    tool_name: "run_command",
-    tool_info: {
-      name: "run_command",
-      parameters: { CommandLine: "echo hello" },
-      output: "hello\r\n",
-    },
-  });
-
-  // 会話には出さない step（実機では user_input が DONE だけで来る）
-  step({ step_index: ++stepIndex, state: "DONE", step_type: "user_input" });
-
-  // 本物と同じく、usage は会話の累計（1 ターン 11・7・3・2 ずつ増える）。usage-reset は累計を 0 から数え直す（agy が数え直したときの扱いの試験）
-  const n = text.startsWith("usage-reset") ? 1 : usageTurns() + 1;
-  setUsageTurns(n);
-  send({
-    event: "result",
-    result: {
-      conversation_id: conversationId, status: "SUCCESS", response: body,
-      duration_seconds: 0.2, num_turns: 1,
-      usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n },
-    },
-  });
+  // 親が消えたら道連れになる。stdin が閉じたことを終了の合図にする
+  process.stdin.on("end", () => process.exit(0));
+  process.stdin.on("close", () => process.exit(0));
 }
+
 
 // ---- ACP モード（`agy acp`）---------------------------------------------------
 //
-// 本物（agy 1.5.17）で測った ACP の口を、stream-json と同じ台本・環境変数で動かす。測ったのは次のとおり:
+// 本物（agy 1.5.17）で測った ACP の口を、台本（環境変数 FAKE_AGY_*）で動かす。測ったのは次のとおり:
 //   - initialize: protocolVersion 1・agentCapabilities（loadSession・promptCapabilities・sessionCapabilities・auth.logout・_meta.antigravity）・authMethods が 4 つ
 //   - session/new: UUID の sessionId・models・modes（4 つ）・configOptions（model / thought_level / mode）、続けて available_commands_update と usage_update の通知
 //   - session/prompt: agent_message_chunk・tool_call・tool_call_update・usage_update、stopReason は end_turn / cancelled
@@ -747,7 +459,7 @@ async function runAcp() {
   });
   const usage = (sessionId, n) => update(sessionId, {
     sessionUpdate: "usage_update", used: 21 * n, size: ACP_WINDOW,
-    // 本物の usage の中身は stream-json の result.usage（入力・出力・思考・キャッシュ読み）。ACP の側の形は測っていないので、身代わりの置き場として _meta に置く
+    // 本物の usage の中身は入力・出力・思考・キャッシュ読み。ACP の側の形は測っていないので、身代わりの置き場として _meta に置く
     _meta: { antigravity: { usage: { input_tokens: 11 * n, output_tokens: 7 * n, thinking_tokens: 3 * n, cache_read_tokens: 2 * n, total_tokens: 21 * n } } },
   });
   // session/new・load・resume の返事の後に、コマンドの一覧と usage を通知する（usage は FAKE_AGY_USAGE_DELAY_MS だけ遅れる）
@@ -807,7 +519,7 @@ async function runAcp() {
       // session/new の _meta で足したシステムプロンプトが届いたかを返す
       if (text === "system-prompt") { say(data.systemPrompt ?? "(none)"); return finish(); }
 
-      // 思考の署名が通らなくなった会話（stream-json と同じ印のファイル）。step を 1 つも出さずに断る
+      // 思考の署名が通らなくなった会話（FAKE_AGY_SIGNATURE_DIR の印のファイル）。step を 1 つも出さずに断る
       const signatureDir = process.env.FAKE_AGY_SIGNATURE_DIR;
       if (signatureDir && (fs.existsSync(path.join(signatureDir, id)) || fs.existsSync(path.join(signatureDir, "all")))) throw acpError(-32000, SIGNATURE_ERROR);
       if (signatureDir && (text === "poison-signature" || text === "poison-signature-all")) {
@@ -963,7 +675,7 @@ async function runAcp() {
       const toolCallId = startTool("run_command", { CommandLine: "echo hello" });
       await pause(token, 1);
       endTool(toolCallId, "completed", "hello\r\n");
-      // 本物と同じく、usage は会話の累計（stream-json と同じ数え方。usage-reset は数え直す）
+      // 本物と同じく、usage は会話の累計（usage-reset は数え直す）
       const n = text.startsWith("usage-reset") ? 1 : usageTurns(id) + 1;
       setUsageTurns(n, id);
       usage(id, n);
@@ -1139,79 +851,4 @@ if (argv[0] === "acp") {
   await runAcp();
   process.exit(0);
 }
-
-// ---- stdin -----------------------------------------------------------------
-//
-// 1 行 1 プロンプト、1 行につき 1 ターン。未ログインなら最初の行で認証に入り、
-// **認可コードも同じ stdin で**受ける（本物と同じ）。
-
-let buf = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buf += chunk;
-  let i;
-  while ((i = buf.indexOf(NL)) >= 0) {
-    const line = buf.slice(0, i).trim();
-    buf = buf.slice(i + 1);
-    if (!line) continue;
-
-    // **プロンプトと認可コードは別経路。** 本物は stream-json の読み手がプロンプト行を食べ、
-    // 認可コードはコンソールの読み取りで受ける（実機では、パイプで渡したプロンプト行が
-    // 認可コード扱いにはならず、コードの入力待ちで時間切れになった）。
-    // ここでも JSON として読めた行はプロンプト、読めない行を認可コードとして扱う
-    let msg = null;
-    try { msg = JSON.parse(line); } catch {}
-
-    if (msg === null) {
-      if (authorized) continue;   // 認証済みなら素の行は捨てる
-      if (line === "fake-auth-code") {
-        authorized = true;
-        // 資格情報が残った、の印。次に起きるプロセス（`agy models` など）から見える
-        if (authFile) { try { fs.mkdirSync(path.dirname(authFile), { recursive: true }); fs.writeFileSync(authFile, "ok"); } catch {} }
-        const queued = pendingPrompt;
-        pendingPrompt = null;
-        if (queued) runTurn(queued);
-      } else {
-        process.stderr.write("Error: authentication failed." + NL);
-        send({
-          event: "result",
-          result: {
-            conversation_id: "", status: "ERROR", response: "", error: "authentication failed or timed out",
-            duration_seconds: 0, num_turns: 0,
-            usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
-          },
-        });
-      }
-      continue;
-    }
-
-    if (msg?.event !== "user") continue;
-    const content = msg.message?.content;
-    const text = typeof content === "string"
-      ? content
-      : (content ?? []).filter((b) => b?.type === "text").map((b) => b.text).join("");
-    // 受け取ったプロンプトを 1 行ずつ控える（再送で二重に届かないことを数える試験用）
-    if (process.env.FAKE_AGY_PROMPT_LOG) { try { fs.appendFileSync(process.env.FAKE_AGY_PROMPT_LOG, `${text.replaceAll("\n", " ")}\n`); } catch {} }
-
-    if (needsAuth && !authorized) {
-      pendingPrompt = text;
-      continue;
-    }
-    runTurn(text);
-  }
-});
-
-// 未ログインなら、最初の入力を待たずに URL を出す（本物もターンを起こした時点で出す）
-if (needsAuth) {
-  process.stderr.write(
-    "Authentication required. Please visit the URL to log in:" + NL
-    + "  " + AUTH_URL + NL
-    + "Waiting for authentication (timeout 60s)..." + NL
-    + "Or, paste the authorization code here and press Enter:" + NL,
-  );
-}
-
-// 親が消えたら道連れになる。stdin が閉じたことを終了の合図にする
-// （本物も「stdin を閉じると走っているターンを終えてから落ちる」）
-process.stdin.on("end", () => process.exit(0));
-process.stdin.on("close", () => process.exit(0));
+runPrintOnce();

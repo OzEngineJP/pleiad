@@ -21,7 +21,7 @@ export const isUnattendedMode = mode => Boolean(mode) && scopeRank(mode.scope) >
 export function decideApp({ app, prefs, sessionApps = [], deniedThisTurn = new Set(), mode, approvals = 'interactive' } = {}) {
   if (!app || isForbiddenApp(app)) return 'forbidden';
   if (deniedThisTurn.has?.(app.id)) return 'denied';
-  // 対話の承認を持たないエージェント（Antigravity。承認モードが yolo しか無い）には、アプリの承認も聞かない（2026-10-01 に決めた）
+  // 対話の承認を持たないエージェント（approvals: 'none'）には、アプリの承認も聞かない（2026-10-01 に決めた。Antigravity は旧い口の間だけ該当し、ACP では 'interactive' になってモードに従う）
   if (approvals === 'none' || isUnattendedMode(mode)) return 'allow';
   const cu = normalizeComputerUse(prefs?.computerUse ?? prefs);
   if (cu.allowAllApps) return 'allow';

@@ -5,6 +5,8 @@
 //   - 未掲載モデルは通し、既知のモデルで選べない思考の強さは断る
 //   - 走っていない子のエージェントを替える: 次のターンで引き継ぎ（履歴を渡す）、完了した子を勝手に走らせない
 //   - agy へ替えても親より緩くはならない（ACP の承認モードを持つ）ので、聞かずに親と同じ強さのモードで決まる
+//   - 親より緩くなる切り替え（親が auto の会話で、強制できる Codex の子を、強制できない fake の auto へ）は親の会話で 1 回聞く。
+//     断ったら何も変えない・許せば委譲と同じ規則で決まる・カードを待つ間に止められたら許しても断る
 //   - 他の会話のタスクは変えられない
 //   - 記録: 子の会話の変更の記録（by: agent・via・bySession）、タスクの backend・model・effort・routing.changed、agentTaskChanged
 import fs from 'node:fs/promises';
@@ -42,9 +44,9 @@ export default async function (t) {
     throw new Error(`task timeout ${what}: ` + JSON.stringify(row && { status: row.status, backend: row.backend, model: row.model, effort: row.effort, notification: row.notification, error: row.error }));
   };
   // その会話から ply_agents のツールを 1 回呼び、戻り（エラーなら { error }）を読む
-  const call = async (sessionId, name, args) => {
+  const call = async (sessionId, name, args, mode) => {
     const from = c.mark();
-    await c.runTurn({ sessionId, prompt: prompt(name, args) });
+    await c.runTurn({ sessionId, ...(mode ? { mode } : {}), prompt: prompt(name, args) });
     const ev = await c.waitFor(e => e.type === 'tool.result' && e.sessionId === sessionId, { from, ms: 60000 });
     return ev.isError ? { error: ev.text } : JSON.parse(ev.text);
   };
@@ -187,5 +189,38 @@ export default async function (t) {
     const queued = (await c.cmd('agentTaskInstructions', { taskId: run2.taskId })).instructions;
     t.ok('エージェントを替える指示は走っているターンへ途中送信しない（待機にして替えた後のターンで読ませる）', !together.error && queued.length === 1 && queued[0].state === 'queued',
       JSON.stringify({ together: together.error, queued }));
+
+    // ---- 親より緩くなる切り替え。親が聞かずに進む auto の会話から、範囲を強制できる Codex の子（full）を、強制できない fake（auto）へ替える。
+    // 親の会話で 1 回聞く（agy は親より緩くならないので聞かれない）
+    const escMark = permissions.length;
+    const cards = () => permissions.slice(escMark).filter(p => p.toolName === 'ply_task_send');
+    const strong = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'codex', task: 'echo:LOOSE' }, 'auto');
+    await settle(strong.taskId);
+    let loose = (await tasks()).find(r => r.taskId === strong.taskId);
+    // 子（fake の Codex）のコマンドの承認は親へ中継されて数に入るので、ply_delegate の確認だけを数える
+    t.ok('（前提）親が auto でも、強制できる Codex の子は聞かずに始まる', loose.backend === 'codex' && loose.mode === 'full' && !permissions.slice(escMark).some(p => p.toolName === 'ply_delegate'),
+      JSON.stringify({ backend: loose.backend, mode: loose.mode, asked: permissions.slice(escMark).map(p => p.title) }));
+    allow = false;
+    const refused = await call(parent, 'ply_task_send', { taskId: strong.taskId, backend: 'fake' }, 'auto');
+    t.ok('親より緩くなる切り替えは親の会話で聞き、断ったら失敗する', Boolean(refused.error) && cards().length === 1 && /[（(]auto[）)]/.test(cards()[0].title ?? ''),
+      JSON.stringify({ refused, titles: cards().map(p => p.title) }));
+    loose = (await tasks()).find(r => r.taskId === strong.taskId);
+    t.ok('断ったら何も変えない', loose.backend === 'codex' && !(await row(strong.sessionId)).nextSettings, JSON.stringify({ backend: loose.backend }));
+    allow = true;
+    const loosened = await call(parent, 'ply_task_send', { taskId: strong.taskId, backend: 'fake' }, 'auto');
+    loose = (await tasks()).find(r => r.taskId === strong.taskId);
+    t.ok('許せば替わり、子の承認モードは委譲と同じ規則で決まる（fake は auto）', !loosened.error && cards().length === 2 && loose.backend === 'fake' && loose.mode === 'auto'
+      && (await row(strong.sessionId)).nextSettings?.mode === 'auto', JSON.stringify({ loosened: loosened.error, backend: loose.backend, mode: loose.mode }));
+
+    // ---- 承認カードを待つ間にタスクが止められたら、許可しても何も書かない
+    const running = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'codex', task: 'slow' }, 'auto');
+    await awaitTask(running.taskId, r => r.status === 'running', 'slow3 running');
+    for (let i = 0; i < 100 && !(await c.cmd('running')).turns.some(x => x.sessionId === running.sessionId); i++) await sleep(50);
+    beforeAnswer = api => api.cmd('cancelAgentTask', { taskId: running.taskId });
+    const raced = await call(parent, 'ply_task_send', { taskId: running.taskId, backend: 'fake' }, 'auto');
+    const racedRow = (await tasks()).find(r => r.taskId === running.taskId);
+    const racedChild = await row(running.sessionId);
+    t.ok('承認を待つ間に止められたタスクは、許可しても断り、子の予約も記録も変えない', Boolean(raced.error) && cards().length === 3 && racedRow.backend === 'codex' && racedChild.nextSettings?.backend !== 'fake',
+      JSON.stringify({ raced, backend: racedRow.backend, next: racedChild.nextSettings }));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 }

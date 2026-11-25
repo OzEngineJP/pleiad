@@ -2,7 +2,13 @@
 
 ## 状態
 
-承認（2026-11-10）。[ADR 0304](0304-memory-auto-learn-default-off-and-halted.md) の Antigravity 部分（受動の照会と一覧の引き直しの範囲）を一部置換する。ほかの決定は引き続き有効。
+承認（2026-11-10）。**口の部分は [0358](0358-antigravity-on-acp.md) で読み替える**（一部置換）。[ADR 0304](0304-memory-auto-learn-default-off-and-halted.md) の Antigravity 部分（受動の照会と一覧の引き直しの範囲）を一部置換する。ほかの決定は引き続き有効。
+
+> **2026-11-26 の追記（[0358](0358-antigravity-on-acp.md)）**: Antigravity の口が stream-json から ACP（`agy acp`）に替わった。
+> この ADR の決定（`agy models` を起こしてよいのは「このプロセスでログイン済みと確かめた所」だけ・送信の関所 `requireModelCatalog`・裏の引き直しと TTL・single-flight・間隔の 2 つ）は**そのまま有効**。モデルの一覧と `/usage`（`agy --print /usage --output-format json`）は今も `agy` のサブコマンドで取る。
+> 読み替えるのは、ログインの証拠になる「ターンの `result`」の部分だけ。
+> - 「このプロセスが受けた・本文のある `SUCCESS`」→「このプロセスが受けた・本文のある `session/prompt` の応答（`stopReason: 'end_turn'`）」。保持役の付け直しが再生した行（`replay`）と、本文の無い完了は、これまでどおり証拠にしない。
+> - 「`init` の行」「`agy --print` のターン」で一覧を確かめる線は無い（ACP の `session/new` の応答にもモデルの一覧が載るが、段つきの id の一覧は `agy models` を正本にする）。
 
 ## 状況
 
