@@ -27,8 +27,8 @@ export const FAKE = {
 export const fixtureFile = (platform = process.platform) =>
   fileURLToPath(new URL(`../fixtures/claude-launch-main.${platform === 'win32' ? 'win32' : 'linux'}.json`, import.meta.url));
 /**
- * 記録で入口（createClaudeConnectorsAuth）に渡す OS。macOS は linux とみなす（期待値も linux の記録。b1 の入口は macOS では platform で止まり、
- * 記録が「起動されない」になって比べられない）。記録が見るのは起動の組み立て（ファイルの資格情報から env へ）で、鍵束は関わらない
+ * 記録で入口（createClaudeConnectorsAuth）に渡す OS。macOS は linux とみなす（期待値も linux の記録）。
+ * 記録が見るのは起動の組み立て（専用フォルダの指定と、親の env の扱い）で、鍵束は関わらない
  */
 export const recordPlatform = (platform = process.platform) => platform === 'win32' ? 'win32' : 'linux';
 // 機械ごとに違う env は有無だけ記録する

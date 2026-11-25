@@ -119,6 +119,30 @@ export async function ensureClaudeOwnDirLinks(dir, shared) {
   return moves;
 }
 
+/** 退避した項目を残す日数（ADR 0350）。過ぎたものは sweepClaudeOwnDirArchives が消す */
+export const ARCHIVE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+const ARCHIVE_NAME = /\.pleiad-moved-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * ensureClaudeOwnDirLinks が名前の重なりで退避した項目（claude-usage の直下の `<名前>.pleiad-moved-<日時>-<uuid>`）のうち、
+ * 退避から keepMs を過ぎたものを消す。名前から日時を読めないもの・まだ新しいものは触らない。リンクはたどらず、リンクそのものだけを消す。
+ * 消せなかったものは次の回に回す。消した数を返す
+ */
+export async function sweepClaudeOwnDirArchives(root, { now = Date.now(), keepMs = ARCHIVE_KEEP_MS } = {}) {
+  let names;
+  try { names = await fs.readdir(root); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    const m = ARCHIVE_NAME.exec(name);
+    if (!m) continue;
+    const at = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+    if (!Number.isFinite(at) || now - at < keepMs) continue;
+    try { await fs.rm(path.join(root, name), { recursive: true, force: true }); removed++; }
+    catch { /* 使用中など。次の回に消す */ }
+  }
+  return removed;
+}
+
 /**
  * macOS で CLI がログインを置くキーチェーンの項目名。CLAUDE_CONFIG_DIR に渡す文字列そのもの（NFC）の SHA-256 の先頭 8 桁を付ける
  * （CLI 2.1.322 の実機で確認。ADR 0351）。realpath や末尾の / の調整はしない（ログイン・会話・使用量に渡す文字列と同じにするため）
