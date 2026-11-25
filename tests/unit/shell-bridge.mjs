@@ -53,13 +53,21 @@ export default async function (t) {
   let mode = { scope: 'workspace', autonomy: 'never' };
   let turnSignal = null;
   const port = bridge.open({ origin, locale: 'ja', owner: async () => ({ sessionId: 's1', cwd: dir, mode, signal: turnSignal, env: { PLY_SHELL_PROBE: 'probe-value' } }) });
+  // 短い run が裏の一覧に出ないことを見る専用の橋。出し始めるまでの時間を 60 秒にして、この PC の Git Bash の起動（300 ms を超えることがある）に左右されないようにする。
+  // 上の橋の 300 ms は、「少し走った run が一覧に出る」側の試験を短く済ませるためのもの
+  const changedLong = [];
+  const longBridge = createShellBridge({ askPermission: async () => ({ allow: true }), onJobChange: (sessionId, job) => changedLong.push({ sessionId, job }), listedAfterMs: 60_000 });
+  const longServer = http.createServer((req, res) => longBridge.handle(req, res));
+  await new Promise((r) => longServer.listen(0, '127.0.0.1', r));
+  const longPort = longBridge.open({ origin: `http://127.0.0.1:${longServer.address().port}`, locale: 'ja', owner: async () => ({ sessionId: 's1', cwd: dir, mode: { scope: 'workspace', autonomy: 'never' }, env: {} }) });
   let seq = 0;
-  const call = async (name, args = {}, signal) => {
-    const res = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' }, signal,
+  const callOn = async (p, name, args = {}, signal) => {
+    const res = await fetch(p.url, { method: 'POST', headers: { ...p.headers, 'content-type': 'application/json' }, signal,
       body: JSON.stringify({ jsonrpc: '2.0', id: ++seq, method: 'tools/call', params: { name, arguments: args } }) });
     const body = await res.json();
     return { text: body.result?.content?.[0]?.text ?? '', isError: Boolean(body.result?.isError) };
   };
+  const call = (name, args = {}, signal) => callOn(port, name, args, signal);
   const until = async (fn, ms = 10_000) => { for (let i = 0; i < ms / 50; i++) { if (fn()) return true; await sleep(50); } return false; };
   const jobOf = (id) => bridge.jobs('s1').find((j) => j.jobId === id);
   const timed = async (fn) => { const from = Date.now(); const value = await fn(); return { value, ms: Date.now() - from }; };
@@ -89,7 +97,10 @@ export default async function (t) {
     t.ok('timeoutMs はスキーマで範囲を弾かない（弾くと呼び出しごと失敗する。範囲は丸める）', timeoutSchema.type === 'integer' && timeoutSchema.maximum === undefined && timeoutSchema.minimum === undefined, JSON.stringify(timeoutSchema));
     r = await call('run', { command: 'echo within-cap', timeoutMs: 2_400_000 });
     t.ok('timeoutMs が上限を超えても断らず、丸めて走らせる', !r.isError && r.text.includes('within-cap') && /終了コード 0/.test(r.text), r.text);
-    t.ok('短い run は裏の一覧に出さない（ちらつかせない）', !changed.some((x) => x.job.command === 'echo within-cap'));
+    // 一覧に出し始めるまでに終わる run は、一覧に出さない（ちらつかせない）。待ちの timer は終わったら消える
+    r = await callOn(longPort, 'run', { command: 'echo within-cap' });
+    t.ok('短い run は裏の一覧に出さない（ちらつかせない。終わるまで一覧に出す知らせも出ない）',
+      !r.isError && r.text.includes('within-cap') && changedLong.length === 0 && longBridge.jobs('s1').every((j) => !j.listed) && !longBridge.sessionsWithJobs().includes('s1'), `${r.text} ${JSON.stringify(changedLong)}`);
 
     r = await call('run', { command: `${node} -e "console.log('early-line'); setTimeout(() => {}, 20000)"`, timeoutMs: 1000 });
     const movedId = jobIdIn(r.text);
@@ -309,7 +320,9 @@ export default async function (t) {
     t.ok('知らないジョブは断る', r.isError && r.text.includes('sh-missing'));
   } finally {
     await bridge.closeAll();
+    await longBridge.closeAll();
     server.close();
+    longServer.close();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
