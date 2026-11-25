@@ -548,7 +548,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 | Antigravity | agy models。ログイン済みと確認した間、期限切れは裏で取り直し、refresh は取得を待つ。失敗時は前の一覧を保つ |
 | OpenCode | サーバーの /config/providers。共有サーバーの回答は 60 秒覚え、専用サーバーでは毎回聞く。認証変更時はサーバーを閉じる。refresh によるプロセス再起動は行わない |
 | Grok | 新しい ACP 接続の initialize の一覧。通常は 5 分、refresh で新しい接続から取り直す |
-| Devin | 一覧用の ACP の会話（`session/new`）の `model` の選択肢の値そのまま（名前を読み替えない）。強さは裏でモデルを選び替えて `thought_level` の選択肢を読む（`speed` は扱わない）。通常は 5 分、refresh で取り直し、失敗は覚えず次回に再試行する（[ADR 0356](adr/0356-devin-models-from-acp-options.md)） |
+| Devin | 一覧用の ACP の会話（`session/new`）の `model` の選択肢の値そのまま（名前を読み替えない）。強さは裏でモデルを選び替えて `thought_level` の選択肢を読む（`speed` は扱わない）。強さは CLI の版ごとに覚え、版が変われば読み直す。一覧と強さを読んだ会話は閉じたら置き場ごと消す。通常は 5 分、refresh で取り直し、失敗は覚えず次回に再試行する（[ADR 0356](adr/0356-devin-models-from-acp-options.md)） |
 
 固定の委譲と ply_task_send は未掲載のモデル名と明示した思考の強さを通す。既知のモデルで非対応の段、互換の接続先の機能、モデル名の形、backend の有効性、権限・タスクの所有者・状態、アカウントの登録・トークンは検査する（満杯と分かった使用枠では断らない。ADR 0352）。これらは未掲載による拒否ではなく、指定どおりの強さ・実行先・操作権限を守る検査である。
 

@@ -6,6 +6,7 @@ import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
 import { migrateClaudeUsage } from './usage-migrations.mjs';
+import { removeDevinCandidatesOnce } from './prefs-migrations.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
 // ここは**エージェント非依存**。エージェントの実行もセッション管理も core/backends/<id>.mjs が持ち、
@@ -269,9 +270,13 @@ const releaseDataLock = await acquireDataLockWait(store.dataDir, { timeoutMs: ST
 const lockWaitedMs = Date.now() - lockFrom;
 if (STARTED_BY_MAIN && lockWaitedMs > 0) console.log(`  [start] got the data lock after ${lockWaitedMs} ms at=${Date.now()}`);
 const migrated = await retryTransient(() => ensureDataSchema(store.dataDir));
-if (migrated?.backup) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
-// 形式 4 → 5 で委譲の段から外した Devin の候補（ADR 0356）。画面には出さず、起動のログに 1 行だけ残す
-if (migrated?.devinCandidates?.count) console.log(`  ${t('data.devinCandidatesRemoved', migrated.devinCandidates)}`);
+if (migrated) console.log(`  ${t('data.migrated', { backup: migrated.backup })}`);
+// 委譲の段の Devin の候補を 1 回だけ外す（prefs.json の印で 1 回きり。core/prefs-migrations.mjs、ADR 0356）。store が prefs.json を読む前に済ませる。
+// 画面には出さず、起動のログに 1 行だけ残す。失敗しても起動は止めない（印が立たないので、次の起動でやり直す）
+try {
+  const devin = removeDevinCandidatesOnce(store.dataDir);
+  if (devin?.count) console.log(`  ${t('data.devinCandidatesRemoved', devin)}`);
+} catch (e) { console.error(`  ${t('data.devinCandidatesFailed')}`, String(e?.message ?? e)); }
 const slowLog = createSlowLog({ dataDir: store.dataDir });
 let wsInFlight = 0;
 const usageStore = createUsageStore(store.dataDir);

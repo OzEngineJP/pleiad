@@ -68,8 +68,17 @@ export function createDevinBackend({ Acp = null, command = () => cliCommand('dev
   // 思考の強さ（`thought_level`）はモデルを選んで初めて見えるので、同じ会話でモデルを順に選んで裏で読む（170 個で 1 分ほど）。
   // 読んだ分はサーバーが動く間覚え、一覧を取り直したときは新しいモデルだけを読む
   const modelsTtlMs = () => envMs('AGENT_HOST_DEVIN_MODELS_TTL_MS', 300_000);
-  let listCache = null, listFetch = null, probeJob = null;
+  // 強さは CLI の版ごとに覚える。initialize の agentInfo.version が変わったら（一覧の取り直しでも、ターンの起動でも）忘れて読み直す
+  let listCache = null, listFetch = null, probeJob = null, probeRun = null, effortsVersion;
   const efforts = new Map(), wanted = [], waiters = new Map();
+  function noteVersion(version) {
+    if (typeof version !== 'string' || !version || version === effortsVersion) return;
+    const known = effortsVersion !== undefined;
+    effortsVersion = version;
+    if (!known) return;
+    efforts.clear(); listCache = null;
+    if (probeRun) { probeRun.stopped = true; void probeRun.client.close().catch(() => {}); }
+  }
   // モデルを切り替えた直後の応答（段はそのモデルの既定）から、そのモデルの強さの選択肢と既定を覚える
   function learn(id, configOptions) {
     try { efforts.set(id, devinThought(configOptions)); } catch { return; }
@@ -99,34 +108,39 @@ export function createDevinBackend({ Acp = null, command = () => cliCommand('dev
     return listFetch;
   }
   // 強さを読んでいないモデルを、一覧を読んだ会話で順に選んで読む。待っている人がいるモデル（wanted）を先にする
+  // 版が変わって止めた読み取り（stopped）は覚えず、新しい版の会話で読み直す。会話は読み終えたら閉じ、置き場ごと消える（devin-config.mjs の cleanup）
   function probe(session) {
-    if (probeJob) { void session.client.close().catch(() => {}); return; }
+    if (probeRun && !probeRun.stopped) { void session.client.close().catch(() => {}); return; }
     const { client, sessionId } = session;
+    const run = { client, stopped: false };
     const configId = session.configOptions.find(o => o?.id === 'model' || o?.category === 'model')?.id ?? 'model';
     const job = (async () => {
-      const skipped = new Set();
+      const tried = new Set();
       try {
-        for (;;) {
+        while (!run.stopped) {
           const listed = new Set(listCache?.value.models.map(m => m.id) ?? []);
-          const pending = id => listed.has(id) && !efforts.has(id) && !skipped.has(id);
+          const pending = id => listed.has(id) && !efforts.has(id) && !tried.has(id);
           const next = wanted.find(pending) ?? [...listed].find(pending);
           if (!next) break;
+          tried.add(next);
           let result = null;
           try { result = await client.call('session/set_config_option', { sessionId, configId, value: next }); }
           catch { if (client.alive === false) break; }
+          if (run.stopped) break;
           const model = result?.configOptions?.find?.(o => o?.id === configId);
-          if (model?.currentValue === next) learn(next, result.configOptions); else skipped.add(next);
+          if (model?.currentValue === next) learn(next, result.configOptions);
         }
       } finally {
         await client.close().catch(() => {});
       }
     })().catch(() => {}).finally(() => {
-      if (probeJob === job) probeJob = null;
+      if (probeRun !== run) return;
+      probeRun = null; probeJob = null;
       // 読めなかったモデルを待っている人には、読み終えたことだけを返す（強さの候補が無いまま判定される）
       for (const list of waiters.values()) for (const resolve of list) resolve();
       waiters.clear(); wanted.length = 0;
     });
-    probeJob = job;
+    probeRun = run; probeJob = job;
   }
   async function rawList(cwd, signal, { refresh = false } = {}) {
     const fresh = listCache && Date.now() - listCache.at < modelsTtlMs();
@@ -164,8 +178,12 @@ export function createDevinBackend({ Acp = null, command = () => cliCommand('dev
       const close = client.close.bind(client);
       client.close = async (...a) => { try { return await close(...a); } finally { await launch.cleanup().catch(() => {}); } };
     }
-    try { await client.start(); return client; }
-    catch (error) { await client.close().catch(() => {}); throw error; }
+    try {
+      const init = await client.start();
+      // 一覧を読む会話でもターンの会話でも、CLI の版が変わっていたら覚えた強さを忘れる（次の一覧で読み直す）
+      noteVersion(init?.agentInfo?.version);
+      return client;
+    } catch (error) { await client.close().catch(() => {}); throw error; }
   }
   async function cwdFor(id) {
     if (rows.has(id)) return rows.get(id).cwd;

@@ -31,10 +31,16 @@ const ALL_MODELS = {
   'paid-exact': {},
 };
 const only = (process.env.FAKE_DEVIN_MODELS ?? '').split(',').filter(Boolean);
-const MODELS = only.length ? Object.fromEntries(only.map(id => [id, ALL_MODELS[id] ?? {}])) : ALL_MODELS;
+const MODELS = only.length ? Object.fromEntries(only.map(id => [id, ALL_MODELS[id] ?? {}])) : { ...ALL_MODELS };
+// FAKE_DEVIN_THOUGHT（JSON の { モデル: [段…] }）で強さの選択肢を替えられる（CLI の版が上がって選択肢が変わったときの試験用。既定は先頭の段）
+for (const [id, thought] of Object.entries(JSON.parse(process.env.FAKE_DEVIN_THOUGHT || '{}'))) {
+  if (Object.hasOwn(MODELS, id)) MODELS[id] = { ...MODELS[id], thought, implicit: thought.includes(MODELS[id].implicit) ? MODELS[id].implicit : thought[0] };
+}
+// FAKE_DEVIN_VERSION で CLI の版（--version と initialize の agentInfo.version）を替えられる
+const VERSION = process.env.FAKE_DEVIN_VERSION || '3000.11.92';
 const LABELS = { 'swe-2-high': 'SWE-2 High', 'claude-opus-5-5-medium': 'Claude Opus 5.5', 'kimi-k2-6': 'Kimi K2.6' };
 const DEFAULT_MODEL = Object.hasOwn(MODELS, 'swe-2-high') ? 'swe-2-high' : Object.keys(MODELS)[0];
-if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
+if (command === '--version' || command === 'version') { console.log(VERSION); process.exit(0); }
 if (command === 'auth') {
   // ログイン状態はファイルに持つ（FAKE_DEVIN_AUTH_FILE。内容は in / out。無ければ in）。`auth login`・`auth logout` で替わる
   const authFile = process.env.FAKE_DEVIN_AUTH_FILE || '';
@@ -151,7 +157,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     const p = request.params ?? {};
     switch (request.method) {
       case 'fixture/no-reply': return;
-      case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
+      case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: VERSION }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
         captureTurnConfig();
         const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: DEFAULT_MODEL, thought_level: MODELS[DEFAULT_MODEL]?.implicit ?? null, speed: 'fast', used: 120000, window: 262000,

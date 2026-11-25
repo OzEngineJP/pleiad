@@ -176,7 +176,7 @@ export async function prepareDevinMcpOff({ root, source, suppress, kept = path.j
  */
 export async function prepareDevinLaunch({ command, cwd, env = process.env, dataDir = env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), metadata = false, turnConfig = null, mcpOff = [] }) {
   const base = path.join(dataDir, 'devin');
-  const sessions = path.join(base, metadata ? 'metadata-sessions' : 'sessions');
+  const sessions = metadata ? await metadataSessionsDir(path.join(base, 'metadata-sessions')) : path.join(base, 'sessions');
   await fs.mkdir(sessions, { recursive: true, mode: 0o700 });
   const launch = { command: [...command], cwd: path.resolve(cwd), env: { ...env, DEVIN_SESSIONS_DIR: sessions } };
   if (!metadata) {
@@ -208,14 +208,45 @@ export async function prepareDevinLaunch({ command, cwd, env = process.env, data
   const configHome = path.join(base, 'metadata-config');
   const configDir = path.join(configHome, 'devin');
   const work = path.join(base, 'metadata-work');
-  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
-  await fs.mkdir(work, { recursive: true, mode: 0o700 });
-  // Fixed, bounded metadata settings only. No user settings or credentials are copied.
-  const configPath = path.join(configDir, 'config.json');
-  await fs.writeFile(configPath, JSON.stringify(METADATA_CONFIG), { mode: 0o600 });
-  await fs.writeFile(path.join(configDir, 'mcp_config.json'), '{"mcpServers":{}}', { mode: 0o600 });
-  launch.command.push('--config', configPath);
+  // 一覧と強さを読む会話は 1 回きり。プロセスを閉じたら、その会話の置き場ごと消す（Devin 側に会話を溜めない。ADR 0356）
+  const cleanup = async () => {
+    try { await fs.rm(sessions, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+    finally { metadataInUse.delete(sessions); }
+  };
+  try {
+    await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(work, { recursive: true, mode: 0o700 });
+    // Fixed, bounded metadata settings only. No user settings or credentials are copied.
+    const configPath = path.join(configDir, 'config.json');
+    await fs.writeFile(configPath, JSON.stringify(METADATA_CONFIG), { mode: 0o600 });
+    await fs.writeFile(path.join(configDir, 'mcp_config.json'), '{"mcpServers":{}}', { mode: 0o600 });
+    launch.command.push('--config', configPath);
+  } catch (error) { await cleanup().catch(() => {}); throw error; }
   launch.cwd = work;
   launch.env.DEVIN_CONFIG_HOME = configHome;
+  launch.cleanup = cleanup;
   return launch;
+}
+
+/** 使っている最中の metadata の会話の置き場（このプロセスの中）。掃除で消さない */
+const metadataInUse = new Set();
+/** 落ちたときなどに消し損ねた置き場を消すまでの猶予。別の Pleiad が読んでいる最中の置き場を消さない（一覧と強さの読み取りは 1 分ほど） */
+const METADATA_SWEEP_AGE_MS = 10 * 60_000;
+
+/**
+ * metadata の読み取りごとの会話の置き場（metadata-sessions/<uuid>）を作る。
+ * 前に消し損ねた置き場と、前の版が 1 つの置き場に溜めた会話（metadata-sessions/cli）を、使っていなければ先に消す
+ */
+async function metadataSessionsDir(root) {
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const now = Date.now();
+  for (const entry of await fs.readdir(root).catch(() => [])) {
+    const full = path.join(root, entry);
+    if (metadataInUse.has(full)) continue;
+    const stat = await fs.stat(full).catch(() => null);
+    if (stat && now - stat.mtimeMs >= METADATA_SWEEP_AGE_MS) await fs.rm(full, { recursive: true, force: true }).catch(() => {});
+  }
+  const dir = path.join(root, crypto.randomUUID());
+  metadataInUse.add(dir);
+  return dir;
 }

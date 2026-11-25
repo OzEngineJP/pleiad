@@ -4,15 +4,13 @@ import { t } from './i18n.mjs';
 import { acquire, checkDb, createDb, dbPath } from './db.mjs';
 import { acquireDataLock } from './data-lock.mjs';
 import { assertNotGuarded } from './test-guard.mjs';
-import { migrateSchema1To2, finishSchema1To2, migrateSchema2To3, migrateSchema3To4, migrateSchema4To5, finishMemoryLogMigration, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
+import { migrateSchema1To2, finishSchema1To2, migrateSchema2To3, migrateSchema3To4, finishMemoryLogMigration, legacyFiles, removeLegacy, writeSchemaFile } from './schema-migration.mjs';
 
 // 2: 件数とともに増える記録は SQLite（pleiad.db）の行（ADR 0115）。1 は記録ごとの JSON ファイル。
 // 形式番号を上げる変更は、バックアップ → 移行 → 突き合わせ → 番号の更新を、ここと同じ形（core/schema-migration.mjs）で足す。
 // 3: bot 削除後の閲覧用状態と、行単位で消せる記憶履歴。旧版の起動を拒否する。
 // 4: 会話の ToDo（todos・todo_scopes の表。ADR 0342）。旧版は ToDo を知らずに会話を消し、ToDo だけが残るので起動を拒否する。
-// 5: Devin のモデル名を CLI の ACP の選択肢どおりにした（ADR 0356）。委譲の段の Devin の候補を 1 回だけ外す。
-//    旧版は新しい名前をカタログの名前として読み替えて送り、CLI に断られるので起動を拒否する。
-export const DATA_SCHEMA = 5;
+export const DATA_SCHEMA = 4;
 
 const reasonOf = e => String(e?.message ?? e);
 
@@ -51,9 +49,7 @@ function createFresh(directory) {
  * データ置き場の形式を確かめ、古ければ移行する（同期）。書き込みを始める前に呼ぶこと。
  * 読めない・未知（新しい版で作られた）形式・形式 2 なのに DB が使えないなら、データに触れずに投げる。
  * 移行に失敗したときも元のデータは変えない。移行と新規作成の間は、置き場のロックを取る（別のプロセスが同時に触らない）。
- * 戻り値は移行したときの { backup, counts, devinCandidates }、何もしなかったときは null。backup は形式 1〜3 からの移行の写し
- * （形式 4 からだけのときは null）。devinCandidates は形式 4 → 5 の結果（{ backup, count }。外さなかったら count は 0）。
- * options はテストが失敗を差し込むためのもの
+ * 戻り値は移行したときの { backup, counts }、何もしなかったときは null。options はテストが失敗を差し込むためのもの
  */
 export function ensureDataSchemaSync(directory, options = {}) {
   assertNotGuarded(directory, 'check or migrate');
@@ -69,39 +65,26 @@ export function ensureDataSchemaSync(directory, options = {}) {
 
   // 形式番号が無い置き場（形式番号を導入する前の版・新しい置き場）と形式 1 は、同じ扱いで移行する
   const unlock = acquireDataLock(directory);
-  // 形式 4 → 5 は設定（prefs.json）だけの移行。どの経路でも最後に 1 回だけ走る
-  const toFive = () => {
-    const done = migrateSchema4To5(directory, options);
-    return { backup: done.backup, count: done.counts.devinCandidates };
-  };
   try {
-    if (schema === 4) {
-      let devinCandidates;
-      try { devinCandidates = toFive(); }
-      catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
-      verifyCurrent(directory, options);
-      return { backup: null, counts: {}, devinCandidates };
-    }
     if (schema === 2 || schema === 3) {
-      let result, devinCandidates;
+      let result;
       try {
         if (schema === 2) result = migrateSchema2To3(directory, options);
         const todos = migrateSchema3To4(directory, options);
         result ??= todos;
-        devinCandidates = toFive();
       } catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
       verifyCurrent(directory, options);
-      return { ...result, devinCandidates };
+      return result;
     }
     if (!legacyFiles(directory).length) { createFresh(directory); return null; }
-    let result, devinCandidates;
+    let result;
     try { result = migrateSchema1To2(directory, options); }
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
     try { finishSchema1To2(directory, result.present, options); }
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
-    try { migrateSchema2To3(directory, options); migrateSchema3To4(directory, options); devinCandidates = toFive(); }
+    try { migrateSchema2To3(directory, options); migrateSchema3To4(directory, options); }
     catch (e) { throw new Error(t('data.migrationFailed', { reason: reasonOf(e) }), { cause: e }); }
-    return { backup: result.backup, counts: result.counts, devinCandidates };
+    return { backup: result.backup, counts: result.counts };
   } finally { unlock(); }
 }
 
