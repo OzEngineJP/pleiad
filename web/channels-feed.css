@@ -22,6 +22,11 @@
 /* ---- 見出し（メインの頭 #channelsView > .top に出す）。# 名前・目的・メンバーのアイコン・⋯ */
 .top.ch-top h2{flex:none;max-width:45%}
 .ch-hash{margin-right:2px;color:var(--ink-weak);font-weight:600}
+/* DM の頭の名前は bot のページへの入口（押せる名前。ADR 0358） */
+.ch-nm{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;margin-left:-6px;padding:2px 6px;border:0;border-radius:var(--r-s);background:transparent;font:inherit;color:inherit;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.ch-nm:hover{background:var(--surface-hover)}
+.ch-nm:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
 .ch-purpose{flex:1;min-width:0;color:var(--ink-weak);font-size:var(--fs-s);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ch-members{display:inline-flex;gap:2px;flex:none;padding:2px 4px;border-radius:var(--r-pill)}
 .ch-av{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface-1);font-size:13px;line-height:1;color:var(--ink)}

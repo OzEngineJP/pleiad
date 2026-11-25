@@ -161,8 +161,19 @@ export function createFeed(host) {
     if (!ch) return;
     title.removeAttribute('data-i18n');
     const dmBot = ch.kind === 'dm' ? S.bots.get(ch.botId) : null;
-    title.replaceChildren(dmBot ? botIcon(dmBot, 'ch-hash') : el('span', 'ch-hash', '#'), document.createTextNode(ch.name));
-    title.title = ch.name;
+    if (dmBot) {
+      // DM の頭の名前は bot のページへの入口（bot のページは、作った後は DM から開く。ADR 0358）
+      const nm = el('button', 'ch-nm');
+      nm.type = 'button';
+      nm.title = t('channels:side.openBot');
+      nm.append(botIcon(dmBot, 'ch-hash'), document.createTextNode(ch.name));
+      nm.onclick = () => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: dmBot.id } }));
+      title.replaceChildren(nm);
+      title.removeAttribute('title');
+    } else {
+      title.replaceChildren(el('span', 'ch-hash', '#'), document.createTextNode(ch.name));
+      title.title = ch.name;
+    }
     const x = (node) => { node.classList.add('ch-head-x'); top.append(node); return node; };
     if (ch.kind === 'home') { paintPlaceholder(); composer.setDisabled(false); return; }
     x(el('span', 'ch-purpose', ch.kind === 'dm' ? '' : ch.purpose ?? ''));

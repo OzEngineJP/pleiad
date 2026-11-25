@@ -690,7 +690,8 @@ export function createBotPage(host) {
       if (withAccount) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account });
       if (deferModel) bot = await host.invoke('bots.update', { botId: bot.id, ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) });
       S.bots.set(bot.id, bot);
-      navigate({ kind: 'bot', id: bot.id });
+      // 作った後は話しかける場面（DM）を開く。入力欄へのカーソルは DM の流れが開くときに置く（feed.mjs の show）。DM がまだ無ければ bot のページ
+      navigate(bot.dmChannelId ? { kind: 'channel', id: bot.dmChannelId } : { kind: 'bot', id: bot.id });
     } catch (e) {
       if (!bot) setError(t('channels:bot.createFailed', { error: message(e) }));
       else {
