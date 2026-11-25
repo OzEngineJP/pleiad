@@ -10,7 +10,7 @@ import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { undelivered } from './undelivered.mjs';
 import { prepareDevinLaunch, devinTurnConfig } from './devin-config.mjs';
-import { buildDevinModels, resolveDevinModel, applyDevinModel } from './devin-models.mjs';
+import { readDevinList, buildDevinModels, applyDevinSelection, devinThought } from './devin-models.mjs';
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
@@ -41,26 +41,10 @@ function matchesVerified(options, verified) {
   });
 }
 
-async function captureCatalogue(launch, signal) {
-  return new Promise((resolve, reject) => {
-    const child = spawnCli(launch.command, ['models', 'list', '--format', 'json'], { cwd: launch.cwd, env: launch.env, signal, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '', bytes = 0, settled = false;
-    const finish = (error) => {
-      if (settled) return; settled = true; clearTimeout(timer);
-      if (error) { child.kill(); reject(error); } else {
-        try { resolve(JSON.parse(output)); } catch { reject(new Error(t('devin.errors.invalidCatalogue'))); }
-      }
-    };
-    const timer = setTimeout(() => finish(new Error(t('devin.errors.timeout', { method: 'models', ms: 20000 }))), 20000);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', chunk => { if (settled) return; bytes += Buffer.byteLength(chunk); if (bytes > 8 * 1024 * 1024) finish(new Error(t('devin.errors.invalidCatalogue'))); else output += chunk; });
-    child.stderr.on('data', () => {});
-    child.once('error', () => finish(new Error(t('devin.errors.startFailed'))));
-    child.once('close', code => finish(code === 0 ? null : new Error(t('devin.errors.invalidCatalogue'))));
-  });
-}
+/** ACP が断った設定（devin-acp.mjs の configRejected）か、選択肢に無くて送らなかった設定（devin-models.mjs の rejected）が、モデル・思考の強さか */
+const modelRejection = error => ['model', 'thought_level'].includes(error?.rejected ?? error?.configRejected?.option);
 
-export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, command = () => cliCommand('devin'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
+export function createDevinBackend({ Acp = null, command = () => cliCommand('devin'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
   const cache = new Map(), rows = new Map(), active = new Map(), liveControls = new Map(), queues = new Map();
   const metadataQueue = Symbol('metadata');
   function remember(id, mapper) {
@@ -78,23 +62,75 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     if (!value) throw Object.assign(new Error(t('devin.errors.notInstalled')), { code: 'NOT_INSTALLED' });
     return value;
   }
-  // モデルの一覧の置き場（`devin models list` の生のカタログ）。起動に秒かかるので、直近の値と取りかけを分け合う
-  // （codex.mjs の modelCache/modelFetch と同じ形）。成功した取得だけを覚え、失敗は次の要求で取り直す
+  // モデルの一覧は、Devin CLI の ACP が出す `model` の選択肢そのもの（ADR 0356）。Pleiad 専用の置き場（devin-config.mjs の
+  // metadata。利用者の設定・会話に触れない）で session/new を開いて読む。起動に秒かかるので、直近の値と取りかけを分け合う
+  // （codex.mjs の modelCache/modelFetch と同じ形）。成功した取得だけを覚え、失敗は次の要求で取り直す。
+  // 思考の強さ（`thought_level`）はモデルを選んで初めて見えるので、同じ会話でモデルを順に選んで裏で読む（170 個で 1 分ほど）。
+  // 読んだ分はサーバーが動く間覚え、一覧を取り直したときは新しいモデルだけを読む
   const modelsTtlMs = () => envMs('AGENT_HOST_DEVIN_MODELS_TTL_MS', 300_000);
-  let catalogueCache = null, catalogueFetch = null;
-  function catalogueJob(cwd) {
-    // 起動する作業場所は固定（devin-config.mjs の metadata）なので、先に来た呼び出しの cwd でよい
-    catalogueFetch ??= serial(metadataQueue, async () => {
-      const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, metadata: true });
-      // 取りかけを分け合うので、呼び出し側の中断（signal）は spawn へ渡さない（rawModels が待ちを切る）
-      return catalogue(launch, undefined);
-    }).then(value => { catalogueCache = { value, at: Date.now() }; return value; })
-      .finally(() => { catalogueFetch = null; });
-    return catalogueFetch;
+  let listCache = null, listFetch = null, probeJob = null;
+  const efforts = new Map(), wanted = [], waiters = new Map();
+  // モデルを切り替えた直後の応答（段はそのモデルの既定）から、そのモデルの強さの選択肢と既定を覚える
+  function learn(id, configOptions) {
+    try { efforts.set(id, devinThought(configOptions)); } catch { return; }
+    for (const resolve of waiters.get(id) ?? []) resolve();
+    waiters.delete(id);
   }
-  async function rawModels(cwd, signal, { refresh = false } = {}) {
-    const fresh = catalogueCache && Date.now() - catalogueCache.at < modelsTtlMs();
-    const job = !refresh && fresh ? Promise.resolve(catalogueCache.value) : catalogueJob(cwd);
+  async function metadataSession(cwd) {
+    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, metadata: true });
+    const client = await openClient(launch.cwd, {}, null, { launch });
+    try {
+      const state = await client.call('session/new', { cwd: launch.cwd, mcpServers: [] });
+      if (typeof state?.sessionId !== 'string' || !state.sessionId) throw new Error(t('devin.errors.notConnected'));
+      return { client, sessionId: state.sessionId, configOptions: state.configOptions };
+    } catch (error) { await client.close().catch(() => {}); throw error; }
+  }
+  function listJob(cwd) {
+    // 起動する作業場所は固定（devin-config.mjs の metadata）なので、先に来た呼び出しの cwd でよい
+    listFetch ??= serial(metadataQueue, async () => {
+      const session = await metadataSession(cwd);
+      try {
+        const list = readDevinList(session.configOptions);
+        if (list.current) learn(list.current, session.configOptions);
+        return { list, session };
+      } catch (error) { await session.client.close().catch(() => {}); throw error; }
+    }).then(({ list, session }) => { listCache = { value: list, at: Date.now() }; probe(session); return list; })
+      .finally(() => { listFetch = null; });
+    return listFetch;
+  }
+  // 強さを読んでいないモデルを、一覧を読んだ会話で順に選んで読む。待っている人がいるモデル（wanted）を先にする
+  function probe(session) {
+    if (probeJob) { void session.client.close().catch(() => {}); return; }
+    const { client, sessionId } = session;
+    const configId = session.configOptions.find(o => o?.id === 'model' || o?.category === 'model')?.id ?? 'model';
+    const job = (async () => {
+      const skipped = new Set();
+      try {
+        for (;;) {
+          const listed = new Set(listCache?.value.models.map(m => m.id) ?? []);
+          const pending = id => listed.has(id) && !efforts.has(id) && !skipped.has(id);
+          const next = wanted.find(pending) ?? [...listed].find(pending);
+          if (!next) break;
+          let result = null;
+          try { result = await client.call('session/set_config_option', { sessionId, configId, value: next }); }
+          catch { if (client.alive === false) break; }
+          const model = result?.configOptions?.find?.(o => o?.id === configId);
+          if (model?.currentValue === next) learn(next, result.configOptions); else skipped.add(next);
+        }
+      } finally {
+        await client.close().catch(() => {});
+      }
+    })().catch(() => {}).finally(() => {
+      if (probeJob === job) probeJob = null;
+      // 読めなかったモデルを待っている人には、読み終えたことだけを返す（強さの候補が無いまま判定される）
+      for (const list of waiters.values()) for (const resolve of list) resolve();
+      waiters.clear(); wanted.length = 0;
+    });
+    probeJob = job;
+  }
+  async function rawList(cwd, signal, { refresh = false } = {}) {
+    const fresh = listCache && Date.now() - listCache.at < modelsTtlMs();
+    const job = !refresh && fresh ? Promise.resolve(listCache.value) : listJob(cwd);
     if (!signal) return job;
     // 共有の取得を呼び出し側の中断で止めない。中断はこの待ちだけを切る
     if (signal.aborted) throw abortError();
@@ -104,6 +140,16 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       job.then(value => { signal.removeEventListener('abort', onAbort); resolve(value); },
             error => { signal.removeEventListener('abort', onAbort); reject(error); });
     });
+  }
+  // そのモデル（'' は既定のモデル）の強さを読み終えるまで待つ。読み終えていて裏の読み取りも終わっていれば、一覧を取り直して読む
+  async function requireEfforts(cwd, model = '') {
+    let list = await rawList(cwd);
+    const id = model || list.current;
+    if (!id || efforts.has(id)) return;
+    if (!probeJob) { list = await rawList(cwd, undefined, { refresh: true }); if (efforts.has(id)) return; }
+    if (!probeJob || !list.models.some(m => m.id === id)) return;
+    wanted.unshift(id);
+    await new Promise(resolve => { const list = waiters.get(id) ?? []; list.push(resolve); waiters.set(id, list); });
   }
   async function openClient(cwd, handlers = {}, extraEnv = null, { held = null, adopt = null, launch = null } = {}) {
     launch ??= await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
@@ -148,9 +194,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     traits: AGENT_TRAITS.devin,
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
-    async models(cwd = process.cwd(), { refresh = false } = {}) { return buildDevinModels(await rawModels(cwd, undefined, { refresh })); },
-    // 起動時に一覧を取り置く（初めての振り分けで CLI の起動を待たない）
-    async warmModels(cwd = process.cwd()) { await rawModels(cwd); },
+    async models(cwd = process.cwd(), { refresh = false } = {}) {
+      const list = await rawList(cwd, undefined, { refresh });
+      return buildDevinModels(list, efforts, { probing: Boolean(probeJob) });
+    },
+    // 起動時に一覧を取り置く（初めての振り分けで CLI の起動を待たない。強さは裏で読み始める）
+    async warmModels(cwd = process.cwd()) { await rawList(cwd); },
+    // 思考の強さの判定の前に、そのモデルの強さを読み終えるまで待つ（core/effort.mjs の validateEffort が呼ぶ）
+    async requireModelCatalog(cwd = process.cwd(), model = '') { await requireEfforts(cwd, model); },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An
       // explicit directory may also discover native sessions in Pleiad's session root.
@@ -336,9 +387,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             client.begin();
             response = client.running;
           } else {
-            const list = await rawModels(cwd, local.signal).catch(error => { if (!args.model) throw error; return null; });
-            const selection = resolveDevinModel(list, args.model ?? '');
-            check();
+            // モデルと思考の強さは、開いた会話の ACP の選択肢だけで確かめる（一覧の取得を待たない。ADR 0356）
+            const requested = { model: typeof args.model === 'string' ? args.model : '', effort: typeof args.effort === 'string' ? args.effort : '' };
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
             // 名前ごとの外部 MCP で Devin 自身の MCP を止める名前があるターンだけ、設定の置き場を写しに替える（devin-config.mjs の prepareDevinMcpOff。ADR 0336）
             const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
@@ -372,7 +422,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             if (modeOptions.length !== 1 || !choices(modeOptions[0].options).includes(mode)) throw new Error(t('devin.errors.modeUnavailable'));
             state = await client.call('session/set_config_option', { sessionId, configId: modeOptions[0].id, value: mode });
             if (state?.configOptions?.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
-            const applied = await applyDevinModel(client.call.bind(client), sessionId, state.configOptions, selection);
+            const applied = await applyDevinSelection(client.call.bind(client), sessionId, state.configOptions, requested, { onModel: learn });
             const config = applied.configOptions;
             if (config.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
             verified = new Map([['mode', { id: modeOptions[0].id, value: mode }], ...applied.verified]);
@@ -402,10 +452,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
                 const oldVerified = verified;
                 verified = null;
                 try {
-                  const latestList = await rawModels(cwd, local.signal).catch(() => null);
-                  const nextSelection = resolveDevinModel(latestList, requested);
-                  const current = latestSnapshot;
-                  const appliedLive = await applyDevinModel(client.call.bind(client), sessionId, current, nextSelection);
+                  // 途中でモデルを替えると、段はそのモデルの既定に戻る（会話の強さは次のターンで送り直す）
+                  const appliedLive = await applyDevinSelection(client.call.bind(client), sessionId, latestSnapshot, { model: requested }, { onModel: learn });
                   const nextVerified = new Map([['mode', { id: [...oldVerified.values()].find(v => v.value === selectedMode)?.id ?? 'mode', value: selectedMode }], ...appliedLive.verified]);
                   if (!matchesVerified(appliedLive.configOptions, nextVerified) || latestSession !== sessionId || !matchesVerified(latestSnapshot, nextVerified)) { verified = oldVerified; return false; }
                   verified = nextVerified;
@@ -424,7 +472,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
             initialNativeId = mapper.beginTurn(prompt, shownText);
             rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
-            emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
+            emit({ type: 'session', sessionId, model: applied.model, ...(args.sessionId ? {} : { first: true }) });
             // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
             steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
               onSent: text => mapper.queueUser(text),
@@ -480,7 +528,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           if (sessionId) liveControls.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
           mapper?.finish();
+          // 選んだモデル・思考の強さを CLI が断った（送る前に選択肢に無かったものも）: kind: 'model' で知らせ、委譲の自動の振り分けでは次の候補へ回す（ADR 0311・0356）
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}),
+            ...(outcome === 'error' && modelRejection(error) ? { kind: 'model', pristine: !sent } : {}),
             ...(outcome === 'limited' && error?.acpLimit ? { error: String(error.message), resetsAt: error.acpLimit.resetsAt, window: null } : {}) });
         }
         if (outcome === 'error') throw sent ? error : undelivered(error);
@@ -681,7 +731,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     },
   };
 
-  /** 認証まわりの小さな起動（status・logout・--version）。ターン・モデル一覧の ACP・catalogue とは別経路 */
+  /** 認証まわりの小さな起動（status・logout・--version）。ターン・モデル一覧の ACP とは別経路 */
   function runAuth(args, { timeoutMs = 15000 } = {}) {
     return new Promise((resolve, reject) => {
       const child = spawnCli(argv(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });

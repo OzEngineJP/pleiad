@@ -30,7 +30,7 @@ export default async function(t) {
     const rollback = path.join(root, 'rollback'); await fs.cp(dir, rollback, { recursive: true });
     // 起動検査の対応形式を旧版と同じ2に固定して、同じ入口が書き込み前に拒否することを確認する。
     const source = (await fs.readFile(new URL('../../core/data-schema.mjs', import.meta.url), 'utf8'))
-      .replace('export const DATA_SCHEMA = 4;', 'export const DATA_SCHEMA = 2;')
+      .replace(/export const DATA_SCHEMA = \d+;/, 'export const DATA_SCHEMA = 2;')
       .replace(/from '(\.\/[^']+)'/g, (_all, relative) => `from '${new URL(relative, new URL('../../core/data-schema.mjs', import.meta.url)).href}'`);
     // 一時のファイルから読む。data: URL だと、エラーの見出しと stack の行ごとに URL（約 8 KB）が載り、出力が約 16 KB になる。
     // spawnSync の子の stderr はソケットで、書き込みは非同期。macOS の送り口は 8192 バイトなので、子が例外で終わると

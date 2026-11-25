@@ -1051,7 +1051,7 @@ try {
     // 4b-1. 止められなかった名前しか無い会話: 中継も止める名前も無いのでエージェント任せの道（記録の unstopped だけ残す）。
     // エージェント任せの一覧の wsdup の行の右端に、設定の一覧と同じ鍵。ほかの行（devBoth）には付けない
     await dvClient.cmd('setMcpAgent', { name: 'wsdup', agent: 'devin', on: false, cwd: dvHome });
-    const turn = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-medium' }, { ms: 60000 });
+    const turn = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-high' }, { ms: 60000 });
     check(turn.outcome === 'ok', '偽の Devin で会話を 1 ターン進める', turn.outcome);
     const rec1 = await dvClient.cmd('sessionContext', { sessionId: turn.sessionId });
     check(rec1.report.status === 'native' && JSON.stringify(rec1.report.unstopped) === JSON.stringify([{ name: 'wsdup', nativeLock: 'workspace' }]),
@@ -1066,7 +1066,7 @@ try {
 
     // 4b-2. 止める名前（devBoth）もある会話: Pleiad が解いた記録のまま。wsdup の行は「つながっている」点・理由の文・同じ鍵
     await dvClient.cmd('setMcpAgent', { name: 'devBoth', agent: 'devin', on: false, cwd: dvHome });
-    const turn2 = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-medium' }, { ms: 60000 });
+    const turn2 = await dvClient.runTurn({ backend: 'devin', cwd: repoD, prompt: 'hello', model: 'swe-2-high' }, { ms: 60000 });
     check(turn2.outcome === 'ok', '偽の Devin で、止める名前のある会話を 1 ターン進める', turn2.outcome);
     await openSessionPanel(turn2.sessionId);
     const n2 = await lockFacts(wsRowOf());

@@ -214,7 +214,7 @@ export default async function (t) {
 
     const ok = await seed('migrate-ok');
     const result = ensureDataSchemaSync(ok);
-    t.ok('形式 3 は 4 へ移す（表を作り、番号を 4 に）', DATA_SCHEMA === 4 && await schema(ok) === 4 && (await tables(ok)).includes('todos') && (await tables(ok)).includes('todo_scopes'));
+    t.ok('形式 3 は 4 へ移す（表を作り、番号を 4 以上の現行形式に）', DATA_SCHEMA >= 4 && await schema(ok) === DATA_SCHEMA && (await tables(ok)).includes('todos') && (await tables(ok)).includes('todo_scopes'));
     t.ok('移す前の DB と番号の写しを backup-schema3-* に残す', /backup-schema3-/.test(result?.backup ?? '') && await schema(result.backup) === 3 && !(await tables(result.backup)).includes('todos'));
     const h = openData(ok);
     try { t.ok('移しても会話は残る', sessionTable(h.db).ids().includes('keep')); } finally { h.release(); }
@@ -224,16 +224,16 @@ export default async function (t) {
     try { ensureDataSchemaSync(failed, { afterTodosCreate: () => { throw new Error('injected'); } }); } catch (e) { error = e; }
     t.ok('移行の途中で失敗したら番号は 3 のまま・表も作らない', !!error && await schema(failed) === 3 && !(await tables(failed)).includes('todos'));
     ensureDataSchemaSync(failed);
-    t.ok('原因が無くなれば移し直せる', await schema(failed) === 4);
+    t.ok('原因が無くなれば移し直せる', await schema(failed) === DATA_SCHEMA);
 
     // 旧版（形式 3 まで）の起動入口は、形式 4 の置き場を書き込みの前に断る
     const source = (await fs.readFile(new URL('../../core/data-schema.mjs', import.meta.url), 'utf8'))
-      .replace('export const DATA_SCHEMA = 4;', 'export const DATA_SCHEMA = 3;')
+      .replace(/export const DATA_SCHEMA = \d+;/, 'export const DATA_SCHEMA = 3;')
       .replace(/from '(\.\/[^']+)'/g, (_all, relative) => `from '${new URL(relative, new URL('../../core/data-schema.mjs', import.meta.url)).href}'`);
     const oldModule = path.join(root, 'data-schema-v3.mjs');
     await fs.writeFile(oldModule, source);
     const old = spawnSync(process.execPath, ['--input-type=module', '-e', `const {ensureDataSchemaSync}=await import(${JSON.stringify(pathToFileURL(oldModule).href)});ensureDataSchemaSync(${JSON.stringify(ok)});`], { encoding: 'utf8' });
-    t.ok('形式 3 までの版は形式 4 の置き場を断る', old.status !== 0 && /別の形式|different format/.test(old.stderr) && await schema(ok) === 4, old.stderr.slice(-300));
+    t.ok('形式 3 までの版は形式 4 以降の置き場を断る', old.status !== 0 && /別の形式|different format/.test(old.stderr) && await schema(ok) === DATA_SCHEMA, old.stderr.slice(-300));
   } finally {
     try { store.close(); } catch { /* 既に閉じた */ }
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});

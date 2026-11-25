@@ -57,7 +57,21 @@ export default async function test(t) {
     assert.equal((await reopened.call('session/list', {})).sessions.length, 1);
     t.ok('fake fixture はプロセスをまたいで session list を保持', true);
   } catch (error) { t.ok('fake fixture はプロセスをまたいで session list を保持', false, error.stack); }
-  finally { await reopened.close(); await fs.rm(root, { recursive: true, force: true }); }
+  finally { await reopened.close(); }
+
+  // 設定の値の断り（-32602）には、どの設定かだけの印を付ける。wire の message は外へ出さない（ADR 0356）
+  const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-devin-acp-config-'));
+  const config = launch(configRoot);
+  try {
+    await config.start();
+    const { sessionId } = await config.call('session/new', { cwd: process.cwd(), mcpServers: [] });
+    const refused = await config.call('session/set_config_option', { sessionId, configId: 'model', value: 'swe-2-1-high' }).catch(e => e);
+    const otherFailure = await config.call('session/load', { sessionId: 'missing-session' }).catch(e => e);
+    t.ok('set_config_option の -32602 は configRejected（configId だけ）を付け、ほかの失敗には付けない',
+      refused?.code === -32602 && JSON.stringify(refused.configRejected) === JSON.stringify({ option: 'model' }) && !refused.message.includes('swe-2-1-high')
+        && otherFailure instanceof Error && !('configRejected' in otherFailure),
+      JSON.stringify({ code: refused?.code, message: refused?.message, mark: refused?.configRejected, other: otherFailure?.configRejected }));
+  } finally { await config.close(); await fs.rm(configRoot, { recursive: true, force: true }); await fs.rm(root, { recursive: true, force: true }); }
 
   const racing = launch('');
   try {

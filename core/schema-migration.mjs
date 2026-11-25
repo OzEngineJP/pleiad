@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { assertNotGuarded } from './test-guard.mjs';
 import { dbPath, createDb, checkDb, loadSqlite, transaction, TODOS_SQL, sessionTable, taskTable, usageTable, conversationTable, threadTable, memoryStateTable } from './db.mjs';
+import { parseCandidate } from './delegation-routing.mjs';
 
 // 形式 1 の JSON。channels/threads.json と memory/learn-state.json は 0.6.0（形式 1 のまま）が書いていた（スレッドの状態・夜の整理の進み）。
 // 置き場からの相対パス（写しの中でも同じ相対パスに置く）
@@ -264,6 +265,62 @@ export function migrateSchema3To4(dir, { now = new Date(), afterTodosCreate } = 
     writeSchemaFile(dir, 4);
     return { backup, counts: {} };
   } finally { db.close(); }
+}
+
+/** prefs.json の委譲の設定から、Devin の候補（backend が devin のもの。アカウント付きも）を外した写しと、外した数 */
+export function withoutDevinCandidates(prefs) {
+  const routing = isObject(prefs) ? prefs.delegationRouting : null;
+  if (!isObject(routing)) return { prefs, removed: [] };
+  const isDevin = id => parseCandidate(id)?.backend === 'devin';
+  const removed = [];
+  const next = { ...routing };
+  if (isObject(routing.tiers)) {
+    next.tiers = Object.fromEntries(Object.entries(routing.tiers).map(([level, list]) => {
+      if (!Array.isArray(list)) return [level, list];
+      for (const id of list) if (isDevin(id)) removed.push(id);
+      return [level, list.filter(id => !isDevin(id))];
+    }));
+  }
+  // 候補ごとの強さの上書き（efforts[段][候補]）も、外した候補の分を外す（'*' は段の既定なので残す）
+  if (isObject(routing.efforts)) {
+    next.efforts = Object.fromEntries(Object.entries(routing.efforts).map(([level, row]) =>
+      [level, isObject(row) ? Object.fromEntries(Object.entries(row).filter(([key]) => !isDevin(key))) : row]));
+  }
+  return removed.length || !isDeepStrictEqual(next, routing) ? { prefs: { ...prefs, delegationRouting: next }, removed } : { prefs, removed };
+}
+
+/**
+ * 形式 4 → 5（Devin のモデルを ACP の選択肢どおりにした。ADR 0356）。委譲の自動選択の段に保存した Devin の候補は、
+ * 前のモデル名（`devin models list` のカタログの名前）で、今の CLI では選べない。読み替えずに外し、利用者に新しい一覧から選び直してもらう。
+ * 形式番号で 1 回きりにする（番号が 5 になった後の起動は、利用者が選び直した Devin の候補に触れない）。
+ * 変えるときだけ prefs.json と data-schema.json を backup-schema4-<日時>/ へ写し、一時ファイルから置き換え、読み戻して確かめてから番号を 5 にする。
+ * 失敗したら番号は 4 のまま（次の起動でやり直す。外す処理は何度走っても同じ結果）。prefs.json が無い・読めないときは触らない。
+ * 戻り値: { backup, counts: { devinCandidates } }。外すものが無ければ backup は null
+ */
+export function migrateSchema4To5(dir, { now = new Date(), afterPrefsWrite } = {}) {
+  assertNotGuarded(dir, 'migrate settings in');
+  const file = path.join(dir, 'prefs.json');
+  let original = null, prefs = null;
+  try { original = fs.readFileSync(file, 'utf8'); prefs = JSON.parse(original); } catch { prefs = null; }
+  const { prefs: next, removed } = isObject(prefs) ? withoutDevinCandidates(prefs) : { prefs, removed: [] };
+  let backup = null;
+  if (isObject(prefs) && next !== prefs) {
+    backup = path.join(dir, `backup-schema4-${stamp(now)}`);
+    for (let n = 2; exists(backup); n++) backup = path.join(dir, `backup-schema4-${stamp(now)}-${n}`);
+    fs.mkdirSync(backup, { recursive: true });
+    fs.writeFileSync(path.join(backup, 'prefs.json'), original, 'utf8');
+    if (exists(path.join(dir, 'data-schema.json'))) fs.copyFileSync(path.join(dir, 'data-schema.json'), path.join(backup, 'data-schema.json'));
+    const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+    try {
+      // core/store.mjs の jsonFile と同じ書き方（字下げ 2）
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
+      fs.renameSync(tmp, file);
+    } finally { fs.rmSync(tmp, { force: true }); }
+    afterPrefsWrite?.();
+    if (!isDeepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), next)) throw new Error('read-back differs from the migrated prefs.json');
+  }
+  writeSchemaFile(dir, 5);
+  return { backup, counts: { devinCandidates: removed.length } };
 }
 
 /** 番号確定後の片付けを再開する。移行後の予期しない旧ログ追記は保全して停止する。 */

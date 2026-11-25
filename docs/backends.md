@@ -91,13 +91,12 @@ Windows のインストール先 `%LOCALAPPDATA%\devin\cli\bin` と、macOS / Li
 ログインは同じ PC の端末で `devin auth login` を実行する（[公式コマンド一覧](https://docs.devin.ai/cli/reference/commands)）。
 Pleiad の画面からのログイン、複数アカウントの切替は未対応。
 
-Devin CLI のモデルは、モデル系列の代表と、思考の強さ・速度が別の選択肢になっている。カタログの版の名前を系列の基部・思考・速度の印に分解し、同じ基部で ACP が返す代表に読み替える。思考・速度の選択肢は系によって無いものもあり、項目がある系だけその値を送る。対応する選択肢が無い形（`-priority`・項目の無い系での `-fast`・代表の無い `-1m` など）や段が 1 つに絞れない形は、別の値で実行せず拒否する
-（[モデルの公式説明](https://docs.devin.ai/cli/models)、[ACP 接続の公式説明](https://docs.devin.ai/cli/acp/zed)）。
-モデルの一覧には有料の候補も出す。既定は現在のカタログで無料と確認できる SWE-2 High を優先し、無ければ別の無料候補を使う。
-無料の既定が無い場合や有料モデルを使う場合は、モデルを明示的に選ぶ。選んだモデル・思考・標準速度を ACP が確認しない場合は開始しない。
-カタログに載っていても ACP が対応する選択肢を返さないモデルは使えない。自動の振り分けでも同じ読み替えで判定し、ACP に表せない版は選ばない。
-無料表示はアカウント・時期によって変わる。2026-10-18 の接続確認では `swe-2-high`・`swe-2-medium`・`swe-2-max` が Free と返った。
-利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
+Devin CLI のモデルは、ACP の会話が示す `model` の選択肢そのままを一覧に出す。Pleiad は名前を分解・読み替えしない。
+思考の強さは、そのモデルの `thought_level` の選択肢（モデルで有無と段が変わる）を Pleiad の「強さ」として選ぶ。速度（`speed`）は選ばず、Devin CLI の既定のまま走る
+（[モデルの公式説明](https://docs.devin.ai/cli/models)、[ACP 接続の公式説明](https://docs.devin.ai/cli/acp/zed)、[ADR 0356](adr/0356-devin-models-from-acp-options.md)）。
+モデルを選ばなければ、Devin CLI がその会話で選んでいるモデル（既定）で走る。
+選んだモデル・強さがその会話の選択肢に無い場合は、送らずに「使えないモデル」として止める（自動の振り分けは次の候補へ回す）。選んだモデル・強さを ACP が確認しない場合も開始しない。
+料金の区分（無料・有料）は ACP の選択肢に無いので表示しない。利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
 
 Pleiad が読むネイティブ設定の一覧が不明なときは、指示量や MCP の一覧を推定しない。
 これは Devin 自身がネイティブ設定を読まないという保証ではない。指示・Skills のセル単位設定（[ADR 0337](adr/0337-context-instructions-skills-by-name-and-agent.md)）では、Devin 自身の置き場（`%APPDATA%/devin/*`・`~/.devin/*`・`<ws>/.devin/*`・`DEVIN_CONFIG_HOME` の置き場と、`.agents/skills`・`~/.codeium`・`~/.copilot` の Skills）は `read_config_from` で止まることを確かめられないためオンのまま鍵（`own` / `workspace`）とし、`claude`・`agents_standard`（作業場所まとめ行含む）・`cursor`・`windsurf`・`copilot`・`opencode` 等の取り込み形式は `read_config_from[fmt] = false` で止めて、同じ形式で残す行を `ply_context` で再配布する。`read_config_from` は形式ごとに指示と Skills をまとめて止めるので、片方で止めた形式に巻き込まれる物は、もう片方の表から渡し直す。入れてある Devin（3000.11.92）は `codex`・`kiro` の取り込みを持たない（新しい版の文書にはあり、版を上げるときに確かめ直す）。`--config` 一時ファイルの寿命は devin.mjs（プロセスを閉じるときに消す）に従う。なお同一形式の `read_config_from[fmt] = false` はその形式のネイティブ MCP 取り込みも止めるため、アクティブな外部 MCP は Pleiad 側の中継で補う。

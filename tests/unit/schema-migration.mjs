@@ -344,6 +344,69 @@ export default async function (t) {
       t.ok('写しと中身が違う threads.json は外さず、読み込みもしない（形式 2 では DB だけを読む）', !!(await read(path.join(resume, 'channels/threads.json'))) && rowsOf(resume).threads.every(row => row.thread_key !== 'c_zzzzzzzz/p_zzzzzzzz'));
     }
 
+    // ---- 形式 4 → 5: 委譲の段の Devin の候補を 1 回だけ外す（ADR 0356）
+    {
+      const four = async (label, prefs) => {
+        const dir = await tmp(label);
+        ensureDataSchemaSync(dir);   // 新しい置き場（DB と現行の番号）を作ってから、番号を 4 に戻す
+        await fs.writeFile(path.join(dir, 'data-schema.json'), '{"schema":4}\n');
+        if (prefs) await fs.writeFile(path.join(dir, 'prefs.json'), JSON.stringify(prefs, null, 2));
+        return dir;
+      };
+      const schemaOf = async dir => JSON.parse(await read(path.join(dir, 'data-schema.json'))).schema;
+      const prefsOf = async dir => JSON.parse(await read(path.join(dir, 'prefs.json')));
+      const routing = () => ({
+        avoidPercent: 70,
+        tiers: {
+          t1: ['devin:swe-1-6', 'claude:haiku'],
+          t2: ['codex:gpt-6-luna', 'devin@acct-x:glm-5', 'antigravity:gemini-3.8-flash-high'],
+          t3: ['devin:swe-2-high'],
+          t4: ['claude:opus'],
+        },
+        efforts: { t1: { '*': 'low', 'devin:swe-1-6': 'high', 'claude:haiku': '' }, t3: { '*': 'medium', 'devin:swe-2-high': 'max' } },
+      });
+      const dir = await four('devin-candidates', { locale: 'ja', delegationRouting: routing(), backends: { devin: { model: 'swe-1-6' } } });
+      const result = ensureDataSchemaSync(dir);
+      const after = await prefsOf(dir);
+      t.ok('形式 4 → 5: 委譲の段から Devin の候補（アカウント付きも）だけを外し、ほかのエージェントの候補は順のまま残す',
+        sameJson(after.delegationRouting.tiers, { t1: ['claude:haiku'], t2: ['codex:gpt-6-luna', 'antigravity:gemini-3.8-flash-high'], t3: [], t4: ['claude:opus'] }),
+        JSON.stringify(after.delegationRouting.tiers));
+      t.ok('外した候補の強さの上書きも外し、段の既定（*）・ほかの候補の上書き・ほかの設定は変えない',
+        sameJson(after.delegationRouting.efforts, { t1: { '*': 'low', 'claude:haiku': '' }, t3: { '*': 'medium' } }) && after.delegationRouting.avoidPercent === 70
+          && after.locale === 'ja' && after.backends.devin.model === 'swe-1-6',
+        JSON.stringify(after));
+      t.ok('外した数と写しを返し、番号を 5 にする（写しは移行前の prefs.json と番号 4）',
+        result?.devinCandidates?.count === 3 && /backup-schema4-/.test(result.devinCandidates.backup ?? '') && result.backup === null
+          && await schemaOf(dir) === DATA_SCHEMA && DATA_SCHEMA === 5
+          && sameJson(JSON.parse(await read(path.join(result.devinCandidates.backup, 'prefs.json'))).delegationRouting, routing())
+          && await schemaOf(result.devinCandidates.backup) === 4,
+        JSON.stringify(result));
+      // 利用者が新しい一覧から選び直した Devin の候補は、次の起動で消さない
+      const chosen = { ...after, delegationRouting: { ...after.delegationRouting, tiers: { ...after.delegationRouting.tiers, t3: ['devin:swe-2-high'] } } };
+      await fs.writeFile(path.join(dir, 'prefs.json'), JSON.stringify(chosen, null, 2));
+      const again = ensureDataSchemaSync(dir);
+      t.ok('2 回目の起動は何もしない（選び直した Devin の候補が残る・新しい写しを作らない）',
+        again === null && sameJson(await prefsOf(dir), chosen) && (await fs.readdir(dir)).filter(n => n.startsWith('backup-schema4-')).length === 1);
+
+      const none = await four('devin-none', { delegationRouting: { tiers: { t1: ['claude:haiku'] } } });
+      const before = await read(path.join(none, 'prefs.json'));
+      const noneResult = ensureDataSchemaSync(none);
+      t.ok('Devin の候補が無ければ prefs.json に触れず、写しも作らずに番号だけ 5 にする',
+        noneResult?.devinCandidates?.count === 0 && noneResult.devinCandidates.backup === null && await read(path.join(none, 'prefs.json')) === before
+          && await schemaOf(none) === DATA_SCHEMA && !(await fs.readdir(none)).some(n => n.startsWith('backup-schema4-')));
+      const noPrefs = await four('devin-no-prefs', null);
+      t.ok('prefs.json が無い置き場も番号を 5 にする（prefs.json を作らない）',
+        ensureDataSchemaSync(noPrefs)?.devinCandidates?.count === 0 && await schemaOf(noPrefs) === DATA_SCHEMA && (await read(path.join(noPrefs, 'prefs.json'))) === null);
+
+      const failing = await four('devin-fail', { delegationRouting: routing() });
+      let error = null;
+      try { ensureDataSchemaSync(failing, { afterPrefsWrite: () => { throw new Error('injected'); } }); } catch (e) { error = e; }
+      t.ok('途中で失敗したら起動を止め、番号は 4 のまま', !!error && await schemaOf(failing) === 4);
+      ensureDataSchemaSync(failing);
+      t.ok('原因が無くなれば次の起動でやり直せる（結果は同じ）', await schemaOf(failing) === DATA_SCHEMA
+        && sameJson((await prefsOf(failing)).delegationRouting.tiers.t1, ['claude:haiku']));
+    }
+
     // ---- 開く（openData）は、書き込みの前に移行を済ませる
     {
       const dir = await tmp('open');

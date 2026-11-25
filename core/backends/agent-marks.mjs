@@ -282,7 +282,7 @@ export const AGENT_TRAITS = {
   // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡った合図は出せない
   antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: false, liveSecrets: false, secretsViaEnvFile: false },
   opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
-  devin: { effortInModelId: true, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
+  devin: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   fake: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
 };
