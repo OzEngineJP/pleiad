@@ -3,7 +3,7 @@
 // 次のターンが始まったら消える。ここは印・文言・数え方だけを持ち、DOM の置き場所は client.mjs と side.mjs が決める。
 import { svgEl } from "./dom.mjs";
 import { t } from "./i18n.mjs";
-import { whenText, timeText } from "./schedule-times.mjs";
+import { whenText } from "./schedule-times.mjs";
 
 // i18n-dynamic: interrupt.label.
 // i18n-dynamic: interrupt.line.
@@ -76,34 +76,15 @@ export const pausedCount = (messages) => (messages ?? []).filter((m) => m?.statu
 export const limitTime = (at, now = Date.now()) => Number.isFinite(at) ? whenText(at, now) : null;
 
 /**
- * 上限で止まった会話の、入力欄の再開の状態（docs/design-system.md「中断と再開」）。上限で止まった会話は自動では再開しない（ADR 0161）。
- * release = 解除前（押せない時計）、ready = 解除の後・解除時刻が分からない上限で、普通の「再開」。上限でなければ null
+ * 再開ボタンの字。保留があれば「保留中の N 件を送って再開」。
+ * 上限で止まった会話も同じ（解除前でも押せる。先回りして待たせない。ADR 0352）。まだ上限なら、送ってもう一度止まるだけ
  */
-export function limitResumeState(interrupted, target, now = Date.now()) {
-  if (reasonOf(interrupted) !== 'limit') return null;
-  if (typeof target === 'number') { now = target; target = null; }
-  if (target && (target.backend !== interrupted.backend
-    || (target.endpoint ?? '') !== (interrupted.endpoint ?? '')
-    || (!target.endpoint && target.hasAccounts && (target.account ?? '') !== (interrupted.account ?? ''))
-    || (interrupted.scope === 'model' && (target.model ?? '') !== (interrupted.model ?? '')))) return 'ready';
-  return Number.isFinite(interrupted.resetsAt) && interrupted.resetsAt > now ? 'release' : 'ready';
-}
-
-/** 再開ボタンの字。保留があれば「保留中の N 件を送って再開」。上限の解除前は時計の字（「2:30 に解除」） */
-export function resumeLabel(paused, interrupted, target, now = Date.now()) {
-  const state = limitResumeState(interrupted, target, now);
-  if (state === 'release') return t('interrupt.limitReleaseAt', { time: limitTime(interrupted.resetsAt) });
+export function resumeLabel(paused) {
   return paused > 0 ? t("interrupt.resumeOutbox", { count: paused }) : t("interrupt.resume");
 }
 
-/** 狭い幅（480px 以下）の上限の解除前の時計の字。時刻だけ（「21:04」）。時計でなければ空 */
-export function resumeShortLabel(interrupted, target, now = Date.now()) {
-  return limitResumeState(interrupted, target, now) === 'release' ? timeText(interrupted.resetsAt) : '';
-}
-
 /** 入力欄の下の一行。保留があれば「送ると、保留中の N 件の後にこの指示で続けます」（サーバーが保留を先に送り直す） */
-export function resumeNoteText(paused, interrupted, target, now = Date.now()) {
-  if (limitResumeState(interrupted, target, now) === 'release') return t('interrupt.limitSendNote', { time: limitTime(interrupted.resetsAt) });
+export function resumeNoteText(paused) {
   return paused > 0 ? t("interrupt.resumeNoteHeld", { count: paused }) : '';
 }
 

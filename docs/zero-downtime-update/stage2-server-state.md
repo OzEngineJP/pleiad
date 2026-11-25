@@ -135,7 +135,7 @@
 | M3 | `taskExecutions`（委譲の子の実行: `outcome`・`rejections`・`waitingSince`・`streamed`） | 477 | 置く 4558、`makeEmit` 2132-2146、`childTarget` 4377、裏の待ち 5433-5450、外す 4610 | 札 | `waitingSince` は札（再生では作れない。ADR 0170）。`rejections` は再生の出来事から作り直る。`streamed` は再生。`execute` の後半を付け直しから呼ぶ（2b-7） |
 | M4 | `liveNotices`（走っている依頼元へ途中送信で渡した完了通知の控え） | 4259 | 置く 4363、合図 2094-2100、終わり 5247-5252 | 札 | 欠けると、渡ったか分からないまま送り直されない（通知が欠ける）か二重。`agentTasks` の `notification` の値と組で渡す（2b-7） |
 | M5 | `liveInstructions`（委譲の子へ途中送信で渡した追加指示の控え） | 4263 | 置く 4395、合図 2103-2106、終わり 5258-5262 | 札 | M4 と同じ。`agentTasks` の `steers`（O17）と組 |
-| M6 | `limitStates` | 4266 | `outbox` の `active` 4270、`endTurn` 5225、起動 6942-6945 | 保存済み | 会話の `interrupted.reason === 'limit'` から起動で作る |
+| M6 | `limitStates`（削除済み。ADR 0352） | 4266 | `outbox` の `active` 4270、`endTurn` 5225、起動 6942-6945 | 無し | 上限で送信を止めなくなったので、会話ごとの上限の待ちの写しを持たない。上限の記録は会話の `interrupted.reason === 'limit'`（保存済み）だけ |
 | M7 | `taskStopReasons` | 4255 | `abortSessions` 5591・5609、`stopChild` 4562 | 捨てる | 中断の最中だけの値。2d は中断の途中を待つ |
 | M8 | `outboxWatchers` | 4252 | `outboxSettled` 5621-5639 | 捨てる | 再開の受け付けの待ち（WS の要求ごと） |
 | M9 | `freeWaiters` | 5390 | `notifyFree` 5391・`waitFree` 5394 | 捨てる | 待つ側（`execute` 4579・圧縮の予約 5380）が付け直しで待ち直す |
@@ -147,7 +147,7 @@
 | M15 | `streamSequence` | 1910 | 1917、`loadSession` 6459・6463 | 捨てる | サーバーごとの番号。画面は読み直しのたびに `streamCursor` を受け取る（`web/session-stream.mjs:31`） |
 | M16 | `runningSeq`・`runningSent` | 3956 | `broadcastRunning` 3957-3964 | 捨てる | |
 | M17 | `limitPoll`（時刻の分からない上限の確かめの間隔） | 5729 | `endTurn` 5194-5198、5862-5866 | 捨てる | 間隔の伸びが元に戻るだけ |
-| M18 | `limitReleaseTimers` | 5779 | 5772-5790 | 捨てる | 起動の `recoverLimitResumes`（今は `recoverLimitWaits`）が作り直す |
+| M18 | `limitReleaseTimers`（削除済み。ADR 0352） | 5779 | 5772-5790 | 無し | 上限の解除時刻に流す送信待ちを持たなくなったので、持ち越す状態が無い |
 | M19 | `compactionSaveTimer`・`compactionSaveChain` | 5313-5314 | `saveCompactionSchedule` 5315 | 捨てる | 旧サーバーは書き切ってから離す（2d） |
 | M20 | `TOKEN`（画面のトークン） | 204 | `ready` 6908・リモート 347・認証 1151 | 札 | 預かり物（design.md §8。段階 1 は main が env で渡す） |
 | M21 | 待ち受けのポート（`PORT` と実際の `server.address().port`） | 202・6948 | `localOrigin` 1035 | 札 | 預かり物。**MCP の口の URL がこれに依る**ので、取れなければ付け直したターンの MCP が全部切れる（design.md §8 の「空きポートに移る」は付け直すターンがあるときは使えない。2d） |
@@ -353,7 +353,7 @@ handOffTurn(key)                                     … 旧サーバーの口�
 | S10 | 4661 `remoteDelegation.start()` | ホストの便りを聞く | そのまま |
 | S11 | 4664 `createSettingApprovals`（`setting-approvals.mjs:35-41`） | 待っていた設定の変更の承認を「再起動で取り下げ」にし、送っている途中の結果を捨てる | 引き継ぎの起動ではカードを出し直す（A4）。ターンには縛られないが同じ引き継ぎで欠ける |
 | S12 | 4681 `worktrees.reconcile()`・4684 `worktreeSweepSoon()` | 作成の途中の worktree を巻き戻し、使っていないものを消す（`runtime.turns`・シェル・タスクで判定） | 付け直すターンを登録した後に走らせる |
-| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`・6950 `schedule.restore()`・6952 `recoverLimitResumes()`（今は `recoverLimitWaits()`。上限の会話を再開せず、送信待ちを流すだけ。ADR 0161）・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け） | 予定・上限の解除時刻に流す送信待ち・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
+| S13 | 6941 `restoreCompactionSchedule`・6942-6945 `limitStates`（ADR 0352 で削除）・6950 `schedule.restore()`・6956 `botHost.start()`（`bots/dispatch.mjs` の `start`: `delivering` → `unknown`・作業中の印の片付け。上限の解除時刻に流す送信待ちの復元 `recoverLimitWaits()` は ADR 0352 で削除） | 予定・bot の出来事の配り直しでターンを始めうる | 付け直す会話が `sessionBusy` で真になってから。bot の会話は付け直さない（O21）ので、dispatch の片付けはそのまま |
 | S14 | 6903 `writeControlFile` | 新しい `CLI_TOKEN` を書く | 預かり物の `CLI_TOKEN`（M22）で書く |
 | S15 | 6871-6880 `orphanGuard`・`announce` の `ready` | 孤児の見張り・main への `ready` | そのまま（段階 1） |
 

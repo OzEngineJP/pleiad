@@ -74,9 +74,9 @@ import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX, SENT_DEFAULT, SENT
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
 import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
-import { createMessageQueue, deliveryArgs } from "./message-queue.mjs";
+import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
-import { activeLimit as limitForTarget, limitResetsAt, limitScope, clockText } from './limit-resume.mjs';
+import { limitResetsAt, limitScope, clockText } from './limit-resume.mjs';
 import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
 import { createModelRejects } from './model-rejects.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
@@ -1405,10 +1405,11 @@ const TASK_SETTINGS = ['backend', 'model', 'effort', 'account'];
 /**
  * 依頼元の AI が書いた Claude のアカウント（ply_delegate・ply_task_send の account。ADR 0205）を内部の値に直して確かめる。
  * 書ける名前は ply_usage の account: 'login'（ログイン中のアカウント。内部は ''）か、登録したアカウントの id。
- * 断るのは、登録に無い・トークンが無い（子を走らせられない）・model の使用枠が満杯と分かっているとき。黙ってほかのアカウントに落とさない。
+ * 断るのは、登録に無い・トークンが無い（子を走らせられない）ときだけ。使用枠が満杯と分かっていても先回りして断らない（ADR 0352。
+ * 実際に断られたら、その枠が止まったと記録して引き継ぐ）。黙ってほかのアカウントに落とさない。
  * 返すのは { account（内部の値）, label（伏せた見出し） }
  */
-async function requestedAccount(name, model, lng, backend = getBackend('claude')) {
+async function requestedAccount(name, lng, backend = getBackend('claude')) {
   const accounts = (await accountRows(backend)).map(a => ({ ...a, hasToken: a.ready }));
   const names = () => [LOGIN_ACCOUNT, ...accounts.filter(a => a.hasToken).map(a => a.id)].join(', ');
   if (typeof name !== 'string' || name.length > 200) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: String(name ?? ''), accounts: names() }));
@@ -1416,10 +1417,6 @@ async function requestedAccount(name, model, lng, backend = getBackend('claude')
   const row = id ? accounts.find(a => a.id === id) : null;
   if (id && !row) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: name, accounts: names() }));
   if (row && !row.hasToken) throw new Error(agentT(lng, 'delegation.accountNoToken', { account: name, accounts: names() }));
-  if (model) {
-    const check = checkCandidate(candidateId(backend.id, model, id || null), { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
-    if (check.reason === 'quota_full') throw new Error(agentT(lng, 'delegation.accountQuotaFull', { account: name, model }));
-  }
   return { account: id, label: await accountLabelOf(id, accounts) };
 }
 /** 委譲カードに出すアカウントの見出し（人が付けた名前。メールアドレスは伏せる）。'' はログイン中のアカウント */
@@ -1493,7 +1490,7 @@ async function taskSettingsPlan(owner, args, lng, turn) {
   }
   if (!endpointCapable(target)) endpoint = '';
   const beforeAccount = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
-  const preselected = accountGiven ? await requestedAccount(args.account, null, lng, target) : null;
+  const preselected = accountGiven ? await requestedAccount(args.account, lng, target) : null;
   const carried = preselected ? preselected.account : target.id === current.id ? beforeAccount : beforeAccount && await accountHas(target, beforeAccount) ? beforeAccount : '';
   // 別のエージェントへ替えるときに継ぐアカウントは、固定の委譲と同じく段に入っているものだけ（ADR 0264）
   const account = preselected || target.id === current.id || endpoint ? carried : await tierAccountFor(target, carried, args.model ?? null, lng);
@@ -1506,12 +1503,6 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     : await resolveModel(null, undefined, target, cwd, endpoint));
   if (args.model !== undefined && !(model === '' || isModelId(model))) {
     throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
-  }
-  // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も、account を書いたときだけ見る）
-  const chosen = accountGiven ? await requestedAccount(args.account, model, lng, target) : null;
-  if (!chosen && !endpoint && model) {
-    const check = checkCandidate(candidateId(target.id, model, accountKind(target) ? account || null : null), { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
-    if (check.reason === 'quota_full') throw new Error(agentT(lng, 'tasks.quotaFull', { model, backend: target.id }));
   }
   if (args.effort !== undefined) {
     await validateEffort(target, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true });
@@ -1545,7 +1536,6 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   const priorNext = prior.nextSettings ?? null;
   const undoReserve = async () => {
     await store.setSessionData(sessionId, 'nextSettings', priorNext, { durable: true }).catch(() => {});
-    syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true });
     emitGlobal({ type: 'nextSettings', sessionId, nextSettings: priorNext });
   };
   let next;
@@ -1939,14 +1929,11 @@ async function routeDelegation(args, lng, cwd) {
   if (!kindOrder(settings).includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng, settings.kinds) }));
   if (args.backend !== undefined) {
     if (args.account === undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
-    // 依頼元が選んだアカウント（ADR 0205・0222）。公式で走らせるので、モデルは公式の一覧で決めて使用枠を見る
-    let backend = getBackend(args.backend);
+    // 依頼元が選んだアカウント（ADR 0205・0222）。使用枠が満杯でも先回りして断らない（ADR 0352）
+    const backend = getBackend(args.backend);
     if (backend && !accountKind(backend)) throw new Error(agentT(lng, 'routing.accountClaudeOnly', { backend: String(args.backend) }));
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-    const preselected = await requestedAccount(args.account, null, lng, backend);
-    backend = await backendForAccount(backend, await accountResolve(backend, preselected.account));
-    const model = typeof args.model === 'string' ? await canonicalModel(backend, args.model, cwd, '') : await resolveModel(null, undefined, backend, cwd, '');
-    const chosen = await requestedAccount(args.account, model, lng, backend);
+    const chosen = await requestedAccount(args.account, lng, backend);
     return { ...args, account: chosen.account, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model, account: chosen.account, accountLabel: chosen.label }) };
   }
   // 自動選択が無効なら、ほかの引数より先に backend を求める（account だけ書いた依頼に「自動で選ばせるなら account を省いて」と返さない）
@@ -4504,7 +4491,6 @@ async function rewindWritableConversation({ sessionId, beforeMessageId, stopRunn
     if (entry.contextSession?.delivered) await store.setSessionData(sessionId, 'contextSession', { ...entry.contextSession, delivered: null });
     // 中断した位置・止めたものは、捨てた範囲の出来事
     await store.setMeta(sessionId, { interrupted: null });
-    syncLimitWait(sessionId, null);
     await store.clearStops(sessionId);
     // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
     if (Number.isFinite(since)) {
@@ -5017,11 +5003,6 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (explicit.worktreePending === false) manual.worktree = true;
       if (Object.keys(manual).length) await store.setSessionData(sessionId, 'selectedSettings', manual);
     }
-    // 上限で待っている送信待ちは、替えた先で流す（取り消したら押した時点の設定の上限の待ちへ戻す。ADR 0347）。
-    // 委譲の上限で同じ子の次のターンを予約したとき（limitSwitch）は触らない（そのターンは agentTasks が始め、戻すときも予約を直接書き戻す）
-    if (!limitSwitch) await retargetLimitWaits(sessionId, { cancel: Boolean(cancel) });
-    // 委譲の上限で同じ子の次のターンを予約したとき（limitSwitch）は、送信待ちを流さない（そのターンは agentTasks が始める）
-    syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: !limitSwitch });
     // 取り消した・別の場所に替えた予約が worktree なら、使っていなければ片付ける（ADR 0089）
     if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
     // keepPrefs: 依頼元の AI が子の設定を替えるとき（applyTaskSettings）。人の既定には覚えない
@@ -5108,7 +5089,6 @@ async function deleteSessionOf(sessionId) {
     await deleteConversation(sessionId, backend.id);
     await store.removeSession(sessionId);
     deleted = true;
-    syncLimitWait(sessionId, null);
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
     sessionCommands?.forget(sessionId);
@@ -6716,7 +6696,6 @@ const opsSessionWork = {
       return { sessionId, backend: target.id };
     } finally {
       switching.delete(sessionId);
-      syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true });
       completionNotices.changed(sessionId);
     }
   },
@@ -7850,8 +7829,6 @@ const liveNotices = new Map();
 // 指示の item id（task-send-<指示 ID>） -> { sessionId: 子の会話, taskId, instructionId }。合図で指示の状態を決め、
 // 合図が来ないままターンが終わったら待機へ戻して次のターンで送る（ADR 0065）
 const liveInstructions = new Map();
-// 上限で止まった会話の、解除時刻に送信待ち（上限中に人が送った指示）を流すタイマー
-const limitReleaseTimers = new Map();
 // 上限で止まったばかりの枠（エージェント・モデル・アカウント）。委譲の振り分けで飛ばす（ADR 0229）。
 // 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
 // 解除時刻が分からないものは 30 分（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
@@ -7908,10 +7885,7 @@ const outbox = createMessageQueue({
   applyReserved: (id, _turn, snapshot) => measureSendPhase('sendSettings', id,
     () => applyReservedNow(id, { via: 'send', snapshot })),
   prepare: prepareQueuedSend,
-  active: async (id, item) => {
-    const limit = sendLimit(await store.get(id), item);
-    if (limit)
-      return { blocked: true, wait: { reason: 'limit', resetsAt: limit.resetsAt } };
+  active: async id => {
     const turn = runtime.turns.get(id);
     if (!turn) {
       if (switching.has(id) || forking.has(id)) return { blocked: true, wait: { reason: 'preparing' } };
@@ -8610,7 +8584,6 @@ agentTasks = await createAgentTasks({
         const current = await store.get(oldSessionId);
         if (JSON.stringify(current.nextSettings) !== JSON.stringify(reserved)) return;
         await store.setSessionData(oldSessionId, 'nextSettings', null, { durable: true });
-        syncLimitWait(oldSessionId, store.peek(oldSessionId));
         emitGlobal({ type: 'nextSettings', sessionId: oldSessionId, nextSettings: null });
       };
       return { sessionId: oldSessionId, backend: backend.id, model, effort, cwd, mode, routing, rollback };
@@ -8787,12 +8760,6 @@ agentTasks = await createAgentTasks({
     if (live) { const r = await steerNotice(live, owner, prompt, []); if (r === 'ok') accepted?.(); return r; }
     if (await noticeBlocked(owner)) return 'requeue';
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
-  },
-  // 上限で止まった子の会話の解除時刻までは、積まれた指示で次の回を始めない（送信待ちと同じ activeLimit の判断）。
-  // 上限で続ける子（reroute の continuing）は予約した枠で判断するので、止まった枠と違えば待たない
-  held: task => {
-    const limit = activeLimit(store.peek(task.sessionId));
-    return limit ? { resetsAt: limit.resetsAt } : null;
   },
   deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
@@ -9405,7 +9372,6 @@ async function beginTurn(ctx) {
     ...(hooks.compact ? { compacting: { trigger: hooks.compact, at: Date.now() } } : {}) }).catch(err => {
     console.error("  ターンの開始の記録に失敗:", String(err?.message ?? err));
   });
-  if (sessionId) syncLimitWait(sessionId, null);
   // 中断で止めたものがあれば、エージェントの言語で文にして発言の前に添える（圧縮のターンでは添えない）。
   // 画面には、何を伝えたかを開ける 1 行で出す（履歴は system-messages.mjs の splitInterruptionNotes が同じ行にする）。
   // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
@@ -10319,7 +10285,6 @@ async function endTurn(turn, emit, { record = true } = {}) {
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
-    syncLimitWait(turn.info.sessionId, store.peek(turn.info.sessionId), { kickIfReleased: true });
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
@@ -10802,20 +10767,14 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
     // 一覧は送信待ちの処理（kick）の後ろに並ぶので、読み終えた時点でもう始まっているかもしれない。読んだ後に確かめ直す
     if (sessionBusy(sessionId)) throw resumeRunning();
     const entry = await store.get(sessionId);
-    if (activeLimit(entry)) throw Object.assign(new Error(t('resume.limitWaiting')), { code: 'LIMIT_WAITING' });
     const interrupted = interruptedOf(entry.interrupted);
     if (!interrupted) throw Object.assign(new Error(t('resume.notInterrupted')), { code: 'NOT_INTERRUPTED' });
     const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
     // 送信中、または先頭が送信待ち（すぐ送られる）なら、もう続きを送っている（再開の二度押し・別の端末から）。
     // 中断の後に送った（受け付けた）ものが既に渡っていても同じ（ターンの開始で中断の印が消えるまでの間）
-    if (open.some(m => m.status === 'sending') || (open[0]?.status === 'queued' && interrupted.reason !== 'limit')
+    if (open.some(m => m.status === 'sending') || open[0]?.status === 'queued'
       || items.some(m => m.status === 'sent' && Date.parse(m.at) > interrupted.at)) throw resumeRunning();
     if (open.some(m => m.status === 'unknown')) throw Object.assign(new Error(t('resume.outboxUnknown')), { code: 'OUTBOX_UNKNOWN' });
-    if (open[0]?.status === 'queued') {
-      sent = open.filter(m => m.status === 'queued').map(m => m.id);
-      outbox.kick(sessionId).catch(() => {});
-      return { sent: 'outbox', count: sent.length };
-    }
     const released = await outbox.retryPaused(sessionId, { failed: true });
     if (released.length) {
       sent = released;
@@ -10856,7 +10815,7 @@ async function withWritableSession(sessionId, fn) {
 
 async function acceptSend(sessionId, messageId, args) { return withWritableSession(sessionId, () => acceptWritableSend(sessionId, messageId, args)); }
 async function acceptWritableSend(sessionId, messageId, args) {
-  const resumePaused = !sessionBusy(sessionId) && !activeLimit(await store.get(sessionId));
+  const resumePaused = !sessionBusy(sessionId);
   return outbox.accept(sessionId, messageId, args, { resumePaused });
 }
 
@@ -10877,7 +10836,7 @@ async function measureSendPhase(command, sessionId, work) {
 }
 
 async function prepareQueuedSend(sessionId, item) {
-  const args = deliveryArgs(item);
+  const args = item.args;
   const settings = args.settings;
   if (!settings.worktreePending) return args;
   return measureSendPhase('sendWorktree', sessionId, async () => {
@@ -10900,91 +10859,6 @@ function sendSettings(value) {
     settings[key] = value[key];
   }
   return { ...settings, worktreePending: value.worktreePending };
-}
-
-function activeLimit(meta) {
-  if (meta?.interrupted?.reason !== 'limit') return null;
-  const backend = getBackend(meta?.nextSettings?.backend ?? meta?.backend);
-  return limitForTarget(meta, { hasAccounts: Boolean(accountKind(backend)) });
-}
-/**
- * 送信待ちの項目が待つ上限。押した時点の設定（args.settings。ADR 0347）を持つ項目はその枠で判断し、後から選んだ設定には左右されない。
- * ただし上限で待つ間に会話の設定を替えたら、替えた先（item.retarget。retargetLimitWaits）で判断する。
- * 設定を持たない古い項目は、今の予約（nextSettings）で判断する
- */
-function sendLimit(meta, item) {
-  const settings = deliveryArgs(item)?.settings;
-  return activeLimit(settings ? { ...meta, nextSettings: settings } : meta);
-}
-/** 先頭の送信待ちが押した時点の設定（替えた先へ移したらその設定）で待っている上限（予約が別の枠でも、解除時刻にその項目を流す） */
-function queuedLimit(meta) {
-  const head = (meta?.outbox ?? []).find(m => !['sent', 'cancelled'].includes(m.status));
-  return head?.status === 'queued' && head.args?.settings ? sendLimit(meta, head) : null;
-}
-
-/** 会話の今の設定（予約があれば予約）で、押した時点の設定 base を取り直す。作業場所の worktree の作りかけは base のまま */
-function turnSettingsOf(meta, base) {
-  const next = meta?.nextSettings;
-  const backend = next?.backend ?? meta?.backend ?? base.backend;
-  return {
-    ...base,
-    backend,
-    model: next ? next.model ?? '' : meta?.model ?? '',
-    effort: next ? next.effort ?? '' : meta?.effort ?? '',
-    mode: next?.mode ?? (backend === meta?.backend ? meta?.mode ?? '' : ''),
-    account: next?.account ?? meta?.claudeAccount ?? '',
-    endpoint: next?.endpoint ?? meta?.compatEndpoint ?? '',
-    cwd: next?.cwd ?? base.cwd,
-  };
-}
-function sameSettings(a, b) {
-  return ['backend', 'model', 'effort', 'mode', 'account', 'endpoint', 'worktreePending'].every(key => (a?.[key] ?? '') === (b?.[key] ?? ''))
-    && path.resolve(a?.cwd || '.') === path.resolve(b?.cwd || '.');
-}
-/**
- * 使用量の上限で待っている送信待ち（まだエージェントへ渡していない、押した時点の設定を持つ項目）を、会話の今の設定へ移す（ADR 0347 の例外）。
- * 移した項目は、その後に替えた設定にも付いていく。取り消し（cancel）なら押した時点の設定へ戻す。
- * 上限以外で待っている項目・渡し始めた項目・設定を持たない古い項目は触らない（古い項目はもともと今の設定で送る）
- */
-async function retargetLimitWaits(sessionId, { cancel = false } = {}) {
-  const meta = await store.get(sessionId);
-  await outbox.retarget(sessionId, item => {
-    if (cancel) return item.retarget ? null : undefined;
-    if (!item.retarget && !sendLimit(meta, item)) return undefined;
-    const settings = turnSettingsOf(meta, item.args.settings);
-    return sameSettings(settings, item.args.settings) ? null : settings;
-  });
-}
-
-/** 止まった会話の待ちが解けていたら、送信待ちを流す。まだなら解除時刻に流す（解除時刻が分からない上限は待たせない） */
-function syncLimitWait(sessionId, meta, { kickIfReleased = false } = {}) {
-  const previous = limitReleaseTimers.get(sessionId);
-  clearTimeout(previous?.timer);
-  const limit = activeLimit(meta) ?? queuedLimit(meta);
-  if (!limit) {
-    limitReleaseTimers.delete(sessionId);
-    if (kickIfReleased && (previous || meta?.interrupted?.reason === 'limit')
-      && meta?.outbox?.some(m => m.status === 'queued')) outbox.kick(sessionId).catch(() => {});
-    return;
-  }
-  const { resetsAt } = limit;
-  const timer = setTimeout(() => syncLimitWait(sessionId, store.peek(sessionId), { kickIfReleased: true }),
-    Math.min(2_147_000_000, Math.max(0, resetsAt - Date.now())));
-  timer.unref?.();
-  limitReleaseTimers.set(sessionId, { timer, resetsAt });
-}
-
-/**
- * 起動時とスリープ解除時に、止まっている会話の送信待ちの待ちを見直す（スリープの間はタイマーが遅れる）。
- * 解除時刻を過ぎた会話は送信待ちを流し、アカウント・エージェントを替えた会話は待ちを下ろす。会話そのものは再開しない
- */
-async function recoverLimitWaits() {
-  for (const id of Object.keys(await store.getAll())) {
-    const meta = store.peek(id);
-    if (meta?.interrupted?.reason === 'limit' || limitReleaseTimers.has(id)) {
-      syncLimitWait(id, meta, { kickIfReleased: true });
-    }
-  }
 }
 
 const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'),
@@ -12343,7 +12217,7 @@ mainPort.on("message", async ({ data }) => {
       mainPort.postMessage({ type: 'plus-hosts', id: data.id, ok: false, error: String(e?.message ?? e), hosts: [] });
     }
   }
-  if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
+  if (data?.type === 'wake') await schedule.check();
   if (data?.type === 'update-lock') {
     const turns = [...runtime.turns.values()];
     const nonResumable = turns.filter(turn => !data.preserveTurns || !heldTurn(turn) ||
@@ -12507,9 +12381,9 @@ mainPort.on('disconnect', () => {
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
 mainAway.onBack(({ first }) => {
-  // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信予定・上限の解除時刻）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
+  // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信予定）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
   mainPort.postMessage({ type: 'locale', locale: locale.lang });
-  if (!first) { void Promise.resolve(schedule.check()).catch(() => {}); void recoverLimitWaits().catch(() => {}); }
+  if (!first) void Promise.resolve(schedule.check()).catch(() => {});
   restartGrace();
 });
 mainPort.on('connect', () => {
@@ -12627,8 +12501,6 @@ for (const { card, source, ctx } of adopting) {
   if (ctx.taskId && !stopUnconfirmed) adoptChild(ctx, turnPromise, { abandon: Boolean(abandon) });
 }
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
-// 上限で止まった会話の送信待ちを、解除時刻に流すよう置き直す（Pleiad を閉じている間に過ぎた分はすぐ）
-await recoverLimitWaits().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
 delegatedQueueReady = true;
 await redoInterruptedCompactions(new Set(adopting.filter(item => item.ctx.turn.compactTrigger).map(item => item.ctx.sessionId)))
   .catch(err => console.error('  圧縮をやり直せませんでした:', String(err?.message ?? err)));

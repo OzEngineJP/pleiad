@@ -47,6 +47,8 @@ const text = (s) => ({ type: "assistant", parent_tool_use_id: null, session_id: 
 const toolUse = (id, name) => ({ type: "assistant", parent_tool_use_id: null, session_id: SESSION, uuid: crypto.randomUUID(), message: { role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] } });
 const toolResult = (id, s) => ({ type: "user", parent_tool_use_id: null, session_id: SESSION, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: s }] } });
 const result = () => ({ type: "result", subtype: "success", session_id: SESSION, num_turns: 1, total_cost_usd: 0 });
+// API が使用量の上限（429）で断ったターンの result。subtype は success のまま is_error が立つ
+const errorResult = () => ({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: "limit", session_id: SESSION, num_turns: 1, total_cost_usd: 0 });
 // 報告 → Stop フックが続きを書かせる → ツールを 2 回呼んで一言 → result（2026-09-27 の子の transcript の末尾と同じ並び）
 const reportThenStopHook = () => [
   start(), text("報告: 作業を終えた"), stop("end_turn"),
@@ -84,7 +86,21 @@ export default async function (t) {
     } finally { restore(); }
   }
 
-  // SDK の result が success でも、上限の行を受けていたら限定された結果を一度だけ返す。
+  // ---- 2. 上限（ADR 0352）。止まったと数えるのは、ターンが実際に失敗したときだけ。
+  //   rate_limit_event（rejected）は枠が埋まったという知らせにすぎず、追加の使用量（従量課金）が有効なら Claude Code はそのまま走り続ける。
+  //   成功したターンは、知らせや上限の assistant 行があっても limited に書き換えない
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const turn = await startTurn();
+      q.push(init(), { type: 'rate_limit_event', session_id: SESSION,
+        rate_limit_info: { status: 'rejected', resetsAt: 1790962200, rateLimitType: 'five_hour' } },
+      ...reportThenStopHook());
+      t.ok('rate_limit_event（rejected）だけでは止まらず、ターンは成功で終わる',
+        await until(turn.settled) && results(turn.events) === 'ok' && !turn.events.some((e) => e.type === 'limit' || e.type === 'limitInfo'),
+        JSON.stringify(turn.events.filter((e) => e.type === 'turnResult' || e.type === 'limit' || e.type === 'limitInfo')));
+    } finally { restore(); }
+  }
   {
     const { q, restore } = fakeSdk();
     try {
@@ -92,29 +108,49 @@ export default async function (t) {
       q.push(init(), { type: 'assistant', session_id: SESSION, error: 'rate_limit',
         quotaLimits: { status: 'rejected', resetsAt: 1790962200, rateLimitType: 'five_hour' },
         message: { role: 'assistant', content: [] } }, result());
-      t.ok('上限の assistant 行があれば SDK の success を limited に変える',
-        await until(turn.settled) && results(turn.events) === 'limited', results(turn.events));
+      t.ok('上限の assistant 行があっても、SDK の result が成功なら成功のまま（limited に書き換えない）',
+        await until(turn.settled) && results(turn.events) === 'ok', results(turn.events));
     } finally { restore(); }
   }
 
-  // 実際の SDK は先に rate_limit_event（解除の時刻と枠）を出し、後の上限の assistant 行には quotaLimits が無い。
-  // 後の行で解除の時刻と枠を消すと、5 時間の枠の上限が「解除の時刻が分からない短い上限」として残った（2026-10-21）
+  // 実際に失敗したターン（429 の error result）は limited。実際の SDK は先に rate_limit_event（解除の時刻と枠）を出し、
+  // 後の上限の assistant 行には quotaLimits が無い。解除の時刻と枠は先の知らせから表示の情報として添える（2026-10-21 の件）
   {
     const { q, restore } = fakeSdk();
     try {
       const turn = await startTurn();
       q.push(init(), { type: 'rate_limit_event', session_id: SESSION,
         rate_limit_info: { status: 'rejected', resetsAt: 1790962200, rateLimitType: 'five_hour' } },
-      { type: 'assistant', session_id: SESSION, error: 'rate_limit', message: { role: 'assistant', content: [] } }, result());
+      { type: 'assistant', session_id: SESSION, error: 'rate_limit', message: { role: 'assistant', content: [] } }, errorResult());
       await until(turn.settled);
       const limited = turn.events.filter((e) => e.type === 'turnResult');
-      t.ok('後の上限の行に見込みが無くても、先の rate_limit_event の解除の時刻と枠を残す',
+      t.ok('ターンが 429 で失敗したら limited。解除の時刻と枠は先の rate_limit_event から残す',
         limited.length === 1 && limited[0].outcome === 'limited' && limited[0].resetsAt === 1790962200_000
           && limited[0].window === 'five_hour' && limited[0].scope === 'account', JSON.stringify(limited));
     } finally { restore(); }
   }
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const turn = await startTurn();
+      q.push(init(), { type: 'assistant', session_id: SESSION, error: 'rate_limit', message: { role: 'assistant', content: [] } }, errorResult());
+      await until(turn.settled);
+      const limited = turn.events.filter((e) => e.type === 'turnResult');
+      t.ok('先の知らせが無くても、429 で失敗したターンは limited（解除の時刻は不明）',
+        limited.length === 1 && limited[0].outcome === 'limited' && (limited[0].resetsAt ?? null) === null, JSON.stringify(limited));
+    } finally { restore(); }
+  }
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const turn = await startTurn();
+      q.push(init(), errorResult());
+      await until(turn.settled);
+      t.ok('assistant の行が無くても、result の 429 だけで limited', results(turn.events) === 'limited', results(turn.events));
+    } finally { restore(); }
+  }
 
-  // ---- 2. 裏へ回ったまま終わらないコマンドが残ると、報告の後もターンは終わらない
+  // ---- 3. 裏へ回ったまま終わらないコマンドが残ると、報告の後もターンは終わらない
   {
     const { q, restore } = fakeSdk({
       // 止めると CLI は stopped の完了通知と一覧の更新を出し、main を再開させる

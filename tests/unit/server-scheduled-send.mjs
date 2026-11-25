@@ -81,17 +81,16 @@ export default async function (t) {
     await c.cmd('resume', { sessionId });
     t.ok('再開すると予定だった発言が送られる', await until(async () => (await c.cmd('listMessages', { sessionId })).find(m => m.id === 'sched-00000002')?.status === 'sent'));
 
-    // ---- 上限で止まっている会話に時刻が来たら、解除まで待つ（API に流さない）
+    // ---- 上限で止まっている会話に時刻が来ても、解除を待たずにふつうに送る（先回りして止めない。ADR 0352）。まだ上限なら、その回がまた止まるだけ
     const limited = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
-    const resetsAt = Date.now() + 4200;
+    const resetsAt = Date.now() + 60 * 60_000;
     await c.runTurn({ sessionId: limited, prompt: `limit ${resetsAt}` }, { ms: 3000 });
     const limitFrom = c.mark();
     await op('sessions.scheduleSend', { sessionId: limited, prompt: 'echo:after-limit', at: Date.now() + 1200, messageId: 'sched-00000003' });
-    await sleep(1900);
-    const held = (await c.cmd('listMessages', { sessionId: limited })).find(m => m.id === 'sched-00000003');
-    t.ok('上限中の会話では、時刻が来ても解除まで送信待ちで待つ', held?.waiting?.reason === 'limit' && !c.since(limitFrom).some(e => e.type === 'userMessage' && e.messageId === 'sched-00000003'), JSON.stringify(held));
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === limited && e.outcome === 'ok', { from: limitFrom, ms: 15000 });
-    t.ok('解除の後に一度だけ送られる', (await userTexts(limited)).filter(x => x === 'echo:after-limit').length === 1);
+    t.ok('上限中の会話にも、時刻が来れば解除前でも一度だけ送られる（送信待ちで解除を待たない）',
+      (await userTexts(limited)).filter(x => x === 'echo:after-limit').length === 1
+      && c.since(limitFrom).some(e => e.type === 'userMessage' && e.messageId === 'sched-00000003'));
 
     // ---- 再起動: 予定は戻り、1 時間以内の遅れなら送る・それより遅れたら送らずに確かめる
     const idle = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
