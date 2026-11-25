@@ -59,7 +59,6 @@ import { authorKey, channelEnvelope, channelThreadEnvelope, channelEventRows, tu
 import { innerTail, WORK_NOTES_VERSION } from '../brain/inner.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
-import { inputWithCache } from '../usage.mjs';
 import { createResting } from './resting.mjs';
 import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 import { isSilentReply, speakingParts, stripSilentMark } from './silence.mjs';
@@ -106,8 +105,6 @@ const RETRY_MS = 3000;
 export const QUIET_REACTIONS = 20;
 /** 始められなかったターンの後に、たまった出来事を配り直す回数（失敗が続くなら止める。次の @ でまとめて渡る） */
 const START_RETRIES = 3;
-/** スレッドのトークンの足し算を書く間隔（ms）。スレッドの状態の書き込みと全接続への配信を毎秒にしない。ターンの終わりには必ず書く */
-export const CREDIT_INTERVAL_MS = 5000;
 /** チャンネルの「ここでの決まり」を bot へ渡す長さの上限（字）。保存の上限（LIMITS.memo = 4000）より短く、超えたぶんは channels.get で読ませる */
 const MEMO_PROMPT_CHARS = 2000;
 const PRESENT_MAX = 8;
@@ -119,7 +116,6 @@ const POST_KINDS = new Set(['thread', 'dm', 'routine']);
 const pad = (n) => String(n).padStart(2, '0');
 /** 包みの at: 現地時刻の分まで */
 export const stamp = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const sum = (a, b) => ({ input: (a?.input ?? 0) + (b?.input ?? 0), output: (a?.output ?? 0) + (b?.output ?? 0), cached: (a?.cached ?? 0) + (b?.cached ?? 0) });
 const botAuthor = (botId) => ({ kind: 'bot', botId });
 const threadKeyOf = (channelId, threadId) => (threadId ? `${channelId}/${threadId}` : null);
 const log = (...a) => console.error('  dispatch:', ...a);
@@ -197,18 +193,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   const bumpCalls = (channelId, threadId) => channels.threads.update(channelId, threadId, (cur) => ({ calls: (cur.calls ?? 0) + 1 })).catch((e) => log('could not write the wake count:', errText(e)));
-
-  /** 使ったトークンを、この記録が足し終えた分との差だけスレッドへ足す（usage は 1 ターンの累計なので、差分で足せば二重にならない） */
-  function credit(rec) {
-    if (!rec.threadId) return Promise.resolve();
-    const live = { input: rec.usage.inputTokens ?? 0, output: rec.usage.outputTokens ?? 0, cached: rec.usage.cachedTokens ?? 0 };
-    const d = { input: Math.max(0, live.input - rec.credited.input), output: Math.max(0, live.output - rec.credited.output), cached: Math.max(0, live.cached - rec.credited.cached) };
-    if (!d.input && !d.output && !d.cached) return Promise.resolve();
-    rec.credited = { input: Math.max(live.input, rec.credited.input), output: Math.max(live.output, rec.credited.output), cached: Math.max(live.cached, rec.credited.cached) };
-    return channels.threads.update(rec.channelId, rec.threadId, (cur) => ({ tokens: sum(cur.tokens, d) }))
-      .then(() => { if (!rec.ended) rt()?.turns?.get(rec.sessionId)?.control?.touch?.(); })
-      .catch((e) => log('could not write the token usage:', errText(e)));
-  }
 
   // ------------------------------------------------------------ 包みの組み立て
 
@@ -1010,7 +994,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       deferPost: Boolean(pre?.heardOnly),
       cur: '', last: '', parts: [], sawText: false, presents: [],
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
-      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), usage: {}, credited: { input: 0, output: 0, cached: 0 }, waiting: new Set(),
+      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(),
       state: 'working', postedState: 'working', lastWritten: PLACEHOLDER, botControlled: false, error: null,
       committed: false, compactedDuring: false, ended: false, stopped: false, receivedSteer: false, abandoned: false,
       timer: null, lastFlush: 0, dirty: false, chain: Promise.resolve(),
@@ -1104,8 +1088,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
       deferPost: !post && ['pulse', 'learner'].includes(sb.kind),
       cur: '', last: '', parts: [], sawText: false, presents: [],
-      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), usage: { ...turn.usage },
-      credited: card?.botCredited ?? { input: 0, output: 0, cached: 0 }, waiting: new Set(card?.waits ?? []),
+      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(card?.waits ?? []),
       state: card?.waits?.length ? 'waiting' : 'working', postedState: post?.state ?? 'working',
       lastWritten: post?.text ?? PLACEHOLDER, botControlled: false, error: null,
       committed: Boolean(card?.delivery?.initialDelivered), compactedDuring: false,
@@ -1200,9 +1183,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         case 'tool.start':
           if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); rec.cur = ''; }
           break;
-        case 'usage':
-          rec.usage = { ...rec.usage, ...event };
-          break;
         case 'present':
           collectPresent(rec, event);
           break;
@@ -1247,10 +1227,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); rec.cur = ''; }
         progress(rec);
         break;
-      case 'usage':
-        rec.usage = { ...rec.usage, ...event };
-        progress(rec);
-        break;
       case 'present':
         collectPresent(rec, event);
         break;
@@ -1291,10 +1267,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   function itemIdsFor(sessionId) {
     return active.get(sessionId)?.itemIds ?? [];
-  }
-
-  function creditedFor(sessionId) {
-    return active.get(sessionId)?.credited ?? null;
   }
 
   function callersFor(sessionId) {
@@ -1347,8 +1319,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (!rec.dirty || rec.ended || !rec.postId) return;
     rec.dirty = false;
     rec.lastFlush = now();
-    // トークンの足し算は間引く（足すたびにスレッドの行を書き直し、全接続へ配る）。ターンの終わり（onTurnEnd）には必ず足す
-    if (now() - (rec.lastCredit ?? 0) >= CREDIT_INTERVAL_MS) { rec.lastCredit = now(); await credit(rec); }
     // 短い断片しかない間は「…」を保ち、終わりにはその断片も全て残す。
     const body = progressBody(rec) || (rec.lastWritten !== PLACEHOLDER ? PLACEHOLDER : '');
     const patch = { channelId: rec.channelId, postId: rec.postId };
@@ -1396,8 +1366,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       clearTimeout(rec.timer);
       rec.timer = null;
       await rec.chain.catch(() => {});
-      rec.usage = { ...rec.usage, ...turn.usage };
-      await credit(rec);
       const ok = outcome === 'ok';
       const state = ok ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
       if (ok && !rec.committed) commit(rec);
@@ -1655,37 +1623,12 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     for (const ch of (await channels.list().catch(() => [])).filter((c) => c.kind === 'dm')) await stale(ch.id, null);
   }
 
-  /**
-   * キャッシュを入力と分けて数えていた頃の Antigravity の分（2026-10-04 に usage の数え方をそろえた）が混ざったスレッドは、
-   * cached が input を超えて見分けがつく。その tokens を、使用量の記録（会話ごと）から数え直す。数え直すと cached は input を超えないので、2 回目からは触らない。
-   * 記録が見つからないスレッドはそのまま
-   */
-  async function repairTokens() {
-    if (!host.usageStore?.records) return;
-    const legacy = ((await channels.threads.list?.()) ?? []).filter((th) => (th.tokens?.cached ?? 0) > (th.tokens?.input ?? 0) && Object.keys(th.sessions ?? {}).length);
-    if (!legacy.length) return;
-    const rows = await host.usageStore.records({ sessionIds: [...new Set(legacy.flatMap((th) => Object.values(th.sessions)))] });
-    const by = new Map();
-    for (const r of rows) {
-      const sum = by.get(r.sessionId) ?? { input: 0, output: 0, cached: 0 };
-      const input = inputWithCache(r);
-      sum.input += input; sum.output += r.outputTokens ?? 0; sum.cached += Math.min(r.cachedTokens ?? 0, input);
-      by.set(r.sessionId, sum);
-    }
-    for (const th of legacy) {
-      const total = { input: 0, output: 0, cached: 0 };
-      for (const id of Object.values(th.sessions)) for (const k of Object.keys(total)) total[k] += by.get(id)?.[k] ?? 0;
-      if (total.input || total.output) await channels.threads.update(th.channelId, th.threadId, { tokens: total }).catch((e) => log('could not repair the token usage:', errText(e)));
-    }
-  }
-
   async function start() {
     closed = false;
     try {
       await inbox.load();
       const { sessions } = await inbox.recover();
       await recoverStale();
-      await repairTokens().catch((e) => log('could not repair the token usage:', errText(e)));
       // サーバーが立ち上がりきってから配り直す
       const timer = setTimeout(() => { for (const id of sessions) pump(id); }, 0);
       timer.unref?.();
@@ -1711,7 +1654,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (rows.length) await inbox.remove(rows.map(x => x.id));
     },
     channels, bots, memory, host, emit, now, inbox,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, creditedFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

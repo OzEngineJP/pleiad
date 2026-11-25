@@ -123,12 +123,12 @@ export default async function (t) {
       // スレッド: count 件を入れておき、1 件を更新する
       const raw = openRaw(dbPath(dir), { create: true });
       const table = threadTable(raw);
-      for (let i = 0; i < count; i++) table.put(`c_1/p_${i}`, 'c_1', JSON.stringify({ channelId: 'c_1', threadId: `p_${i}`, sessions: { b_x: `s-${i}` }, state: 'idle', tokens: { input: 1, output: 1, cached: 0 }, calls: 1, stopped: null, updatedAt: 1 }));
+      for (let i = 0; i < count; i++) table.put(`c_1/p_${i}`, 'c_1', JSON.stringify({ channelId: 'c_1', threadId: `p_${i}`, sessions: { b_x: `s-${i}` }, state: 'idle', calls: 1, stopped: null, updatedAt: 1 }));
       raw.close();
       const threads = createThreadStore({ dir: path.join(dir, 'channels'), now: () => 5 });
       closers.push(() => threads.close());
       await threads.load();
-      const thread = await counter.measure(() => threads.update('c_1', 'p_7', (cur) => ({ tokens: { input: cur.tokens.input + 10, output: 5 }, calls: cur.calls + 1 })));
+      const thread = await counter.measure(() => threads.update('c_1', 'p_7', (cur) => ({ calls: cur.calls + 1 })));
       // 夜の整理: count 件の会話のカーソルを持ち、1 件だけ増えたとき
       let clock = 1000;
       const rows = Array.from({ length: count }, (_, i) => ({ id: `s${i}`, backend: 'fake', lastModified: 1 }));

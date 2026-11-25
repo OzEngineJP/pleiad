@@ -391,12 +391,11 @@ export default async function (t) {
     t.ok('承認のカードの id（waits）が札に載って往復する', true);
   }
 
-  // Bot dispatch の途中送信と、既に集計した使用量は復元札に残す
+  // Bot dispatch の途中送信は復元札に残す
   {
-    const { card } = cardOf({ sessionId: 's-bot', backend: 'fake', botItemIds: ['i-1', '', 3], botCredited: { input: 12, output: 8, cached: 2 }, botCallers: [{ botId: 'b-1', postId: 'p-1' }, { botId: 2 }] });
+    const { card } = cardOf({ sessionId: 's-bot', backend: 'fake', botItemIds: ['i-1', '', 3], botCallers: [{ botId: 'b-1', postId: 'p-1' }, { botId: 2 }] });
     assert.deepEqual(card.botItemIds, ['i-1']);
     assert.deepEqual(restoreFields(card).botItemIds, ['i-1']);
-    assert.deepEqual(restoreFields(card).botCredited, { input: 12, output: 8, cached: 2 });
     assert.deepEqual(restoreFields(card).botCallers, [{ botId: 'b-1', postId: 'p-1' }]);
     t.ok('bot の未確定受信 id と集計済み使用量が復元札を往復する', true);
   }

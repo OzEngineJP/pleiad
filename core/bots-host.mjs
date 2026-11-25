@@ -172,7 +172,6 @@ export function createBotHost(deps) {
     restoreTurn: guard('restoreTurn', (turn, card) => dispatch.restoreTurn(turn, card), false),
     liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
     itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
-    creditedFor: (sessionId) => dispatch.creditedFor(sessionId),
     callersFor: (sessionId) => dispatch.callersFor(sessionId),
     onTurnEvent: guard('onTurnEvent', (turn, event, options) => dispatch.onTurnEvent(turn, event, options)),
     onTurnReplayEnd: guard('onTurnReplayEnd', (turn) => dispatch.onTurnReplayEnd(turn)),

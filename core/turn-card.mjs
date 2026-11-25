@@ -145,11 +145,6 @@ export function cardOf(ctx, options = {}) {
   const internal = Boolean(ctx.hooks?.internal);
   const taskId = ctx.hooks?.taskId ?? ctx.taskId ?? null;
   const botItemIds = Array.isArray(ctx.botItemIds) ? ctx.botItemIds.filter(id => typeof id === 'string' && id).slice(0, 64) : [];
-  const botCredited = ctx.botCredited && typeof ctx.botCredited === 'object' ? {
-    input: Math.max(0, Number(ctx.botCredited.input) || 0),
-    output: Math.max(0, Number(ctx.botCredited.output) || 0),
-    cached: Math.max(0, Number(ctx.botCredited.cached) || 0),
-  } : null;
   const botCallers = Array.isArray(ctx.botCallers) ? ctx.botCallers.filter(c => typeof c?.botId === 'string').slice(0, 32)
     .map(c => ({ botId: c.botId, ...(typeof c.postId === 'string' ? { postId: c.postId } : {}) })) : [];
   const botLiveSteers = Array.isArray(ctx.botLiveSteers) ? ctx.botLiveSteers.slice(0, 64).map(item => ({
@@ -273,7 +268,6 @@ export function cardOf(ctx, options = {}) {
     waits,
     delegation,
     botItemIds,
-    botCredited,
     botCallers,
     botLiveSteers,
   };
@@ -340,11 +334,6 @@ export function restoreFields(card) {
     internal: Boolean(card.input?.internal),
     taskId: typeof card.input?.taskId === 'string' ? card.input.taskId : null,
     botItemIds: Array.isArray(card.botItemIds) ? card.botItemIds.filter(id => typeof id === 'string' && id).slice(0, 64) : [],
-    botCredited: card.botCredited && typeof card.botCredited === 'object' ? {
-      input: Math.max(0, Number(card.botCredited.input) || 0),
-      output: Math.max(0, Number(card.botCredited.output) || 0),
-      cached: Math.max(0, Number(card.botCredited.cached) || 0),
-    } : { input: 0, output: 0, cached: 0 },
     botCallers: Array.isArray(card.botCallers) ? card.botCallers.filter(c => typeof c?.botId === 'string').slice(0, 32)
       .map(c => ({ botId: c.botId, ...(typeof c.postId === 'string' ? { postId: c.postId } : {}) })) : [],
     botLiveSteers: Array.isArray(card.botLiveSteers) ? card.botLiveSteers.slice(0, 64).map(item => ({

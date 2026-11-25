@@ -9872,7 +9872,6 @@ function heldTurnCard(ctx) {
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null,
     botLiveSteers: botHost?.liveSteersFor?.(turn.info.sessionId) ?? [],
     botItemIds: botHost?.itemIdsFor?.(turn.info.sessionId) ?? [],
-    botCredited: botHost?.creditedFor?.(turn.info.sessionId) ?? null,
     botCallers: botHost?.callersFor?.(turn.info.sessionId) ?? [] });
 }
 

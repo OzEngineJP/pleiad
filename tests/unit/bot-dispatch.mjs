@@ -54,36 +54,6 @@ export default async function (t) {
       t.ok('inbox: 読めない版は読み込まない', await createInboxStore({ dir: future }).list({}).then(() => false, (e) => /version 2/.test(e.message)));
     }
 
-    // ================================================================ 古い Antigravity の tokens の数え直し（キャッシュを入力と分けて数えていた頃の分）
-    {
-      const rows = {
-        'p_old': { channelId: 'c_1', threadId: 'p_old', state: 'idle', sessions: { b_c: 's_claude', b_a: 's_agy' }, tokens: { input: 1100, output: 70, cached: 1600 } },   // cached > input = 古い形が混ざった
-        'p_ok': { channelId: 'c_1', threadId: 'p_ok', state: 'idle', sessions: { b_c: 's_claude' }, tokens: { input: 1000, output: 50, cached: 900 } },
-        'p_none': { channelId: 'c_1', threadId: 'p_none', state: 'idle', sessions: { b_a: 's_gone' }, tokens: { input: 10, output: 5, cached: 99 } },   // 記録が見つからない
-      };
-      const updates = [];
-      const channels = {
-        dir: path.join(tmp, 'repair'),
-        list: async () => [], read: async () => ({ posts: [] }),
-        threads: {
-          get: async (c, id) => structuredClone(rows[id] ?? null),
-          list: async () => structuredClone(Object.values(rows)),
-          update: async (c, id, patch) => { updates.push([id, patch]); Object.assign(rows[id], patch); return rows[id]; },
-        },
-      };
-      const records = [
-        { sessionId: 's_claude', inputTokens: 1000, outputTokens: 50, cachedTokens: 900 },
-        { sessionId: 's_agy', inputTokens: 100, outputTokens: 20, cachedTokens: 700 },   // 古い形（cached > input）。入力に足して読む
-      ];
-      const host = { store: { get: async () => ({}) }, usageStore: { records: async ({ sessionIds }) => records.filter((r) => sessionIds.includes(r.sessionId)) } };
-      const d = createDispatcher({ channels, bots: { get: async () => null, list: async () => [] }, memory: {}, host });
-      await d.start();
-      d.stop();
-      t.ok('cached が input を超えたスレッドだけ、使用量の記録（会話ごと）から tokens を数え直す', rows.p_old.tokens.input === 1800 && rows.p_old.tokens.output === 70 && rows.p_old.tokens.cached === 1600
-        && updates.length === 1 && updates[0][0] === 'p_old', JSON.stringify([rows.p_old.tokens, updates]));
-      t.ok('直したスレッド・正しいスレッドは触らず、記録が見つからないスレッドもそのまま', rows.p_ok.tokens.input === 1000 && rows.p_none.tokens.cached === 99);
-    }
-
     // ================================================================ 空の入れ物（P0 のつなぎ目と同じく、bot の会話でなければ何もしない）
     {
       const sessions = { plain: {} };
@@ -108,7 +78,7 @@ export default async function (t) {
           { id: 'p_2', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 2', mentions: [], at: 2000, reactions: {} },
           { id: 'p_3', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 3', mentions: [], at: 3000, reactions: {} },
         ];
-        const threads = { 'c_1/p_root': { channelId: 'c_1', threadId: 'p_root', sessions: { b_1: 's1' }, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null } };
+        const threads = { 'c_1/p_root': { channelId: 'c_1', threadId: 'p_root', sessions: { b_1: 's1' }, state: 'idle', calls: 0, stopped: null } };
         const sessions = { s1: { bot: { botId: 'b_1', kind: 'thread', channelId: 'c_1', threadId: 'p_root', memRev: 0, snapshotDue: false, delivered: [], postCursor: 'p_root' } } };
         const steers = [], emitted = [], started = [], aborted = [];
         let accept = async () => true;
@@ -126,7 +96,7 @@ export default async function (t) {
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
             update: async (c, th, patch) => {
-              const cur = (threads[`${c}/${th}`] ??= { channelId: c, threadId: th, sessions: {}, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null });
+              const cur = (threads[`${c}/${th}`] ??= { channelId: c, threadId: th, sessions: {}, state: 'idle', calls: 0, stopped: null });
               const next = typeof patch === 'function' ? patch(structuredClone(cur)) : patch;
               Object.assign(cur, next);
               return structuredClone(cur);
@@ -525,7 +495,7 @@ export default async function (t) {
 
         // 3 世代と無関係の 1 つ: p_root（s1）→ p_t2（s2）→ p_t3（s3）、p_other（s4）
         const x = world('plain', { more: true, modes: { b_1: ASK, b_2: ASK, b_3: ASK } });
-        const mkThread = (id, sessionId, botId, origin) => { x.threads[`c_1/${id}`] = { channelId: 'c_1', threadId: id, sessions: { [botId]: sessionId }, state: 'working', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, ...(origin ? { origin } : {}) }; };
+        const mkThread = (id, sessionId, botId, origin) => { x.threads[`c_1/${id}`] = { channelId: 'c_1', threadId: id, sessions: { [botId]: sessionId }, state: 'working', calls: 1, stopped: null, ...(origin ? { origin } : {}) }; };
         mkThread('p_t2', 's2', 'b_2', { channelId: 'c_1', threadId: 'p_root' });
         mkThread('p_t3', 's3', 'b_3', { channelId: 'c_1', threadId: 'p_t2' });
         mkThread('p_other', 's4', 'b_1', null);
@@ -639,31 +609,6 @@ export default async function (t) {
         t.ok('F-3: 次のターンは、commit が進めた postCursor の後ろだけを渡す（前の起こしの投稿を文脈として渡し直さない）', w.started.length === 2 && second.includes('post="p_3"') && !second.includes('post="p_2"'), second);
       }
 
-      // S-10: トークンの足し算を、毎秒の書き換えのたびにしない（数秒に 1 回・ターンの終わりには必ず）
-      {
-        let clock = 1_000_000;
-        const w = world('plain');
-        w.turns.delete('s1');
-        const d = createDispatcher({ channels: w.d.channels, bots: w.d.bots, memory: w.d.memory, host: w.d.host, now: () => clock });
-        let tokenWrites = 0;
-        const base = w.d.channels.threads.update;
-        w.d.channels.threads.update = async (c, th, patch) => { if (typeof patch === 'function' && 'tokens' in patch({ tokens: { input: 0, output: 0, cached: 0 } })) tokenWrites++; return base(c, th, patch); };
-        const turn = { info: { sessionId: 's1' }, agentLocale: 'ja', stream: {}, control: {}, ac: { signal: { aborted: false } }, outcome: null, usage: {} };
-        await d.turnExtras(turn);
-        for (let i = 1; i <= 8; i++) {
-          clock += 1100;
-          d.onTurnEvent(turn, { type: 'usage', inputTokens: i * 100, outputTokens: i * 10, cachedTokens: i * 50 });
-          d.onTurnEvent(turn, { type: 'text.delta', text: `${i}` });
-          await sleep(40);
-        }
-        const during = tokenWrites;
-        t.ok('S-10: 8 秒の間に毎秒書き換えても、トークンの足し算は数秒に 1 回（8 回ではなく 2 回以下）', during >= 1 && during <= 2, String(during));
-        w.turns.delete('s1');
-        turn.usage = { inputTokens: 900, outputTokens: 90, cachedTokens: 450 };
-        await d.onTurnEnd(turn, { outcome: 'ok' });
-        const th = w.threads['c_1/p_root'];
-        t.ok('S-10: ターンの終わりには残りを必ず足す（途中の分と合わせて、使った分に一致する）', tokenWrites === during + 1 && th.tokens.input === 900 && th.tokens.output === 90 && th.tokens.cached === 450, JSON.stringify(th.tokens));
-      }
       // 途中の短い断片は表示を待ち、終わりにはすべての文章を順番に残す。
       {
         const none = (...xs) => xs.every((x) => progressBody({ cur: x, last: '' }) === '' && progressBody({ cur: '', last: x }) === '');
@@ -1113,7 +1058,6 @@ export default async function (t) {
     const thA = await settled(rootA);
     const sessionA = thA.sessions[owl.id];
     t.ok('スレッドの状態: Owl の会話・起こした回数 1・止めた印なし・idle に戻る', typeof sessionA === 'string' && thA.calls === 1 && thA.stopped === null && thA.state === 'idle', JSON.stringify(thA));
-    t.ok('スレッドの使用量に、Owl のターンの分が積まれる（入力 1000・出力 200・キャッシュ 900）', thA.tokens.input === 1000 && thA.tokens.output === 200 && thA.tokens.cached === 900, JSON.stringify(thA.tokens));
     const posts = c.since(mA).filter((e) => e.type === 'channelPost' && e.channelId === dev.id);
     t.ok('投稿は作業中（working）で作られ、同じ投稿を編集して done にする（全接続へ・sessionId なし）', posts.some((e) => e.op === 'add' && e.post.id === a.p.id && e.post.state === 'working' && e.post.text === PLACEHOLDER && !e.sessionId)
       && posts.some((e) => e.op === 'edit' && e.post.id === a.p.id && e.post.state === 'done') && botPost((await read(dev.id, rootA.id)), owl).length === 1);

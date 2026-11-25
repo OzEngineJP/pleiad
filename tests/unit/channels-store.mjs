@@ -114,9 +114,9 @@ export default async function (t) {
     threadStores.push(threads);
     t.ok('無いスレッドは null・一覧は空', (await threads.get('c_a', 'p_1')) === null && (await threads.list()).length === 0);
     const th1 = await threads.update('c_a', 'p_1', { sessions: { b_owl: 's_1' }, state: 'working', calls: 1 });
-    t.ok('update は空の状態から作り、欄を重ねる（sessions は bot ごと）', th1.state === 'working' && th1.sessions.b_owl === 's_1' && th1.calls === 1 && th1.updatedAt === 777 && th1.stopped === null && th1.tokens.input === 0);
-    const th2 = await threads.update('c_a', 'p_1', (cur) => ({ sessions: { b_lynx: 's_2' }, tokens: { input: cur.tokens.input + 10, output: 5 }, calls: cur.calls + 1 }));
-    t.ok('関数で渡すと今の値から計算できる（トークンの足し算）。sessions は足される', th2.sessions.b_owl === 's_1' && th2.sessions.b_lynx === 's_2' && th2.tokens.input === 10 && th2.tokens.output === 5 && th2.calls === 2);
+    t.ok('update は空の状態から作り、欄を重ねる（sessions は bot ごと）', th1.state === 'working' && th1.sessions.b_owl === 's_1' && th1.calls === 1 && th1.updatedAt === 777 && th1.stopped === null);
+    const th2 = await threads.update('c_a', 'p_1', (cur) => ({ sessions: { b_lynx: 's_2' }, calls: cur.calls + 1 }));
+    t.ok('関数で渡すと今の値から計算できる（起こした回数の足し算）。sessions は足される', th2.sessions.b_owl === 's_1' && th2.sessions.b_lynx === 's_2' && th2.calls === 2);
     t.ok('sessions の null はその bot の会話を外す', !('b_owl' in (await threads.update('c_a', 'p_1', { sessions: { b_owl: null } })).sessions));
     t.ok('不正な state・stopped は投げる（保存しない）', (await threads.update('c_a', 'p_1', { state: 'zzz' }).then(() => 'ok', () => 'rejected')) === 'rejected'
       && (await threads.update('c_a', 'p_1', { stopped: { by: { kind: 'bot' }, at: 1 } }).then(() => 'ok', () => 'rejected')) === 'rejected' && (await threads.get('c_a', 'p_1')).state === 'working');
