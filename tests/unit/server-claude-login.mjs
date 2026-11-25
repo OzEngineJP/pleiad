@@ -1,6 +1,6 @@
 // Claude のアカウントの認可を server の配線で通す（claudeLoginStart / claudeLoginCode / claudeLoginCancel と claudeLogin イベント）。
 // Claude Code の代わりに偽の CLI（tests/lib/fake-claude-login.mjs）を AGENT_HOST_CLAUDE_BIN で渡す。本物のログインもネットワークも使わない。
-// ADR 0352: アカウントは名前と claude.ai のログインで作り、済んだときだけ載せる。前の版の会話用のトークンは起動時に消す。
+// ADR 0353: アカウントは名前と claude.ai のログインで作り、済んだときだけ載せる。前の版の会話用のトークンは起動時に消す。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,7 +52,7 @@ export default async function (t) {
     t.ok('登録していないアカウントの認可は始めない', refused?.message.includes('登録されていません'));
     refused = null;
     await c.cmd('claudeLoginStart', { kind: 'setup-token', name: '仕事用' }).catch(e => { refused = e; });
-    t.ok('setup-token の認可は始めない（ADR 0352）', Boolean(refused));
+    t.ok('setup-token の認可は始めない（ADR 0353）', Boolean(refused));
 
     // ---- 新しいアカウント（名前 → claude.ai のログイン）
     const m0 = c.mark();

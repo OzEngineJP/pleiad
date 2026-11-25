@@ -311,7 +311,7 @@ function onControlRequest(m) {
         try {
           const cfg = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_MODELS_FILE, 'utf8'));
           const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
-          // トークンが無ければ、専用フォルダ（CLAUDE_CONFIG_DIR）の資格情報の accessToken を 'cred:<accessToken>' の鍵にする（登録したアカウント。ADR 0352）
+          // トークンが無ければ、専用フォルダ（CLAUDE_CONFIG_DIR）の資格情報の accessToken を 'cred:<accessToken>' の鍵にする（登録したアカウント。ADR 0353）
           const key = tok || ownDirKey();
           account = cfg.accounts?.[tok] ?? {};
           const picked = key ? (cfg.tokens?.[key] ?? (tok ? cfg.default : (cfg.login ?? cfg.default))) : (cfg.login ?? cfg.default);

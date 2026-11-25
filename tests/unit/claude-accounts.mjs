@@ -1,5 +1,5 @@
 // Claude のアカウント切り替え（core/claude-accounts.mjs）。LLM も Claude Code も呼ばない。
-// アカウントは専用フォルダ（<data>/claude-usage/<id>）のログイン 1 つだけ（ADR 0352）。一覧の中身・名前の検査・
+// アカウントは専用フォルダ（<data>/claude-usage/<id>）のログイン 1 つだけ（ADR 0353）。一覧の中身・名前の検査・
 // ログインの印・削除・0.43.0-beta.24 より前の会話用トークンの片付け（dropLegacyTokens）を確かめる。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createClaudeAccounts, AccountError, readOauthAccount, cliConfigFile, newAccountId, normalizeName } from '../../core/claude-accounts.mjs';
 
 export const name = 'claude-accounts';
-export const title = 'Claude のアカウント: 一覧・名前・ログインの印・削除・会話用トークンの片付け（ADR 0352）';
+export const title = 'Claude のアカウント: 一覧・名前・ログインの印・削除・会話用トークンの片付け（ADR 0353）';
 
 const ORG_WORK = '11111111-0000-4000-8000-000000000001';
 const LEGACY_TOKEN = 'sk-ant-oat01-' + 'A'.repeat(40);
@@ -109,7 +109,7 @@ export default async function (t) {
     t.ok('無いものは消せない', Boolean(twice));
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 
-  // ---- 0.43.0-beta.24 より前の会話用トークンの片付け（ADR 0352）
+  // ---- 0.43.0-beta.24 より前の会話用トークンの片付け（ADR 0353）
   {
     const data = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-legacy-'));
     try {

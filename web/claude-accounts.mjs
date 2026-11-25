@@ -1,7 +1,7 @@
 // Claude のアカウント（会話ごとに選ぶ。core/claude-accounts.mjs）の設定。
 // 一覧の追加・名前の変更・削除と、claude.ai のログイン（Pleiad が疑似端末で `claude auth login` を回す。core/claude-login.mjs）。
 //
-// 1 つのアカウントが持つ認証は claude.ai のログイン 1 つだけ（ADR 0352）。会話・使用量の表示・claude.ai のコネクターは、
+// 1 つのアカウントが持つ認証は claude.ai のログイン 1 つだけ（ADR 0353）。会話・使用量の表示・claude.ai のコネクターは、
 // どれもアカウントごとの専用フォルダのログインで動く。新しいアカウントは、名前を付けてログインが済んだ時点で一覧に載る。
 //
 // 面は「カードがその場で開く」形（docs/design-system.md「Claude のアカウント」）:
@@ -409,7 +409,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     for (const k of Object.keys(fresh)) delete fresh[k];
     draw();
   }
-  // usageLogin: そのアカウントの claude.ai のログイン（し直し）を始める（会話の失敗の行の［ログインし直す］。web/auth-expired.mjs、ADR 0212・0352）。
+  // usageLogin: そのアカウントの claude.ai のログイン（し直し）を始める（会話の失敗の行の［ログインし直す］。web/auth-expired.mjs、ADR 0212・0353）。
   // focus: そのアカウントのカードの［編集］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   let onOpen = () => {};
   async function open({ usageLogin, focus } = {}) {

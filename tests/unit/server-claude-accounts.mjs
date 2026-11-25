@@ -1,5 +1,5 @@
 // Claude のアカウント切り替えを server の配線で通す。fake バックエンドは Claude と同じく選んだアカウント（account）を受け取り、
-// "whoami" でその id の指紋を返す。LLM は呼ばない。アカウントはログインが済んだ形で置く（tests/lib/claude-account-seed.mjs。ADR 0352）。
+// "whoami" でその id の指紋を返す。LLM は呼ばない。アカウントはログインが済んだ形で置く（tests/lib/claude-account-seed.mjs。ADR 0353）。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,7 +34,7 @@ export default async function (t) {
 
     const work = await seedClaudeAccount(scratch, '仕事用', { oauthAccount: { organizationUuid: '11111111-2222-4000-8000-00000000000b', emailAddress: 'work@example.com' } });
     const listed = (await c.cmd('claudeAccounts')).accounts;
-    t.ok('一覧は名前とログインの有無だけ（トークン・持ち主の照合の項目は無い。ADR 0352）', listed.length === 1 && listed[0].id === work && listed[0].name === '仕事用'
+    t.ok('一覧は名前とログインの有無だけ（トークン・持ち主の照合の項目は無い。ADR 0353）', listed.length === 1 && listed[0].id === work && listed[0].name === '仕事用'
       && listed[0].usageLogin === true && !('hasToken' in listed[0]) && !('tokenCheck' in listed[0]), JSON.stringify(listed[0]));
 
     // ログインがまだのアカウントは選ばせず、ログインへ案内する

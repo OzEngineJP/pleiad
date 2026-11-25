@@ -137,10 +137,10 @@ const PROVIDER_ENV = ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_C
 const states = new Map();
 const accountScopeKey = (account) => {
   const id = typeof account === "string" ? account : account?.id;
-  // 登録したアカウントは、コネクターのオン・オフに関係なく専用フォルダのログインで一覧を引く（ADR 0352）。一覧はオン・オフで変わらないので分けない
+  // 登録したアカウントは、コネクターのオン・オフに関係なく専用フォルダのログインで一覧を引く（ADR 0353）。一覧はオン・オフで変わらないので分けない
   return id ? `account:${id}` : "login";
 };
-/** 試験用: アカウントごとのキャッシュのキー（ADR 0352。コネクターのオン・オフで変わらないことを試験が確かめる） */
+/** 試験用: アカウントごとのキャッシュのキー（ADR 0353。コネクターのオン・オフで変わらないことを試験が確かめる） */
 export const accountScopeKeyForTest = (account) => accountScopeKey(account);
 /** 試験用: 一覧を覚える場所を作り（touch のアカウントごと）、今あるキーを返す（invalidateModels が入口オンのキーも消すことを試験が確かめる。ADR 0340） */
 export const catalogStateKeysForTest = (touch = []) => { for (const account of touch) stateFor(account); return [...states.keys()]; };
@@ -199,7 +199,7 @@ function cliSignature() {
 function resetCliSignatureCache() { cliSigAt = 0; cliSigValue = null; }
 
 async function probeCatalog(cwd, withSettings, account = null) {
-  // 登録したアカウントは、会話と同じく専用フォルダを整えてから、そのログインで引く（ADR 0352）。整えられなければ投げる（保存した一覧か固定の一覧に戻る）
+  // 登録したアカウントは、会話と同じく専用フォルダを整えてから、そのログインで引く（ADR 0353）。整えられなければ投げる（保存した一覧か固定の一覧に戻る）
   if (account?.id && !account?.ownDir) throw new Error("missing Claude account own dir");
   const auth = account?.ownDir ? await account.ownDir.prepare({ cwd }) : null;
   const ac = new AbortController();
@@ -243,7 +243,7 @@ export const probeClaudeCatalogForTest = (cwd, withSettings, account = null) => 
 export const CONNECTOR_PROBE_MS = 20_000;
 
 /** claude.ai のコネクターの名前を読む（設定 › 外部 MCP の一覧用。ADR 0327）。話しかけずに起こし、deny の名前は止める（読み取りが Pleiad の登録をつながない） */
-// connectors: 登録したアカウントの専用フォルダの認証（ADR 0350・0352）。会話と同じ組み立て（専用フォルダ・権限）で読み、取れなければ投げる。無ければログイン中のアカウント
+// connectors: 登録したアカウントの専用フォルダの認証（ADR 0350・0353）。会話と同じ組み立て（専用フォルダ・権限）で読み、取れなければ投げる。無ければログイン中のアカウント
 export async function probeClaudeConnectors({ deny = [], connectors = null, signal = null } = {}) {
   const ownDir = connectors?.identity === OWN_DIR;
   const auth = ownDir ? await connectors.prepare() : null;
@@ -446,7 +446,7 @@ function makeScopedBackend(account) {
 }
 
 /**
- * 登録したアカウント（専用フォルダ方式。ADR 0350・0352）の会話・内部呼出し: 起動の直前に専用フォルダを整え（リンク・設定の反映。
+ * 登録したアカウント（専用フォルダ方式。ADR 0350・0353）の会話・内部呼出し: 起動の直前に専用フォルダを整え（リンク・設定の反映。
  * core/claude-connectors-auth.mjs の prepare）、env（CLAUDE_CONFIG_DIR。コネクターがオフなら ENABLE_CLAUDEAI_MCP_SERVERS=false も）を渡す。
  * トークンは渡さない（更新は CLI が自分で行う）。整えられなければ投げて始めない。
  * 互換の接続先の呼出しは今までどおり（専用フォルダの認証を足さない）
@@ -1360,7 +1360,7 @@ export const backend = {
             ...(held ? { spawnClaudeCodeProcess: held.spawnClaudeCodeProcess } : {}),
             // env は置き換え（足し算ではない）なので process.env を必ず広げる。
             // 待ちの上限は 0 = 無し。入力を開けている限り CLI は上限を見ないが、閉じた後の保険として外す。
-            // 会話で選んだアカウントは専用フォルダ（CLAUDE_CONFIG_DIR）を、この会話の env にだけ入れる（process.env は触らない。ADR 0352）
+            // 会話で選んだアカウントは専用フォルダ（CLAUDE_CONFIG_DIR）を、この会話の env にだけ入れる（process.env は触らない。ADR 0353）
             // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
             env: { ...(endpoint ? { ...claudeCompatEnv(process.env, endpoint, claudeExtraEnv), ...browserEnv, ...controlRuntime?.env }
               : ownDir ? claudeOwnDirEnv({ ...process.env, ...browserEnv, ...controlRuntime?.env }, { ...claudeExtraEnv, ...activeConnectorsEnv })

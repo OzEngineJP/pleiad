@@ -1,4 +1,4 @@
-// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・専用フォルダでの取得・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0329・0352）
+// Claude のアカウントごとのモデル一覧・検証・キャッシュ隔離・専用フォルダでの取得・無効化・LRU・Mythos 説明・bot/心拍の backendForAccount（ADR 0329・0353）
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -18,7 +18,7 @@ import { normalizePulse } from '../../core/bots/store.mjs';
 export const name = 'claude-catalog-accounts';
 export const title = 'Claude: アカウントごとのモデル一覧・検証・anyCatalog 隔離・専用フォルダでの取得・無効化・Mythos 説明・心拍';
 
-// 登録したアカウントの専用フォルダの認証（core/claude-connectors-auth.mjs の resolveAuth が付ける ownDir の写し。ADR 0352）。
+// 登録したアカウントの専用フォルダの認証（core/claude-connectors-auth.mjs の resolveAuth が付ける ownDir の写し。ADR 0353）。
 // 中身の無い名前だけのフォルダ（偽の CLI は env の CLAUDE_CONFIG_DIR でアカウントを見分ける）
 const DIR_VERIFIED = path.join(os.tmpdir(), 'ply-cat-own-verified');
 const DIR_PLAIN = path.join(os.tmpdir(), 'ply-cat-own-plain');
@@ -94,7 +94,7 @@ export default async function (t) {
     setLocale(prevLocale);
   }
 
-  // ---- 2. backendForAccount: accounts: 'token' / 'agent' で forAccount を呼ぶ（ログイン中・未指定は元を包む／そのまま）。'token' は「Pleiad がアカウントを持つ」印の名前（ADR 0352 からトークンは持たない）
+  // ---- 2. backendForAccount: accounts: 'token' / 'agent' で forAccount を呼ぶ（ログイン中・未指定は元を包む／そのまま）。'token' は「Pleiad がアカウントを持つ」印の名前（ADR 0353 からトークンは持たない）
   {
     const loginNull = await backendForAccount(claude, null);
     const loginUndef = await backendForAccount(claude, undefined);

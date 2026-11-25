@@ -14,7 +14,7 @@ import { t } from '../i18n.mjs';
 /**
  * 使用量を読むプロセスの env。
  *   configDir あり … 登録したアカウントの使用量。そのアカウント専用の設定フォルダ（`claude auth login` 済み）を
- *                    CLAUDE_CONFIG_DIR にし、env の長期トークン（CLAUDE_CODE_OAUTH_TOKEN）は外す（会話と同じログインで読む。ADR 0352）。
+ *                    CLAUDE_CONFIG_DIR にし、env の長期トークン（CLAUDE_CODE_OAUTH_TOKEN）は外す（会話と同じログインで読む。ADR 0353）。
  *   無し          … ログイン中のアカウント（今までどおり）
  */
 export function usageEnv(base = process.env, { configDir } = {}) {

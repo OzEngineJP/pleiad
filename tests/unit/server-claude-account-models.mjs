@@ -1,5 +1,5 @@
 // サーバー通し: Claude のアカウントごとのモデル一覧・検証・委譲・bot・設定 › 委譲・アカウント追加/ログインし直し/削除（fake CLI）
-// アカウントは専用フォルダのログインで走る（ADR 0352）。偽の CLI は専用フォルダの資格情報の accessToken（'cred:<access>'）でアカウントを見分ける
+// アカウントは専用フォルダのログインで走る（ADR 0353）。偽の CLI は専用フォルダの資格情報の accessToken（'cred:<access>'）でアカウントを見分ける
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';

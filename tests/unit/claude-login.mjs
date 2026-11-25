@@ -1,6 +1,6 @@
 // Claude のアカウントの認可を Pleiad から回す（core/claude-login.mjs）。本物の Claude Code もネットワークも使わない。
 // 出力の読み取り（ANSI・OSC 8・折り返し）、トークンを伏せること、疑似端末の偽物での進み方（URL → コード → 完了 / 失敗 / 時間切れ / 取り消し）、
-// 新しいアカウントを済んだときだけ載せること（ADR 0352）、使用量の設定フォルダの env を確かめる。node-pty が読めれば、偽の CLI（tests/lib/fake-claude-login.mjs）を本物の疑似端末でも回す。
+// 新しいアカウントを済んだときだけ載せること（ADR 0353）、使用量の設定フォルダの env を確かめる。node-pty が読めれば、偽の CLI（tests/lib/fake-claude-login.mjs）を本物の疑似端末でも回す。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -191,7 +191,7 @@ export default async function (t) {
 
     // 起動できない
     let noKind = null; try { login.start({ kind: 'setup-token', name: 'x' }); } catch (e) { noKind = e; }
-    t.ok('setup-token など知らない種類は断る（ADR 0352）', Boolean(noKind));
+    t.ok('setup-token など知らない種類は断る（ADR 0353）', Boolean(noKind));
     let noName = null; try { login.start({ name: '  ' }); } catch (e) { noName = e; }
     t.ok('新しいアカウントは名前が要る', Boolean(noName));
     const noCli = createClaudeLogin({ command: () => null, emit: () => {}, spawn: pty.spawn, usageDir: () => dir, newAccountId: () => 'x' });

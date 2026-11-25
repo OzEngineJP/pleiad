@@ -46,7 +46,7 @@ export const PARENTS = {
   undefinedOauth: { CLAUDE_CODE_OAUTH_TOKEN: undefined, CLAUDE_CONFIG_DIR: undefined },
   lowerCase: { claude_code_oauth_token: FAKE.parentOauth, Claude_Config_Dir: FAKE.configDir },
 };
-/** アカウントの状態: none = 指定なし（ログイン中のアカウントを選んだ場合も同じ道）/ registered = 登録したアカウント（専用フォルダ。accountFor で入口を通す。ADR 0352） */
+/** アカウントの状態: none = 指定なし（ログイン中のアカウントを選んだ場合も同じ道）/ registered = 登録したアカウント（専用フォルダ。accountFor で入口を通す。ADR 0353） */
 export const ACCOUNTS = ['none', 'registered'];
 export const ENDPOINTS = { none: null, compat: { baseUrl: 'https://compat.example.invalid', auth: 'bearer', key: FAKE.endpointKey, roles: { main: 'fake-model' }, options: {} } };
 

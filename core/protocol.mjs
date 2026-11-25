@@ -48,7 +48,7 @@ export const COMMANDS = new Set([
   'setVoiceKey',    // { key } -> { hasKey, storage, today, active, check: ok|invalid|unreachable }
   'deleteVoiceKey', // {} -> { hasKey, storage, today, active }
   'providerUsage', // { backend } -> subscription quota + locally recorded usage（Claude はアカウントを登録していれば quota.accounts にアカウントごと）
-  // Claude のアカウント（会話ごとに選ぶ。アカウントごとの専用フォルダのログイン。core/claude-accounts.mjs・ADR 0352）
+  // Claude のアカウント（会話ごとに選ぶ。アカウントごとの専用フォルダのログイン。core/claude-accounts.mjs・ADR 0353）
   'claudeAccounts',      // {} -> { accounts: [{ id, name, usageLogin, usageExpired, connectors? }] }
   'saveClaudeAccount',   // { id, name } -> 名前の変更（追加は claudeLoginStart の name とログイン）
   'deleteClaudeAccount', // { id } -> 一覧から消す（専用フォルダも）。選んでいた会話は次の送信でエラーになる

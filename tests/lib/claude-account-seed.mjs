@@ -1,5 +1,5 @@
 // テスト用: Claude のアカウントを、claude.ai のログインが済んだ形でデータの置き場に直に置く。
-// ADR 0352 から、アカウントは専用フォルダのログインが済んだときだけ登録される（claudeLoginStart { name }）。
+// ADR 0353 から、アカウントは専用フォルダのログインが済んだときだけ登録される（claudeLoginStart { name }）。
 // 画面とサーバーを通したログインは server-claude-login・claude-login が確かめるので、ほかのテストはこれで置く。
 // claude-accounts.json はサーバーが毎回読み直すので、サーバーが動いている間に置いてもよい（claudeAccountsChanged は出ない）。
 import fs from 'node:fs/promises';

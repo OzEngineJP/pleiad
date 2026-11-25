@@ -1,9 +1,9 @@
-// 登録した Claude アカウントで claude.ai のコネクターを使うかの設定（ADR 0340・0352）。
+// 登録した Claude アカウントで claude.ai のコネクターを使うかの設定（ADR 0340・0353）。
 // アカウントごとに 1 つのスイッチ。未設定・読めない・知らない版・知らない値はすべてオフ。
 //   <データ置き場>/claude-account-connectors.json = { version: 1, accounts: { <アカウント id>: { enabled: true } } }
 //   （秘密を含まない。claude-accounts.json の版は上げない。claude-connectors.json は設定 › 外部 MCP のコネクターの一覧の覚えで別のもの）
 //   コネクターの名前ごとのオフは、同じアカウントの項目に後から足せる（今は読まない。知らない項目は無視する）
-// 登録したアカウントは、オン・オフに関係なく専用フォルダのログインで会話する（core/claude-connectors-auth.mjs の createClaudeConnectorsWiring。ADR 0352）。
+// 登録したアカウントは、オン・オフに関係なく専用フォルダのログインで会話する（core/claude-connectors-auth.mjs の createClaudeConnectorsWiring。ADR 0353）。
 // オフのときは claude.ai のコネクターを出さない（ENABLE_CLAUDEAI_MCP_SERVERS=false）。保存済みの mode（b1 の時代の印）は読まない
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';

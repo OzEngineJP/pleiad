@@ -441,7 +441,7 @@ export default async function (t) {
     const own = accounts.usageDir(id);
     await fs.mkdir(own, { recursive: true });
 
-    // コネクターがオフでも専用フォルダのログインが要る（会話用のトークンへ戻らない。ADR 0352）
+    // コネクターがオフでも専用フォルダのログインが要る（会話用のトークンへ戻らない。ADR 0353）
     await assert.rejects(wiring.resolve(id), { code: 'connectors-ownDirLogin' });
     await wiring.settings.setEnabled(id, true);
     // 入口の設定は enabled だけ。b1 の時代の mode が書かれていても読まない・書き直すと消える（ADR 0350）

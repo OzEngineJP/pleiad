@@ -1,7 +1,7 @@
 // サーバー通し: 設定 › 外部 MCP のコネクターの一覧を、新しい会話の既定の Claude アカウントで読む（ADR 0327・0340 段 2）。
 // 偽の CLI（AGENT_HOST_CLAUDE_BIN）・偽の値だけ。本物の CLI・本物の資格情報・ホーム直下の .claude.json は使わない（CLAUDE_CONFIG_DIR は一時フォルダ）。
 // server の accountResolve → 入口（gate）→ 認証側の組み立て（createClaudeConnectorsWiring）→ connectorListProbe → probeClaudeConnectors を本物の配線で通す。
-//   1. オフ（入口の設定なし）: 同じ専用フォルダで、claude.ai のコネクターを切って（ENABLE_CLAUDEAI_MCP_SERVERS=false）読む。会話用のトークンは無い（ADR 0352）
+//   1. オフ（入口の設定なし）: 同じ専用フォルダで、claude.ai のコネクターを切って（ENABLE_CLAUDEAI_MCP_SERVERS=false）読む。会話用のトークンは無い（ADR 0353）
 //   2. オンで止める条件に当たる（使用量のログインが無い）: ログイン中のアカウントで読み直さない（一覧のための CLI を起こさない）・覚えの一覧を書かない
 //   3. オンで使える: 会話と同じ組み立て（アクセス用トークン・権限の並び・共有の設定フォルダの 3 つ）で読み、覚えの一覧を書く
 //   段 3（2026-11-19）: オンのアカウントのコネクターは上の表に並べず、「claude.ai のコネクター（アカウントごと）」の行で読む（accounts.refreshConnectors）。
@@ -105,7 +105,7 @@ export default async function (t) {
     try {
       const r = await s.read();
       const lines = s.envLines();
-      t.ok('オフ: 一覧はアカウントの専用フォルダで、claude.ai のコネクターを切って 1 回読む（トークン・権限の環境変数なし）・覚えの一覧を書く（ADR 0352）',
+      t.ok('オフ: 一覧はアカウントの専用フォルダで、claude.ai のコネクターを切って 1 回読む（トークン・権限の環境変数なし）・覚えの一覧を書く（ADR 0353）',
         r.saw && lines.length === 1 && lines[0].who === 'login' && lines[0].scopes === null && lines[0].configDir === path.dirname(s.credFile)
           && lines[0].claudeAi === 'false' && fss.existsSync(s.savedList),
         JSON.stringify({ saw: r.saw, lines, saved: fss.existsSync(s.savedList) }));
@@ -263,7 +263,7 @@ export default async function (t) {
       t.ok('専用フォルダ方式: 入れるとき、専用フォルダの projects・skills・plugins・settings.json が共有の ~/.claude へのリンクになる', linked);
       const models = () => c.cmd('invoke', { op: 'agents.models', args: { backend: 'claude', cwd: s.work, account: s.id } });
       const onModels = await models().then(r => r, e => ({ error: e.message }));
-      t.ok('専用フォルダ方式: モデル一覧も専用フォルダのログインで読める（会話用のトークンは要らない。ADR 0352）', !onModels.error, JSON.stringify(onModels).slice(0, 300));
+      t.ok('専用フォルダ方式: モデル一覧も専用フォルダのログインで読める（会話用のトークンは要らない。ADR 0353）', !onModels.error, JSON.stringify(onModels).slice(0, 300));
       let before = s.envLines().length;
       const list = await s.refreshRow();
       const checks = s.envLines().slice(before);

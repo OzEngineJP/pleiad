@@ -1,7 +1,7 @@
 // Claude のアカウントの切り替え（会話ごと）。
 //
 // アカウントごとに専用の設定フォルダ（<data>/claude-usage/<id>/）で claude.ai にログインしておき、その会話の子 CLI に
-// CLAUDE_CONFIG_DIR として渡す（専用フォルダ方式。ADR 0345・0350・0352。準備とリンクは core/claude-connectors-auth.mjs・
+// CLAUDE_CONFIG_DIR として渡す（専用フォルダ方式。ADR 0345・0350・0353。準備とリンクは core/claude-connectors-auth.mjs・
 // core/claude-own-dir.mjs）。process.env は書き換えない（書き換えると Pleiad から起動するすべての会話がそのアカウントになる）。
 // 履歴（projects/）・skills・plugins・settings.json は共有の ~/.claude へリンクするので、会話の途中でアカウントを変えても
 // resume で続きから話せる。ログインの更新は CLI が自分で行う。Pleiad はトークンを持たない。
@@ -14,7 +14,7 @@
 //                                 （core/claude-login.mjs）。済むと ply-usage-login.json を置く。会話・使用量・モデル一覧・コネクターが使う
 //
 // 0.43.0-beta.24 より前は、会話用の長期トークン（claude setup-token）を <data>/claude-account-secrets.json に置いていた。
-// 起動時に dropLegacyTokens() で消す（ADR 0352）
+// 起動時に dropLegacyTokens() で消す（ADR 0353）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +27,7 @@ const MAX_NAME = 60;
 const USAGE_MARKER = 'ply-usage-login.json';
 const USAGE_EXPIRED_MARKER = 'ply-usage-expired.json';
 const ORG = /^[A-Za-z0-9-]{8,64}$/;
-// 0.43.0-beta.24 より前の置き場（ADR 0352 で使わなくなった）
+// 0.43.0-beta.24 より前の置き場（ADR 0353 で使わなくなった）
 const LEGACY_SECRETS = 'claude-account-secrets.json';
 const LEGACY_LOGIN_SCRATCH = 'claude-login-tmp';
 const LEGACY_FIELDS = ['tokenOrg', 'tokenCheckedAt'];
@@ -208,7 +208,7 @@ export function createClaudeAccounts({ dataDir, cliConfig = cliConfigFile(), log
       });
     },
     /**
-     * 0.43.0-beta.24 より前の会話用トークン（setup-token）と持ち主の照合の記録を消す（ADR 0352）。起動時に 1 度。
+     * 0.43.0-beta.24 より前の会話用トークン（setup-token）と持ち主の照合の記録を消す（ADR 0353）。起動時に 1 度。
      * トークンは以後読まない。復号は要らない（ファイルごと消す）。{ removed } は消したものがあったか
      */
     dropLegacyTokens() {

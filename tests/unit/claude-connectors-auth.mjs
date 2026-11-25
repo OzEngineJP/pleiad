@@ -3,7 +3,7 @@
 //   2. 設定の反映（projectProfile）: 許可した項目だけ・既存の値を上書きしない・冪等（変わらなければ書かない）・元の ~/.claude.json を変えない・認証や組織の情報を写さない
 //   3. 認証の解決: 成功の形（トークンを渡さない・CLAUDE_CONFIG_DIR だけ）・止める条件ごとの失敗（OS・ssh・別の認証の環境変数・履歴の場所・版・ログイン・準備）・
 //      止めた理由に秘密が出ない・process.env を変えない・親の認証の環境変数は子へ渡さない（claudeOwnDirEnv）
-//   4. 起動の記録（オン・オフ）: どちらも専用フォルダ（トークンなし）。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS=false だけ。互換接続は同じ（ADR 0352）
+//   4. 起動の記録（オン・オフ）: どちらも専用フォルダ（トークンなし）。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS=false だけ。互換接続は同じ（ADR 0353）
 //   5. 入口の設定: 未設定・オフ・別アカウント・壊れた設定はオフとして読み、書かない・保存済みの mode は読まない・キャッシュのキー
 //   6. server の配線（オン・オフとも専用フォルダの認証を付ける）・認証側はネットワークも更新用トークンも使わない
 //   7. 設定 › 外部 MCP のコネクターの一覧（connectorListProbe）: 会話と同じ組み立て・止める条件はログイン中へ戻らない
@@ -146,7 +146,7 @@ export default async function (t) {
 
       reset();
       const resolved = (await make()(account)).account;
-      t.ok('認証: 成功 — 全アカウントが専用フォルダ（ownDir・識別子 own-dir）。コネクターがオフなら connectors は置かない（ADR 0352）',
+      t.ok('認証: 成功 — 全アカウントが専用フォルダ（ownDir・識別子 own-dir）。コネクターがオフなら connectors は置かない（ADR 0353）',
         resolved.id === ACCOUNT_ID && resolved.name === 'fake-account' && resolved.ownDir.identity === OWN_DIR && OWN_DIR === 'own-dir' && resolved.ownDir.enabled === false
         && Object.keys(resolved).sort().join() === 'id,name,ownDir' && Object.keys(resolved.ownDir).sort().join() === 'authFailure,enabled,identity,prepare');
       t.ok('認証: 解決のときは準備（リンク・設定の反映）をしない（project 0 回）・版とログインの有無は見る', calls.project === 0 && calls.versions === 1 && calls.login === 1, JSON.stringify(calls));
@@ -283,7 +283,7 @@ export default async function (t) {
         JSON.stringify(process.env) === savedProcessEnv && leaked(consoleLines.join('\n')).length === 0 && consoleLines.length === 0, consoleLines.slice(0, 2).join(' | ').slice(0, 120));
     }
 
-    // ---------------------------------------------------------------- 4. 起動の記録（オン・オフ）— どちらも専用フォルダ。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS だけ（ADR 0352）
+    // ---------------------------------------------------------------- 4. 起動の記録（オン・オフ）— どちらも専用フォルダ。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS だけ（ADR 0353）
     if (!canLink) t.skip('登録したアカウントの起動の記録（Windows でファイルのシンボリックリンクを作る権限が無い。専用フォルダの準備に要る）');
     else {
       const labels = ['plain/registered/none', 'parentOauth/registered/none', 'configDir/registered/none', 'emptyOauth/registered/none', 'undefinedOauth/registered/none', 'plain/registered/compat'];
@@ -403,7 +403,7 @@ export default async function (t) {
       const written = JSON.parse(await fs.readFile(path.join(modeData, CONNECTORS_FILE), 'utf8'));
       t.ok('入口の設定: 保存済みの mode は読まない（enabled だけでオン）・書き直すときに mode を捨てる',
         JSON.stringify(read) === '{"enabled":true}' && JSON.stringify(written.accounts[ACCOUNT_ID]) === '{"enabled":true}', JSON.stringify({ read, written }));
-      t.ok('キャッシュのキー: コネクターのオン・オフで変わらない（account:<id>。一覧は同じ専用フォルダのログインで引く。ADR 0352）',
+      t.ok('キャッシュのキー: コネクターのオン・オフで変わらない（account:<id>。一覧は同じ専用フォルダのログインで引く。ADR 0353）',
         accountScopeKeyForTest({ id: ACCOUNT_ID, connectors: { identity: OWN_DIR } }) === `account:${ACCOUNT_ID}`
         && accountScopeKeyForTest({ id: ACCOUNT_ID }) === `account:${ACCOUNT_ID}` && accountScopeKeyForTest(null) === 'login');
     }
@@ -430,7 +430,7 @@ export default async function (t) {
         resolves.length === 1 && resolves[0].rest === 0 && onAccount.ownDir?.identity === OWN_DIR && onAccount.connectors === onAccount.ownDir && onAccount.token === undefined, JSON.stringify(resolves));
       resolves.length = 0;
       const offAccount = await offW.resolve(ACCOUNT_ID);
-      t.ok('配線: オフも同じ認証側を通る（専用フォルダの ownDir あり・connectors なし・トークンなし。ADR 0352）',
+      t.ok('配線: オフも同じ認証側を通る（専用フォルダの ownDir あり・connectors なし・トークンなし。ADR 0353）',
         resolves.length === 1 && offAccount.ownDir?.identity === OWN_DIR && offAccount.ownDir.enabled === false && !offAccount.connectors && offAccount.token === undefined);
       const authSrc = await fs.readFile(path.join(REPO, 'core/claude-connectors-auth.mjs'), 'utf8');
       const code = authSrc.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -523,7 +523,7 @@ export default async function (t) {
       try {
         const prepareCalls = [];
         const connectors = { identity: OWN_DIR, prepare: async o => { prepareCalls.push(o); return { env: { CLAUDE_CONFIG_DIR: 'FAKE_OWN' } }; } };
-        // 登録したアカウントは入口（配線）が専用フォルダの認証（ownDir）を付けて作る。トークンは持たない（ADR 0352）
+        // 登録したアカウントは入口（配線）が専用フォルダの認証（ownDir）を付けて作る。トークンは持たない（ADR 0353）
         const on = { id: ACCOUNT_ID, name: 'fake-account', ownDir: connectors, connectors };
         const args = { cwd: path.join(tmp, 'work'), card: { held: true }, source: { write() {} } };
         const r = await claudeBackend.forAccount(on).adoptTurn(args);

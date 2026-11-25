@@ -1,6 +1,6 @@
-// 登録した Claude アカウントの認証（ADR 0340・ADR 0345・ADR 0350・ADR 0352。専用フォルダ方式だけ）。
+// 登録した Claude アカウントの認証（ADR 0340・ADR 0345・ADR 0350・ADR 0353。専用フォルダ方式だけ）。
 //
-// 登録したアカウントはすべてここへ来る（コネクターのオン・オフで分けない。ADR 0352）。ログイン中・互換接続はここを呼ばない。
+// 登録したアカウントはすべてここへ来る（コネクターのオン・オフで分けない。ADR 0353）。ログイン中・互換接続はここを呼ばない。
 // 会話の CLI は、そのアカウントの専用フォルダ（claude-usage/<id>。設定 › アカウントのログインを置く場所）を CLAUDE_CONFIG_DIR にして起動する。
 // コネクター（入口 core/claude-connectors.mjs）がオフのアカウントは ENABLE_CLAUDEAI_MCP_SERVERS=false も渡し、claude.ai のコネクターを出さない。
 // トークンは env で渡さない。更新は CLI が自分で行う（同じフォルダの CLI どうしは .oauth_refresh.lock で直列になり、失効を検知したら
@@ -46,7 +46,7 @@ export function supportedConnectorVersions(found, verified = VERIFIED_VERSIONS) 
 export const READ_ATTEMPTS = 3;
 const READ_RETRY_MS = 100;
 const SETTINGS_FILE = 'settings.json';
-/** claude.ai のコネクターを出さない指定（Claude Code 2.1.328 は "0"・"false"・"no"・"off" で止める。ADR 0352） */
+/** claude.ai のコネクターを出さない指定（Claude Code 2.1.328 は "0"・"false"・"no"・"off" で止める。ADR 0353） */
 export const NO_CONNECTORS_ENV = 'ENABLE_CLAUDEAI_MCP_SERVERS';
 /**
  * 専用フォルダ方式を使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351。2026-11-24 の実機の確かめで通した）。
@@ -599,7 +599,7 @@ export function createClaudeConnectorsAuth({ accounts, versions, env = process.e
 
 /**
  * server の組み立て: 入口の設定・認証を 1 つにつなぐ。戻りは { settings, resolve, inspect }。
- * resolve(id) は登録したアカウントを専用フォルダ方式で引く（コネクターのオン・オフで分けない。ADR 0352）。'' / 未指定は null
+ * resolve(id) は登録したアカウントを専用フォルダ方式で引く（コネクターのオン・オフで分けない。ADR 0353）。'' / 未指定は null
  */
 export function createClaudeConnectorsWiring({ dataDir, accounts, versions, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
   const resolveAuth = createClaudeConnectorsAuth({ accounts, versions, ...options });

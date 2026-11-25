@@ -167,7 +167,7 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-auth-expired-'));
   const cliDir = path.join(scratch, 'cli-config');
   await fs.mkdir(cliDir, { recursive: true });
-  // 登録したアカウント（専用フォルダでログイン済み。ADR 0352）
+  // 登録したアカウント（専用フォルダでログイン済み。ADR 0353）
   const accountId = await seedClaudeAccount(path.join(scratch, 'data'), '仕事用');
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir }, dataDir: path.join(scratch, 'data') });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
@@ -212,7 +212,7 @@ export default async function (t) {
     t.ok('ほかの失敗には auth を添えず、期限切れにもしない', plain?.outcome === 'error' && !plain.kind && !plain.auth && !(await status()).expired, JSON.stringify(plain));
     t.ok('ほかの失敗は中断にしない（今のまま）', ends.get(sessionId)?.interrupted == null && (await loaded(sessionId)) === null, JSON.stringify(ends.get(sessionId)));
 
-    // Pleiad の Claude のアカウント（専用フォルダのログイン）を使う会話（ADR 0352）
+    // Pleiad の Claude のアカウント（専用フォルダのログイン）を使う会話（ADR 0353）
     const { sessionId: tokenSession } = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
     await c.cmd('setTurnSettings', { sessionId: tokenSession, account: accountId });
     const tokenFailed = await failure(tokenSession, 'fail-auth');

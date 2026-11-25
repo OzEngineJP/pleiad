@@ -1,4 +1,4 @@
-# 0352 Claude のアカウントを専用フォルダのログイン 1 つにまとめ、会話用のトークン（setup-token）を削除する
+# 0353 Claude のアカウントを専用フォルダのログイン 1 つにまとめ、会話用のトークン（setup-token）を削除する
 
 - 状態: 承認（2026-11-25）
 - 関係: [ADR 0350](0350-claude-own-config-dir-default-remove-b1.md)（コネクターをオンにしたアカウントの専用フォルダ方式。この ADR で全アカウントへ広げる）・[ADR 0345](0345-claude-account-own-config-dir.md)・[ADR 0351](0351-claude-own-config-dir-macos-keychain.md)（macOS）・[ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0340](0340-claude-connectors-per-account.md)

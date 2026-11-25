@@ -1,6 +1,6 @@
 // 設定 › Claude のアカウント（web/claude-accounts.mjs）が送るコマンドの並びを、ブラウザー無しで確かめる。
 // 期待値は origin/main（カードがその場で開く形にする前）の web/claude-accounts.mjs を読んで書いた（今の実装から写さない）。
-// 違いはコメントに理由を書く。会話用のトークン（setup-token）の発行・手で貼るは ADR 0352 で無くなり、流れは claude.ai のログイン（usage-login）だけ。
+// 違いはコメントに理由を書く。会話用のトークン（setup-token）の発行・手で貼るは ADR 0353 で無くなり、流れは claude.ai のログイン（usage-login）だけ。
 // 描画は本物の web/dom-patch.mjs に通すので、下に HTML を読む小さな DOM を置く（依存を足さない）。
 import assert from 'node:assert/strict';
 

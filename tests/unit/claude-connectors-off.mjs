@@ -1,4 +1,4 @@
-// 登録した Claude アカウントのコネクターの設定（ADR 0340・0352）の置き場と入口の位置。LLM も CLI も呼ばない。
+// 登録した Claude アカウントのコネクターの設定（ADR 0340・0353）の置き場と入口の位置。LLM も CLI も呼ばない。
 //   オン・オフどちらの起動の記録も claude-connectors-auth の 4. が確かめる（どちらも専用フォルダ。差はオフの ENABLE_CLAUDEAI_MCP_SERVERS=false だけ）。
 //   アカウントを指定しない会話の起動の記録は claude-launch-main-pinned が main の記録と比べる。ここでは次を確かめる:
 //   1. 設定の口（read・list・setEnabled・remove）・設定ファイルの名前が画面・操作の一覧に出ていない・server の入口が 1 か所

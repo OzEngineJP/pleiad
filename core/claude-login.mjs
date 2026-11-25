@@ -1,6 +1,6 @@
 // Claude のアカウントの認可を Pleiad から行う（設定の「Claude のアカウント」）。
 //
-// usage-login だけ（ADR 0352）: アカウントごとの設定フォルダ（<data>/claude-usage/<id>）を CLAUDE_CONFIG_DIR にして
+// usage-login だけ（ADR 0353）: アカウントごとの設定フォルダ（<data>/claude-usage/<id>）を CLAUDE_CONFIG_DIR にして
 // `claude auth login --claudeai` を回す。会話・使用量・モデル一覧・コネクターは、このログインで動く（専用フォルダ方式）。
 // 新しいアカウントは id を先に決めてその設定フォルダでログインし、済んだときだけ一覧に載せる（取り消し・失敗では片付ける）。
 //
