@@ -759,8 +759,7 @@
         "summary": "Toggle claude.ai connectors for a registered Claude account",
         "id": "Registered account ID",
         "enabled": "Whether connectors are enabled",
-        "cwd": "Optional working directory for settings inspection",
-        "mode": "Authentication method (optional, available for accounts with connectors enabled)"
+        "cwd": "Optional working directory for settings inspection"
       },
       "refreshConnectors": {
         "summary": "Refresh the claude.ai connector list for a registered Claude account",
