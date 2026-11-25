@@ -2,7 +2,7 @@
 //   - 送った時に本文のハッシュを会話に残し、履歴の発言に sentByHuman が付く（読み直しても残る）。依頼（最初の発言）には付かない
 //   - 委譲の子でない会話（依頼元）への送信には付かない
 //   - 届いた出来事にも sentByHuman（開いているモーダルがその場で「あなた」の名札を描ける）
-//   - 子が終わったとき、親の AI へ渡す完了通知に「人からの指示 N 件」が 1 回だけ載る（送るたびには知らせない）。人が送っていない子には載らない
+//   - 子が終わったとき、親の AI へ渡す完了通知の「これまでの出来事」に人の指示の中身が 1 回だけ載る（送るたびには知らせない。ADR 0355）。人が送っていない子には載らない
 //   - 同じ文面を親の AI（ply_task_send）と人が送っても、「あなた」は人の分だけ（順序が入れ替わっても）。同じ messageId の送り直しは数えない
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -12,7 +12,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { createFakeGates } from '../lib/fake-gate.mjs';
 
 export const name = 'server-human-sent';
-export const title = '人が子の会話へ直接送った発言: 履歴の「あなた」の印・出来事の印・完了通知の「人からの指示 N 件」（fake）';
+export const title = '人が子の会話へ直接送った発言: 履歴の「あなた」の印・出来事の印・完了通知の出来事に載る人の指示（fake）';
 
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const delegate = task => ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task });
@@ -42,7 +42,7 @@ export default async function (t) {
     const [done] = await awaitTasks(parent, rows => rows[0]?.status === 'completed' && rows[0]?.notification === 'sent');
     t.ok('子の行が人からの指示を 1 件と数える', done.humanInstructions === 1, String(done.humanInstructions));
     const notices = c.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent);
-    t.ok('完了通知に「人からの指示 1 件」が 1 回', notices.length === 1 && /人からの指示 1 件/.test(notices[0].text), notices.map(n => n.text).join(' ||| '));
+    t.ok('完了通知に人の指示の中身が 1 回', notices.length === 1 && notices[0].text.split('人が子に指示しました：「echo:人からの追加」').length === 2, notices.map(n => n.text).join(' ||| '));
 
     const delivered = c.since(0).find(e => e.type === 'userMessage' && e.sessionId === child && e.text === 'echo:人からの追加');
     t.ok('子の会話に届いた出来事に sentByHuman', delivered?.sentByHuman === true, JSON.stringify(delivered));
@@ -58,7 +58,7 @@ export default async function (t) {
     const quiet = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate('echo:人は送らない') })).sessionId;
     await awaitTasks(quiet, rows => rows[0]?.status === 'completed' && rows[0]?.notification === 'sent');
     const quietNotices = c.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === quiet);
-    t.ok('人が送っていない子の通知に「人からの指示」は載らない', quietNotices.length === 1 && !quietNotices[0].text.includes('人からの指示'), quietNotices[0]?.text);
+    t.ok('人が送っていない子の通知に人の指示は載らない', quietNotices.length === 1 && !quietNotices[0].text.includes('人が子に指示しました'), quietNotices[0]?.text);
 
     // 委譲の子でない会話（依頼元）への送信には付けない
     const mark2 = c.mark();

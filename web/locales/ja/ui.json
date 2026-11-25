@@ -2952,6 +2952,8 @@
       "delegated": "· 委譲 {{count}}",
       "instructionsWaiting_other": "追加指示 {{count}} 件待機中",
       "instruction": "追加の指示",
+      "handoffContinue": "Chrome を戻した続き",
+      "resumeContinue": "再開",
       "instructionQueued": "待機中 · 今の作業が終わると届く",
       "instructionDropped": "✕ 届かずに終わった",
       "instructionNextTurn": "次のターンで届く · 今の作業の途中には渡せない",

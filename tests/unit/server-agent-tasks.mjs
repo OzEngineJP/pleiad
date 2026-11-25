@@ -88,12 +88,18 @@ export default async function(t) {
     const slow = rows.find(r => r.task === 'slow');
     t.ok('子がまだ動いている間に依頼元の完了を通知しない',
       !c.since(slowMark).some(e => e.type === 'completionReady' && e.sessionId === sid));
+    const stopMark = c.mark();
     await c.cmd('cancelAgentTask', { taskId: slow.taskId });
     await awaitTasks(rows => rows.find(r => r.taskId === slow.taskId)?.status === 'cancelled');
     await c.waitFor(e => e.type === 'completionReady' && e.sessionId === sid, { from: slowMark, ms: 10000 });
     t.ok('子のキャンセルで結果が届かなくても依頼元に一度だけ知らせる',
       c.since(slowMark).filter(e => e.type === 'completionReady' && e.sessionId === sid).length === 1);
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
+    // 人が止めた子の回も終了通知を 1 つ作り、止められていない依頼元へすぐ届けて起こす（ADR 0355）
+    await awaitTasks(rows => rows.find(r => r.taskId === slow.taskId)?.notification === 'sent');
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: stopMark, ms: 20000 });
+    const stoppedNotice = (await c.cmd('loadSession', { sessionId: sid })).messages.filter(m => m.internalTaskNotice).at(-1)?.text ?? '';
+    t.ok('画面で人が止めた子の終了通知で依頼元が起き、終わり方は「人が止めた」', stoppedNotice.includes(slow.taskId) && stoppedNotice.includes('子の回が終わりました：人が止めました'), stoppedNotice.slice(0, 300));
     for (let i = 0; i < 100; i++) { if (!(await c.cmd('running')).turns.some(t => t.sessionId === sid)) break; await sleep(50); }
     t.ok('親の強さに収まる委譲では聞かない', escalations.length === 0, `${escalations.length} 件聞かれた`);
     await idle(sid);

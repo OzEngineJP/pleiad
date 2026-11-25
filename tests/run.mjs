@@ -143,6 +143,8 @@ const SUITES = [
   './unit/chrome-handoff.mjs',
   './unit/chrome-delegation.mjs',
   './unit/server-chrome-delegation.mjs',
+  // Chrome を戻した続き（Issue #235・ADR 0355）: 終わった委譲の子の続きのターンもタスクを動かし、1 回知らせる。名札・数えない・二度押し
+  './unit/server-chrome-handoff-wake.mjs',
   // Chrome の窓の映像（ADR 0148 第 5 段）: 今のタブへの付け外し・ack の間引き・focus emulation の理由の数え方（ターンと映像。閉じてすぐ開き直しても残る）・タブの付け替え・rebind／forget／Chrome 側の detach・撮影を断つ口（suspend。見る前・開始の途中・会話の寿命）・見るだけ（偽の Chrome）
   './unit/chrome-screencast.mjs',
   // Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり）
@@ -359,9 +361,14 @@ const SUITES = [
   './unit/agent-tasks-adopt.mjs',
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
+  './unit/agent-tasks-end-notice.mjs',
+  // 完了通知の出来事の行と「結果」「エラー」の段落: 結果を書かずに止まった回に前の結果を出さない・動いている子の返答は 1 度だけ（ADR 0355 §7）
+  './unit/task-notice-events.mjs',
   './unit/server-delegation-notice.mjs',
-  // 人が子の会話へ直接送った発言（ADR 0317）: 履歴の「あなた」の印・出来事の印・完了通知の「人からの指示 N 件」
+  // 人が子の会話へ直接送った発言（ADR 0317）: 履歴の「あなた」の印・出来事の印・完了通知の出来事に載る人の指示
   './unit/server-human-sent.mjs',
+  // 止まった委譲の子が外から起きた（ADR 0355）: 人の送信・続けて 2 件・再開で、タスクが running → completed、止まったら 1 回知らせる
+  './unit/server-task-wake.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
   // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・既読不明は dropped で送り直さない）を指示の状態に反映する

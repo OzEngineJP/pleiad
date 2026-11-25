@@ -24,7 +24,8 @@
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
 //   "fail-model"   … 選んだモデルを断られて失敗する（kind: 'model'・pristine: true。ADR 0311）。モデル名が rejected- で始まるときは、台本によらずどのターンも同じ断り方をする
-//   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
+//   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）。発言を受け取ってから断る（Claude が CLI に渡した発言を API が 429 で断る形）
+//                    本文のどこかの LIMIT_TURN:<Unix ミリ秒> も同じ上限で断る（echo:・ply:・steps: の台本には効かない。委譲の子の結果に入れると、その完了通知で始まる親のターンが断られる）
 //   "retry-wait <limit|error> <秒|none> gate:<名前> <本文>" … 再試行の待ち（OpenCode の session.status の retry を写した activity retrying と同じ形。ADR 0229）を出し、
 //                    ゲートが開いたら running に戻って本文を返す。<秒> は次の再試行までの秒（none は時刻が分からない待ち）。待ちの間に中断されたら aborted
 //   "whoami"       … 渡されたアカウント（account）の id の指紋を本文にする。無ければ account:none
@@ -617,8 +618,9 @@ export const backend = {
         if (abort?.aborted) { stop(); resolve(); } else abort?.addEventListener?.("abort", () => { stop(); resolve(); }, { once: true });
       });
     }
-    if (!plain && text.startsWith('limit ')) {
-      const raw = text.slice(6).replace(/\s+HOLD_TURN:[\w.-]+$/, '').trim();
+    const limitTurn = plain || /^(?:echo|ply|steps):/.test(text) ? null : /\bLIMIT_TURN:(\d+)/.exec(text)?.[1];
+    if (!plain && (text.startsWith('limit ') || limitTurn)) {
+      const raw = limitTurn ?? text.slice(6).replace(/\s+HOLD_TURN:[\w.-]+$/, '').trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
       emit({ type: 'turnResult', outcome: 'limited', resetsAt: Number.isFinite(resetsAt) ? resetsAt : null,
         window: 'five_hour' });

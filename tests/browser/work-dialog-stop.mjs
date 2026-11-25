@@ -2,10 +2,11 @@
 //   1. 見出しに「停止」は無い。止めるのは入力欄の中断ボタン 1 つ（塗りの四角・34×34・字なし・名前は「中断」）
 //   2. 走っている子: 押すと abort が子の会話へ届き、子が止まる。一覧の印・見出しの印が同時に「中止」へ変わる
 //   3. 承認待ちの子: 出る。押すと承認も片づき、子が止まる
-//   4. 順番待ち（queued）の子: 出る。押すと止まる（abort で止まらなければ cancelAgentTask に切り替える根拠をここで測る）
-//   5. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
-//   6. 止めた後の依頼元の次のターンに、止めた子が伝わる
-//   7. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
+//   4. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
+//   5. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0355 §7）
+//   6. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
+// 順番待ち（queued）のまま留まる子は、上限の子へ積んだ指示も待たずに走る（ADR 0352）ので画面の操作だけでは作れない。
+// 順番待ちの子を止めたときの動き（止めた通知・上限を外す）は tests/unit/agent-tasks-end-notice.mjs が更新の準備中（canStart）に止める形で見る
 // 実行: node tests/browser/work-dialog-stop.mjs   （WORK_DIALOG_STOP_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -72,13 +73,6 @@ try {
   const askChildId = (await taskOf(askT.taskId)).sessionId;
   const askPerm = await client.waitFor(e => e.type === 'permission' && e.sessionId === askChildId, { from: 0, ms: 30_000 });
   console.log('ask permission', askPerm.id, askPerm.toolName ?? askPerm.tool);
-  const resetsAt = Date.now() + 3 * 3600_000;
-  const limT = await delegate('順番待ちの子', `limit ${resetsAt}`);
-  await wait(async () => (await taskOf(limT.taskId))?.status === 'failed', 'limit child failed');
-  const sent = await callParent('ply_task_send', { taskId: limT.taskId, message: 'echo:続き' });
-  assert.equal(sent.status, 'queued', 'the limited child holds a queued send');
-  await sleep(1500);
-  assert.equal((await taskOf(limT.taskId)).status, 'queued', 'the limited child is a stable queued task');
   const grandArgs = { backend: 'fake', kind: 'mechanical', title: '孫', task: 'slow' };
   const grT = await delegate('孫を待つ子', ply('ply_delegate', grandArgs));
   await wait(async () => { const all = await tasks(); return all.some(r => r.parentSessionId === (all.find(x => x.taskId === grT.taskId)?.sessionId ?? '-') && ['running', 'queued'].includes(r.status)); }, 'grandchild running');
@@ -105,10 +99,15 @@ try {
   });
   const cmds = (name) => evaluate(n => window.__cmds.filter(c => c.command === n), name);
 
+  // 止めた子の知らせで依頼元が起き、一覧が描き直されると、印を付けた要素が押す前に入れ替わることがある。そのときは印を付け直して押し直す
   const clickOn = (sel, label) => {
-    const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
-    assert.ok(ok, `target exists: ${label}`);
-    try { ab('click', '[data-probe="pick"]'); } finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    for (let tries = 0; ; tries++) {
+      const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
+      assert.ok(ok, `target exists: ${label}`);
+      try { ab('click', '[data-probe="pick"]'); return; }
+      catch (error) { if (tries >= 3 || !/Element not found/.test(String(error.stderr ?? error.message))) throw error; }
+      finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    }
   };
   const dialogOpen = () => evaluate(() => document.getElementById('workDialog').open);
   const openCard = async (taskId, label) => {
@@ -166,20 +165,21 @@ try {
   await wait(() => !stopBtn().shown, 'stop button hidden after the stop', 8000);
   console.log('PASS: running child — one stop button (filled square 34px, no heading 停止); abort stops it; list/heading marks change together', JSON.stringify({ before, after: marks(runT.taskId) }));
 
-  // ---- 2a. 止めた子へ人が直接送ると、会話は走り直す。タスクの状態は変わらない（メインと同じ）が、
-  //          詳細の見出し・一覧の行・■ は「実行中」に合わせる。止まれば「中断」に戻る ----
+  // ---- 2a. 止めた子へ人が直接送ると、タスクそのものが running に戻る（ADR 0355）。
+  //          詳細の見出し・一覧の行・■ は台帳どおり「実行中」。止めればまた止まった状態に戻る ----
   const stoppedStatus = (await taskOf(runT.taskId)).status;
   const stoppedMark = marks(runT.taskId).head;
   await client.cmd('sendMessage', { sessionId: runChild, messageId: 'stop-rerun-0001', prompt: `steps:@${runFile}` });
   await wait(() => stopBtn().shown, 'stop button on the re-run child', 10_000);
+  await wait(async () => (await taskOf(runT.taskId)).status === 'running', 'the task row itself is running again (ADR 0355)', 10_000);
   await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head !== stoppedMark; }, 'marks show running again', 8000);
-  assert.equal((await taskOf(runT.taskId)).status, stoppedStatus, 'the task row itself keeps its terminal state (same as main)');
   assert.deepEqual(marks(runT.taskId), { head: '実行中', row: '実行中' }, 'heading and list row both say running');
   shot('2a-rerun-1280');
   pressStop();
   await wait(() => !stopBtn().shown, 'stop button hidden after stopping the re-run', 12_000);
-  await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head === stoppedMark; }, 'marks back to stopped', 8000);
-  console.log('PASS: re-run after a stop — heading, list row and ■ follow the running turn, and return to stopped', JSON.stringify({ stoppedStatus, marks: marks(runT.taskId) }));
+  await wait(async () => ['cancelled', 'interrupted'].includes((await taskOf(runT.taskId)).status), 'the re-run task stopped', 12_000);
+  await wait(() => { const m = marks(runT.taskId); return m.head && m.head === m.row && m.head !== '実行中'; }, 'marks back to stopped', 8000);
+  console.log('PASS: re-run after a stop — the task row, heading, list row and ■ follow the running turn, and return to stopped', JSON.stringify({ stoppedStatus, after: (await taskOf(runT.taskId)).status, marks: marks(runT.taskId) }));
 
   // ---- 2b. 終わった子: 入力欄の上の帯に、この子の文脈の使用量が出る（メインの帯の値ではなく子の値。押すとメインと同じ圧縮・設定のメニュー） ----
   await openCard(doneT.taskId, 'finished');
@@ -203,42 +203,43 @@ try {
   await wait(() => !stopBtn().shown, 'stop button hidden after the stop', 8000);
   console.log('PASS: approval-waiting child — the button shows; pressing stops the child and clears the approval');
 
-  // ---- 4. 順番待ち（queued）の子 ----
-  await openCard(limT.taskId, 'queued');
-  const limChild = await childIdOf(limT.taskId);
-  await wait(() => stopBtn().shown, 'stop button on the queued child');
-  assert.equal((await taskOf(limT.taskId)).status, 'queued');
-  shot('4-queued-1280');
-  pressStop();
-  await wait(() => cmds('abort').some(c => c.sessionId === limChild), 'abort sent for the queued child');
-  let queuedStopped = false;
-  try { await wait(async () => ['cancelled', 'interrupted'].includes((await taskOf(limT.taskId)).status), 'queued task stopped', 8000); queuedStopped = true; } catch { /* 下で切り替える */ }
-  console.log('queued: abort alone stopped it =', queuedStopped, '(status', (await taskOf(limT.taskId)).status + ')');
-  assert.ok(queuedStopped, 'abort stops a queued child (otherwise the queued case must send cancelAgentTask)');
-  console.log('PASS: queued child — the button shows and abort stops it');
-
-  // ---- 5. 孫を待っている子（ターンの外） ----
+  // ---- 4. 孫を待っている子（ターンの外） ----
   await openCard(grT.taskId, 'grandchild wait');
   const grChild = await childIdOf(grT.taskId);
   const grBefore = await taskOf(grT.taskId);
   console.log('grand-wait child task', grBefore.status);
   await wait(() => stopBtn().shown, 'stop button on the child waiting for a grandchild');
-  shot('5-grandchild-1280');
+  shot('4-grandchild-1280');
   pressStop();
   await wait(() => cmds('abort').some(c => c.sessionId === grChild), 'abort sent for the child waiting on a grandchild');
   await wait(async () => ['cancelled', 'interrupted'].includes((await taskOf(grT.taskId)).status), 'waiting child stopped');
   await wait(async () => (await tasks()).filter(r => r.parentSessionId === grChild).every(r => !['queued', 'running', 'cancelling'].includes(r.status)), 'the grandchild stopped too');
   console.log('PASS: child waiting for a grandchild — the button shows; abort stops both');
 
-  // ---- 6. 依頼元の次のターンで、止めた子が伝わる ----
+  // ---- 5. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0355 §7） ----
+  //      知らせは子ごとの節（1 件なら見出しが「[Pleiad タスク完了通知 / <ID>]」、まとめたら「--- <ID> ---」）に分かれる。その子の節だけを見る
   evaluate(() => document.getElementById('workDialog').close());
-  const mark = client.mark();
-  await client.cmd('runTurn', { sessionId: parent, prompt: 'echo:つづき' });
-  const note = await client.waitFor(e => e.type === 'interruptionNote' && e.sessionId === parent, { from: mark, ms: 30_000 });
-  for (const id of [runT.taskId, askT.taskId, limT.taskId, grT.taskId]) assert.ok(note.text.includes(id), `the parent next turn learns of ${id}`);
-  console.log('PASS: the parent learns of the stopped children on its next turn');
+  const sectionOf = (text, id) => {
+    const at = text.indexOf(id);
+    if (at < 0) return null;
+    const next = text.indexOf('\n--- ply-task-', at);
+    return text.slice(at, next < 0 ? undefined : next);
+  };
+  const stoppedNotice = id => client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent)
+    .map(e => sectionOf(String(e.text), id)).find(s => s && s.includes('人が止めました'));
+  for (const [id, label] of [[runT.taskId, 'running'], [askT.taskId, 'approval'], [grT.taskId, 'grandchild wait']]) {
+    try { await wait(() => !!stoppedNotice(id), `the notice that wakes the parent says a person stopped ${label} (${id})`); }
+    catch (e) {
+      // 届かなかったときの手がかり（行の通知の状態と、その子の ID を含む節）
+      const row = await taskOf(id);
+      console.log('notice missing', label, JSON.stringify({ status: row?.status, notification: row?.notification, stoppedBy: row?.stoppedBy, events: row?.events,
+        sections: client.since(0).filter(x => x.type === 'taskNotice' && x.sessionId === parent).map(x => sectionOf(String(x.text), id)).filter(Boolean).map(s => s.slice(0, 600)) }));
+      throw e;
+    }
+  }
+  console.log('PASS: the notice that wakes the parent carries each stopped child id and 「人が止めました」');
 
-  // ---- 7. メインの中断ボタンも同じ形 ----
+  // ---- 6. メインの中断ボタンも同じ形 ----
   const known = new Set([parent, first.sessionId, ...(await tasks()).flatMap(r => [r.sessionId, r.parentSessionId])]);
   const slowMark = client.mark();
   await client.cmd('runTurn', { backend: 'fake', cwd: work, prompt: 'slow' });
@@ -253,7 +254,7 @@ try {
   });
   console.log('main stop', JSON.stringify(m));
   assert.deepEqual([m.w, m.h, m.svgW, m.svgH, m.text, m.label, m.title], [34, 34, 15, 15, '', '中断', '中断'], 'the main stop button has the same shape');
-  shot('7-main-1280');
+  shot('6-main-1280');
   clickOn('#abort', 'main stop');
   await wait(() => cmds('abort').some(c => c.sessionId === slowSession), 'main stop sends abort');
   console.log('PASS: the main stop button has the same shape and still sends abort');

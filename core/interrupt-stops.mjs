@@ -117,6 +117,16 @@ export function interruptionNote(lng, stops, reason = null) {
 }
 
 /**
+ * 依頼元の会話が止められている間に終わった、委譲した子の終了通知（ADR 0355）を、次のターンの始めに渡す文。
+ * 「止めたもの」と同じ印で囲む（履歴でも人の発言にならず、システムの 1 行になる）。notice は completionNotice の本文
+ */
+export function heldNoticeNote(lng, notice) {
+  if (!notice) return null;
+  const body = [agentT(lng, 'stops.heldHeading'), notice].join('\n\n');
+  return { text: `${OPEN}\n${body}\n${CLOSE}\n\n`, body };
+}
+
+/**
  * ［今すぐ変える］で止めて新しい設定にしたあと、続きを頼む文（AI にだけ渡す。画面には出さない）。
  * 印 reason="settings" で囲むので、履歴でも人の発言にならず、見えない行になる（splitInterruptionNote）
  */

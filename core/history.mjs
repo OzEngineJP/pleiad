@@ -105,32 +105,36 @@ export async function prepareMessages(sessionId, raw) {
   const notices = new Set(side.taskNotices ?? []);
   const relayed = new Map((side.relayed ?? []).map(r => [r.hash, r.sentBy]));
   // 委譲の子の会話へ実際に渡った発言の台帳（core/server.mjs の recordDelivery。ADR 0317）。人が直接送った発言か、依頼元の AI の追加の指示かを決める元
+  // Chrome を戻した続き（by: handoff。ADR 0355）と再開の文（by: resume）は人の発言とも AI の指示とも分けて、別の名札（sentByHandoff・sentByResume）にする
   const human = humanMessages(messages, side.deliveries ?? []);
   for (const m of messages) {
     if (m.role !== 'user' || m.kind) continue;
     const hash = crypto.createHash('sha256').update(m.text ?? '').digest('hex');
     if (notices.has(hash)) m.internalTaskNotice = true;
     else if (relayed.has(hash)) m.sentBy = relayed.get(hash);
-    else if (human.has(m)) m.sentByHuman = true;
+    else if (human.get(m) === 'human') m.sentByHuman = true;
+    else if (human.get(m) === 'handoff') m.sentByHandoff = true;
+    else if (human.get(m) === 'resume') m.sentByResume = true;
   }
   return messages;
 }
 
 /**
- * 履歴の発言のうち、人が直接送ったもの（台帳の by: human）の集合。台帳の行に ID を持つ（nativeId = バックエンドが付けた発言の uuid）ものは、
+ * 履歴の発言のうち、人が直接送ったもの（台帳の by: human）と Chrome を戻した続き（by: handoff）の、発言 → by の表。台帳の行に ID を持つ（nativeId = バックエンドが付けた発言の uuid）ものは、
  * その uuid の発言と 1 対 1 で結ぶ。uuid を返さないバックエンド（codex など）と、まだ uuid が付いていない行は、同じ本文の発言どうしを
  * 末尾から数えて結ぶ（履歴の最後の「続けて」は台帳の最後の「続けて」）。台帳の上限で古い行が落ちても、履歴の古い発言が結ばれないだけで
  * 新しい発言の判定は変わらない。同じ本文が AI からも人からも来ていても、台帳の by で見分ける。
  */
 function humanMessages(messages, ledger) {
-  const human = new Set();
+  const human = new Map();
+  const marked = by => by === 'human' || by === 'handoff' || by === 'resume';
   if (!ledger.length) return human;
   const byNative = new Map(messages.filter(m => m.role === 'user' && !m.kind && m.uuid).map(m => [m.uuid, m]));
   const taken = new Set();
   const loose = new Map();
   for (const entry of ledger) {
     const m = entry.nativeId ? byNative.get(entry.nativeId) : null;
-    if (m && !taken.has(m)) { taken.add(m); if (entry.by === 'human') human.add(m); continue; }
+    if (m && !taken.has(m)) { taken.add(m); if (marked(entry.by)) human.set(m, entry.by); continue; }
     if (!loose.has(entry.hash)) loose.set(entry.hash, []);
     loose.get(entry.hash).push(entry);
   }
@@ -144,7 +148,7 @@ function humanMessages(messages, ledger) {
   for (const [hash, entries] of loose) {
     const shown = rest.get(hash) ?? [];
     for (let i = 1; i <= Math.min(entries.length, shown.length); i++) {
-      if (entries.at(-i).by === 'human') human.add(shown.at(-i));
+      if (marked(entries.at(-i).by)) human.set(shown.at(-i), entries.at(-i).by);
     }
   }
   return human;

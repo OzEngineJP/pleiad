@@ -88,6 +88,9 @@ export default async function (t) {
   t.ok("最初の発言は「依頼」", child.userWord({ text: "x" }, { index: 0, base: 0 }) === request);
   t.ok("人が子へ直接送った発言は「あなた」（最初の発言だけは、人が送っていても依頼）",
     child.userWord({ text: "x", sentByHuman: true }, { index: 3 }) === you && child.userWord({ text: "x", sentByHuman: true }, { index: 0 }) === request);
+  const handoff = tr("dialog.work.handoffContinue");
+  t.ok("Chrome を戻した後の続き（sentByHandoff）は「Chrome を戻した続き」。あなた・追加の指示とは違う語（ADR 0355）",
+    child.userWord({ text: "x", sentByHandoff: true }, { index: 3 }) === handoff && !new Set([request, you, instruction]).has(handoff));
   t.ok("それ以外の 2 件目以降は「追加の指示」", child.userWord({ text: "x" }, { index: 2 }) === instruction);
   t.ok("古い分を省いた筋（base > 0）の最初の発言は会話の途中: 依頼ではなく追加の指示", child.userWord({ text: "x" }, { index: 0, base: 40 }) === instruction);
   t.ok("主は発言者の語を替えない（null）", main.userWord({ text: "x" }, { index: 0 }) === null);

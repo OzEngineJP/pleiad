@@ -1,7 +1,7 @@
-// 子の会話の名札と、親の AI への「人からの指示 N 件」（ADR 0317）。実ブラウザー。
+// 子の会話の名札と、親の AI への完了通知に載る人の指示（ADR 0317・0355）。実ブラウザー。
 //   1. 最初の依頼は「依頼」、モーダルの入力欄から人が送った発言は「あなた」、親の AI が後から送った発言（ply_task_send）は「追加の指示」
 //   2. 閉じて開き直しても（履歴を読み直しても）同じ名札
-//   3. 子の完了通知（親の AI に渡る）に「人からの指示 1 件」が 1 回だけ載り、人の送信ごとの通知は無い
+//   3. 子の完了通知（親の AI に渡る）に人の指示の中身が 1 回だけ載り、人の送信ごとの通知は無い
 // 実行: node tests/browser/work-dialog-name-tags.mjs   （WORK_DIALOG_TAGS_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import assert from 'node:assert/strict';
@@ -123,14 +123,14 @@ try {
   shot('tags-reopened-1280');
   console.log('PASS: reopened — the same three tags');
 
-  // 親の AI への完了通知に「人からの指示 1 件」が 1 回だけ
+  // 親の AI への完了通知に人の指示の中身が 1 回だけ（ADR 0355 の「これまでの出来事」）
   await wait(() => client.since(0).some(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes(child.taskId)), 'completion notice', 60_000);
   const notices = client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes(child.taskId));
-  console.log('notice', JSON.stringify(notices.map(n => n.text.split('\n').filter(l => /人からの指示|状態/.test(l)))));
+  console.log('notice', JSON.stringify(notices.map(n => n.text.split('\n').filter(l => /人が子に指示しました|状態/.test(l)))));
   assert.equal(notices.length, 1, 'one completion notice');
-  assert.ok(/人からの指示 1 件/.test(notices[0].text), 'the report carries 人からの指示 1 件');
-  assert.equal(client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes('人からの指示')).length, 1, 'only the completion report mentions it');
-  console.log('PASS: the completion report carries 人からの指示 1 件, once');
+  assert.equal(notices[0].text.match(/人が子に指示しました：「[^」]*人がモーダルから送る指示/g)?.length, 1, 'the report carries the human instruction once');
+  assert.equal(client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent && e.text.includes('人が子に指示しました')).length, 1, 'only the completion report mentions it');
+  console.log('PASS: the completion report carries the human instruction, once');
   console.log('PASS');
 } finally {
   client?.close();
