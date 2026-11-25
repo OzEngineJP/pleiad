@@ -148,6 +148,27 @@ export default async function (t) {
     gate3.resolve();
     t.ok('trailing: 何も走っていなければ、すぐ走る', await g.coalesce('snapshot:repo', work, { mode: 'trailing' }) === 'result-3');
   }
+  for (const [mode, expectRuns, expectThird] of [['trailing', 3, 3], ['join', 2, 2]]) {
+    // 走っているものが終わり、次の 1 回へ引き継ぐ間（1 回目の結果を受けた直後の同じ並び）に来た頼みが、同じ鍵の 2 本目を起こさない
+    //   trailing: 引き継がれた次の回の「次の次」を予約する（3 回走る）。join: 引き継がれた次の回に相乗りする（2 回で済む）
+    const g = createPlaceGuard();
+    let runs = 0, active = 0, maxActive = 0;
+    const gates = [defer(), defer(), defer()];
+    const work = async () => { const n = ++runs; active++; maxActive = Math.max(maxActive, active); try { await gates[n - 1].promise; return n; } finally { active--; } };
+    const first = g.coalesce('handover', work, { mode: 'trailing' });
+    await tick();
+    const second = g.coalesce('handover', work, { mode: 'trailing' });
+    let third = null;
+    first.then(() => { third = g.coalesce('handover', work, { mode }); });
+    gates[0].resolve();
+    await tick();
+    t.ok(`引き継ぐ間に来た頼み（${mode}）でも、同じ鍵の作業は同時に 2 本走らない`, maxActive === 1 && runs === 2, JSON.stringify({ runs, maxActive }));
+    for (const gate of gates.slice(1)) gate.resolve();
+    const [r1, r2, r3] = await Promise.all([first, second, third]);
+    t.ok(`引き継ぐ間に来た頼み（${mode}）の結果: 1 回目は 1 人だけ・次の回の結果は予約した側・${mode === 'join' ? '相乗りした側も次の回の結果' : '予約した次の次の回は別の結果'}`,
+      runs === expectRuns && maxActive === 1 && r1 === 1 && r2 === 2 && r3 === expectThird, JSON.stringify({ runs, maxActive, r1, r2, r3 }));
+    t.ok(`引き継いだ後に空いたら、また普通に走る（${mode}）`, await g.coalesce('handover', async () => 'idle') === 'idle');
+  }
   {
     // 待つ側が全員諦めたら、走っている仕事を止める。1 人だけ諦めても止めない（もう 1 人が待っている）
     const g = createPlaceGuard();

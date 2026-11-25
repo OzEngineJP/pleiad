@@ -2,6 +2,7 @@
 //   - 止めた後 killDeadlineMs で、終われない子（遅いファイルシステムの I/O 待ちで kill が効かない子）を待たずに締める（stuck・onLeftover）
 //   - 終われる子は今までどおり（stuck を付けず、onLeftover も呼ばない）
 //   - 子は終わったが出力のパイプを握ったプロセスが残るときも、待たずに締める（leftover）
+//   - 入力（input）を読まずに終わる子へ大きな入力を書いて EPIPE になっても、未処理の例外にしない
 //   - 木ごと止める taskkill は非同期（spawnSync は runSync だけ）
 import fs from 'node:fs';
 import os from 'node:os';
@@ -91,6 +92,18 @@ export default async function (t) {
       const pid = Number(fs.existsSync(grandPid) ? fs.readFileSync(grandPid, 'utf8') : NaN);
       if (Number.isInteger(pid)) stray.push(pid);
       t.ok('終わった子が残したプロセスがパイプを握っていても、2 秒ほどで待たずに戻る（leftover）', elapsed < 6500 && r.leftover === true && r.exitCode === 0 && r.stdout.includes('parent done'), `${elapsed}ms ${JSON.stringify(r)}`);
+    }
+
+    // ---- 入力を読まずに終わる子（隠し ref の削除で git が先に落ちる、など）に大きな入力を書いても、ホストは落ちない
+    {
+      const crashes = [];
+      const onCrash = (error) => crashes.push(String(error?.code ?? error));
+      process.on('uncaughtException', onCrash);
+      try {
+        const r = await runBackground(process.execPath, ['-e', 'process.exit(0)'], { input: 'x'.repeat(16 * 1024 * 1024), timeoutMs: 20_000 });
+        await sleep(300);
+        t.ok('入力を読まずに終わる子へ書いて EPIPE になっても、未処理の例外にならず、子の結果を返す', crashes.length === 0 && r.exitCode === 0 && !r.startError && !r.timedOut, `${JSON.stringify(crashes)} ${JSON.stringify({ ...r, stdout: '', stderr: '' })}`);
+      } finally { process.off('uncaughtException', onCrash); }
     }
 
     // ---- taskkill は非同期（spawnSync はイベントループを止める。runSync だけが持つ）

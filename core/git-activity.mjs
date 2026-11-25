@@ -34,8 +34,9 @@ export function createGitActivity({ now = Date.now } = {}) {
   /**
    * 撮影をやめた後に残っている refs/pleiad/turn/ の ref を、リポジトリごとに 1 回だけ消す。呼び出し元は待たない（結果を返さない）。
    * 触るのは refs/pleiad/turn/ の ref だけ（ブランチ・index・作業ツリーには触れない。git-info の writeGit が refs/pleiad/ 以外の update-ref を断る）。
-   * 他の git と同じ見張りに乗る: 同じ場所の片付けは 1 本ずつ（合流）、場所が BUSY・REST のときは起こさない、時間切れは数える。
-   * 読めなかった・消せなかったときは済みにせず、TIDY_RETRY_MS あけて次の読み取りでやり直す
+   * 他の git と同じ見張りに乗る: 同じ場所の片付けは 1 本ずつ（合流）、場所が BUSY・REST のときは起こさない・止めても終われない子は数える。
+   * ただし片付けの時間切れは休みに数えない（数千本を数百本ずつ消すので、長い上限を使う。git-info の dropTurnRefs）。
+   * 読めなかった・消せなかった・途中までのときは済みにせず、TIDY_RETRY_MS あけて次の読み取りでやり直す（残りだけから続く）
    */
   function tidy(root) {
     if (!root || tidied.has(root)) return;

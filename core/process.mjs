@@ -123,7 +123,12 @@ export function run(command, args = [], {
     ended = new Promise(settle => { child.once('exit', () => settle()); child.once('error', () => { if (!child.pid) settle(); }); });
     signal?.addEventListener?.('abort', onAbort, { once: true });
     if (timeoutMs > 0) timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else stopChild(); }, timeoutMs);
-    if (input != null && child.stdin) child.stdin.end(input);
+    if (input != null && child.stdin) {
+      // 子が入力を読まずに終わる・落ちると、書き込みが EPIPE で失敗して 'error' になる。受け手が無いと未処理の例外でホストが落ちるので、
+      // ここでは捨てる（子の結果は exit・close が決める。入力が届かなかった失敗は、子の終了コードに出る）
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
+    }
     for (const stream of ['stdout', 'stderr']) {
       const readable = child[stream];
       if (!readable) continue;

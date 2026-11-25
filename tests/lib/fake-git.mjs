@@ -7,6 +7,7 @@
 //                 { "unborn": true, "rules": { "<名前>": { "delayMs": 400 } | { "hang": true } | { "exit": 1 } } }
 // 名前: rev-parse-root（--show-toplevel）・rev-parse-head（HEAD の確認）・rev-parse-index（--git-path）・それ以外はサブコマンドそのまま
 //   （status・add・write-tree・commit-tree・update-ref・for-each-ref・diff・…）。決めていないものは何も出さず 0 で終わる（commit-tree・write-tree は hash を出す）。
+//   { "out": "…" } は、その名前の標準出力をそのまま出す（for-each-ref に ref の一覧を出させる）。標準入力は読まない。
 // hang は、終わらずに生き続ける（本物の kill で落ちる。「kill を無視する git」は呼び出し側が killWith に何もしない関数を渡して作る）。
 import fs from 'node:fs';
 
@@ -30,7 +31,8 @@ if (rule.exit) process.exit(rule.exit);
 
 const cwd = process.cwd().replaceAll('\\', '/');
 const hex = (c) => c.repeat(40);
-if (name === 'rev-parse-root') process.stdout.write(`${cwd}\n${cwd}/.git\n${cwd}/.git\n`);
+if (rule.out != null) process.stdout.write(String(rule.out));
+else if (name === 'rev-parse-root') process.stdout.write(`${cwd}\n${cwd}/.git\n${cwd}/.git\n`);
 else if (name === 'rev-parse-index') process.stdout.write(`${cwd}/.git/index\n`);
 else if (name === 'rev-parse-head') { if (ctl.unborn) process.exit(1); process.stdout.write(`${hex('a')}\n`); }
 else if (name === 'status') process.stdout.write(`# branch.oid ${ctl.unborn ? '(initial)' : hex('a')}\0# branch.head main\0`);

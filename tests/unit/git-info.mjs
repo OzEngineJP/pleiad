@@ -130,6 +130,33 @@ export default async function (t) {
       && sh(repo, 'rev-parse', 'main').trim() === headBefore && sh(repo, 'branch', '--list').split('\n').filter(Boolean).length === 2);
     t.ok('dropTurnRefs: ユーザーの index・作業ツリーは動かない', sh(repo, 'diff', '--cached', '--name-only').trim() === 'core/auth.mjs' && sh(repo, 'status', '--porcelain').includes('?? new.txt'));
     t.ok('dropTurnRefs: 消すものが無ければ 0（もう 1 回呼んでよい）', (await git.dropTurnRefs(info.root)) === 0);
+
+    // 数千本（Pleiad 自身の開発用リポジトリに 2,182 本あった）。1 回の読みの上限（4 秒）に 1 本の update-ref --stdin で入れず、数百本ずつ消す
+    {
+      const total = () => sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/pleiad/turn/').split('\n').filter(Boolean).length;
+      const make = (n, prefix) => execFileSync('git', ['update-ref', '--stdin'], { cwd: repo, windowsHide: true,
+        input: Array.from({ length: n }, (_, i) => `create refs/pleiad/turn/${prefix}/${String(i).padStart(5, '0')}-start ${headBefore}\n`).join('') });
+      make(3000, 'many');
+      t.ok('前提: 3000 本の隠し ref を作った（archive の退避が 1 本ある）', total() === 3000 && sh(repo, 'for-each-ref', 'refs/pleiad/archive/').includes('ply-9'));
+      const startedAt = Date.now();
+      const removed = await git.dropTurnRefs(info.root);
+      const elapsed = Date.now() - startedAt;
+      t.ok(`dropTurnRefs: 3000 本を全部消し、消した数を返す（${elapsed}ms）`, removed === 3000 && total() === 0, `removed ${removed} left ${total()}`);
+      t.ok('dropTurnRefs: 数千本消しても、場所は休まない（REST にならず、時間切れを数えない）', git.placeBlocked(info.root) === null && git.placeGuard.snapshot(git.placeGuard.placeOf(info.root)).light.consecutive === 0);
+      t.ok('dropTurnRefs: 退避の ref・ブランチ・index は残る', sh(repo, 'for-each-ref', '--format=%(refname)', 'refs/pleiad/').trim() === 'refs/pleiad/archive/ply-9'
+        && sh(repo, 'rev-parse', 'main').trim() === headBefore && sh(repo, 'diff', '--cached', '--name-only').trim() === 'core/auth.mjs');
+
+      // 途中で止まっても、次に呼べば残りから続く（2 つ目の塊に、ロックの残った ref を入れて、その塊だけ git に断らせる）
+      make(900, 'resume');
+      const lock = path.join(repo, '.git', 'refs', 'pleiad', 'turn', 'resume', '00450-start.lock');
+      await fs.writeFile(lock, '');
+      const partial = await git.dropTurnRefs(info.root, { chunk: 300 });
+      t.ok('dropTurnRefs: 2 つ目の塊が消せなくても、1 つ目（300 本）は消えていて、null を返す（済みにしない）', partial === null && total() === 600, `partial ${partial} left ${total()}`);
+      t.ok('dropTurnRefs: 消せなかっただけでは、場所は休まない', git.placeBlocked(info.root) === null);
+      await fs.rm(lock, { force: true });
+      const resumed = await git.dropTurnRefs(info.root, { chunk: 300 });
+      t.ok('dropTurnRefs: 次に呼ぶと、残りの 600 本だけを消して済む', resumed === 600 && total() === 0, `resumed ${resumed} left ${total()}`);
+    }
     await fs.writeFile(path.join(repo, 'ignored.txt'), 'x\n');
 
     // worktree

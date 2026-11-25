@@ -1,6 +1,6 @@
 import { setupGitPanel } from '../git-panel.mjs';
 import { fmt } from '../i18n.mjs';
-import { api, node, query, request, requestResult, sessionId, text } from './bridge.mjs';
+import { api, node, request, requestResult, sessionId, text } from './bridge.mjs';
 
 // Keep the existing graph, keyboard navigation, worktrees and diff controls.
 // The page supplies its transport and body; the browser supplies the outer title.
@@ -70,5 +70,5 @@ export async function renderGit(root) {
       close:() => { location.href = `/_pleiad/s/${encodeURIComponent(sessionId)}/new`; },
     },
   });
-  root.append(holder); panel.open(null, { range:query.get('range') });
+  root.append(holder); panel.open(null);
 }

@@ -25,6 +25,14 @@ export const REF_PREFIX = 'refs/pleiad/turn/';
 export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
 const READ_TIMEOUT = 4_000;
 const SNAPSHOT_TIMEOUT = 8_000;
+/**
+ * 隠し ref の片付け（dropTurnRefs）用。読みの上限（4 秒）には、数千本の削除が収まらない（Pleiad 自身の開発用リポジトリに 2,182 本あった）。
+ * 数百本ずつに分け、1 回ごとに長い上限を使う。この時間切れは場所の休みに数えない（片付けは利用者の画面に出ない。休みに入ると git タブまで休む）
+ */
+const CLEANUP_TIMEOUT = 30_000;
+const CLEANUP_CHUNK = 300;
+/** 片付け 1 回が使ってよい合計の時間。超えたら残りは次回へ回す（遅い場所で裏の作業を長く握らない） */
+const CLEANUP_BUDGET_MS = 90_000;
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 const IDENT = { GIT_AUTHOR_NAME: 'Pleiad', GIT_AUTHOR_EMAIL: 'pleiad@localhost', GIT_COMMITTER_NAME: 'Pleiad', GIT_COMMITTER_EMAIL: 'pleiad@localhost' };
@@ -45,9 +53,10 @@ export const placeBlocked = (cwd, cls = 'light') => placeGuard.blocked(placeGuar
  * guarded: 場所が BUSY・REST なら起こさず ok: false（code 'BUSY' | 'REST'）を返し、時間切れ・終了を場所の数えに載せる（readGit・writeGit は常に guarded）。
  *   execGit（worktree の作成・削除など、利用者が頼んだ操作）は guarded にせず、止めても終われない子だけ数える
  * cls: 'light' | 'heavy'（休みの段を分ける）。signal: 止める口（待つ側が諦めたとき）
+ * counts: false なら、時間切れ・終了を場所の数えに載せない（休みに入る数えにも、数えの戻しにも）。片付けが使う。BUSY・REST のときは起こさない・止めても終われない子は数える、は変わらない
  * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number|string|null, truncated?: boolean }>}
  */
-async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null, guarded = false, cls = 'light', signal = null } = {}) {
+async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null, guarded = false, cls = 'light', signal = null, counts = true } = {}) {
   const place = placeGuard.placeOf(cwd);
   if (guarded) {
     const why = placeGuard.blocked(place, cls);
@@ -60,7 +69,7 @@ async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = M
     onLeftover: (left) => placeGuard.leftover(place, left),
     ...(gitKillWith ? { killWith: gitKillWith } : {}),
   });
-  if (guarded) {
+  if (guarded && counts) {
     if (result.timedOut) placeGuard.timedOut(place, cls, startedAt);
     else if (!result.stopped && !result.startError) placeGuard.completed(place, cls);
   }
@@ -395,25 +404,35 @@ export async function updateRef(root, ref, commit) {
   return (await writeGit(root, ['update-ref', ref, commit])).ok;
 }
 
-/** ref を消す（まとめて 1 回）。消した数 */
-export async function deleteRefs(root, refs) {
+/** ref を消す（まとめて 1 回）。消した数。options は git の呼び出しへ渡す（片付けが、長い上限と counts: false を渡す） */
+export async function deleteRefs(root, refs, options = {}) {
   const list = refs.filter((r) => r.startsWith(REF_PREFIX) || r.startsWith(ARCHIVE_PREFIX));
   if (!list.length) return 0;
-  const r = await writeGit(root, ['update-ref', '--stdin'], { input: list.map((ref) => `delete ${ref}\n`).join('') });
+  const r = await writeGit(root, ['update-ref', '--stdin'], { ...options, input: list.map((ref) => `delete ${ref}\n`).join('') });
   return r.ok ? list.length : 0;
 }
 
 /**
  * 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）を、全部消す（ADR 0353）。消すのは refs/pleiad/turn/ の ref だけ
  * （ブランチ・タグ・index・作業ツリー・worktree の退避の ref refs/pleiad/archive/ には触れない）。
- * 読めなかった・消せなかった（場所が BUSY・REST のとき、時間切れ、git が断った）ときは null（呼び出し側が、あとでやり直す）。消した数（0 を含む）を返せたら済み。
+ * 数千本あっても終えられるように: 数百本ずつ（CLEANUP_CHUNK）の削除に分け、1 回ごとに長い上限（CLEANUP_TIMEOUT）を使い、
+ * この時間切れは場所の休みに数えない（counts: false）。全体の時間は CLEANUP_BUDGET_MS まで。
+ * 読めなかった・消せなかった（場所が BUSY・REST のとき、時間切れ、git が断った、時間の上限）ときは null。そこまでに消した分は戻らないので、
+ * 呼び出し側があとでもう 1 回呼べば、残りだけ（for-each-ref で数え直す）から続く。消した数（0 を含む）を返せたら全部済み。
  * 同じ ref が 1 本も無ければ、for-each-ref 1 回で済む
  */
-export async function dropTurnRefs(root) {
-  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX]);
+export async function dropTurnRefs(root, { chunk = CLEANUP_CHUNK, budgetMs = CLEANUP_BUDGET_MS, timeout = CLEANUP_TIMEOUT } = {}) {
+  const cleanup = { timeout, counts: false };
+  const startedAt = Date.now();
+  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX], cleanup);
   if (!r.ok) return null;
   const refs = r.stdout.split('\n').map((s) => s.trim()).filter((ref) => ref.startsWith(REF_PREFIX));
-  if (!refs.length) return 0;
-  const removed = await deleteRefs(root, refs);
-  return removed === refs.length ? removed : null;
+  let removed = 0;
+  for (let at = 0; at < refs.length; at += chunk) {
+    if (Date.now() - startedAt >= budgetMs) return null;
+    const part = refs.slice(at, at + chunk);
+    if (await deleteRefs(root, part, cleanup) !== part.length) return null;
+    removed += part.length;
+  }
+  return removed;
 }

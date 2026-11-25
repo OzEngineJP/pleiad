@@ -103,10 +103,21 @@ export function createPlaceGuard({ now = Date.now, ladder = REST_LADDER_MS, rest
 
   const drop = (key, slot) => { if (!slot.running && !slot.next && slots.get(key) === slot) slots.delete(key); };
 
+  const newRun = () => ({ ctl: new AbortController(), waiters: 0, promise: null });
+
   function start(key, slot, run, work) {
     slot.running = run;
     run.promise = Promise.resolve().then(() => work(run.ctl.signal)).finally(() => {
       if (slot.running === run) slot.running = null;
+      // 次の 1 回（trailing）は、この終わりの処理の中で、同期的に引き継ぐ。slot.running が空になる隙間を作らない
+      // （隙間に来た頼みが「何も走っていない」と見て、引き継がれる次の回と並んで 2 本目を起こすため）
+      const next = slot.next;
+      if (next) {
+        slot.next = null;
+        const settle = next.settle;
+        if (next.waiters <= 0 || next.ctl.signal.aborted) settle(null);
+        else { start(key, slot, next, next.work); settle(next.promise); }   // start が next.promise を本物に差し替える。待っていた側は settle で本物へつなぐ
+      }
       drop(key, slot);
     });
     run.promise.catch(noop);
@@ -143,19 +154,16 @@ export function createPlaceGuard({ now = Date.now, ladder = REST_LADDER_MS, rest
   function coalesce(key, work, { mode = 'join', signal = null } = {}) {
     let slot = slots.get(key);
     if (!slot) { slot = { running: null, next: null }; slots.set(key, slot); }
-    if (!slot.running) return attach(start(key, slot, { ctl: new AbortController(), waiters: 0, promise: null }, work), signal);
+    if (!slot.running) return attach(start(key, slot, newRun(), work), signal);
     if (mode === 'join') return attach(slot.running, signal);
     if (!slot.next) {
-      const next = { ctl: new AbortController(), waiters: 0, promise: null };
-      slot.next = next;
-      const after = slot.running.promise.then(noop, noop);
-      next.promise = after.then(() => {
-        if (slot.next === next) slot.next = null;
-        if (next.waiters <= 0 || next.ctl.signal.aborted) { drop(key, slot); return null; }
-        // 同じ object のまま走らせる（待つ側の数と止める口を、始まる前と後で共有する。後から相乗りする側も同じ数に入る）
-        return start(key, slot, next, work).promise;
-      });
+      // 同じ object のまま走らせる（待つ側の数と止める口を、始まる前と後で共有する。後から相乗りする側も同じ数に入る）。
+      // 待つ側がつなぐ promise は、走り始めるまでの仮のもの（走っているものが終わったとき、start の中で本物につなぐ）
+      const next = newRun();
+      next.work = work;
+      next.promise = new Promise((resolve) => { next.settle = resolve; });
       next.promise.catch(noop);
+      slot.next = next;
     }
     return attach(slot.next, signal);
   }

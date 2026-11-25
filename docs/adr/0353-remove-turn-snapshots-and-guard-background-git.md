@@ -43,16 +43,19 @@
 
 実装:
 
-1. **`run()` の締め**（`core/process.mjs`）: `killDeadlineMs`（止めてから戻るまでの上限）・`onLeftover`（終わらなかった pid を渡す）・`killWith` を足す。裏の作業用の `runBackground` は `killTree: true`・`exitCloseGraceMs: 2000`・`killedCloseGraceMs: 500`・`killDeadlineMs: 3000`。**`taskkill` は非同期**（`TASKKILL_TIMEOUT_MS` 10 秒。以前は同期で、止まった木を待つと event loop ごと止まった）。
+1. **`run()` の締め**（`core/process.mjs`）: `killDeadlineMs`（止めてから戻るまでの上限）・`onLeftover`（終わらなかった pid を渡す）・`killWith` を足す。裏の作業用の `runBackground` は `killTree: true`・`exitCloseGraceMs: 2000`・`killedCloseGraceMs: 500`・`killDeadlineMs: 3000`。**`taskkill` は非同期**（`TASKKILL_TIMEOUT_MS` 10 秒。以前は同期で、止まった木を待つと event loop ごと止まった）。`input` を渡す子は、入力を読まずに終わると書き込みが EPIPE の `error` になるので、標準入力の `error` を受けて捨てる（受け手が無いと未処理の例外でホストが落ちる。子の結果は `exit` / `close` が決める）。
 2. **場所の見張り**（`core/place-guard.mjs`）: `createPlaceGuard` が、場所ごとの生存数（`leftover` / `alive`）・連続した時間切れ（`timedOut` / `completed`）・休み（`blocked`）・合流（`coalesce`）を持つ。場所は `git rev-parse --show-toplevel` の結果（別名は 500 まで覚える）。
 3. **git の入口を 1 本にする**（`core/git-info.mjs`）: `readGit` / `writeGit` は常に見張りを通る。見張りが止めたときは例外にせず `{ ok: false, code: 'BUSY' | 'REST' }` を返し、呼び出し側は前の値を出す（`gitStatus` は最後に取れた値。無ければ「情報なし」）。`execGit`（worktree の作成・削除など、120 秒）は見張りの前に待たせないが、上限と終わらなかった分の数え上げには乗る。
-4. **同じ種類は 1 本に合流**: 同じ場所の同じ種類は同時に 1 本。`gitStatus` は、TTL（読み終えた時刻から 2 秒）内なら前の値を返し、過ぎていれば走っている分に乗る（`join`。新しく並べない）。`fresh` を頼まれたときは「走っている 1 本の次の 1 本」を共有する（`trailing`。走り始めたあとに頼まれた `fresh` に前の結果は渡さない）。スナップショットも同じ `trailing`（次の 1 本は頼んだ時刻より後に始まるので、基準はずれない）。待つ人が全員いなくなったら走っている分を止める。
+4. **同じ種類は 1 本に合流**: 同じ場所の同じ種類は同時に 1 本。`gitStatus` は、TTL（読み終えた時刻から 2 秒）内なら前の値を返し、過ぎていれば走っている分に乗る（`join`。新しく並べない）。`fresh` を頼まれたときは「走っている 1 本の次の 1 本」を共有する（`trailing`。走り始めたあとに頼まれた `fresh` に前の結果は渡さない）。スナップショットも同じ `trailing`（次の 1 本は頼んだ時刻より後に始まるので、基準はずれない）。待つ人が全員いなくなったら走っている分を止める。`trailing` の「次の 1 本」は、走っている分が終わる処理の中で同期的に引き継ぐ（`slot.running` が空になる隙間を作らない。隙間に来た頼みが「何も走っていない」と見て、引き継がれる次の 1 本と並んで 2 本目を起こすため）。
 
 ### C. 隠し ref の片付けは、場所を最初に読んだときの 1 回
 
 - 起動直後の一括の掃除は作らない（遅い場所をまとめて起こすことになり、この ADR の目的と逆）。かわりに、その場所を最初に読むとき（`status` が成功したあと・`changes`・`changeCount`・`commits`）に `tidy(root)` を 1 回だけ起こす。
-- 消すのは `refs/pleiad/turn/` の下だけ（`dropTurnRefs`。ほかの接頭辞・ブランチ・タグには触れない）。`git for-each-ref` で一覧し、`update-ref --stdin`（`delete` の行）でまとめて 1 回で消す。1 本も無ければ `for-each-ref` の 1 回で終わる。commit・tree・blob は到達不能になり、`git gc` が整理する。
-- 見張りに乗せる: 場所ごとに同時に 1 本（合流の鍵は `tidy:<場所>`・`join`）、止まっている場所（`BUSY` / `REST`）では起こさない。取れなかったら記録を残さず、60 秒後（`TIDY_RETRY_MS`）以降の次の読み取りでやり直す。終わった場所は二度と起こさない。
+- 消すのは `refs/pleiad/turn/` の下だけ（`dropTurnRefs`。ほかの接頭辞・ブランチ・タグには触れない）。`git for-each-ref` で一覧し、`update-ref --stdin`（`delete` の行）で消す。1 本も無ければ `for-each-ref` の 1 回で終わる。commit・tree・blob は到達不能になり、`git gc` が整理する。
+- **数千本でも終わるように、数百本ずつ消す**: 実際のリポジトリに 2,182 本あり、1 本の `update-ref --stdin` では読みの上限（4 秒）に収まらない恐れがあった。収まらないと、60 秒ごとにやり直す・軽い時間切れとして数えられる・場所が休みに入って git タブまで休む、の連鎖になる。そこで 300 本ずつ（`CLEANUP_CHUNK`）の削除に分け、1 回ごとに掃除用の長い上限（`CLEANUP_TIMEOUT` 30 秒）を使う。全体は 90 秒（`CLEANUP_BUDGET_MS`）まで。
+- **掃除の時間切れは休みに数えない**（`exec` の `counts: false`。休みに入る数えにも、数えの戻しにも載せない）。掃除は画面に出ず、遅い場所を休ませる理由にならない。止まっている場所（`BUSY` / `REST`）では起こさない・止めても終われない子は数える、は他の git と同じ。
+- **途中までなら、次回は残りから続く**: 消せなかった塊（時間切れ・git が断った・全体の上限）があれば `null` を返し、そこまでに消した分は戻さない。次に呼ばれたときは `for-each-ref` で数え直すので、残りだけから続く。
+- 見張りに乗せる: 場所ごとに同時に 1 本（合流の鍵は `tidy:<場所>`・`join`）、止まっている場所（`BUSY` / `REST`）では起こさない。取れなかった・消せなかった・途中までのときは記録を残さず、60 秒後（`TIDY_RETRY_MS`）以降の次の読み取りでやり直す。終わった場所は二度と起こさない。
 
 ## 決めた数と根拠
 
@@ -70,6 +73,7 @@
 | `READ_TIMEOUT` / `SNAPSHOT_TIMEOUT` | 4 秒 / 8 秒（変えない） | 時間切れが「効く」ようになったので、これまでの値がそのまま上限になる |
 | `gitStatus` の TTL | 2 秒（変えない） | 同じ場所に 5 本並んだのは TTL の過ぎた後ろに並べる作りのため。TTL は変えず、合流で 1 本にする |
 | `tidy` のやり直し | 60 秒 | 取れなかった理由は主に止まっている場所。休みの最初の段（30 秒）より少し長くし、ぶつけない |
+| 掃除の塊 / 1 回の上限 / 全体の上限 | 300 本 / 30 秒 / 90 秒 | 3,000 本を 300 本ずつ 10 回で消すのに約 5 秒（一時リポジトリ。1 回の読みの上限 4 秒には、塊でなく全部を 1 回で消すと収まらない見込み）。1 回の上限は読みの 4 秒の数倍にし、遅い場所でも 1 つの塊が終われるようにした。判断で決めた数 |
 
 ## 理由
 
@@ -95,6 +99,14 @@
 | 上限だけ（場所は持たない） | `core/git-prs.mjs` の `runGh`、`core/agent-browser.mjs` の `listProcesses`、`core/backends/claude-held.mjs` の `askVersion`、`core/mcp-ledger.mjs` の `startTimesOf` | `runBackground`。時間どおりに戻る |
 | 見張りの前では待たせないが、上限と数え上げには乗る | `execGit`（`core/git-worktree.mjs` の worktree 作成・削除・ブランチ・`update-ref`。120 秒） | 人の操作の結果を待つので休ませない |
 | 変えない | `core/host-shell.mjs`（`!`）、`ply_shell`、アカウントの `whoami` / `icacls`（`runSync`）、`core/mcp-ledger.mjs` の `killTree` の `taskkill`、ログアウトの処理 | 使う人が待つ・または上限が既にある・起動時の 1 回 |
+
+## 残したこと
+
+見直しで挙がったが、利用者と合意した方針どおり直さないもの。
+
+- 終わらない子が残っている間、その場所は `BUSY` のまま（「生きているものがあれば、新しく起こさない」を優先する。残りが消えれば自分で戻る）。
+- `BUSY` / `REST` の間、`repoInfo` は git でない場所と同じく `null` を返す（記録が取れないときは「何も出さない」と決めた。前に取れた値を残すかは画面側の話）。
+- `placeKey` は 8.3 短縮名・`\\?\` 接頭辞・シンボリックリンクを同じ場所にそろえない（別の鍵は別の場所として数える。そろえると、遅いファイルシステムへ余計な問い合わせが要る）。
 
 ## 採らなかった案
 

@@ -4,7 +4,8 @@
 //   - 止められる git の時間切れが続く: 2 回目から休み（REST）。休みの間は起こさない
 //   - 場所が BUSY・REST のとき: 状態は前に読めた値を返す（無ければ null）。変更の一覧・履歴・数えも新しい git を起こさない
 //   - 同じ種類の裏の作業は 1 本ずつ: 状態の取り直し（fresh でない 5 つ → 1 本、fresh の 5 つ → 2 本）・撮影（5 つ → add 2 本）・変更の数え（5 つ → 撮影 1 本）
-//   - 残っている隠し ref の片付け: リポジトリごとに 1 回・読めなかったらあけてやり直し（本物の git で消す所は git-info・server-git が見る）
+//   - 残っている隠し ref の片付け: リポジトリごとに 1 回・読めなかったらあけてやり直し（本物の git で消す所は git-info・server-git が見る）。
+//     数百本ずつ・長い上限・時間切れは休み（REST）に数えない・途中までなら残りから続く（数千本を 1 回の読みの上限に入れない）
 //   - ターンごとの撮影をやめた（ADR 0353）: 撮影の口・環境変数・表示の値がコードに残っていない
 import fs from 'node:fs';
 import os from 'node:os';
@@ -208,6 +209,74 @@ export default async function (t) {
       await Promise.all(entrances.map((a) => a.status(mkRepo('tidy-c'), { fresh: true })));
       await sleep(2200);
       t.ok('同じ場所を 3 つの入口から同時に読んでも、片付けの for-each-ref は 1 本に合流する', count('for-each-ref') === 4, `for-each-ref ${count('for-each-ref')}`);
+    }
+
+    // ---- 隠し ref の片付けは、数百本ずつ・長い上限・時間切れを休みに数えない・残りから続く（数千本を 1 回の 4 秒の上限に入れない）
+    const refsOut = (n, from = 0) => Array.from({ length: n }, (_, i) => `refs/pleiad/turn/s1/${from + i}-start\n`).join('');
+    {
+      reset();
+      useGit();
+      const repo = mkRepo('cleanup-chunks');
+      control({ 'for-each-ref': { out: refsOut(7) } });
+      const removed = await git.dropTurnRefs(repo, { chunk: 3 });
+      t.ok('dropTurnRefs: 7 本を 3 本ずつ消す（update-ref は 3 回）。消した数を返す', removed === 7 && count('for-each-ref') === 1 && count('update-ref') === 3, `removed ${removed} update-ref ${count('update-ref')}`);
+      reset();
+      control({ 'for-each-ref': { out: refsOut(700) } });
+      const many = await git.dropTurnRefs(repo);
+      t.ok('既定は 300 本ずつ（700 本は update-ref 3 回）', many === 700 && count('update-ref') === 3, `removed ${many} update-ref ${count('update-ref')}`);
+      reset();
+      control({ 'for-each-ref': { out: refsOut(7) } });
+      const budget = await git.dropTurnRefs(repo, { chunk: 3, budgetMs: 0 });
+      t.ok('全体の時間の上限を超えたら、残りは消さず null（次回へ回す）', budget === null && count('update-ref') === 0, `budget ${budget} update-ref ${count('update-ref')}`);
+      const rest = await git.dropTurnRefs(repo, { chunk: 3 });
+      t.ok('次に呼ぶと、そのときの残りを読み直して消す', rest === 7 && count('for-each-ref') === 2 && count('update-ref') === 3, `rest ${rest} update-ref ${count('update-ref')}`);
+    }
+    {
+      reset();
+      useGit();
+      const repo = mkRepo('cleanup-no-rest');
+      control({ 'for-each-ref': { out: refsOut(4) }, 'update-ref': { hang: true } });
+      const results = [];
+      for (let i = 0; i < 3; i++) results.push(await git.dropTurnRefs(repo, { timeout: 300 }));
+      harvest();
+      const lane = git.placeGuard.snapshot(placeOf(repo)).light;
+      t.ok('削除の時間切れ（3 回続けても）は null で、場所は休まない（REST にならない・数えにも載らない）', results.every((x) => x === null) && count('update-ref') === 3 && git.placeBlocked(repo) === null && lane.consecutive === 0 && lane.restUntil === 0, `${JSON.stringify(results)} ${JSON.stringify(lane)}`);
+      control({ 'for-each-ref': { hang: true } });
+      const listing = [await git.dropTurnRefs(repo, { timeout: 300 }), await git.dropTurnRefs(repo, { timeout: 300 })];
+      harvest();
+      t.ok('一覧を読む for-each-ref の時間切れも、休みに数えない', listing.every((x) => x === null) && git.placeBlocked(repo) === null && git.placeGuard.snapshot(placeOf(repo)).light.consecutive === 0);
+      control({ status: { hang: true } });
+      const real = await git.readGit(repo, ['status', '--porcelain=v2'], { timeout: 300 });
+      harvest();
+      t.ok('片付けの時間切れのあとの、普通の読みの時間切れは 1 回目として数える（まだ休まない）', real.code === 'TIMEOUT' && git.placeBlocked(repo) === null && git.placeGuard.snapshot(placeOf(repo)).light.consecutive === 1);
+      git.placeGuard.leftover(placeOf(repo), { pid: process.pid, ended: new Promise(() => {}) });
+      const before = lines().length;
+      t.ok('場所が BUSY のときは、片付けも git を起こさない（null）', await git.dropTurnRefs(repo, { timeout: 300 }) === null && lines().length === before);
+    }
+    {
+      // 片付けを呼ぶ側（createGitActivity）: 消せなかったら済みにせず、60 秒あけて残りをやり直す。済んだら二度とやらない
+      reset();
+      useGit();
+      let clock = 1_000_000;
+      const activity = createGitActivity({ now: () => clock });
+      const repo = mkRepo('tidy-partial');
+      control({ 'for-each-ref': { out: refsOut(5) }, 'update-ref': { exit: 1 } });
+      await activity.status(repo, { fresh: true });
+      t.ok('消せなかった（update-ref を git が断った）', await waitFor(() => count('update-ref') === 1, 3000), `update-ref ${count('update-ref')}`);
+      await sleep(100);
+      clock += 30_000;
+      await activity.status(repo, { fresh: true });
+      await sleep(200);
+      t.ok('消せなかった後 60 秒たつまでは、やり直さない', count('for-each-ref') === 1 && count('update-ref') === 1, `for-each-ref ${count('for-each-ref')}`);
+      clock += 31_000;
+      control({ 'for-each-ref': { out: refsOut(2) } });
+      await activity.status(repo, { fresh: true });
+      t.ok('60 秒あけたら、残り（読み直した 2 本）を消す', await waitFor(() => count('update-ref') === 2, 3000) && count('for-each-ref') === 2, `update-ref ${count('update-ref')}`);
+      await sleep(100);
+      clock += 500_000;
+      await activity.status(repo, { fresh: true });
+      await sleep(200);
+      t.ok('消し終えた後は、もう片付けない', count('for-each-ref') === 2 && count('update-ref') === 2);
     }
   } finally {
     harvest();

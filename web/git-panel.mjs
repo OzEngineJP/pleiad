@@ -116,9 +116,9 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       const ch = st.changes.uncommitted;
       if (!ch || ch.failed) return { title: t('git.rangeUncommitted'), groups: [], total: { files: 0, add: 0, del: 0 }, failed: true };
       const g = ch.groups;
-      const groups = g ? [...(g.staged.length ? [{ id: 'staged', title: t('git.staged'), files: tag(g.staged, { range: 'uncommitted', stage: 'staged' }) }] : []),
-        { id: 'work', title: t('git.changes'), files: tag(g.work, { range: 'uncommitted', stage: 'work' }) }].filter((x) => x.files.length || x.id === 'work')
-        : [{ id: 'work', title: t('git.changes'), files: tag(ch.files, { range: 'uncommitted' }) }];
+      const groups = g ? [...(g.staged.length ? [{ id: 'staged', title: t('git.staged'), files: tag(g.staged, { stage: 'staged' }) }] : []),
+        { id: 'work', title: t('git.changes'), files: tag(g.work, { stage: 'work' }) }].filter((x) => x.files.length || x.id === 'work')
+        : [{ id: 'work', title: t('git.changes'), files: tag(ch.files, {}) }];
       return { title: t('git.rangeUncommitted'), groups, total: ch.total };
     }
     const data = st.commitData[sel.hash];
@@ -417,7 +417,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   }
   function diffRequest(f) {
     const s = f.src ?? {};
-    return { sessionId: sid(), range: 'uncommitted', path: f.path, stage: s.stage, commit: s.commit, from: s.from, to: s.to, worktree: s.wt, orig: f.orig, context: 3, after: true };
+    return { sessionId: sid(), path: f.path, stage: s.stage, commit: s.commit, from: s.from, to: s.to, worktree: s.wt, orig: f.orig, context: 3, after: true };
   }
   async function loadDiffAt(index) {
     const d = st.diff; if (!d || d.cache.has(index)) return;
@@ -496,7 +496,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function wtList(row) {
     const m = /^w(\d+):([cu]):(\d+)$/.exec(row.dataset.key);
     const w = st.wt.rows[Number(m[1])]; const d = st.wtDetail.get(w.path);
-    const files = (m[2] === 'c' ? d.committed.files : d.uncommitted.files).map((f) => ({ ...f, src: m[2] === 'c' ? { wt: w.path, from: d.base, to: d.head } : { wt: w.path, range: 'uncommitted' } }));
+    const files = (m[2] === 'c' ? d.committed.files : d.uncommitted.files).map((f) => ({ ...f, src: m[2] === 'c' ? { wt: w.path, from: d.base, to: d.head } : { wt: w.path } }));
     return [files, Number(m[3])];
   }
   function onKeydown(e) {
@@ -669,7 +669,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     st.loading = true; st.failed = false;
     if (!st.base) paint();
     let data = null;
-    try { data = await ask('gitPanel', { sessionId: id, range: 'uncommitted', only: 'light' }); } catch { /* 取れなかった */ }
+    try { data = await ask('gitPanel', { sessionId: id, only: 'light' }); } catch { /* 取れなかった */ }
     if (mine !== ticket || sid() !== id) return;
     st.loading = false; st.at = Date.now();
     if (!data?.git) { st.base = null; st.failed = true; onState(null, { foreign: foreign() }); paint(); return; }
