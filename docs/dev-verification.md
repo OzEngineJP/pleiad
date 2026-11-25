@@ -50,14 +50,18 @@ npm run test:delivery                 # 6 エージェントを順に（1 エー
 npm run test:delivery -- claude devin # 選ぶ
 ```
 
-1 ターンで 3 つを見る: **instructions**（設定 › 指示に足した合言葉が返答に入る = `plyInstructions`・`plyAgents` の届け方）、
+1 ターンで 5 つを見る: **instructions**（設定 › 指示に足した合言葉が返答に入る = `plyInstructions`・`plyAgents` の届け方）、
 **plyControl**（`ply_control` の `list_ops` を呼び、操作の id が返る）、**secrets**（秘密情報の変数が会話のシェルにある。
-値は読まず `[ -n "$DELIVERY_CHECK_TOKEN" ]` で有る無しを答えさせる）。データ置き場と作業場所は一時ディレクトリ、モードは Bypass。
+値は読まず `[ -n "$DELIVERY_CHECK_TOKEN" ]` で有る無しを答えさせる）、**models**（モデルの一覧 `models` が 1 件以上返る）、
+**model**（モデルを指定しない会話が、一覧の既定 `models['']` の `resolvesTo` で走る。`REAL_OVERRIDES` でモデルを指定するエージェントは、
+そのモデルが一覧にあり、そのモデルで走る）。データ置き場と作業場所は一時ディレクトリ、モードは Bypass。
 
 - 落ちたときは `instructions=NG` などと、返答・ツールの結果の末尾を出す。CLI が無い・ログインしていないエージェントは `SKIP` と理由を出す。
 - `tests/lib/server.mjs` は実 Devin・Grok を起こさないよう `AGENT_HOST_DEVIN_BIN`・`AGENT_HOST_GROK_BIN` に身代わりを指し、`GROK_HOME` を
   空の一時ディレクトリにする。この入口はそれらを実物（PATH の `devin`・`grok`、`~/.grok`）へ戻す（2026-10-26。戻さないと Devin は
-  「見つかりません」、Grok は「ACP request failed」になる）。
+  「見つかりません」、Grok は「ACP request failed」になる）。実行ファイルは全エージェント分を記述（`AGENTS[id].cli.binEnv` に `cli.exe`）から戻し、
+  それ以外の上書き（Grok の `GROK_HOME`・Antigravity の流すモデル）は `tests/delivery-cli.mjs` の `REAL_OVERRIDES` に書く
+  （`definePerAgentMap` なので、エージェントを足して書き忘れると読み込みで落ちる）。
 - Bypass にしないと、Devin は MCP のツールを「読み取り専用の注釈が無い」として断り、`ply_control`・`ply_shell` を呼べない（2026-10-26）。
 - 秘密の値を表示させると、Grok の自動モードが「秘密の抜き出し」としてコマンドを止める。有る無しだけを答えさせる（2026-10-26）。
 

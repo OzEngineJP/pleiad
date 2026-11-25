@@ -33,7 +33,7 @@
   `traits: AGENT_TRAITS.<id>`。写しを持たない（backend-contract が一致を確かめる）。試験用の fake だけは環境変数で
   印を切り替えるので capabilities を自分に持ち、性質だけ `AGENT_TRAITS.fake` を読む。
 - **性質は server・bot・委譲の振り分けが `backend.traits` から読む。** 画面へは出さない（`describeBackends` に載せない）。
-  一覧（`node tests/lib/backend-matrix.mjs`）と公開文書の表にも出さない。
+  一覧（`node tests/lib/backend-matrix.mjs`。後の版で廃止）と公開文書の表にも出さない。
 - **公開文書のエージェントのページは、軽いファイルの閉包から作る。**
   - `site/tools/docs-sources.mjs` の `DOCS_SOURCE_FILES` が、タグから取るファイルの一覧（`agents.mjs`・
     `capability-marks.mjs`・`agent-marks.mjs`・`computer-timing.mjs`）。`tests/unit/docs-source.mjs` が、相対 import を
@@ -61,6 +61,6 @@
   `features` からも消える（性質は機能ではない）。
 - 性質は `todo` を持たない。
 - 公開文書の `/docs/agents/<id>/` が増える。v0.40.0 の公開では一覧だけ。
-- 印を足すときは、`capability-marks.mjs`（定義・説明）・`agent-marks.mjs`（全エージェントの状態）・`ABOUT`・
-  `CAPABILITY_DOCS` を書く（当時は `CAPABILITY_CONTRACTS` も要ったが、後の版で廃止した。[0278](0278-capability-delivery-tests.md)）。
+- 印を足すときは、`capability-marks.mjs`（定義・説明）・`agent-marks.mjs`（全エージェントの状態）・
+  `CAPABILITY_DOCS` を書く（当時は `ABOUT`・`CAPABILITY_CONTRACTS` も要ったが、後の版で廃止した。[0357](0357-consolidate-backend-leak-guards.md)）。
   性質を足すときは `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS`。

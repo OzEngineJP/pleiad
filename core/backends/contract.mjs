@@ -12,7 +12,7 @@
 //    impossible は cause（upstream / design / retired）を持ち、理由に「確かめていない」「#Issue の番号」を書けない
 //    （手段があるのに未確認・未実装は todo('#Issue')）。
 //    印を足すときは、capability-marks.mjs に 1 行足し、全バックエンドに状態を書く（agent-marks.mjs）。
-//    一覧（tests/lib/backend-matrix.mjs）の 1 列目の説明 ABOUT は任意（足さなくても印の名前で出る）。
+//    印の説明は capability-marks.mjs の CAPABILITY_DOCS 1 か所に書く（公開文書の表もここから作る。ADR 0357）。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
 // 2. 性質（TRAITS）: 機能ではなくエージェントの特徴。true / false だけで書き、状態は持たない（ADR 0274）。
 //    server・bot・委譲の振り分けが backend.traits から読み、画面へは出さない。

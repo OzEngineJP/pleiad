@@ -6,14 +6,16 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, IMPOSSIBLE_CAUSES, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, TRAIT_KEYS, RUN_ARG_FEATURES,
-  checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, gateRunArgs, impossible, isCapabilityState, legacyCapabilities, todo, traitProblem,
+  checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, gateRunArgs, impossible, legacyCapabilities, todo, traitProblem,
 } from '../../core/backends/contract.mjs';
 import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, definePerAgentMap, idleCompactionKey } from '../../core/backends/agents.mjs';
 import {
-  DELIVERY_ARG_KEYS, DELIVERY_HINTS, DELIVERY_PROBES, EXTRA_PROBES, PROBE_MARKS, RIGS, deliveryArgs, deliveryRequired, probeVerdict,
+  DELIVERY_ARG_KEYS, DELIVERY_HINTS, DELIVERY_PROBES, EXTRA_PROBES, PROBE_MARKS, RIGS, deliveryArgs, deliveryRequired, loadNatives, probeVerdict,
 } from '../lib/backend-common.mjs';
-import { ABOUT, MATRIX_AGENTS, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
 import { ROOT } from '../lib/server.mjs';
+
+// 現役のエージェント（試験用の fake を除く）
+const ACTIVE = DEFAULT_AGENT_IDS;
 
 // 性質（能力ではない。ADR 0274）ごとの契約の試験（tests/run.mjs の suite 名）。性質を足すときはここにも足す
 const TRAIT_CONTRACTS = {
@@ -86,16 +88,17 @@ export default async function (t) {
     const text = readFileSync(path.join(ROOT, 'tests', 'unit', `${file}.mjs`), 'utf8');
     return /export const name = ['"]([^'"]+)['"]/.exec(text)?.[1] ?? file;
   }));
-  const matrix = renderMatrix(natives);
+  const text = (v) => ['ja', 'en'].every((lng) => typeof v?.[lng] === 'string' && v[lng].length > 0);
   for (const key of CAPABILITY_KEYS) {
-    // 公開文書（site/docs/scripts/generate.mjs）が使う利用者向けの文。印を足して説明を書き忘れたら落とす
+    // 印の説明の正本（公開文書 site/docs/scripts/generate.mjs が使う利用者向けの文）。印を足して説明を書き忘れたら落とす
     const doc = CAPABILITY_DOCS[key];
-    t.ok(`印 ${key}: 利用者向けの説明（ja・en の label・summary・unavailable）がある`, Boolean(doc)
-      && ['ja', 'en'].every((lng) => typeof doc.label?.[lng] === 'string' && doc.label[lng].length > 0
-        && typeof doc.summary?.[lng] === 'string' && doc.summary[lng].length > 0
-        && typeof doc.unavailable?.[lng] === 'string' && doc.unavailable[lng].length > 0));
+    t.ok(`印 ${key}: 利用者向けの説明（ja・en の label・summary・unavailable）がある（core/backends/capability-marks.mjs の CAPABILITY_DOCS）`,
+      Boolean(doc) && text(doc.label) && text(doc.summary) && text(doc.unavailable) && Object.values(doc.values ?? {}).every(text));
+    // Pleiad が補える印（covered: true）は、どう補うかの文を持つ。補えない印は持たない
+    t.ok(`印 ${key}: Pleiad が補える印だけが、補い方の説明（covered）を ja・en で持つ`,
+      CAPABILITIES[key].covered === true ? text(doc?.covered) : !Object.hasOwn(doc ?? {}, 'covered'));
   }
-  t.ok('説明に、一覧に無い印が無い', Object.keys(ABOUT).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(CAPABILITY_DOCS).every((k) => CAPABILITY_KEYS.includes(k)));
+  t.ok('説明に、一覧に無い印が無い', Object.keys(CAPABILITY_DOCS).every((k) => CAPABILITY_KEYS.includes(k)));
   // 性質は能力の表に出さない（一覧にも混ぜない）
   for (const key of TRAIT_KEYS) {
     const named = TRAIT_CONTRACTS[key] ?? [];
@@ -103,14 +106,14 @@ export default async function (t) {
     t.ok(`性質 ${key}: 契約の試験がある（tests/unit/backend-contract.mjs の TRAIT_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
   }
   t.ok('性質の契約の試験に、一覧に無い性質が無い', Object.keys(TRAIT_CONTRACTS).every((k) => TRAIT_KEYS.includes(k)) && TRAIT_KEYS.every((k) => !CAPABILITY_KEYS.includes(k)));
-  t.ok('一覧（端末に出す）に性質を出さない', TRAIT_KEYS.every((k) => !new RegExp(`（\`${k}\`）`).test(matrix) && !Object.hasOwn(ABOUT, k)));
+  t.ok('印の説明（公開文書の表）に性質を出さない', TRAIT_KEYS.every((k) => !Object.hasOwn(CAPABILITY_DOCS, k)));
   // 配達物（runArgs の渡し物）: 現役のエージェントは全員、1 ターン流して届いた証拠を返す probe を持つ（tests/unit/backend-common.mjs が回す）。
   // 新しいエージェントを足したときに漏れないよう、記述（AGENTS）から機械的に決める
-  for (const id of MATRIX_AGENTS) {
+  for (const id of ACTIVE) {
     t.ok(`${id}: 配達物の probe がある（tests/lib/backend-common.mjs の DELIVERY_PROBES に、1 ターン流して証拠を返す probe を書く）`,
       typeof DELIVERY_PROBES[id] === 'function');
   }
-  t.ok('配達物の probe の一覧に、記述に無い・現役でないエージェントが無い', Object.keys(DELIVERY_PROBES).every((id) => MATRIX_AGENTS.includes(id)));
+  t.ok('配達物の probe の一覧に、記述に無い・現役でないエージェントが無い', Object.keys(DELIVERY_PROBES).every((id) => ACTIVE.includes(id)));
   // 配達物のキーは RUN_ARG_FEATURES から作る（手で写さない）。deliveryArgs が全部のキーを実際に渡す（一覧だけ足して渡し忘れない）
   const allCaps = Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, true]));
   const built = deliveryArgs(allCaps, {});
@@ -125,7 +128,7 @@ export default async function (t) {
     && featureMarks.every((key) => CAPABILITIES[key]?.probe === true), JSON.stringify({ probe: PROBE_MARKS, features: featureMarks }));
   const extraKeys = Object.values(EXTRA_PROBES).flat();
   t.ok('エージェントごとの追加の証拠: 現役のエージェントのもので、PROBE_MARKS と重ならない',
-    Object.keys(EXTRA_PROBES).every((id) => MATRIX_AGENTS.includes(id)) && extraKeys.every((key) => !PROBE_MARKS.includes(key)));
+    Object.keys(EXTRA_PROBES).every((id) => ACTIVE.includes(id)) && extraKeys.every((key) => !PROBE_MARKS.includes(key)));
   t.ok('証拠ごとに、届くはずの場所の説明（DELIVERY_HINTS）がある',
     [...PROBE_MARKS, ...new Set(extraKeys)].every((key) => typeof DELIVERY_HINTS[key] === 'string' && DELIVERY_HINTS[key].length > 0));
   t.ok('追加の証拠のうち印のものは、そのエージェントの宣言にある（知らない印を書いていない）',
@@ -185,18 +188,6 @@ export default async function (t) {
   const lenient = gateRunArgs({ prompt: 'p', notRegistered: 1 }, supportedCaps, { strict: false, log: (line) => logged.push(line) });
   t.ok('runArgs の絞り込み: 登録の無いキーは strict なら例外、そうでなければログだけ出して消さない',
     strictThrows && logged.length === 1 && /notRegistered/.test(logged[0]) && lenient.notRegistered === 1);
-  // 一覧（端末に出す）: 不可能は理由、未実装は Issue を、宣言から引いた行そのままに全部出す（宣言の文言を試験に写さない）
-  const stateRows = [];
-  for (const id of MATRIX_AGENTS) for (const key of CAPABILITY_KEYS) {
-    const value = natives[id].capabilities[key];
-    if (!isCapabilityState(value)) continue;
-    const label = natives[id].label ?? id;
-    if (value.state === 'impossible') stateRows.push(`| ${label} | ${key} | ${value.reason} |`);
-    if (value.state === 'todo') stateRows.push(`| ${label} | ${key} | ${value.issue} |`);
-  }
-  const missingRows = stateRows.filter((row) => !matrix.includes(row));
-  t.ok('一覧（端末に出す）: 対応・補う・不可能・未実装を出し、不可能の理由と未実装の Issue を添える',
-    /\| ✓ \|/.test(matrix) && /補/.test(matrix) && stateRows.length > 0 && missingRows.length === 0, JSON.stringify(missingRows));
 
   // 状態と値の検査そのもの
   const base = { id: 'state-check', label: 'S', capabilities: { ...NO_CAPABILITIES }, traits: { ...NO_TRAITS }, modes: () => ({}), models: async () => ({}),

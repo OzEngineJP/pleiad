@@ -278,8 +278,8 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 委譲のツール名を `subagentTools` で申告するか、申告できない理由を `subagentToolsAbsent` に書く。現役のエージェントは `NO_CAPABILITIES`（対応を終えたバックエンド用の
 全部 `impossible` の雛形）を使えない。エージェントごとの表（id → 値）は `definePerAgentMap`（`core/backends/agents.mjs`）で作り、
 エージェントを足して表へ書き忘れたら読み込みで落とす（黙って `?? {}` に落とさない）。server・画面へは、レジストリ（`core/backends/index.mjs`）が状態を今までの値に引いて渡す
-（`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
-（文書の写しは持たない）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
+（`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。エージェントごとの対応は公開文書のエージェントのページ（下の「公開文書の
+エージェントのページ」）に宣言から作る（文書の写しも端末の一覧も持たない。[ADR 0357](adr/0357-consolidate-backend-leak-guards.md)）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
 **性質（`traits`）は能力ではない**（[ADR 0274](adr/0274-capability-traits-and-public-marks.md)）。`effortInModelId`・
 `instructionsAtStart`・`failureDiagnostics`・`promptDelivery` の 4 つで、`true` / `false` だけを書く。状態（`covered`・
@@ -979,32 +979,13 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 ### 2.9 エージェントを足す
 
-エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)・[0274](adr/0274-capability-traits-and-public-marks.md)）。
-足すときに書くもの:
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)・[0274](adr/0274-capability-traits-and-public-marks.md)・[0357](adr/0357-consolidate-backend-leak-guards.md)）。
 
-1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`DESCRIPTOR_KEYS` を全部書く（使わないものは null）。
-   `brand` のロゴは `web/brand/` に、`cli` の `searchDirs` はそのエージェントの配置先に合わせる。`contextSources` に新しい読み込み元を書くなら、
-   `core/context-scan.mjs` に読み方を足す。レジストリ・CLI の探し方・自動の圧縮の設定の行・画面のロゴと短い名前・委譲の行き先・保存の知らせ（`contextAt`。会話を始めるときだけ設定を読むなら `'conversation'`）は、ここから作るので触らない。
-2. **印の状態と性質**（`core/backends/agent-marks.mjs`）。`CAPABILITY_STATES` に `CAPABILITIES` の全部のキーを 4 つの状態で書き、
-   `AGENT_TRAITS` に `TRAITS` の全部のキーを `true` / `false` で書く。バックエンドはそこから `capabilities: CAPABILITY_STATES.<id>`・
-   `traits: AGENT_TRAITS.<id>` と読む（写しを持たない）。試験用の fake だけは環境変数で印を切り替えるので capabilities を自分に持つ。
-3. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形で書く。
-4. **身代わり**（`tests/lib/fake-<id>.mjs`。slow・fail の合図と、再起動の後も会話を残す置き場を持つ）と `tests/lib/backend-common.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
-   配達物（`RUN_ARG_FEATURES` の印）を 1 つでも対応にするなら、`tests/lib/backend-common.mjs` の `DELIVERY_PROBES` にそのエージェントの
-   1 ターンの確かめ（`{ seen, evidence }`）を書く（backend-contract が案内する）。そのエージェントだけの証拠は `EXTRA_PROBES` にも書く。
-5. **確かめる**。`npm test -- backend-contract backend-common`。落ちた文が「どのファイルに何を書くか」を案内する。
-   `backend-common` は全エージェント（fake を含む）に同じ流れ（1 ターン・履歴・続き・分岐・中断・エラー・再起動の後の続き）と配達物を流す。
-   そのエージェント固有の試験は `tests/run.mjs` に登録する。backend-registry は CLI の差し替え・インストール案内・既定と指定順の登録を確かめる。
-   実物の CLI で 1 ターン流す: `npm run test:delivery -- <id>`（1 エージェント 1 ターン。CI では回さない。下の「実物の CLI で確かめる」）。
-6. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
-
-**能力の印を足すとき**は、`capability-marks.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）と
-`CAPABILITY_DOCS` に利用者向けの説明（ja・en の `label`・`summary`・`unavailable`）、全バックエンドの状態（`agent-marks.mjs`）を足す。
-印ごとの試験の索引は持たない（試験が無い印を数で見張るより、各エージェントの宣言と実際の動きを `backend-common` が突き合わせる）。
-**その印が配達物**（`RUN_ARG_FEATURES` の値）なら、`probe: true` を付け、対応・`covered` のエージェントごとに
-`DELIVERY_PROBES` の証拠も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。
-現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
-**性質を足すとき**は `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS` に足す（性質は能力の表・公開文書に出さない）。
+**宣言**（`core/backends/agents.mjs` の `AGENTS`、`core/backends/agent-marks.mjs` の状態と性質）・**バックエンド**（`core/backends/<id>.mjs`。§2.3 の形）・
+**身代わりと RIGS**（`tests/lib/fake-<id>.mjs` と `tests/lib/backend-common.mjs` の `RIGS` の 1 行）を書き、
+`npm test -- backend-contract backend-common agents-lint` が落ちた文に従う。落ちた文が「どのファイルに何を書くか」を案内する。
+印や性質を足すときも同じ（印は `capability-marks.mjs` の `CAPABILITIES` と `CAPABILITY_DOCS`）。
+実物の CLI では `npm run test:delivery -- <id>` で 1 ターン流す（下の「実物の CLI で確かめる」）。
 
 秘密情報と変数の途中反映は性質 `liveSecrets` で表す（Claude・OpenCode・試験用の fake）。`control.readSecretsEnv()` で cwd の現在の env を読み、バックエンドは `control.updateSecrets(env)` を登録して既存の注入先の全体を置き換え、成功なら true を返す。初期化・保持役からの付け直しでも最新の env を読む。`ply_shell` はコマンドごとに読み直す。途中反映できないエージェントへの保存通知は、その制約と `ply_shell` の可否を伝え、既存の設定承認の台帳の `nextTurn` で終了後の継続を一度届ける（[ADR 0217](adr/0217-secrets-and-variables-for-agents.md) の 2026-11-16 の追記）。
 
@@ -1031,7 +1012,9 @@ SDK などを読まない。`site/tools/build-site.mjs` は、最新の安定版
 
 偽のプロセスで確かめる `tests/unit/backend-common.mjs` とは別に、本物の CLI で 1 エージェント 1 ターンだけ流す入口を持つ:
 `npm run test:delivery`（引数なしは 6 エージェント。`npm run test:delivery -- claude devin` で選ぶ）。1 ターンで、Pleiad の指示
-（設定 › 指示に足した合言葉）が返答に入るか、`ply_control` の `list_ops` を呼べるか、秘密情報の変数が会話のシェルにあるかを見る。
+（設定 › 指示に足した合言葉）が返答に入るか、`ply_control` の `list_ops` を呼べるか、秘密情報の変数が会話のシェルにあるか、
+モデルの一覧が 1 件以上返るか、モデルを指定しない会話が一覧の既定のモデルで走るかを見る。実行ファイルは記述（`cli.binEnv`・`cli.exe`）から戻し、
+エージェントごとの上書き（ログインの置き場・既定の代わりに流すモデル）は `tests/delivery-cli.mjs` の `REAL_OVERRIDES` に全員分書く。
 データ置き場と作業場所は一時ディレクトリ、モードは Bypass（承認で止まらないように）。CI では回さない。CLI が無い・ログインしていない
 エージェントは SKIP と理由を出す。手順は `docs/dev-verification.md`「配達物を実物の CLI で確かめる」。
 
