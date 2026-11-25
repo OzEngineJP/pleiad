@@ -1,14 +1,15 @@
-// 登録した Claude アカウントで claude.ai のコネクターを使うときの認証（ADR 0340・ADR 0345・ADR 0350。専用フォルダ方式だけ）。
+// 登録した Claude アカウントの認証（ADR 0340・ADR 0345・ADR 0350・ADR 0353。専用フォルダ方式だけ）。
 //
-// 入口（core/claude-connectors.mjs）がオンのアカウントだけがここへ来る。オフ・未設定・別アカウント・ログイン中・互換接続はここを呼ばない。
-// 会話の CLI は、そのアカウントの専用フォルダ（claude-usage/<id>。使用量の認可のログインを置く場所）を CLAUDE_CONFIG_DIR にして起動する。
+// 登録したアカウントはすべてここへ来る（コネクターのオン・オフで分けない。ADR 0353）。ログイン中・互換接続はここを呼ばない。
+// 会話の CLI は、そのアカウントの専用フォルダ（claude-usage/<id>。設定 › アカウントのログインを置く場所）を CLAUDE_CONFIG_DIR にして起動する。
+// コネクター（入口 core/claude-connectors.mjs）がオフのアカウントは ENABLE_CLAUDEAI_MCP_SERVERS=false も渡し、claude.ai のコネクターを出さない。
 // トークンは env で渡さない。更新は CLI が自分で行う（同じフォルダの CLI どうしは .oauth_refresh.lock で直列になり、失効を検知したら
 // ディスクから読み直す）ので、Pleiad は期限を見ず、更新もしない。専用フォルダの projects・skills・plugins・settings.json は
 // 共有の ~/.claude へのリンクにする（core/claude-own-dir.mjs の ensureClaudeOwnDirLinks。名前が重なった項目は退避する）。
 // 会話・内部呼出し（core/backends/claude.mjs の withConnectorsAuth）と、設定 › 外部 MCP のコネクターの一覧（connectorListProbe）は、
 // どちらも connectors.prepare()（リンクの準備・設定の反映）を通り、{ env: { CLAUDE_CONFIG_DIR } } を受け取る。
 //
-// 止める条件（黙って会話用トークンへ戻さない。投げるのは ConnectorsAuthError。server の scopedOrUnavailable がそのアカウントの会話を
+// 止める条件（黙ってログイン中のアカウントへ戻さない。投げるのは ConnectorsAuthError。server の scopedOrUnavailable がそのアカウントの会話を
 // 「引けなかった理由」で断る）: ログインが無い・読めない / 確かめていない CLI・SDK の版 / 対応していない OS・ssh 経由の macOS /
 // 共有の settings.json に別の認証がある / 履歴の場所を保てない / リンクの準備・設定の反映に失敗。
 // トークン・メールアドレス・組織の id はメッセージ・ログに出さない。
@@ -19,7 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { AccountError, cliConfigFile } from './claude-accounts.mjs';
-import { createClaudeConnectorsGate, createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
+import { createClaudeConnectorSettings, hashConnectorIdentity } from './claude-connectors.mjs';
 import { claudeManagedFiles } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 import { claudeLoginPresent, ensureClaudeOwnDirLinks, macKeychainAuthFailure, OWN_DIR, sshSession, withClaudeUsageDir } from './claude-own-dir.mjs';
@@ -45,6 +46,8 @@ export function supportedConnectorVersions(found, verified = VERIFIED_VERSIONS) 
 export const READ_ATTEMPTS = 3;
 const READ_RETRY_MS = 100;
 const SETTINGS_FILE = 'settings.json';
+/** claude.ai のコネクターを出さない指定（Claude Code 2.1.328 は "0"・"false"・"no"・"off" で止める。ADR 0353） */
+export const NO_CONNECTORS_ENV = 'ENABLE_CLAUDEAI_MCP_SERVERS';
 /**
  * 専用フォルダ方式を使える OS。macOS はキーチェーンの項目の有無で判定する（ADR 0351。2026-11-24 の実機の確かめで通した）。
  * macOS でも ssh からの起動は止める（ssh。画面が無いと CLI が鍵束を開けない）
@@ -93,8 +96,7 @@ function attachConnectorsError(error, account, fallbackKind = 'login') {
       code: error.code,
       accountId: account?.id ?? null,
       accountName: account?.name ?? account?.id ?? '',
-      reauth: ['expired', 'login', 'format', 'ownDirLogin', 'keychainAuth'].includes(kind),
-      needsOwnerCheck: kind === 'owner',
+      reauth: ['login', 'ownDirLogin', 'keychainAuth'].includes(kind),
       params: error.connectorsParams ?? {},
     };
   }
@@ -472,12 +474,11 @@ export function createClaudeConnectorsAuth({ accounts, versions, env = process.e
   }
 
   /**
-   * 入口がオンのときの解決。止める条件は ConnectorsAuthError で投げる。想定外の例外（使用量の設定フォルダを引けないなど）も
-   * login に揃えて投げる（呼び手の一覧の読み取りは ConnectorsAuthError 以外をオフと同じ「ログイン中のアカウントで読む」に回すため。
-   * 元の文面は出さない）
+   * 登録したアカウントの解決（config は入口の設定。enabled でコネクターを出すか決める）。止める条件は ConnectorsAuthError で投げる。
+   * 想定外の例外（設定フォルダを引けないなど）も login に揃えて投げる（元の文面は出さない）
    */
-  async function resolveAuth(account) {
-    try { return await resolveOwnDir(account); }
+  async function resolveAuth(account, config = { enabled: false }) {
+    try { return await resolveOwnDir(account, config?.enabled === true); }
     catch (error) {
       if (error instanceof ConnectorsAuthError) throw attachConnectorsError(error, account);
       throw attachConnectorsError(new ConnectorsAuthError('login', { name: account?.name ?? account?.id }), account);
@@ -501,7 +502,6 @@ export function createClaudeConnectorsAuth({ accounts, versions, env = process.e
         code: err.code,
         message: err.message,
         reauth: err.connectorsError.reauth,
-        needsOwnerCheck: err.connectorsError.needsOwnerCheck,
         identityHash: null,
       };
     }
@@ -567,14 +567,19 @@ export function createClaudeConnectorsAuth({ accounts, versions, env = process.e
     });
   }
 
-  async function resolveOwnDir(account) {
+  /**
+   * account.ownDir は会話・内部呼出し・モデル一覧が使う認証（全アカウント）。account.connectors は同じもので、コネクターがオンのときだけ置く
+   * （server と画面は account.connectors の有無でコネクターを使うかを見る）
+   */
+  async function resolveOwnDir(account, enabled) {
     const { dir } = await ownDirChecks(account);
-    return { account: { ...account, connectors: {
+    const auth = {
       identity: OWN_DIR,
+      enabled,
       async prepare({ cwd } = {}) {
         try {
           await prepareOwnDir(account, dir, cwd, true);
-          return { env: { CLAUDE_CONFIG_DIR: dir } };
+          return { env: { CLAUDE_CONFIG_DIR: dir, ...(enabled ? {} : { [NO_CONNECTORS_ENV]: 'false' }) } };
         } catch (error) { throw attachConnectorsError(error, account); }
       },
       /**
@@ -587,26 +592,23 @@ export function createClaudeConnectorsAuth({ accounts, versions, env = process.e
         if (await macKeychainAuthFailure(dir, { platform, present: loginPresent }) !== 'keychain') return null;
         return attachConnectorsError(new ConnectorsAuthError('keychainAuth', { name: account.name ?? account.id }), account);
       },
-    } } };
+    };
+    return { account: { ...account, ownDir: auth, ...(enabled ? { connectors: auth } : {}) } };
   }
 }
 
 /**
- * server の組み立て: 入口の設定・認証を 1 つにつなぐ。戻りは入口（{ settings, gate, resolve, inspect }）。
- * 方式は専用フォルダ方式だけ（ADR 0350）。入口がオンなら、モデル一覧の取得（forModels）にはトークン付きの登録（accounts.resolve）を渡す
- * （長期トークンの無いアカウントの probeCatalog が使う。#195 で決めるまでそのまま）
+ * server の組み立て: 入口の設定・認証を 1 つにつなぐ。戻りは { settings, resolve, inspect }。
+ * resolve(id) は登録したアカウントを専用フォルダ方式で引く（コネクターのオン・オフで分けない。ADR 0353）。'' / 未指定は null
  */
 export function createClaudeConnectorsWiring({ dataDir, accounts, versions, settings = createClaudeConnectorSettings({ dataDir }), ...options }) {
   const resolveAuth = createClaudeConnectorsAuth({ accounts, versions, ...options });
-  const gate = createClaudeConnectorsGate({ dataDir, resolveAuth, settings });
   return {
-    ...gate,
-    async resolve(id, { forModels = false } = {}) {
-      const config = await settings.read(id);
-      if (config.enabled && forModels) return accounts.resolve(id);
-      const account = await accounts.resolve(id, { requireToken: !config.enabled });
-      if (config.enabled) account.resolveCatalogAccount = () => accounts.resolve(id);
-      return gate.gate(account, config);
+    settings,
+    async resolve(id) {
+      const account = await accounts.resolve(id);
+      if (!account) return account;
+      return (await resolveAuth(account, await settings.read(id))).account;
     },
     inspect: resolveAuth.inspect,
   };
@@ -614,10 +616,9 @@ export function createClaudeConnectorsWiring({ dataDir, accounts, versions, sett
 
 /**
  * 設定 › 外部 MCP のコネクターの一覧の読み取り（core/context-claude-extras.mjs の createConnectorReader の probe）。
- * 新しい会話の既定のアカウントで読む。入口がオンのアカウントは会話と同じ組み立て（connectors.prepare()）を通し、
- * 止める条件（ConnectorsAuthError）はそのまま投げる（ログイン中のアカウントで読み直さない。読めなかった扱いで、覚えの一覧は書かない）。
- * オンの解決は想定外の例外も ConnectorsAuthError にして投げる（createClaudeConnectorsAuth）ので、ここへ来るそれ以外の失敗は
- * 入口の手前（アカウントを消した・トークンが無いなど。オフと同じ）だけで、今までどおりログイン中のアカウントで読む
+ * 新しい会話の既定のアカウントで読む。登録したアカウントは会話と同じ組み立て（ownDir.prepare()。コネクターがオフなら claude.ai の
+ * コネクターは出ない）を通し、止める条件（ConnectorsAuthError）はそのまま投げる（ログイン中のアカウントで読み直さない。読めなかった扱いで、
+ * 覚えの一覧は書かない）。それ以外の失敗（アカウントを消したなど）は、今までどおりログイン中のアカウントで読む
  */
 export function connectorListProbe({ defaultId, resolve, probe }) {
   return async ({ deny }) => {
@@ -628,6 +629,6 @@ export function connectorListProbe({ defaultId, resolve, probe }) {
       if (error instanceof ConnectorsAuthError) throw error;
       account = null;
     }
-    return probe({ deny, token: account?.token ?? null, ...(account?.connectors ? { connectors: account.connectors } : {}) });
+    return probe({ deny, ...(account?.ownDir ? { connectors: account.ownDir } : {}) });
   };
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, writeSessions } from '../lib/data-store.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-limit-resume';
 export const title = '上限で中断しても先回りで止めない（ADR 0352）。止まった後に送った指示も人の「再開」も、解除時刻の前に普通に送られ、まだ上限なら実際に断られてまた止まる。古い自動再開の予定と印は読まない';
@@ -105,7 +106,7 @@ export default async function (t) {
     // ---- 5. アカウントを替えて送ると、替えた先で送られる。替えなくても待たない
     const switched = await newSession();
     await c.runTurn({ sessionId: switched, prompt: `limit ${Date.now() + 3 * HOUR}` });
-    const account = await c.cmd('saveClaudeAccount', { name: '別のアカウント', token: 'sk-ant-oat01-' + 'Y'.repeat(48) });
+    const account = { id: await seedClaudeAccount(dataDir, '別のアカウント') };
     await c.cmd('setTurnSettings', { sessionId: switched, account: account.id });
     const switchedFrom = c.mark();
     await c.cmd('sendMessage', { sessionId: switched, messageId: 'switchedq00001', prompt: 'echo:after-switch' });

@@ -879,35 +879,18 @@
     "close": "閉じる",
     "intro": "登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。",
     "add": "＋ アカウントを追加",
-    "usageNote": "使用量の表示と claude.ai のコネクターには、アカウントごとに claude.ai のログインが要ります。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。",
-    "token": "会話用のトークン",
+    "usageNote": "会話・使用量の表示・claude.ai のコネクターは、どれもアカウントごとの claude.ai のログインで動きます。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。",
     "login": "claude.ai のログイン",
-    "summary": "会話用のトークン: {{token}} · claude.ai のログイン: {{login}}",
+    "summary": "claude.ai のログイン: {{login}}",
     "status": {
       "expired": "切れています",
-      "registered": "登録済み",
       "done": "済み",
       "none": "まだ",
-      "tokenFresh": "✓ 登録済み",
       "loginFresh": "✓ 済み"
     },
-    "owner": {
-      "reissue": "ブラウザーの claude.ai のアカウントを切り替えてから、トークンを発行し直してください。",
-      "expected": "（claude.ai のログインは {{email}}）",
-      "email": "（{{email}}）",
-      "named": "この会話用のトークンは「{{owner}}」のアカウントで発行されています{{expected}}。{{reissue}}",
-      "loggedIn": "この会話用のトークンは、ログイン中のアカウント{{email}}で発行されています{{expected}}。{{reissue}}",
-      "other": "この会話用のトークンは、claude.ai のログイン{{email}}とは別のアカウントで発行されています。{{reissue}}",
-      "same": "この会話用のトークンは「{{names}}」と同じアカウントで発行されています。別のアカウントとして使うなら、ブラウザーの claude.ai のアカウントを切り替えてから、トークンを発行し直してください。",
-      "nameJoin": "」「"
-    },
-    "reissue": "トークンを発行し直す",
-    "reissueMissing": "そのアカウントは見つかりません。一覧から選んでトークンを発行し直してください。",
-    "issue": "トークンを発行",
+    "loginMissing": "そのアカウントは見つかりません。一覧から選んで claude.ai にログインし直してください。",
     "redoUsage": "claude.ai にログインし直す",
     "authorizeUsage": "claude.ai にログイン",
-    "manualReplace": "手動で貼り直す",
-    "manualNew": "手動で貼り付ける",
     "edit": "編集",
     "done": "完了",
     "delete": "削除",
@@ -924,10 +907,6 @@
     "confirmDelete": "「{{name}}」を削除しますか？ このアカウントを選んでいる会話は、選び直すまで送信できません。claude.ai のログインも消えます。",
     "confirmDeleteButton": "削除する",
     "empty": "まだ登録していません。",
-    "storage": {
-      "encrypted": "トークンは OS の資格情報で暗号化して保存します。",
-      "plain": "この起動では暗号化できないため、トークンは本人だけが読めるファイルに保存します（Pleiad デスクトップで開くと暗号化し直します）。"
-    },
     "deleteFailed": "削除できませんでした: {{error}}",
     "loading": "読み込んでいます…",
     "name": {
@@ -940,7 +919,7 @@
       "openLink": "ブラウザーが開かないときはこちら",
       "starting": "Claude Code を起動しています…",
       "step1Usage": "1. ブラウザーで、このアカウントの Claude にログインして「承認」を押してください。",
-      "step1Token": "1. ブラウザーで、使いたいアカウントの Claude にログインして「承認」を押してください。",
+      "step1New": "1. ブラウザーで、追加したいアカウントの Claude にログインして「承認」を押してください。",
       "step2": "2. ブラウザーに表示されたコードを貼ってください。",
       "codePlaceholder": "コードを貼り付け",
       "codeLabel": "ブラウザーに表示されたコード",
@@ -949,16 +928,6 @@
       "failed": "認可できませんでした。",
       "retry": "やり直す",
       "codeRequired": "ブラウザーに表示されたコードを貼り付けてください"
-    },
-    "manual": {
-      "note": "Pleiad から認可できないときは、使いたいアカウントでターミナルから {{command}} を実行し、表示されたトークンを貼り付けてください。",
-      "token": "トークン",
-      "show": "表示",
-      "hide": "非表示",
-      "save": "保存",
-      "saving": "保存しています…",
-      "hint": "発行されたトークン（sk-ant-oat01-…）をそのまま貼り付けてください。保存したトークンは表示しません。",
-      "required": "トークンを貼り付けてください"
     }
   },
   "git": {
@@ -1243,10 +1212,8 @@
       "group": "claude.ai のコネクター（{{name}}）",
       "off": "「{{name}}」ではオフです。",
       "turnOn": "外部 MCP でオンにする",
-      "expired": "claude.ai のログインが切れているため使えません。",
       "stopped": "使えません（{{why}}）。",
       "relogin": "ログインし直す",
-      "openAccount": "アカウントを開く",
       "change": "外部 MCP で変える",
       "unread": "コネクターの一覧をまだ読めていません",
       "none": "claude.ai にコネクターがありません",
@@ -1748,9 +1715,7 @@
         "none": "オン · claude.ai にコネクターがありません",
         "on": "オン · {{n}} 件利用可能",
         "onAuth": "オン · {{n}} 件利用可能 · {{auth}} 件要認可",
-        "expired": "claude.ai のログインが切れています",
         "login": "claude.ai のログインを読めません",
-        "owner": "会話用トークンと claude.ai のログインの持ち主が異なります",
         "version": "未確認の Claude Code の版",
         "platform": "この OS ではまだ使えません",
         "env": "環境変数の認証が優先されています",
@@ -1763,14 +1728,11 @@
         "ssh": "ssh からは使えません",
         "ownDirLinks": "共有設定へのリンクを準備できません",
         "ownDirLinksWindows": "Windows のリンク作成権限を確認してください",
-        "ownDirProfile": "専用フォルダーに設定を反映できません",
-        "format": "claude.ai のログインの形式を読めません"
+        "ownDirProfile": "専用フォルダーに設定を反映できません"
       },
       "tip": {
         "nologin": "「{{name}}」の claude.ai のログインが済んでいません",
-        "expired": "「{{name}}」の claude.ai のログインが切れています。ログインし直すとオンにできます",
         "login": "「{{name}}」の claude.ai のログインを読めません。ログインし直すとオンにできます",
-        "owner": "「{{name}}」の会話用トークンと claude.ai のログインの持ち主が異なります。アカウントを開いて確かめてください",
         "version": "お使いの Claude Code の版はコネクター対応の確認前のため、オンにできません",
         "platform": "この OS では、登録したアカウントの claude.ai のコネクターはまだ使えません",
         "env": "環境変数（ANTHROPIC_API_KEY など）の認証が優先されるため、オンにできません",
@@ -1783,12 +1745,10 @@
         "ssh": "ssh などの画面の無いログインからは使えません。Mac の画面から Pleiad を起動してください。",
         "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
         "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
-        "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
-        "format": "「{{name}}」の claude.ai のログインの形式を読めません。ログインし直すとオンにできます"
+        "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。"
       },
       "login": "ログイン",
       "relogin": "ログインし直す",
-      "openAccount": "アカウントを開く",
       "reload": "読み直す",
       "reloadAria": "「{{name}}」の claude.ai のコネクターを読み直す",
       "switchAria": "「{{name}}」で claude.ai のコネクターを使う",
@@ -2022,44 +1982,36 @@
   "chat": {
     "connectorsFail": {
       "why": {
-        "ownDirLogin": "「{{name}}」の専用フォルダーで claude.ai にログインしてください。",
+        "ownDirLogin": "「{{name}}」は claude.ai にログインしていないか、ログインが切れています。ログインすると送れます。",
         "keychain": "「{{name}}」のログインが入っている Mac のキーチェーンを開けません。画面でロックを解除してから送り直してください。",
         "keychainAuth": "「{{name}}」のログインで断られました。Mac のキーチェーンのロックを解除して送り直してください。解除しても続くときはログインし直してください。",
-        "ssh": "ssh などの画面の無いログインからは、登録したアカウントの claude.ai のコネクターを使えません。Mac の画面から Pleiad を起動するか、コネクターをオフにすると送れます。",
+        "ssh": "ssh などの画面の無いログインからは、登録した Claude アカウントで送れません。Mac の画面から Pleiad を起動してください。",
         "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
         "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
         "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
-        "expired": "「{{name}}」の claude.ai のログインが切れているため、コネクター付きで送れません。ログインし直すか、コネクターをオフにして送ってください。",
-        "login": "「{{name}}」で claude.ai のコネクターを使うには、まず claude.ai にログインしてください。",
-        "owner": "「{{name}}」の会話用トークンと claude.ai のログインの持ち主（組織）が一致しません。「Claude のアカウント」で確かめるか、コネクターをオフにして送ってください。",
-        "version": "お使いの Claude Code（CLI {{cli}} / SDK {{sdk}}）はコネクター対応の確認前の版のため停止しました（確認済み: {{verified}}）。コネクターをオフにすると送れます。",
-        "platform": "登録したアカウントでの claude.ai のコネクターは、この OS ではまだ使えません。コネクターをオフにすると送れます。",
-        "env": "環境変数（ANTHROPIC_API_KEY など）が設定されているため、別の資格情報へ切り替わりコネクターを使えません。環境変数を外すか、コネクターをオフにしてください。",
-        "settings": "settings.json（共有・作業場所・ローカル・管理者）に別の認証の指定（apiKeyHelper や env）があるか読み取れないため、コネクター付きで開始できません。設定を外すか、コネクターをオフにしてください。",
-        "history": "会話の履歴の置き場を動かす指定（環境変数か settings.json）があるため、コネクター付きで開始できません。指定を外すか、コネクターをオフにしてください。",
-        "profile": "「{{name}}」のコネクターの設定を共有の設定フォルダーへ反映できなかったため停止しました。もう一度送るか、コネクターをオフにして送ってください。",
-        "format": "資格情報または共有設定の読み書きに失敗したため停止しました。claude.ai にログインし直すか、コネクターをオフにして送ってください。"
+        "login": "「{{name}}」で送るには、まず claude.ai にログインしてください。",
+        "version": "お使いの Claude Code（CLI {{cli}} / SDK {{sdk}}）は、登録したアカウントでの動作を確かめる前の版のため停止しました（確認済み: {{verified}}）。Claude Code を更新してください。",
+        "platform": "登録した Claude アカウントは、この OS ではまだ使えません。",
+        "env": "環境変数（ANTHROPIC_API_KEY など）が設定されているため、登録したアカウントのログインへ切り替えられません。環境変数を外してください。",
+        "settings": "settings.json（共有・作業場所・ローカル・管理者）に別の認証の指定（apiKeyHelper や env）があるか読み取れないため、登録したアカウントで開始できません。設定を外してください。",
+        "history": "会話の履歴の置き場を動かす指定（環境変数か settings.json）があるため、登録したアカウントで開始できません。指定を外してください。",
+        "profile": "「{{name}}」のコネクターの設定を共有の設定フォルダーへ反映できなかったため停止しました。もう一度送ってください。"
       },
       "fix": {
         "relogin": "claude.ai にログインし直す",
         "login": "claude.ai にログイン",
-        "openAccount": "アカウントを開く",
         "resend": "再送する"
       },
-      "off": "コネクターをオフにして送る",
-      "offNote": "オフは「{{name}}」のほかの会話にも効きます",
       "cancel": "取り消す",
       "waiting": "claude.ai のログインを待っています…",
       "sending": "もう一度送っています…",
       "done": {
         "relogin": "✓ claude.ai にログインし直して、もう一度送りました",
         "login": "✓ claude.ai にログインして、もう一度送りました",
-        "off": "✓ 「{{name}}」の claude.ai のコネクターをオフにして、もう一度送りました",
         "resend": "✓ もう一度送りました"
       },
       "resendFailed": "もう一度送れませんでした: {{error}}",
-      "loginFailed": "claude.ai にログインできませんでした。もう一度お試しください",
-      "offFailed": "コネクターをオフにできませんでした: {{error}}"
+      "loginFailed": "claude.ai にログインできませんでした。もう一度お試しください"
     },
     "secretRequest": {
       "headingMark": "秘密情報の入力",
@@ -2448,17 +2400,16 @@
     "authExpired": {
       "login": "{{agent}} のログイン（{{email}}）の有効期限が切れています。",
       "loginNoEmail": "{{agent}} のログインの有効期限が切れています。",
-      "token": "Claude のアカウント「{{name}}」の会話用のトークンの有効期限が切れています。",
+      "token": "Claude のアカウント「{{name}}」の claude.ai のログインが切れています。",
       "account": "アカウント「{{name}}」（{{agent}}）のログインが切れました",
       "openAccounts": "アカウント設定を開く",
-      "tokenUnnamed": "Claude のアカウントの会話用のトークンの有効期限が切れています。",
+      "tokenUnnamed": "Claude のアカウントの claude.ai のログインが切れています。",
       "signInAgain": "ログインし直す",
       "waiting": "ブラウザーでログインしてください…",
       "cancel": "やめる",
       "signedIn": "✓ ログインしました",
       "resent": "✓ ログインし直して、もう一度送りました",
       "sendAgain": "もう一度送る",
-      "reissue": "トークンを発行し直す",
       "loginFailed": "ログインできませんでした: {{error}}"
     },
     "sendFail": {
@@ -3385,16 +3336,13 @@
         "countAuth": "コネクター {{n}} · {{auth}} 要認可",
         "stopped": "コネクター停止中（{{why}}）",
         "why": {
-          "expired": "ログイン切れ",
           "login": "未ログイン",
-          "owner": "持ち主の不一致",
           "version": "未確認の版",
           "platform": "この OS は未対応",
           "env": "環境変数",
           "settings": "settings.json",
           "history": "履歴の置き場",
           "profile": "設定の反映に失敗",
-          "format": "ログインを読めない",
           "ownDirLogin": "専用フォルダーのログインが必要",
           "keychain": "キーチェーンを開けない",
           "keychainAuth": "ログインで断られた",

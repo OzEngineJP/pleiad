@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 const require = createRequire(import.meta.url);
@@ -28,7 +29,7 @@ try {
   await client.cmd('authLogin', { backend: 'fake' });
   await client.cmd('authStatus', { backend: 'antigravity', probe: true });
   await client.cmd('completeSetup', { backend: 'fake' });
-  const { id: privateId } = await client.cmd('saveClaudeAccount', { name: 'Private', token: 'sk-ant-oat01-' + 'X'.repeat(48) });
+  const privateId = await seedClaudeAccount(path.join(scratch, 'data'), 'Private');
   const { sessionId } = await client.cmd('newSession', { backend: 'fake', cwd: scratch });
   await client.cmd('setTurnSettings', { sessionId, account: '' });
   await client.runTurn({ sessionId, prompt: 'echo:デザイン案の続きに取りかかります。' });

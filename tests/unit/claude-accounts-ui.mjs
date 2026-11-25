@@ -1,6 +1,6 @@
 // 設定 › Claude のアカウント（web/claude-accounts.mjs）が送るコマンドの並びを、ブラウザー無しで確かめる。
 // 期待値は origin/main（カードがその場で開く形にする前）の web/claude-accounts.mjs を読んで書いた（今の実装から写さない）。
-// 違いはコメントに理由を書く（手で貼ったあとの一覧の取り直し）。
+// 違いはコメントに理由を書く。会話用のトークン（setup-token）の発行・手で貼るは ADR 0353 で無くなり、流れは claude.ai のログイン（usage-login）だけ。
 // 描画は本物の web/dom-patch.mjs に通すので、下に HTML を読む小さな DOM を置く（依存を足さない）。
 import assert from 'node:assert/strict';
 
@@ -106,7 +106,7 @@ async function setup(setupClaudeAccounts) {
   doc.getElementById = id => id === 'agentControls' ? controls : null;
   doc.activeElement = doc.body;
   const s = {
-    rows: [{ id: A, name: 'A', hasToken: true, usageLogin: true }, { id: B, name: 'B', hasToken: true, usageLogin: false }],
+    rows: [{ id: A, name: 'A', usageLogin: true }, { id: B, name: 'B', usageLogin: false }],
     calls: [], hold: new Set(), held: [], loginSeq: 0, fail: {},
   };
   s.cmd = (name, args) => {
@@ -165,56 +165,35 @@ export default async function test(t) {
       try { await fn(); t.ok(label, true); }
       catch (e) { t.ok(label, false, String(e?.message ?? e).split(/\r?\n/).slice(0, 6).join(' / ')); }
     };
-    // 会話用のトークンを発行し直す流れを A で始め、コードを待つ所まで進める
+    // claude.ai にログインし直す流れを A で始め、コードを待つ所まで進める
     const reissueA = async s => {
-      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:tok"]`);
+      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);
       await s.event({ loginId: 'L1', phase: 'url', url: 'https://claude.ai/oauth/x' });
     };
 
     // ============================================================ 流れごとの並び（origin/main と同じ）
-    await check('追加（トークンを発行）: claudeLoginStart { kind: setup-token, name, open } → claudeLoginCode → 済んだら claudeAccounts', async () => {
+    await check('追加（claude.ai にログイン）: claudeLoginStart { kind: usage-login, name, open } → claudeLoginCode → 済んだら claudeAccounts', async () => {
       const s = await mk(); s.reset();
       await s.click('[data-add]');
       await s.type('[data-name="new1"]', '新しいアカウント');
-      await s.click('[data-account="new1"] [data-fix="new1:tok"]');
+      await s.click('[data-account="new1"] [data-fix="new1:lg"]');
       await s.event({ loginId: 'L1', phase: 'url', url: 'https://claude.ai/oauth/x' });
       s.q('[data-account="new1"] [data-code]').value = 'code-123';
       await s.submit('[data-account="new1"] [data-flowform]');
-      s.rows.push({ id: 'acct-cccccccccccc', name: '新しいアカウント', hasToken: true, usageLogin: false });
+      s.rows.push({ id: 'acct-cccccccccccc', name: '新しいアカウント', usageLogin: false });
       await s.event({ loginId: 'L1', phase: 'done', accountId: 'acct-cccccccccccc' });
-      // origin: startLogin({ kind: 'setup-token', name }) → cmd('claudeLoginStart', { kind, name, open: desktop() })、submitCode → cmd('claudeLoginCode', { loginId, code })、done → load(true)
+      // origin: startLogin({ kind, name }) → cmd('claudeLoginStart', { kind, name, open: desktop() })、submitCode → cmd('claudeLoginCode', { loginId, code })、done → load(true)
       assert.deepEqual(s.sent(), [
-        ['claudeLoginStart', { kind: 'setup-token', name: '新しいアカウント', open: true }],
+        ['claudeLoginStart', { kind: 'usage-login', name: '新しいアカウント', open: true }],
         ['claudeLoginCode', { loginId: 'L1', code: 'code-123' }],
         'claudeAccounts',
       ]);
-    });
-
-    await check('発行し直す: claudeLoginStart { kind: setup-token, accountId, open }（名前は送らない）', async () => {
-      const s = await mk(); s.reset();
-      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:tok"]`);
-      // origin: startLogin({ kind: 'setup-token', accountId, name }) は accountId があれば name を送らない
-      assert.deepEqual(s.sent(), [['claudeLoginStart', { kind: 'setup-token', accountId: A, open: true }]]);
     });
 
     await check('claude.ai にログインし直す: claudeLoginStart { kind: usage-login, accountId, open }', async () => {
       const s = await mk(); s.reset();
       await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);
       assert.deepEqual(s.sent(), [['claudeLoginStart', { kind: 'usage-login', accountId: A, open: true }]]);
-    });
-
-    await check('手で貼る: saveClaudeAccount { id, name, token }。遅れて届く claudeAccountsChanged（持ち主の確かめ）が画面に出る', async () => {
-      const s = await mk(); s.reset();
-      await s.click(`[data-account="${A}"] .mp-body [data-manual="${A}"]`);
-      s.q(`[data-account="${A}"] [data-token]`).value = 'sk-ant-oat01-fake';
-      await s.submit(`[data-manualform="${A}"]`);
-      // origin: cmd('saveClaudeAccount', { id, name, token }) のあと load(true)。今は応答（saveClaudeAccount は一覧を添えて返す）を使い、
-      // 取り直しは 1 回少ない。持ち主の確かめは後から claudeAccountsChanged で届き、invalidate で取り直す（下で確かめる）
-      assert.deepEqual(s.sent(), [['saveClaudeAccount', { id: A, name: 'A', token: 'sk-ant-oat01-fake' }]]);
-      s.rows[0] = { ...s.rows[0], tokenCheck: { status: 'mismatch', expectedEmail: '', ownerName: 'B' } };
-      s.api.invalidate(); await settle();
-      assert.deepEqual(s.sent().slice(1), ['claudeAccounts']);
-      assert.match(s.card(A).el.textContent, /⚠/, '持ち主の食い違いが出る');
     });
 
     await check('名前の変更: saveClaudeAccount { id, name } → claudeAccounts', async () => {
@@ -307,7 +286,7 @@ export default async function test(t) {
     // ============================================================ 途中の状態
     await check('応答より先に届いたイベントを、応答が来てから当てる', async () => {
       const s = await mk(); s.hold.add('claudeLoginStart');
-      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:tok"]`);
+      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);
       await s.event({ loginId: 'L9', phase: 'url', url: 'https://claude.ai/oauth/early' });
       s.take('claudeLoginStart').resolve({ loginId: 'L9' }); await settle();
       assert.equal(s.card(A).flow, true);
@@ -316,9 +295,9 @@ export default async function test(t) {
 
     await check('古い試みの応答・イベントを、新しい試みに当てない', async () => {
       const s = await mk(); s.hold.add('claudeLoginStart');
-      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:tok"]`);
+      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);
       await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);   // 応答の前に別の流れ
-      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:tok"]`);   // もう一度
+      await s.click(`[data-account="${A}"] .mp-body [data-fix="${A}:lg"]`);   // もう一度
       const [first, second, third] = [s.take('claudeLoginStart'), s.take('claudeLoginStart'), s.take('claudeLoginStart')];
       first.reject(new Error('古い失敗')); await settle();
       assert.ok(!s.card(A).el.textContent.includes('古い失敗'), '古い失敗を出さない');
@@ -326,9 +305,9 @@ export default async function test(t) {
       await s.event({ loginId: 'L2', phase: 'url', url: 'https://claude.ai/oauth/old' });
       third.resolve({ loginId: 'L3' }); await settle();
       assert.equal(s.card(A).flow, false, '古い応答・イベントで進まない');
-      assert.ok(s.q(`[data-slot="flow:${A}:tok"] [data-k="step:starting"]`), '新しい試みは始まったところ');
+      assert.ok(s.q(`[data-slot="flow:${A}:lg"] [data-k="step:starting"]`), '新しい試みは始まったところ');
       await s.event({ loginId: 'L3', phase: 'url', url: 'https://claude.ai/oauth/new' });
-      assert.equal(s.q(`[data-slot="flow:${A}:tok"] a`)?.getAttribute('href'), 'https://claude.ai/oauth/new');
+      assert.equal(s.q(`[data-slot="flow:${A}:lg"] a`)?.getAttribute('href'), 'https://claude.ai/oauth/new');
     });
 
     await check('失敗のあとの［やり直す］: origin と同じ引数で始め直し、前の試みのイベントは当てない', async () => {
@@ -337,10 +316,10 @@ export default async function test(t) {
       s.reset(); s.hold.add('claudeLoginStart');
       await s.click(`[data-account="${A}"] [data-flow="retry"]`);
       // origin: startLogin({ kind: flow.kind, accountId: flow.accountId, name: flow.name })。失敗の流れには取り消しを送らない
-      assert.deepEqual(s.sent(), [['claudeLoginStart', { kind: 'setup-token', accountId: A, open: true }]]);
+      assert.deepEqual(s.sent(), [['claudeLoginStart', { kind: 'usage-login', accountId: A, open: true }]]);
       await s.event({ loginId: 'L1', phase: 'code', message: '' });
       s.take('claudeLoginStart').resolve({ loginId: 'L2' }); await settle();
-      assert.ok(s.q(`[data-slot="flow:${A}:tok"] [data-k="step:starting"]`), '前の試みのイベントで進まない');
+      assert.ok(s.q(`[data-slot="flow:${A}:lg"] [data-k="step:starting"]`), '前の試みのイベントで進まない');
     });
 
     await check('流れの途中の claudeAccountsChanged: 流れと打ちかけのコードが残り、名前は新しくなる', async () => {
@@ -408,12 +387,12 @@ export default async function test(t) {
       await s.click('[data-add]');
       await s.type('[data-name="new1"]', 'Z');
       s.fail.claudeLoginStart = Object.assign(new Error(tr('claude.accounts.nameDuplicate')), { code: 'bad-name' });
-      await s.click('[data-account="new1"] [data-fix="new1:tok"]');
+      await s.click('[data-account="new1"] [data-fix="new1:lg"]');
       assert.ok(s.q('[data-account="new1"] [data-name][aria-invalid="true"]'), '名前の欄に出す');
-      assert.equal(s.q('[data-slot="flow:new1:tok"] [data-flow="retry"]'), null);
+      assert.equal(s.q('[data-slot="flow:new1:lg"] [data-flow="retry"]'), null);
       s.fail.claudeLoginStart = new Error('起動できませんでした');
-      await s.click('[data-account="new1"] [data-fix="new1:tok"]');
-      assert.ok(s.q('[data-slot="flow:new1:tok"] [data-flow="retry"]'), '流れの所に［やり直す］');
+      await s.click('[data-account="new1"] [data-fix="new1:lg"]');
+      assert.ok(s.q('[data-slot="flow:new1:lg"] [data-flow="retry"]'), '流れの所に［やり直す］');
       assert.equal(s.q('[data-account="new1"] [data-name][aria-invalid="true"]'), null);
     });
 
@@ -421,8 +400,8 @@ export default async function test(t) {
       const s = await mk();
       await s.click('[data-add]');
       await s.type('[data-name="new1"]', 'N');
-      await s.click('[data-account="new1"] [data-fix="new1:tok"]');
-      s.rows.push({ id: 'acct-nnnnnnnnnnnn', name: 'N', hasToken: true, usageLogin: false });
+      await s.click('[data-account="new1"] [data-fix="new1:lg"]');
+      s.rows.push({ id: 'acct-nnnnnnnnnnnn', name: 'N', usageLogin: false });
       await s.event({ loginId: 'L1', phase: 'done', accountId: 'acct-nnnnnnnnnnnn' });
       await s.click('[data-account="acct-nnnnnnnnnnnn"] .mp-body [data-fix="acct-nnnnnnnnnnnn:lg"]');
       assert.equal(doc.activeElement?.getAttribute?.('data-slot'), 'flow:new1:lg');

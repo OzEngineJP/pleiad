@@ -7,6 +7,7 @@ import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -233,7 +234,7 @@ export default async function (t) {
       await c.cmd('setTurnSettings', { sessionId: id, account });
       return id;
     };
-    const registered = (await c.cmd('saveClaudeAccount', { name: 'routing', token: 'sk-ant-oat01-' + 'R'.repeat(48) })).id;
+    const registered = await seedClaudeAccount(scratch, 'routing');
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
     await c.cmd('delegationRouting', { refresh: true });
     const owner = await parentOn(registered);

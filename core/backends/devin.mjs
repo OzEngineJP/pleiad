@@ -249,7 +249,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         };
         let error = null, outcome = 'ok';
         try {
-          if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
+          if (args.account != null || args.endpoint) throw new Error(t('accounts.badBackend'));
           check();
           // モデル一覧・CLI の起動・履歴の再生・設定の適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す

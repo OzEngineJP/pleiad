@@ -312,8 +312,7 @@ export function createMcpMatrix({ section, onCount }) {
     const open = o => ctx.openAccount?.(o);
     let b = null;
     if (st === 'nologin') { b = button('btn lnk cx-act', t('mcp.accounts.login')); b.onclick = () => open({ usageLogin: r.id }); }
-    else if (['expired', 'login', 'format', 'ownDirLogin', 'keychainAuth'].includes(k)) { b = button('btn lnk cx-act', t('mcp.accounts.relogin')); b.onclick = () => open({ usageLogin: r.id }); }
-    else if (k === 'owner') { b = button('btn lnk cx-act', t('mcp.accounts.openAccount')); b.onclick = () => open({ focus: r.id }); }
+    else if (['login', 'ownDirLogin', 'keychainAuth'].includes(k)) { b = button('btn lnk cx-act', t('mcp.accounts.relogin')); b.onclick = () => open({ usageLogin: r.id }); }
     else if (st === 'on') {
       b = button('btn cx-act', t('mcp.accounts.reload'));
       b.setAttribute('aria-label', t('mcp.accounts.reloadAria', { name: r.name }));

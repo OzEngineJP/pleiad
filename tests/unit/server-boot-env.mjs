@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { BOOT_ENV_NAMES, isBootEnvName, takeBootEnv, withoutBootEnv } from '../../core/boot-env.mjs';
-import { claudeEnv } from '../../core/claude-accounts.mjs';
+import { claudeOwnDirEnv } from '../../core/claude-connectors-auth.mjs';
 import { usageEnv } from '../../core/backends/claude-usage.mjs';
 import { loginEnv } from '../../core/claude-login.mjs';
 import { mcpTransportConfig } from '../../core/context-runtime.mjs';
@@ -91,7 +91,7 @@ export default async function (t) {
   Object.assign(process.env, bootValues(scratch));
   try {
     takeBootEnv(process.env);
-    t.ok('Claude の会話の env（claudeEnv）に入らない', leaked(Object.keys(claudeEnv(process.env, { token: 'x', extra: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' } }))).length === 0);
+    t.ok('Claude の会話の env（登録したアカウントの claudeOwnDirEnv）に入らない', leaked(Object.keys(claudeOwnDirEnv(process.env, { CLAUDE_CONFIG_DIR: 'x', CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' }))).length === 0);
     t.ok('Claude の使用量の env（usageEnv）に入らない', leaked(Object.keys(usageEnv(process.env, { configDir: scratch }))).length === 0);
     t.ok('Claude のログインの env（loginEnv）に入らない', leaked(Object.keys(loginEnv(process.env, { configDir: scratch }))).length === 0);
     const item = source => ({ name: 'fixture', definition: { command: process.execPath, args: ['x.mjs'], env: { TOKEN: 'v' } }, origins: [{ source }] });

@@ -1,4 +1,5 @@
-// サーバー通し: Claude のアカウントごとのモデル一覧・検証・委譲・bot・設定 › 委譲・アカウント追加/入替/削除（fake CLI）
+// サーバー通し: Claude のアカウントごとのモデル一覧・検証・委譲・bot・設定 › 委譲・アカウント追加/ログインし直し/削除（fake CLI）
+// アカウントは専用フォルダのログインで走る（ADR 0353）。偽の CLI は専用フォルダの資格情報の accessToken（'cred:<access>'）でアカウントを見分ける
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fss from 'node:fs';
@@ -7,17 +8,20 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { installFakeClaude } from '../lib/fake-claude.mjs';
-import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
 
 export const name = 'server-claude-account-models';
-export const title = 'サーバー通し: Claude アカウントごとのモデル一覧・設定・委譲・bot・トークン入替';
+export const title = 'サーバー通し: Claude アカウントごとのモデル一覧・設定・委譲・bot・ログインし直し';
 
-const TOK_VERIFIED = 'sk-ant-oat01-' + 'V'.repeat(40);
-const TOK_PLAIN = 'sk-ant-oat01-' + 'N'.repeat(40);
+// 専用フォルダの偽の資格情報（accessToken）。偽の CLI はこれでアカウントを見分ける
+const ACC_VERIFIED = 'fake-acc-verified';
+const ACC_PLAIN = 'fake-acc-plain';
 // 削除の確認用（probe ログの呼び名が、ほかのアカウントと重ならない）
-const TOK_GONE = 'sk-ant-oat01-' + 'G'.repeat(40);
+const ACC_GONE = 'fake-acc-gone';
 // 一覧の応答が遅いアカウント（画面の待ち 3 秒より後に取れる。fake の delays で遅らせる）
-const TOK_LATE = 'sk-ant-oat01-' + 'L'.repeat(40);
+const ACC_LATE = 'fake-acc-late';
+const key = access => `cred:${access}`;
 const LATE_DELAY_MS = 4_500;
 
 const STANDARD_14 = [
@@ -56,29 +60,33 @@ export default async function (t) {
     login: STANDARD_14,
     default: STANDARD_14,
     tokens: {
-      [TOK_VERIFIED]: MYTHOS_16,
-      [TOK_PLAIN]: STANDARD_14,
-      [TOK_GONE]: STANDARD_14,
-      [TOK_LATE]: MYTHOS_16,
+      [key(ACC_VERIFIED)]: MYTHOS_16,
+      [key(ACC_PLAIN)]: STANDARD_14,
+      [key(ACC_GONE)]: STANDARD_14,
+      [key(ACC_LATE)]: MYTHOS_16,
     },
     labels: {
-      [TOK_VERIFIED]: 'verified',
-      [TOK_PLAIN]: 'plain',
-      [TOK_GONE]: 'gone',
-      [TOK_LATE]: 'late',
+      [key(ACC_VERIFIED)]: 'verified',
+      [key(ACC_PLAIN)]: 'plain',
+      [key(ACC_GONE)]: 'gone',
+      [key(ACC_LATE)]: 'late',
     },
-    delays: { [TOK_LATE]: LATE_DELAY_MS },
+    delays: { [key(ACC_LATE)]: LATE_DELAY_MS },
   }));
 
+  // 承認のあるアカウントと承認の無いアカウント（起動の前に置く。使用量の取り置きが起動のときから 2 つを数える）
+  const verifiedId = await seedClaudeAccount(scratch, 'verified', { access: ACC_VERIFIED });
+  const plainId = await seedClaudeAccount(scratch, 'plain', { access: ACC_PLAIN });
   const cli = await installFakeClaude(cliDir);
-  const api = await startFakeAnthropicApi({ [TOK_VERIFIED]: 'org-verified', [TOK_PLAIN]: 'org-plain', [TOK_GONE]: 'org-gone', [TOK_LATE]: 'org-late' });
   const server = await startServer({
     dataDir: scratch,
     env: {
       AGENT_HOST_BACKENDS: 'claude,fake',
       ...cli.env,
       CLAUDE_CONFIG_DIR: claudeConfig,
-      AGENT_HOST_ANTHROPIC_API: api.url,
+      FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli,
+      // ログインし直し（claudeLoginStart）で書く資格情報は、承認のあるアカウントのもの（6 の入れ替え）
+      FAKE_CLAUDE_LOGIN_ACCESS: ACC_VERIFIED,
       AGENT_HOST_ROUTING_USAGE: 'on',
       FAKE_CLAUDE_MODELS_FILE: modelsFile,
       FAKE_CLAUDE_PROBE_LOG: probeLog,
@@ -138,11 +146,7 @@ export default async function (t) {
     const mLogin0 = await c.cmd('models', { backend: 'claude', cwd: ROOT });
     assert.equal('claude-mythos-5-2' in mLogin0, false);
 
-    // 2. 承認のあるアカウントと承認の無いアカウントを登録 → 承認のあるアカウントだけ Mythos 5.2 / 5.1 を持つ（説明も補われる）
-    const savedVerified = await c.cmd('saveClaudeAccount', { name: 'verified', token: TOK_VERIFIED });
-    const savedPlain = await c.cmd('saveClaudeAccount', { name: 'plain', token: TOK_PLAIN });
-    const verifiedId = savedVerified.id;
-    const plainId = savedPlain.id;
+    // 2. 承認のあるアカウントと承認の無いアカウント → 承認のあるアカウントだけ Mythos 5.2 / 5.1 を持つ（説明も補われる）
 
     // 起動・保存の先読みが回りきるか、models 呼び出しで両アカウントが引く
     let mVerified;
@@ -248,7 +252,7 @@ export default async function (t) {
     assert.equal(botAfterPlain.model, 'claude-mythos-5-2');
     t.ok('bots.*: bot のアカウントに応じたモデル一覧で update を検証し、アカウント変更時は bot.model を保つ', true);
 
-    // 6. 設定 › 委譲（delegationRouting）の一覧警告と、トークン入れ替え時の自動無効化 + 再読み込み
+    // 6. 設定 › 委譲（delegationRouting）の一覧警告と、ログインし直したときの自動無効化 + 再読み込み
     await c.cmd('setDelegationRouting', { settings: { tiers: { t4: [`claude@${verifiedId}:claude-mythos-5-2`, `claude@${plainId}:claude-mythos-5-2`] } } });
     let routing;
     for (let i = 0; i < 80; i++) {
@@ -272,8 +276,12 @@ export default async function (t) {
     assert.equal(Object.keys(countsBefore).includes('verified') && Object.keys(countsBefore).includes('plain'), true, JSON.stringify(countsBefore));
     t.ok('delegationRouting: 一覧が揃った後は、取り直しを重ねても、アカウントごとの一覧の CLI を起こさない', true);
 
-    // トークンを承認のあるアカウントのものに入れ替えるとキャッシュが無効化され、そのアカウントも Mythos 5.2 を返して警告が消える
-    await c.cmd('saveClaudeAccount', { id: plainId, name: 'plain-upgraded', token: TOK_VERIFIED });
+    // 承認のあるアカウントでログインし直すとキャッシュが無効化され、そのアカウントも Mythos 5.2 を返して警告が消える
+    const relogin = c.mark();
+    const { loginId } = await c.cmd('claudeLoginStart', { accountId: plainId });
+    await c.waitFor((e) => e.type === 'claudeLogin' && e.loginId === loginId && e.phase === 'code', { from: relogin, ms: 30_000 });
+    await c.cmd('claudeLoginCode', { loginId, code: 'good#1' });
+    await c.waitFor((e) => e.type === 'claudeLogin' && e.loginId === loginId && e.phase === 'done', { from: relogin, ms: 30_000 });
     let mPlainUpgraded;
     for (let i = 0; i < 100; i++) {
       mPlainUpgraded = await c.cmd('models', { backend: 'claude', cwd: ROOT, account: plainId });
@@ -289,13 +297,12 @@ export default async function (t) {
       await sleep(100);
     }
     assert.equal(routingAfterSwap.warnings.some((w) => w.candidate === `claude@${plainId}:claude-mythos-5-2`), false, JSON.stringify(routingAfterSwap.warnings));
-    t.ok('saveClaudeAccount でトークンを入れ替えるとキャッシュを引き直し、委譲の警告も消える', true);
+    t.ok('ログインし直すとキャッシュを引き直し、委譲の警告も消える', true);
 
     // 7. 削除: 消したアカウントの一覧は忘れる（引き直せず、ほかのアカウントの一覧で代わりもしない）。消した後は、そのアカウントの CLI を起こさない。
-    // 呼び名がほかと重ならない 3 つ目のアカウントで確かめる（トークンを入れ替えた承認の無いアカウントは、承認のあるアカウントと同じ呼び名になる）
-    const savedGone = await c.cmd('saveClaudeAccount', { name: 'gone', token: TOK_GONE });
-    const goneId = savedGone.id;
-    // 追加すると先読みが始まる。そのアカウントの一覧を引く CLI が起きるまで待つ
+    // 呼び名がほかと重ならない 3 つ目のアカウントで確かめる（ログインし直した承認の無いアカウントは、承認のあるアカウントと同じ呼び名になる）
+    const goneId = await seedClaudeAccount(scratch, 'gone', { access: ACC_GONE });
+    // そのアカウントの一覧を引く CLI が起きるまで待つ
     for (let i = 0; i < 100 && !(probeCounts().gone > 0); i++) {
       await c.cmd('models', { backend: 'claude', cwd: ROOT, account: goneId });
       await sleep(100);
@@ -312,8 +319,7 @@ export default async function (t) {
 
     // 8. 一覧が後から届いたとき: 一覧が取れるのが画面の待ち（3 秒）より遅いアカウントは、先に固定の一覧を答える。
     // 本物の一覧が取れた時点で、サーバーが claudeAccountsChanged で知らせる（画面は固定の一覧を持ち続けず、取り直して Mythos が出る）
-    const savedLate = await c.cmd('saveClaudeAccount', { name: 'late', token: TOK_LATE });
-    const lateId = savedLate.id;
+    const lateId = await seedClaudeAccount(scratch, 'late', { access: ACC_LATE });
     const fixedList = await c.cmd('models', { backend: 'claude', cwd: ROOT, account: lateId });
     assert.equal('claude-mythos-5-2' in fixedList, false, '取れる前は固定の一覧で答える');
     const afterFixed = c.mark();
@@ -332,12 +338,11 @@ export default async function (t) {
     const probeTrace = fss.existsSync(probeLog) ? await fs.readFile(probeLog, 'utf8') : '';
     assert.equal(probeTrace.includes('verified') && probeTrace.includes('plain'), true, probeTrace);
     const tail = server.tail(400);
-    assert.equal([TOK_VERIFIED, TOK_PLAIN, TOK_GONE, TOK_LATE].every((tok) => !tail.includes(tok)), true);
-    t.ok('各アカウント別に CLI が起動され、サーバーログにトークンを一切出力しない', true);
+    assert.equal([ACC_VERIFIED, ACC_PLAIN, ACC_GONE, ACC_LATE].every((acc) => !tail.includes(acc)), true);
+    t.ok('各アカウント別に CLI が起動され、サーバーログに資格情報を一切出力しない', true);
   } finally {
     c.close();
     await server.stop();
-    await api.close();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }
