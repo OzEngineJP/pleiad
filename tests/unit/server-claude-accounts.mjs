@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { claudeAccountServerEnv, seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-claude-accounts';
 export const title = 'Claude のアカウント: 一覧・ログインの無いアカウントは選ばせず止める・会話ごとの選択・分岐と委譲での引き継ぎ・削除したら止める';
@@ -21,7 +21,7 @@ export default async function (t) {
   const cliDir = path.join(scratch, 'cli-config');
   await fs.mkdir(cliDir, { recursive: true });
   await fs.writeFile(path.join(cliDir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: '22222222-1111-4000-8000-00000000000a', emailAddress: 'logged-in@example.com' } }));
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir }, dataDir: scratch });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', CLAUDE_CONFIG_DIR: cliDir, ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')) }, dataDir: scratch });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const row = async id => (await c.cmd('listSessions')).find(s => s.id === id);
   try {

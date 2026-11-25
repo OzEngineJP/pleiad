@@ -85,6 +85,7 @@ export default async function (t) {
       ...cli.env,
       CLAUDE_CONFIG_DIR: claudeConfig,
       FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli,
+      AGENT_HOST_FAKE_OWN_DIR_LOGIN: 'file',   // macOS でも本物のキーチェーンを見ない
       // ログインし直し（claudeLoginStart）で書く資格情報は、承認のあるアカウントのもの（6 の入れ替え）
       FAKE_CLAUDE_LOGIN_ACCESS: ACC_VERIFIED,
       AGENT_HOST_ROUTING_USAGE: 'on',
