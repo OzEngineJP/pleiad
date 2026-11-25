@@ -12,17 +12,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { hookedTaskStorage } from '../lib/task-storage.mjs';
+import { noticeResultParts } from '../../core/task-notice-events.mjs';
 
 export const name = 'agent-tasks-end-notice';
-export const title = '子の回の終了通知: ply_task_cancel・人の止め・依頼元が止められている間・止めた直後の外からのターン';
+export const title = '子の回の終了通知: ply_task_cancel・人の止め・依頼元が止められている間・止めた直後の外からのターン・取り直し';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await sleep(15); } throw new Error('timeout'); }
 
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-end-'));
   let seq = 0;
-  const notReady = new Set(), stoppedOwners = new Set(), gates = new Map();
-  // 届いた終了通知: [依頼元, taskId, status, stoppedBy, result, events]
+  const notReady = new Set(), stoppedOwners = new Set(), limitHeld = new Set(), gates = new Map(), flags = { requeueExternal: false };
+  // 届いた終了通知: [依頼元, taskId, status, stoppedBy, result, events, 行の写し]
   const delivered = [];
   const externalRuns = [];
   let hooked = hookedTaskStorage(dir, {});
@@ -33,7 +34,18 @@ export default async function(t) {
       if (opts.external) {
         const o = await opts.external.turn({});
         externalRuns.push([task.taskId, o]);
+        // 始まった外からのターンが取り直し（requeue）になる
+        if (flags.requeueExternal) return { requeue: true };
         return { outcome: signal.aborted ? 'aborted' : 'ok', text: `woken:${o}` };
+      }
+      // 上限で断られた回（上限の明ける時刻つき）
+      if (prompt === 'limited') return { outcome: 'limited', limit: { resetsAt: Date.now() + 3 * 3600_000 }, text: '' };
+      // 完了したが注意書き（error）の付いた回（履歴を読み直せなかったときなど）
+      if (prompt === 'warned') return { outcome: 'ok', text: '作業は終えた', error: '注意: 履歴を読めませんでした' };
+      // 止める合図を受けて、結果を書かずに取り直し（requeue）で返る回
+      if (prompt === 'hold-requeue') {
+        await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+        return { requeue: true };
       }
       if (prompt.startsWith('hold')) {
         await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
@@ -45,8 +57,10 @@ export default async function(t) {
     },
     ready: async task => !notReady.has(task.parentSessionId),
     ownerStopped: owner => stoppedOwners.has(owner),
+    // 上限の明けを待っている子の会話（積まれた指示で次の回を始めない）
+    held: row => limitHeld.has(row.sessionId) ? { resetsAt: Date.now() + 3 * 3600_000 } : null,
     deliver: async tasks => {
-      for (const x of tasks) delivered.push([x.parentSessionId, x.taskId, x.status, x.stoppedBy ?? null, x.result, x.events ?? []]);
+      for (const x of tasks) delivered.push([x.parentSessionId, x.taskId, x.status, x.stoppedBy ?? null, x.result, x.events ?? [], structuredClone(x)]);
       return 'ok';
     },
   };
@@ -90,6 +104,29 @@ export default async function(t) {
     t.ok('人が直接止めた子の終了通知はすぐ届く（人が止めた・止めた時点までの返答）',
       of(human.taskId).length === 1 && of(human.taskId)[0][2] === 'cancelled' && of(human.taskId)[0][3] === 'human' && of(human.taskId)[0][4] === 'partial:hold-b',
       JSON.stringify(of(human.taskId)));
+
+    // ---- 完了したが注意書きの付いた回: 回の終わりの出来事にもエラーを残す（「エラー」の段落はこれを見て出す）
+    const warned = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'warned' });
+    await until(() => of(warned.taskId).length === 1);
+    const warnedRun = of(warned.taskId)[0][5].find(e => e.kind === 'run');
+    t.ok('完了したが注意書きの付いた回は、回の終わりの出来事に返答とエラーを残す',
+      warnedRun?.status === 'completed' && warnedRun.result === '作業は終えた' && warnedRun.error === '注意: 履歴を読めませんでした', JSON.stringify(warnedRun));
+
+    // ---- 上限の明けを待って積まれた子（走る回が無い）を人が止めた: 止めたことを終了通知で届け、上限の一言にしない。「止めたもの」には返さない
+    const limited = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'limited' });
+    await until(() => manager.get(limited.taskId).status === 'failed' && manager.get(limited.taskId).notification === 'sent');
+    limitHeld.add(manager.get(limited.taskId).sessionId);
+    const queuedSend = await manager.call('parent', 'ply_task_send', { taskId: limited.taskId, message: 'つづき' });
+    await sleep(300);
+    const queuedBefore = manager.get(limited.taskId).status;
+    const limitedStop = await manager.cancel(limited.taskId, { by: 'human' });
+    await until(() => of(limited.taskId).length === 2);
+    const limitedNotice = of(limited.taskId)[1];
+    t.ok('積まれた子を人が止めると、人が止めた回の終わりを終了通知で届け、前の回の上限（limit）を外す',
+      queuedSend.status === 'queued' && queuedBefore === 'queued' && limitedNotice[2] === 'cancelled' && limitedNotice[3] === 'human'
+      && shape(limitedNotice[5]).join('|') === 'run:cancelled:human:' && !limitedNotice[6].limit && !manager.get(limited.taskId).limit,
+      JSON.stringify({ queuedSend: queuedSend.status, queuedBefore, notice: limitedNotice.slice(0, 6), limit: limitedNotice[6].limit ?? null }));
+    t.ok('人が止めた子は取り消しの戻り値で返さない（依頼元の「止めたもの」に重ねて残さない）', limitedStop === null, JSON.stringify(limitedStop));
 
     // ---- 子を取り消すと孫も止まる。孫の終了通知で子（取り消している途中）を起こさない
     const child = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'hold-c' });
@@ -209,6 +246,45 @@ export default async function(t) {
     await until(() => of(runner.taskId).length === 1);
     t.ok('その指示は次の回の終わりの知らせに、起きた順で載る', shape(of(runner.taskId)[0][5]).join('|') === 'human:途中で一言:0|run:cancelled:parent:partial:hold-f',
       JSON.stringify(of(runner.taskId)));
+
+    // ---- 完了して通知が待っている子へ人が送り、そのターンの途中で通知が届き、その後でターンが取り直しになった:
+    //      起こす前の状態へ戻しても、届け済みの完了をもう 1 通送らない
+    notReady.add('parent');
+    const requeued = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'quick-5' });
+    await until(() => manager.get(requeued.taskId).status === 'completed' && manager.get(requeued.taskId).notification === 'pending');
+    const requeuedSession = manager.get(requeued.taskId).sessionId;
+    flags.requeueExternal = true;
+    try {
+      await manager.external(requeuedSession, 'human', async hooks => {
+        if (!hooks) return 'plain';
+        await hooks.began();
+        notReady.delete('parent');
+        // 人の指示が子に渡った（これで、待たせていた前の回の知らせが出る）
+        await manager.humanSent(requeuedSession, { text: '取り直しの前' });
+        await until(() => of(requeued.taskId).length === 1);
+        return 'requeued';
+      });
+    } finally { flags.requeueExternal = false; }
+    await until(() => manager.get(requeued.taskId).status === 'completed');
+    await sleep(1200);
+    t.ok('途中で届いた通知の後に取り直しになっても、届け済みの完了をもう 1 通送らない', of(requeued.taskId).length === 1
+      && shape(of(requeued.taskId)[0][5]).join('|') === 'run:completed:-:result:quick-5|human:取り直しの前:0'
+      && manager.get(requeued.taskId).status === 'completed' && manager.get(requeued.taskId).notification === 'sent',
+      JSON.stringify({ delivered: of(requeued.taskId).map(x => [x[2], shape(x[5]).join('|')]), notification: manager.get(requeued.taskId).notification }));
+
+    // ---- 結果を書かずに止まった回（取り直しの途中で止めた）: 行の result は前の回のまま。通知の「結果」の段落に出さない
+    const stale = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'quick-6' });
+    await until(() => manager.get(stale.taskId).notification === 'sent');
+    await manager.call('parent', 'ply_task_send', { taskId: stale.taskId, message: 'hold-requeue' });
+    await until(() => manager.get(stale.taskId).status === 'running');
+    await manager.call('parent', 'ply_task_cancel', { taskId: stale.taskId });
+    await until(() => of(stale.taskId).length === 2);
+    const staleRow = of(stale.taskId)[1][6];
+    const staleParts = noticeResultParts('ja', staleRow, 16000);
+    t.ok('結果を書かずに止まった回の通知に、前の回の結果を「結果」として出さない', staleRow.status === 'cancelled' && staleRow.stoppedBy === 'parent'
+      && staleRow.result === 'result:quick-6' && shape(staleRow.events).join('|') === 'run:cancelled:parent:' && staleParts.result === '',
+      JSON.stringify({ status: staleRow.status, result: staleRow.result, events: shape(staleRow.events), staleParts }));
+    t.ok('前の回（結果を書いた回）の通知には「結果」の段落が出る', noticeResultParts('ja', of(stale.taskId)[0][6], 16000).result.includes('result:quick-6'));
 
     // ---- 届けていない出来事は再起動の後も残り、届く
     notReady.add('parent');

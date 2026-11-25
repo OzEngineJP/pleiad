@@ -33,24 +33,30 @@
    - 再開（`wakeResume`）
    - 別の会話からの送信（`wakeRelay`。`sessions.send`・`sentBy` のある送信予定）
    2 つ以上は `wakeSeparator` でつなぐ。最初の回（依頼で始まった回）と、走っている回への追加の指示・人の送信には付けない（止まっていないので「再び」ではない）。
-4. **名札**: Chrome を戻した後の「続けてください」は、委譲の子では送信待ちの項目に `byHandoff` を付け、台帳（`deliveries`）に `by: 'handoff'` で載せる。履歴と流れの出来事には `sentByHandoff` を付け、子の会話の名札を「Chrome を戻した続き」（`ui:dialog.work.handoffContinue`）にする。人の指示（`humanInstructions`）には数えない。人の送信は今までどおり「あなた」で数え、依頼元の `ply_task_send` は「追加の指示」のまま。主の会話（委譲の子でない会話）の続きは今までどおり印を付けない。
+4. **名札**: Chrome を戻した後の「続けてください」は、委譲の子では送信待ちの項目に `byHandoff` を付け、台帳（`deliveries`）に `by: 'handoff'` で載せる。履歴と流れの出来事には `sentByHandoff` を付け、子の会話の名札を「Chrome を戻した続き」（`ui:dialog.work.handoffContinue`）にする。人の指示（`humanInstructions`）には数えない。子の会話の「再開」の文も同じ形で、委譲の子では送信待ちの項目に `byResume` を付け、台帳に `by: 'resume'` で載せ、履歴と流れの出来事に `sentByResume` を付けて、名札を「再開」（`ui:dialog.work.resumeContinue`）にする。人の指示には数えない。人の送信は今までどおり「あなた」で数え、依頼元の `ply_task_send` は「追加の指示」のまま（台帳の `by` は `human` / `ai` / `handoff` / `resume` の 4 つ）。主の会話（委譲の子でない会話）の続きと再開は今までどおり印を付けない。
 5. **二度押し**: 「戻す」の続きの `messageId` はカードの id から決まり（0148）、送信待ちは同じ `messageId` を 1 件にまとめる。走り直しは 1 回、知らせも 1 回。
 6. **モーダル**: `state.runningIds` で一覧の行と見出しを「実行中」に重ねる回避策を外し、タスクの行の状態をそのまま出す。
 
 7. **終了通知と出来事**（2026-11-25 追補。プロダクトオーナーの決定）。子の回が終わるたびに、終わり方・止めた人・返答を記録する。人が子へ直接送った指示は、中身と送り手を記録する。届けるときは、まだ届けていない出来事を起きた順に全部載せ、届ける時点の子の状態を添えて 1 通にする。
    - **出来事の一覧**（タスクの行の `events`。DB に保存し、再起動の後も届ける）。形は 2 つ。
-     - 回の終わり: `{ id, at, kind: 'run', status, stoppedBy, cause, result, error? }`。`status` は `completed` / `failed` / `cancelled`。`stoppedBy` は取り消しのときだけ `human`（人が止めた。子の会話の中断・人の取り消し）・`parent`（依頼元の `ply_task_cancel`）・`owner`（依頼元の会話の中断・依頼元ごと止めた子孫）、ほかは `null`。`cause` は §3 のきっかけの種類の並び。`result` / `error` はその回の返答と失敗の文（伏せて切ったもの）。走る回の無いまま止めた（積まれただけの）子は、止めたときに回の終わりを 1 つ作る。
+     - 回の終わり: `{ id, at, kind: 'run', status, stoppedBy, cause, result, error? }`。`status` は `completed` / `failed` / `cancelled`。`stoppedBy` は取り消しのときだけ `human`（人が止めた。子の会話の中断・人の取り消し）・`parent`（依頼元の `ply_task_cancel`）・`owner`（依頼元の会話の中断・依頼元ごと止めた子孫）、ほかは `null`。`cause` は §3 のきっかけの種類の並び。`result` / `error` はその回の返答とエラー（失敗の文・完了した回の注意書き。伏せて切ったもの）。走る回の無いまま止めた（積まれただけの）子は、止めたときに回の終わりを 1 つ作る。このとき前の回の上限（`limit`）は外す（残すと通知が上限の一言だけになり、止めたことが伝わらない。積んだ送信も捨てるので、上限の明けを待つものは無い）。
      - 人の指示: `{ id, at, kind: 'human', text, attachments }`。人の発言が子に渡った時（`humanSent`。台帳に初めて載った時）に作る。`text` は `redactForPeer` で伏せ、300 字で切って「…」を付ける。添付は数（`attachments`）だけ。「戻す」の続き（`byHandoff`）と「再開」は人の指示ではない（作らない）。
      - 50 件まで（`MAX_EVENTS`）。超えたら古いものから捨て、捨てた数を `eventsDropped` に残す（知らせの先頭に「これより前の出来事 N 件は省きました」）。
-   - **届け方**: 依頼元が受け取れるとき、まだ届けていない出来事を起きた順に全部載せて 1 通にする（`agent:delegation.noticeEvents`。各行は `eventRun` / `eventHuman`、2 つ目から「その後、」）。最後に届ける時点の子の状態（`eventStateRunning`「子は動いています。終わったら改めて知らせます。」/ `eventStateStopped`）を添える。止められた回があれば止められた後の扱いの一言（`eventStopHint`）、人の指示があればその一言（`eventHumanHint`）を足す。最後の回の返答は、子が止まっているときは結果の段落と重なるので行には書かない。
+   - **届け方**: 依頼元が受け取れるとき、まだ届けていない出来事を起きた順に全部載せて 1 通にする（`agent:delegation.noticeEvents`。各行は `eventRun` / `eventHuman`、2 つ目から「その後、」）。最後に届ける時点の子の状態（`eventStateRunning`「子は動いています。終わったら改めて知らせます。」/ `eventStateStopped`）を添える。止められた回があれば止められた後の扱いの一言（`eventStopHint`）、人の指示があればその一言（`eventHumanHint`）を足す。
+   - **「結果」「エラー」の段落と返答の置き場**（`core/task-notice-events.mjs` の `noticeResultParts`・`eventsNotice`）。同じ返答を 2 か所に書かない。
+     - 子が止まっている: 最後の回の返答・エラーは「結果」「エラー」の段落に載せ（16000 字まで。続きは `ply_task_status` の `offset`）、その回の行には書かない。前の回の返答は行に書く。
+     - 子が止まっていて、最後の回が結果を書かずに終わった（積まれただけで止めた・取り直しの途中で止めた・例外で失敗した）: その段落を出さない。行の `result` は結果を書いた前の回のままなので、出すと親が古い結果を今の結果と読み違える。`result` を回の始めで消さないのは、`ply_task_status` の `offset` で読み進める結果と、取り直しで戻す前の状態がこの値だからで、消すとそれらが失われる（その子の `ply_task_status` の `result` には前の回の結果が残る）。
+     - 子が動いている（次の回が始まった）: 「結果」「エラー」の段落を出さず、終わった回の返答・エラーは行にだけ書く（行の文は 300 字まで。全文は回が止まった後の通知か `ply_task_status` で読む）。
+     - 出来事を持たない古い行（版を上げる前に積まれた通知）は、今までどおり段落を出す。
    - **届けた出来事は消す**。送る直前に載せた出来事の id を `sending` に控え、受け取られたら（`sent`）その分だけ消す（`delivered`）。届ける間に増えた出来事は残り、次の通知に載る。新しい回が始まっても、届けていない出来事は消さない。走っているターンへ渡した通知が読まれないままターンが死んだら（`renotify`）、控え（`lastNotice`）から出来事を先頭へ戻して送り直す。依頼元が `ply_task_status` / `ply_task_wait` で終わった結果を受け取ったら（`read`）、出来事も消す。
    - **起こすのは回の終わりだけ**。人の指示だけでは依頼元を起こさない（次の回の終わりの通知に載る）。子が走っている間でも、届けていない回の終わりがあれば届ける（人が止めた直後に人が送って子がまた走り出したときも、止まったことを先に知らせる）。人が止めた直後の人の送信は、止まった回の通知をその指示が記録されるまで待たせ（`humanWaits`）、止まったことと指示を 1 通にする。
    - **依頼元の会話が止められている間は届けない**。依頼元の会話の中断（`cancelOwner` の `by: 'human'`）と依頼元ごと止めた子孫には印（`ownerStop`）を付け、終了通知は `pending` のまま、依頼元の会話の次のターンの始め（`takeHeld`）にまとめて渡す。印を付けるのは、止めた会話へ完了通知で新しいターンを始めない（勝手に再開しない）ためと、取り消している最中の子を孫の終了通知で起こさないため。
    - **`ply_task_cancel` は止める合図を送ってすぐ戻る**。止まったことは同じ終了通知（「依頼元が取り消しました」）で届く。もう終わっていて通知も届いていれば「もう終わっています」（`cancelEnded`）、届いていなければその通知を届ける（`cancelEndedPending`。`read` にはしない）。
    - `humanInstructions`（累計）は画面と試験のために残すが、知らせの文には載せない（0317 §7 の「人からの指示 N 件」は出来事の一覧で置き換えた）。
-   - `ply_task_status` / `ply_task_wait` の戻り値にも、まだ届けていない出来事（`events`・`eventsDropped`）を載せる。
+   - `ply_task_status` / `ply_task_wait` の戻り値にも、まだ届けていない出来事（`events`・`eventsDropped`）を載せる。消すのは、終わった（`completed` / `failed`）子の結果を受け取って通知を `read` にしたときだけ。走っている子・取り消し中の子（と取り消された子）では出来事を消さずに返すので、後の通知に同じ出来事がもう一度載る（依頼元は戻り値で一度読んだ出来事を通知でまた読む）。届いたかどうかを通知の配送だけで決め、読み取りの道で出来事を落とさないための扱い。
    - 止められた回の後の外からのターン（`external`）は、止めている最中（`cancelling`）の回に合流しない（新しい回になる）。
    - ホストに任せた子（根）と、止めた側の分からない取り消し（`by` の無い取り消し。ホストの便りの口など）は今までどおり（通知を `suppressed` にし、出来事を作らない）。
+   - `agentTasks.cancel` が返す（`abortSessions` が依頼元の「止めたもの」に残し、次のターンで「完了通知も届きません」と伝える）のは、通知を止めた取り消し（`by` の無い取り消し・ホストに任せた子）だけ。`by` のある取り消しは終了通知で届くので返さない（「届きません」と「人が止めました」の通知が食い違わないため）。
 
 ### 変えないもの
 
@@ -68,10 +74,11 @@
 
 ## 影響
 
+- 取り直し（`externalRequeue`）で起こす前の状態へ戻すとき、起きた回が始まった後に依頼元へ通知が届いていれば、通知の状態は届いたもの（`sent` など）のままにする（届け済みの完了をもう 1 通送らない）。
 - 終わった子へ人が送ると、依頼元に新しい完了通知が届く（0317 の「新しい完了通知は出ない」を置き換える）。依頼元の AI は、出来事の一覧の人の指示とその回のきっかけで人の送信だと分かる。
 - 完了通知の本文に「これまでの出来事（起きた順）」と「今の状態」の行が常に入る（ふつうの完了でも 3 行増える）。`agent:delegation.noticeWake`・`noticeEnd`・`end*`・`noticeHuman` の文は無くなった。
 - `ply_task_cancel` と人の取り消しで止まった子は、通知を止めず（`suppressed` にせず）終了通知を届ける。
 - 依頼元の会話に、人の送信のたびに（止まるたびに）完了通知が 1 通来る。走っている間に何件送っても、止まったときの 1 通。
 - `ws` の `runTurn` コマンド（送信待ちを通らない。試験と `mobile/scripts/fake-host` だけが使う）は引き取らない。
 - 付け直し（無停止の更新）で外から起きた回を引き継ぐ道は、`ply_task_send` の回と同じ（引き継ぎの間に戻った指示はタスクの待ち行列へ戻る）。
-- 試験: `tests/unit/server-task-wake.mjs`（人の送信・続けて 2 件で 1 回・止めて再開）・`tests/unit/server-chrome-handoff-wake.mjs`（Issue #235 の再現・名札・数えない・二度押し）・`tests/unit/server-worktree.mjs`（片付いた作業場所の作り直し）・`tests/unit/agent-tasks-end-notice.mjs`（§7。人が止めて直後に送る・依頼元が受け取れない間の 3 件・伏せと 300 字・再起動の後に届く・人の送信だけでは起こさない）・`tests/unit/server-interrupt-stops.mjs`（依頼元の会話の中断の後の次のターンで渡す）・`tests/unit/server-human-sent.mjs`・`tests/unit/stream-messages.mjs`・`tests/unit/conversation-view-child.mjs`・`tests/browser/work-dialog-stop.mjs`。
+- 試験: `tests/unit/server-task-wake.mjs`（人の送信・続けて 2 件で 1 回・止めて再開）・`tests/unit/server-chrome-handoff-wake.mjs`（Issue #235 の再現・名札・数えない・二度押し）・`tests/unit/server-worktree.mjs`（片付いた作業場所の作り直し）・`tests/unit/agent-tasks-end-notice.mjs`（§7。人が止めて直後に送る・依頼元が受け取れない間の 3 件・伏せと 300 字・再起動の後に届く・人の送信だけでは起こさない・途中で届いた後の取り直し・結果を書かずに止まった回・上限で積まれた子を人が止めた・完了した回の注意書き）・`tests/unit/task-notice-events.mjs`（§7 の「結果」「エラー」の段落と返答の置き場）・`tests/unit/server-interrupt-stops.mjs`（依頼元の会話の中断の後の次のターンで渡す）・`tests/unit/server-human-sent.mjs`・`tests/unit/stream-messages.mjs`・`tests/unit/conversation-view-child.mjs`・`tests/browser/work-dialog-stop.mjs`（人が止めた子の ID と「人が止めました」が、依頼元を起こす知らせに載る）。

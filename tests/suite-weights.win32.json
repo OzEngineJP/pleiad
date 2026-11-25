@@ -29,6 +29,7 @@
     "agent-tasks-command-settle": 996,
     "agent-tasks-command-storage": 274,
     "agent-tasks-end-notice": 6000,
+    "task-notice-events": 300,
     "agent-tasks-interrupt": 1913,
     "agent-tasks-notice": 8790,
     "agent-tasks-notice-accepted": 9705,

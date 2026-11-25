@@ -4,7 +4,7 @@
 //   3. 承認待ちの子: 出る。押すと承認も片づき、子が止まる
 //   4. 順番待ち（queued）の子: 出る。押すと止まる（abort で止まらなければ cancelAgentTask に切り替える根拠をここで測る）
 //   5. ターンの外で孫の完了を待っている子: 出る。押すと子も孫も止まる
-//   6. 止めた後の依頼元の次のターンに、止めた子が伝わる
+//   6. 人が止めた子は、依頼元をすぐ起こす知らせ（taskNotice）で伝わる。その子の節に子の ID と「人が止めました」が載る（ADR 0352 §7）
 //   7. メインの中断ボタンも同じ形（塗りの四角・34×34・字なし）
 // 実行: node tests/browser/work-dialog-stop.mjs   （WORK_DIALOG_STOP_SHOTS=<dir> で画面も撮る）
 // 本物のサーバー（fake バックエンド・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
@@ -105,10 +105,15 @@ try {
   });
   const cmds = (name) => evaluate(n => window.__cmds.filter(c => c.command === n), name);
 
+  // 止めた子の知らせで依頼元が起き、一覧が描き直されると、印を付けた要素が押す前に入れ替わることがある。そのときは印を付け直して押し直す
   const clickOn = (sel, label) => {
-    const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
-    assert.ok(ok, `target exists: ${label}`);
-    try { ab('click', '[data-probe="pick"]'); } finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    for (let tries = 0; ; tries++) {
+      const ok = evaluate(s => { const n = document.querySelector(s); if (!n) return false; n.dataset.probe = 'pick'; n.scrollIntoView({ block: 'center', behavior: 'instant' }); return true; }, sel);
+      assert.ok(ok, `target exists: ${label}`);
+      try { ab('click', '[data-probe="pick"]'); return; }
+      catch (error) { if (tries >= 3 || !/Element not found/.test(String(error.stderr ?? error.message))) throw error; }
+      finally { evaluate(() => document.querySelector('[data-probe="pick"]')?.removeAttribute('data-probe')); }
+    }
   };
   const dialogOpen = () => evaluate(() => document.getElementById('workDialog').open);
   const openCard = async (taskId, label) => {
@@ -231,13 +236,28 @@ try {
   await wait(async () => (await tasks()).filter(r => r.parentSessionId === grChild).every(r => !['queued', 'running', 'cancelling'].includes(r.status)), 'the grandchild stopped too');
   console.log('PASS: child waiting for a grandchild — the button shows; abort stops both');
 
-  // ---- 6. 依頼元の次のターンで、止めた子が伝わる ----
+  // ---- 6. 人が止めた子は、依頼元をすぐ起こす知らせで伝わる（次のターンを待たない。ADR 0352 §7） ----
+  //      知らせは子ごとの節（1 件なら見出しが「[Pleiad タスク完了通知 / <ID>]」、まとめたら「--- <ID> ---」）に分かれる。その子の節だけを見る
   evaluate(() => document.getElementById('workDialog').close());
-  const mark = client.mark();
-  await client.cmd('runTurn', { sessionId: parent, prompt: 'echo:つづき' });
-  const note = await client.waitFor(e => e.type === 'interruptionNote' && e.sessionId === parent, { from: mark, ms: 30_000 });
-  for (const id of [runT.taskId, askT.taskId, limT.taskId, grT.taskId]) assert.ok(note.text.includes(id), `the parent next turn learns of ${id}`);
-  console.log('PASS: the parent learns of the stopped children on its next turn');
+  const sectionOf = (text, id) => {
+    const at = text.indexOf(id);
+    if (at < 0) return null;
+    const next = text.indexOf('\n--- ply-task-', at);
+    return text.slice(at, next < 0 ? undefined : next);
+  };
+  const stoppedNotice = id => client.since(0).filter(e => e.type === 'taskNotice' && e.sessionId === parent)
+    .map(e => sectionOf(String(e.text), id)).find(s => s && s.includes('人が止めました'));
+  for (const [id, label] of [[runT.taskId, 'running'], [askT.taskId, 'approval'], [limT.taskId, 'queued'], [grT.taskId, 'grandchild wait']]) {
+    try { await wait(() => !!stoppedNotice(id), `the notice that wakes the parent says a person stopped ${label} (${id})`); }
+    catch (e) {
+      // 届かなかったときの手がかり（行の通知の状態と、その子の ID を含む節）
+      const row = await taskOf(id);
+      console.log('notice missing', label, JSON.stringify({ status: row?.status, notification: row?.notification, stoppedBy: row?.stoppedBy, events: row?.events,
+        sections: client.since(0).filter(x => x.type === 'taskNotice' && x.sessionId === parent).map(x => sectionOf(String(x.text), id)).filter(Boolean).map(s => s.slice(0, 600)) }));
+      throw e;
+    }
+  }
+  console.log('PASS: the notice that wakes the parent carries each stopped child id and 「人が止めました」');
 
   // ---- 7. メインの中断ボタンも同じ形 ----
   const known = new Set([parent, first.sessionId, ...(await tasks()).flatMap(r => [r.sessionId, r.parentSessionId])]);

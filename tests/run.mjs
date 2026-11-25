@@ -356,6 +356,8 @@ const SUITES = [
   // 中断で委譲タスクを止める: 届いていない結果を捨てずに返す・取り消したものを返す・cancel は終わったタスクの通知を止めない・再起動で止まったもの
   './unit/agent-tasks-interrupt.mjs',
   './unit/agent-tasks-end-notice.mjs',
+  // 完了通知の出来事の行と「結果」「エラー」の段落: 結果を書かずに止まった回に前の結果を出さない・動いている子の返答は 1 度だけ（ADR 0352 §7）
+  './unit/task-notice-events.mjs',
   './unit/server-delegation-notice.mjs',
   // 人が子の会話へ直接送った発言（ADR 0317）: 履歴の「あなた」の印・出来事の印・完了通知の出来事に載る人の指示
   './unit/server-human-sent.mjs',

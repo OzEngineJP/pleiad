@@ -47,6 +47,7 @@ import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
 import { acquireDataLockWait, retryTransient, LOCK_WAIT_MS } from './data-lock.mjs';
 import { localeInfo, setLocale, t, i18n, LOCALE_SETTINGS, agentT, agentLocaleOf, currentLocale } from './i18n.mjs';
+import { eventsNotice, noticeResultParts } from './task-notice-events.mjs';
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -8114,9 +8115,8 @@ function completionNotice(lng, tasks) {
   const limit = tasks.length > 1 ? Math.max(2000, Math.floor(16000 / tasks.length)) : 16000;
   const parts = [...tasks].sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0)).map(task => ({
     taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
-    result: task.result.slice(0, limit),
-    more: task.result.length > limit ? agentT(lng, 'delegation.noticeMore', { offset: limit }) : '',
-    error: task.error ?? '',
+    // 「結果」「エラー」の段落は、子が止まっていて最後の回がその結果を書いたときだけ（ADR 0352 §7）
+    ...noticeResultParts(lng, task, limit),
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     // 仕事を始める前に断られた委譲先を自動で替えた（ADR 0302）なら、元の委譲先と理由・実際に走った委譲先を 1 行ずつ添える
@@ -8132,56 +8132,6 @@ function completionNotice(lng, tasks) {
   const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
     : agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
   return [...stops, completed].join('\n');
-}
-
-// 子の回が再び動いたきっかけの文の鍵（ADR 0352）
-// i18n-dynamic: agent:delegation.wake
-const WAKE_NOTICE_KEYS = { parent: 'delegation.wakeParent', human: 'delegation.wakeHuman', handoff: 'delegation.wakeHandoff', resume: 'delegation.wakeResume', relay: 'delegation.wakeRelay' };
-// 子の回の終わり方の文の鍵（ADR 0352）。止めた側（stoppedBy）が分からない取り消しは「取り消された」
-// i18n-dynamic: agent:delegation.eventEnd
-const EVENT_END_KEYS = { completed: 'delegation.eventEndCompleted', failed: 'delegation.eventEndFailed', human: 'delegation.eventEndHuman', parent: 'delegation.eventEndParent', owner: 'delegation.eventEndOwner', cancelled: 'delegation.eventEndCancelled' };
-const TASK_ACTIVE = new Set(['queued', 'running', 'cancelling']);
-const STOPPERS = new Set(['human', 'parent', 'owner']);
-
-/**
- * 完了通知の「これまでの出来事」（ADR 0352）。agent-tasks が残した、まだ届けていない出来事（task.events）を起きた順に 1 行ずつ並べ、
- * 届ける時点の子の状態を添える。子が止まっているときの最後の回の返答・エラーは、通知の「結果」「エラー」と同じなので行には載せない。
- * 出来事を持たない古い行（版を上げる前に積まれた通知）は、状態と止めた側から回の終わりを 1 つ組み立てる
- */
-function eventsNotice(lng, task) {
-  const active = TASK_ACTIVE.has(task.status);
-  let events = Array.isArray(task.events) ? task.events : [];
-  if (!active && !events.some(e => e.kind === 'run') && ['completed', 'failed', 'cancelled'].includes(task.status)) {
-    events = [{ kind: 'run', status: task.status, stoppedBy: task.stoppedBy, cause: task.wake?.kinds ?? [], result: '' }, ...events];
-  }
-  if (!events.length) return '';
-  const lastRun = events.findLastIndex(e => e.kind === 'run');
-  const lines = [];
-  if (task.eventsDropped > 0) lines.push(agentT(lng, 'delegation.eventsDropped', { count: task.eventsDropped }));
-  events.forEach((e, i) => {
-    const then = i ? agentT(lng, 'delegation.eventThen') : '';
-    if (e.kind === 'human') {
-      lines.push(agentT(lng, 'delegation.eventHuman', { then, text: e.text ?? '',
-        attachments: e.attachments > 0 ? agentT(lng, 'delegation.eventAttachments', { count: e.attachments }) : '' }));
-      return;
-    }
-    const how = e.status === 'cancelled' ? (STOPPERS.has(e.stoppedBy) ? e.stoppedBy : 'cancelled') : e.status;
-    const causes = (e.cause ?? []).filter(kind => WAKE_NOTICE_KEYS[kind]).map(kind => agentT(lng, WAKE_NOTICE_KEYS[kind]));
-    const shown = active || i !== lastRun;
-    // i18n-dynamic: agent:delegation.eventPartial
-    // i18n-dynamic: agent:delegation.eventReply
-    lines.push(agentT(lng, 'delegation.eventRun', { then,
-      how: EVENT_END_KEYS[how] ? agentT(lng, EVENT_END_KEYS[how]) : how,
-      cause: causes.length ? agentT(lng, 'delegation.eventCause', { causes: causes.join(agentT(lng, 'delegation.wakeSeparator')) }) : '',
-      reply: shown && e.result ? agentT(lng, e.status === 'cancelled' ? 'delegation.eventPartial' : 'delegation.eventReply', { text: e.result }) : '',
-      error: shown && e.error ? agentT(lng, 'delegation.eventError', { text: e.error }) : '' }));
-  });
-  const hint = (events.some(e => e.kind === 'run' && e.status === 'cancelled') ? agentT(lng, 'delegation.eventStopHint') : '')
-    + (events.some(e => e.kind === 'human') ? agentT(lng, 'delegation.eventHumanHint') : '');
-  // i18n-dynamic: agent:delegation.eventStateRunning
-  // i18n-dynamic: agent:delegation.eventStateStopped
-  return agentT(lng, 'delegation.noticeEvents', { lines: lines.join(''),
-    state: agentT(lng, active ? 'delegation.eventStateRunning' : 'delegation.eventStateStopped'), hint });
 }
 
 function limitNotice(lng, limit) {
