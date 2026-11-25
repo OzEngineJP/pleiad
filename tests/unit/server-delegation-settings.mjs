@@ -4,7 +4,7 @@
 //   - message なしで設定だけ・message と一緒に
 //   - 未掲載モデルは通し、既知のモデルで選べない思考の強さは断る
 //   - 走っていない子のエージェントを替える: 次のターンで引き継ぎ（履歴を渡す）、完了した子を勝手に走らせない
-//   - 親より緩くなる切り替え（agy は全部自動）は親の会話で 1 回聞く。断ったら何も変えない
+//   - agy へ替えても親より緩くはならない（ACP の承認モードを持つ）ので、聞かずに親と同じ強さのモードで決まる
 //   - 他の会話のタスクは変えられない
 //   - 記録: 子の会話の変更の記録（by: agent・via・bySession）、タスクの backend・model・effort・routing.changed、agentTaskChanged
 import fs from 'node:fs/promises';
@@ -135,20 +135,12 @@ export default async function (t) {
     child = await row(made.sessionId);
     t.ok('戻した先（fake）で、指定したモデルで走る', child.backend === 'fake' && child.model === 'fast' && done.backend === 'fake' && done.model === 'fast', JSON.stringify({ backend: child.backend, model: child.model }));
 
-    // ---- 親より緩くなる切り替え（agy は全部自動）。親の会話で 1 回聞く
-    allow = false;
-    const denied = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'antigravity' });
-    // 子（Codex の ask）のコマンドの承認も親へ中継されて数に入るので、ply_task_send の承認だけを数える
+    // ---- agy も ACP の承認モード（default・accept-edits・auto・plan・yolo）を持つので、親より緩くはならない。聞かずに、親と同じ規則で決まる
     const asked = () => permissions.filter(p => p.toolName === 'ply_task_send');
-    t.ok('親より緩くなる切り替えは親の会話で聞き、断ったら失敗する', Boolean(denied.error) && asked().length === 1
-      && String(asked()[0].title ?? '').includes('Antigravity'), JSON.stringify({ denied, titles: permissions.map(p => p.title) }));
-    done = (await tasks()).find(r => r.taskId === made.taskId);
-    t.ok('断ったら何も変えない', done.backend === 'fake' && !(await row(made.sessionId)).nextSettings, JSON.stringify({ backend: done.backend }));
-    allow = true;
     const agy = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'antigravity' });
     done = (await tasks()).find(r => r.taskId === made.taskId);
-    t.ok('許可すれば替わり、子の承認モードは委譲と同じ規則で決まる（agy は yolo）', !agy.error && asked().length === 2 && done.backend === 'antigravity' && done.mode === 'yolo'
-      && (await row(made.sessionId)).nextSettings?.mode === 'yolo', JSON.stringify({ agy: agy.error, backend: done.backend, mode: done.mode }));
+    t.ok('agy へ替えるときは親の会話で聞かず、子の承認モードは委譲と同じ規則（依頼元と同じ強さ）で決まる', !agy.error && asked().length === 0 && done.backend === 'antigravity'
+      && Boolean(done.mode) && (await row(made.sessionId)).nextSettings?.mode === done.mode, JSON.stringify({ agy: agy.error, backend: done.backend, mode: done.mode }));
 
     // ---- 元のエージェントへ戻すと、タスクの承認モードも子の会話の今のモードに戻る（yolo のまま残さない）
     const back = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'fake' });
@@ -195,13 +187,5 @@ export default async function (t) {
     const queued = (await c.cmd('agentTaskInstructions', { taskId: run2.taskId })).instructions;
     t.ok('エージェントを替える指示は走っているターンへ途中送信しない（待機にして替えた後のターンで読ませる）', !together.error && queued.length === 1 && queued[0].state === 'queued',
       JSON.stringify({ together: together.error, queued }));
-
-    // ---- 承認カードを待つ間にタスクが止められたら、許可しても何も書かない
-    beforeAnswer = api => api.cmd('cancelAgentTask', { taskId: run2.taskId });
-    const raced = await call(parent, 'ply_task_send', { taskId: run2.taskId, backend: 'antigravity' });
-    const run2Row = (await tasks()).find(r => r.taskId === run2.taskId);
-    const run2Child = await row(run2.sessionId);
-    t.ok('承認を待つ間に止められたタスクは、許可しても断り、子の予約も記録も変えない', Boolean(raced.error) && run2Row.backend === 'codex' && run2Child.nextSettings?.backend === 'codex',
-      JSON.stringify({ raced, backend: run2Row.backend, next: run2Child.nextSettings }));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 }

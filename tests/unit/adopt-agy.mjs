@@ -1,5 +1,5 @@
 // 段階 3（agy）: 保持役に載せた agy（偽物 tests/lib/fake-agy.mjs）を、サーバーの入れ替えをまたいで付け直す
-// （docs/zero-downtime-update/stage3-agy.md。載せ方は core/backends/antigravity-held.mjs、付け直しは antigravity.mjs の adoptTurn）。
+// （docs/zero-downtime-update/stage3-agy.md。載せ方は core/backends/acp-held.mjs（lifetime: 'conversation'）、付け直しは antigravity.mjs の adoptTurn）。
 //   1. 載せるかの切り替え: 実行場所の置き場が無い・AGENT_HOST_AGY_HOLDER=off では agy は保持役の子にならない（今の流れ）。置き場があれば既定で載る。
 //      ターンが終わった子は idle（札も印も無い）で、次のターンにも使われる
 //   2. 途中で落とす（ADR 0270 の形: A を普通に止める。札はターンの間に保持役の子へ置き直されている）。同じデータ置き場で B が起動で付け直す。
@@ -81,7 +81,7 @@ export default async function (t) {
   /** 保持役の子（agy のもの）。つなぐと親の座を取るので、サーバーが動いている間は呼ばない */
   const heldChildren = async () => {
     const probe = await connectHolder({ dataDir, root });
-    const children = probe.welcome.children.filter(c => c.id.startsWith('agy-'));
+    const children = probe.welcome.children.filter(c => c.id.startsWith('acp-agy-'));
     probe.close();
     return children;
   };
@@ -120,7 +120,7 @@ export default async function (t) {
           // 札と印を外す依頼は、ターンの終わりにサーバーが送る（保持役が読み終えるまで少しかかる）
           const child = await until(async () => { const [one] = await heldChildren(); return one && one.marks.turn === undefined ? one : null; }, WAIT_MS, 'ターンが終わった子の印が外れる');
           assert.equal(child.alive, true);
-          assert.equal(child.policy, 'none', 'agy の子は行だけ（policy none）');
+          assert.equal(child.policy, 'jsonrpc', 'agy の子は ACP の行（policy jsonrpc）を保持役に任せる');
           assert.ok((await spawned()).includes(child.pid), '保持役の子の pid は偽の agy の pid');
           assert.equal(child.label, null, 'ターンが終わった子は札を持たない（付け直す対象でない）');
           leftover = child;
@@ -219,16 +219,17 @@ export default async function (t) {
       await ca.cmd('abort', { sessionId: ids.X });
       const end = await ca.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids.X, { ms: WAIT_MS, from: markX });
       assert.equal(end.outcome, 'aborted', '中断で終わる');
-      await until(() => !alive(xPid), 10_000, '中断した agy が止まる');
+      // ACP は session/cancel でターンだけ止める。会話の agy は 1 本のまま生きて、次のターンに使う
+      assert.ok(alive(xPid), '中断しても会話の agy は止まらない（session/cancel）');
       const spawnedBefore = (await spawned()).length;
       const again = await ca.runTurn({ backend: 'antigravity', sessionId: ids.X, cwd: work, prompt: 'after abort X' }, { ms: WAIT_MS });
       assert.equal(again.outcome, 'ok', a.tail(10));
-      assert.equal((await spawned()).length, spawnedBefore + 1, '中断した会話の次のターンは agy を起こし直す');
-      t.ok('中断: 保持役に載った agy は止まり、記録が捨てられ、次のターンは起こし直して続く', true);
+      assert.equal((await spawned()).length, spawnedBefore, '中断した会話の次のターンは同じ agy を使う（起こし直さない）');
+      t.ok('中断: 保持役に載った agy はターンだけ止まり、会話の agy は生きたまま次のターンに使われる', true);
       ca.close(); ca = null;
       await a.stop(); a = null;
-      // サーバーが動いている間に保持役へつなぐと、その親の座を取ってしまう（A の読みが切れる）ので、止めた子の記録が捨てられたかは A が終わってから見る
-      assert.ok(!(await heldChildren()).some(c => c.pid === xPid), '止めた子の記録は保持役から捨てられている');
+      // サーバーが動いている間に保持役へつなぐと、その親の座を取ってしまう（A の読みが切れる）ので、子が idle で残っているかは A が終わってから見る
+      assert.ok((await heldChildren()).some(c => c.pid === xPid && c.label === null), '中断した会話の agy は札の無い idle の子として保持役に残る');
     }
 
     // 3. 強制終了: ツールの実行中のまま A2 を落とす。札は agy を起こした直後に置いてある（A2 がツールの出来事を受け取る前に、保持役へ届いている）
@@ -298,7 +299,7 @@ export default async function (t) {
       const next = await cb.runTurn({ backend: 'antigravity', sessionId: ids.I, cwd: work, prompt: 'after restart I' }, { ms: WAIT_MS });
       assert.equal(next.outcome, 'ok', b.tail(10));
       await until(() => !alive(idlePid), 10_000, 'idle の agy を B の起動が止める');
-      assert.equal((await spawned()).length, spawnedBefore + 1, 'I: idle だった会話の次のターンは agy を起こし直す');
+      assert.ok((await spawned()).length > spawnedBefore, 'I: idle だった会話の次のターンは agy を起こし直す');
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('main が起こした起動: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直して 1 回だけ締まる。idle の agy は B の起動が止め、次のターンは起こし直して続く', true);
       t.ok('付け直した agy は会話の次のターンにも使われる（B が同じポート・トークンなので印の比べが合う）', true);

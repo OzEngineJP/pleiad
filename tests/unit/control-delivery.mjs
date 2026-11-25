@@ -153,7 +153,7 @@ export default async function (t) {
   const withContext = serversOf(agentDefinition({ ...base, contextEnabled: true, controlEnabled: true }));
   t.ok('agy: context と control の 2 つも束ねる', withContext.length === 1 && withContext[0].args.slice(1).join() === '--context,--control');
 
-  const prepared = await prepareAgent({ owners: base.owners, prompt: 'P', cwd: process.cwd(), locale: 'ja', context: true, control: { url: runtime.url, authorization: runtime.headers.Authorization, env: runtime.env } });
+  const prepared = await prepareAgent({ owners: base.owners, prompt: 'P', cwd: process.cwd(), locale: 'ja', context: true, restricted: true, control: { url: runtime.url, authorization: runtime.headers.Authorization, env: runtime.env } });
   try {
     t.ok('agy: 置き場の agent.md に --control の中継が書かれる', /--control/.test(fs.readFileSync(path.join(prepared.home, '.agents', 'agents', 'ply-context', 'agent.md'), 'utf8')));
     t.ok('agy: env に中継の接続先（PLY_CONTROL_*）と、会話のシェルの CLI の接続情報（PLEIAD_CONTROL_*）', prepared.env.PLY_CONTROL_URL === runtime.url && prepared.env.PLY_CONTROL_AUTHORIZATION === runtime.headers.Authorization

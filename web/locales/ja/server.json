@@ -53,7 +53,8 @@
     "full": "全部自動",
     "readonly": "読むだけ",
     "acceptEdits": "編集は自動",
-    "plan": "計画のみ"
+    "plan": "計画のみ",
+    "auto": "自動判断"
   },
   "models": {
     "default": "既定に従う"
@@ -846,16 +847,20 @@
     },
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {
-      "yolo": "確認しない。すべてのツールを通す（agy のヘッドレスはこれ以外だと黙って拒否される。組織の管理ポリシーが確認を求めるときは、そちらが優先される）"
+      "default": "ツールごとに確認する（Pleiad の承認カードで答える）",
+      "accept-edits": "ファイルの編集は確認せず、ほかのツールは確認する",
+      "auto": "モデルが必要と判断したときだけ確認する",
+      "plan": "計画だけ立てる（編集・実行はしない）",
+      "yolo": "確認しない。すべてのツールを通す（組織の管理ポリシーが確認を求めるときは、そちらが優先される）。承認の方式は会話の起動時に決まるので、この項目との行き来では agy を起こし直す"
     },
     "truncated": "…（以下略）",
     "errors": {
       "endedWith": "agy が {{status}} で終わった",
       "unknownStatus": "不明な状態",
-      "printTimeout": "agy が出力を打ち切りました（--print-timeout）。返答は途中までで、agy 側ではこのターンがまだ続いている可能性があります。取り違えないよう、この agy は終了しました（会話は残っているので続けられます）。長いターンを扱うには AGENT_HOST_AGY_PRINT_TIMEOUT を伸ばしてください（Go の duration 文字列。既定は 24h）。",
-      "startTimeout": "agy が {{ms}}ms で応答しなかった",
+      "acpTooOld": "agy {{version}} は ACP に対応していません（{{min}} 以上が必要です）。`agy update` で更新してください。",
+      "modeUnavailable": "この agy は選んだ承認モードに切り替えられませんでした。",
+      "modelRejected": "agy が選んだモデル・段を受け付けませんでした。",
       "noModels": "agy models が何も返さなかった",
-      "exited": "agy が終了した: {{why}}",
       "notConnected": "agy につながっていない",
       "badConversationId": "使えない会話 id: {{id}}",
       "backgroundGone": "その裏のコマンドはもう走っていない",
@@ -1333,7 +1338,8 @@
     "full": "全自動",
     "readonly": "読む",
     "acceptEdits": "編集自動",
-    "plan": "計画"
+    "plan": "計画",
+    "auto": "自動判断"
   },
   "routing": {
     "settings": {

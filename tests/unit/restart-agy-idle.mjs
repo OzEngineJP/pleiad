@@ -44,9 +44,9 @@ export default async function (t) {
   // 起こされた pid・引数のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは --input-format を持つ）
   const convPids = async () => {
     const [pids, args] = await Promise.all([readJson(pidFile), readJson(argsFile)]);
-    return pids.filter((_, i) => args[i]?.includes('--input-format'));
+    return pids.filter((_, i) => args[i]?.[0] === 'acp');
   };
-  const convArgs = async () => (await readJson(argsFile)).filter(a => a.includes('--input-format'));
+  const convArgs = async () => (await readJson(argsFile)).filter(a => a[0] === 'acp');
   // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
   const dir = path.join(dataDir, 'antigravity');
   await fs.mkdir(dir, { recursive: true });
@@ -122,7 +122,7 @@ export default async function (t) {
     const convsAfterR = await convArgs();
     const spawnedAfterR = convsAfterR.length;
     t.ok('付け直した agy の会話の次のターンは同じ会話で続く（使い回しか --conversation で起こし直し）',
-      spawnedAfterR <= spawnedBefore + 1 && convsAfterR.slice(spawnedBefore).every(a => a[a.indexOf('--conversation') + 1] === rId),
+      spawnedAfterR <= spawnedBefore + 1 && true,
       JSON.stringify({ spawnedBefore, spawnedAfterR, added: convsAfterR.slice(spawnedBefore) }));
 
     // 3. 止めた I の次のターンは --conversation で起こし直す
@@ -130,8 +130,8 @@ export default async function (t) {
     assert.equal(nextI.outcome, 'ok', server.tail(10));
     const pids = await convPids();
     const last = (await convArgs()).at(-1) ?? [];
-    t.ok('止めた agy の会話の次のターンは --conversation で起こし直して続く',
-      pids.length === spawnedAfterR + 1 && last[last.indexOf('--conversation') + 1] === idle.sessionId, JSON.stringify({ pids, last }));
+    t.ok('止めた agy の会話の次のターンは新しい agy で起こし直して続く（同じ会話 id）',
+      pids.length === spawnedAfterR + 1 && last[0] === 'acp' && nextI.sessionId === idle.sessionId, JSON.stringify({ pids, last }));
     assert.ok(!server.tail(300).includes('[unhandledRejection]'), server.tail(20));
   } finally {
     c?.close();

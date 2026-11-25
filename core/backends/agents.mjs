@@ -85,7 +85,8 @@ export const AGENTS = {
       // PATH だけを見ていると、入れた直後に「再確認」を押しても未インストールのまま。Unix 版は `$HOME/.local/bin` なので既定の置き場で足りる
       searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'agy', 'bin')] : []),
     },
-    idleCompaction: null,
+    // 会話を離れた後の自動の圧縮（/compact を発言として送る）。既定は切る
+    idleCompaction: { enabled: false, delayMinutes: 25 },
     rebuildIdleMinutes: null,
     // AGENTS.md（作業場所。common）と、~/.gemini・.agents 系（antigravity）
     contextSources: ['common', 'antigravity'],

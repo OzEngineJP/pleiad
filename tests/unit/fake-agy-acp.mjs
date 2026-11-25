@@ -69,7 +69,7 @@ export default async function test(t) {
 
   try {
     // ---- stream-json の側は無傷
-    t.ok('--version は FAKE_AGY_VERSION を返し、既定は 1.2.5', sync(['--version'], { FAKE_AGY_VERSION: '9.9.9' }).stdout.trim() === '9.9.9' && sync(['--version']).stdout.trim() === '1.2.5');
+    t.ok('--version は FAKE_AGY_VERSION を返し、既定は 1.5.15', sync(['--version'], { FAKE_AGY_VERSION: '9.9.9' }).stdout.trim() === '9.9.9' && sync(['--version']).stdout.trim() === '1.5.15');
     const models = sync(['models'], { FAKE_AGY_EXTRA_MODELS: 'gemini-x,gemini-y' });
     const rows = models.stdout.split(/\r?\n/).filter(line => line.includes('\t')).map(line => line.split('\t'));
     t.ok('models は id<TAB>表示名で、4 つの身代わりの後ろに FAKE_AGY_EXTRA_MODELS を並べる',

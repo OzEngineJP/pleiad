@@ -271,7 +271,7 @@ export default async function (t) {
     t.ok('out のあとは古い一覧でも agy を起こさない', true);
 
     // ---- 認証の証拠: 保持役の付け直しが再生した result・本文の無い SUCCESS は 'in' にしない。
-    //      再生はこのプロセスが確かめた訳ではなく、空の SUCCESS は打ち切り（print timeout）と見分けがつかない
+    //      再生はこのプロセスが確かめた訳ではない
     const noEvidence = await freshBackend();
     const replayCalls = (await calls()).length;
     // 保持役の子 1 つ分の写し（core/adopt.mjs の holderSource の形）。印（turn）から ack までが再生になる
@@ -280,16 +280,20 @@ export default async function (t) {
       client: { on() {}, off() {}, end() {}, kill() {}, mark() {}, label() {}, sendBatch() {} },
       state: { id: 'agy-replay', alive: true, acked: 1, seq: 1, marks: { turn: 1 } },
       attachable: true, acked: 0,
+      async open() { return null; },
       async replay() {
-        return [[1, JSON.stringify({ event: 'result', result: {
-          conversation_id: 'conv-replay', status: 'SUCCESS', response: '過去の返事', duration_seconds: 0.1, num_turns: 1 } })]];
+        // ACP の再生: 本文の更新と、発言（id 7）への応答。ログインを今このプロセスが確かめた訳ではない
+        return [
+          [1, JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'conv-replay', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '過去の返事' } } } })],
+          [2, JSON.stringify({ jsonrpc: '2.0', id: 7, result: { stopReason: 'end_turn' } })],
+        ];
       },
       async *attach() { yield { exit: { code: 0, signal: null } }; },
       ack() {}, write() { return true; }, release() {}, dispose() {},
     };
     const adopted = await noEvidence.adoptTurn({
       sessionId: 'conv-replay', cwd: dir, emit: () => {},
-      card: { held: true, agy: { sentAt: 1, resumed: true, sentHash: null, home: null, keys: null, hookRuns: null } },
+      card: { held: true, agy: { promptId: 7, sentAt: 1, resumed: true, sentHash: null, home: null, keys: null, hookRuns: null } },
       source: replaySource,
     });
     assert.equal(adopted.sessionId, 'conv-replay');
@@ -298,16 +302,7 @@ export default async function (t) {
     await noEvidence.models();
     assert.equal((await calls()).length, replayCalls, '再生の後の models() も agy models を起こさない');
     noEvidence.releaseConversation('conv-replay');
-    // 本文の無い SUCCESS（'timeout' は空の SUCCESS を出してから印を stderr に書く。猶予を縮めて猶予後の確定側を試す）
-    process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS = '10';
-    const emptySid = await noEvidence.runTurn({ cwd: dir, prompt: 'timeout', emit: () => {} }).then((r) => r?.sessionId).catch(() => null);
-    if (emptySid) noEvidence.releaseConversation(emptySid);
-    delete process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS;
-    assert.equal((await noEvidence.auth.status()).unconfirmed, true, '本文の無い SUCCESS もログインの証拠にしない');
-    const afterEmpty = (await catalogCalls()).length;
-    await noEvidence.models();
-    assert.equal((await catalogCalls()).length, afterEmpty, '空の SUCCESS の後の models() も agy models を起こさない');
-    t.ok('再生の result・本文の無い SUCCESS はログインの証拠にしない（一覧の自動の取得は開かない）', true);
+    t.ok('再生した応答はログインの証拠にしない（一覧の自動の取得は開かない）', true);
 
     // ---- 関所の再試行の間隔は、裏の引き直しの間隔（TTL）と別。
     //      裏の取得が一時的な理由で落ちても、短い間隔（AGENT_HOST_AGY_MODELS_GATE_RETRY_MS。既定 30 秒）を過ぎれば自分で 1 回試す

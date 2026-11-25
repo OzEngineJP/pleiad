@@ -115,10 +115,11 @@ export default async function(t) {
     const agyChild = rows.find(r => r.backend === 'antigravity');
     t.ok('委譲先 antigravity で子会話を開始し結果を受け取る', agyChild.status === 'completed' && agyChild.result.includes('agy-test-task'));
     const allSessions = await c.cmd('listSessions');
-    t.ok('antigravity の子は yolo モードで開始する', allSessions.find(s => s.id === agyChild.sessionId)?.mode === 'yolo');
-    const asked = escalations.find(e => e.toolName === 'ply_delegate');
-    t.ok('親より強い委譲は親の会話で1回だけ聞き、何をどの強さで動かすか見せる',
-      escalations.length === 1 && String(asked?.title ?? '').includes('Antigravity') && String(asked?.title ?? '').includes('yolo'), asked?.title ?? '聞かれなかった');
+    // agy も ACP の承認モードを持つので、親より強くはならない。子の承認モードは親の強さに収まり（親が default なら plan 等）、聞かれもしない
+    const parentMode = allSessions.find(s => s.id === sid)?.mode;
+    t.ok('antigravity の子は親より強くない承認モード（yolo ではない）で開始し、親の会話で聞かない',
+      Boolean(parentMode) && ['default', 'plan'].includes(allSessions.find(s => s.id === agyChild.sessionId)?.mode) && escalations.length === 0,
+      `${parentMode} / ${allSessions.find(s => s.id === agyChild.sessionId)?.mode} / 聞かれた ${escalations.length} 件`);
     // 親が auto（聞かずに進む）なら、子も既定の default ではなく auto で始まる
     await idle(sid);
     await c.runTurn({ sessionId: sid, mode: 'auto', prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:INHERITED' }) });

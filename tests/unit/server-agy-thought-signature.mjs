@@ -174,10 +174,10 @@ export default async function (t) {
       results(afterStep.events, sid3).map((e) => e.outcome).join() === "error" && results(otherCode.events, sid3).map((e) => e.outcome).join() === "error"
         && (await prompts("signature-after-step")).length === 1 && (await prompts("fail-400")).length === 1,
       JSON.stringify({ afterStep: results(afterStep.events, sid3).map((e) => e.outcome), otherCode: results(otherCode.events, sid3).map((e) => e.outcome) }));
-    t.ok("どちらも新しい会話を起こさない", missSpawns.every((a) => a.includes("--conversation")), JSON.stringify(missSpawns.map((a) => flag(a, "--conversation"))));
-    // step が始まった発言は渡っている（送れた）。署名でない 400 は何か実行したかもしれないので結果不明。どちらも「失敗」（再開で送り直す）にしない
-    t.ok("何か実行したかもしれない失敗は「失敗」にしない（step の後は送れた・署名でない 400 は結果不明）",
-      afterStep.item?.status === "sent" && otherCode.item?.status === "unknown", JSON.stringify([afterStep.item?.status, otherCode.item?.status]));
+    t.ok("どちらも新しい会話を起こさない", missSpawns.every((a) => a[0] === "acp") && (await prompts("signature-after-step")).length === 1, JSON.stringify(missSpawns.map((a) => a[0])));
+    // ACP は依頼が受け付けられた時点で発言は渡っている（送れた）。何か実行したかもしれない失敗は「失敗」（再開で送り直す）にしない
+    t.ok("何か実行したかもしれない失敗は「失敗」にしない（step の後も署名でない 400 も、渡った発言は sent のまま）",
+      afterStep.item?.status === "sent" && otherCode.item?.status === "sent", JSON.stringify([afterStep.item?.status, otherCode.item?.status]));
     t.ok("区切りを残さない", ((await load(sid3)).rebuilds ?? []).length === 0);
 
     // ---- 4. 新しい会話が最初の発言で断られる → 作り直さず「失敗」

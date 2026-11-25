@@ -226,7 +226,7 @@ const adoptable = child => Boolean(child.label) && Number.isInteger(child.marks?
  * 前のサーバーが保持役に残した idle の子を止める: prefix の子のうち、**札か印の欠けた**ものを止める（旧サーバーの停止・更新・落ちで、止めるタイマーを持つ人が居なくなった）。
  * 札と印を持つ子は付け直し（server の restoreAdoptedTurns）が読むので触れない。ids は、この呼び出しの前に保持役へつないでいた自分の子（止めない）。
  * onHomes(kept) は止めた後に（子が居なくても）1 回呼ぶ。kept は、付け直せる生きた子（札と印を持つもの）。agent の置き場（agy の held-*）を、生きている子が指していないものだけ消すために使う。
- * 「プロセスで 1 回だけ」の制御は呼ぶ側が持つ（antigravity-held.mjs の sweepIdle）。戻り値は止めた子の id
+ * 「プロセスで 1 回だけ」の制御は呼ぶ側が持つ（antigravity.mjs の sweepIdleAtStart）。戻り値は止めた子の id
  */
 export async function sweepIdleAcp(client, { prefix = ACP_CHILD_PREFIX, ids = new Set(), onHomes = null } = {}) {
   const children = (client.welcome?.children ?? []).filter(child => String(child.id).startsWith(prefix) && !ids.has(child.id));

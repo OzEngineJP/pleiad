@@ -113,25 +113,25 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     tag: covered,         // 状態タグも無い -> sidecar が正本
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
     subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
-    liveModel: impossible('起動時の --model だけで、走らせたままは変えられない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveEffort: impossible('起動時のモデル id（段違い）だけで、走らせたままは変えられない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveModel: true,        // session/set_config_option（model）で走らせたまま替える
+    liveMode: true,         // session/set_mode で替える（yolo との行き来だけは起こし直し）
+    liveEffort: true,       // session/set_config_option（thought_level）で替える
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     // Pleiad 担当のコンテキスト（ply_context）は、Pleiad の置き場に作ったカスタムエージェント経由で渡す（antigravity-context.mjs）。
     // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
     plyContext: "conversation",
-    alwaysAllow: impossible('対話の承認そのものが無い（approvals: none）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    alwaysAllow: true,      // session/request_permission の allow_always を使う
     login: true,
     // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
     // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
     forkMessage: covered,
     rewind: covered,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
-    approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
+    approvals: 'interactive', // session/request_permission を Pleiad の承認カードへ繋ぐ
     mcpApproval: 'agent',
     accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    compact: true,          // /compact を session/prompt で送る
     autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 次の発言の候補も内部呼出しで作る。agy の --print は会話を履歴に残し、道具・フックを止める保証も無いので、
     // 分離できるか確かめるまで出さない（Issue #180）
@@ -151,8 +151,8 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    steer: impossible('agy の stream-json は走っているターンへ入力を足せない', 'upstream'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
+    steer: true,            // 走っているターンへ追加の入力を足す（acp-steer.mjs）
+    handover: true,          // agy の子を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs の lifetime: 'conversation'）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
     // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに、可視化は各ターンの発言の前に渡す。
     // エージェント定義の指示は起動時にしか反映されないため、visualizeInstructions は本文に前置きする。
@@ -292,7 +292,7 @@ export const AGENT_TRAITS = definePerAgentMap('AGENT_TRAITS', {
   claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: true },
   codex: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡った合図は出せない
-  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: false, liveSecrets: false, secretsViaEnvFile: false },
+  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
   devin: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },

@@ -16,7 +16,7 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-reroute-'));
   const server = await startServer({ dataDir: scratch, env: {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
-    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-turbo-high',
+    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-turbo-high,gemini-3.8-after-reply,claude-opus-4-6-thinking',
     AGENT_HOST_ROUTING_USAGE: 'on' } });
   // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
@@ -96,11 +96,15 @@ export default async function (t) {
     const replyRow = await settle(afterReply.data.taskId);
     t.ok('返事を書いてから失敗した子は任せ直さない', replyRow?.status === 'failed' && replyRow.backend === 'antigravity'
       && replyRow.sessionId === afterReply.data.sessionId && !(replyRow.routing?.attempts ?? []).length, JSON.stringify({ s: replyRow?.status, at: replyRow?.routing?.attempts }));
-    // 返事を終えてから上限で断られた分は、agy の仕様で返事を結果として残す（ok）。失敗ではないので任せ直しの対象にもならない
+    // ACP には返事の終わりの印が無い。返事を終えてから上限で断られても、上限は上限として任せ直す（残った返事は消さない）。
+    // 他の上限の試験に枠の止まりが残らないよう、ここだけ別のモデルを使う
+    await setTiers(['antigravity:gemini-3.8-after-reply', 'fake:fast']);
     const afterLimit = await delegate(sid, { kind: 'trivial', task: 'limit-after-reply' });
     const limitRow = await settle(afterLimit.data.taskId);
-    t.ok('返事を終えてから上限で断られた分は、残った返事で完了する（失敗ではないので任せ直さない）', limitRow?.status === 'completed'
-      && limitRow.sessionId === afterLimit.data.sessionId && !(limitRow.routing?.attempts ?? []).length, JSON.stringify({ s: limitRow?.status, at: limitRow?.routing?.attempts }));
+    t.ok('返事を終えてから上限で断られた分も、上限として同じ子で次の候補へ任せ直す（ACP は返事の終わりを区別しない）', limitRow?.status === 'completed'
+      && limitRow.sessionId === afterLimit.data.sessionId && (limitRow.routing?.attempts ?? []).length === 1 && limitRow.routing.attempts[0].outcome === 'limited',
+      JSON.stringify({ s: limitRow?.status, at: limitRow?.routing?.attempts }));
+    await setTiers(['antigravity:gemini-3.8-pro-high', 'fake:fast']);
 
     // ---- ツールの痕跡がある失敗は任せ直さない
     await setTiers(['fake:fast', 'fake:smart']);

@@ -78,7 +78,7 @@ const has = (name) => argv.includes(name);
 
 if (has('--version')) {
   // FAKE_AGY_VERSION で版を差し替える（古い CLI は /usage の print を持たない再現に使う）
-  console.log(process.env.FAKE_AGY_VERSION || '1.2.5');
+  console.log(process.env.FAKE_AGY_VERSION || '1.5.15');
   process.exit(0);
 }
 // 未ログインの再現（前半）: 本物の資格情報は OS の資格情報ストアに残り、**プロセスをまたいで効く**。
@@ -229,7 +229,8 @@ const customAgent = (() => {
   process.stderr.write(`Agent "${agentName}" not found, falling back to default` + NL);
   return null;
 })();
-if (process.env.FAKE_AGY_AGENT_FILE) {
+// 会話の agy（acp）だけが控える。--version・models など会話でない起動が上書きしない
+if (process.env.FAKE_AGY_AGENT_FILE && argv[0] === "acp") {
   try {
     fs.writeFileSync(process.env.FAKE_AGY_AGENT_FILE, JSON.stringify({
       agent: agentName, found: Boolean(customAgent), file: customAgent?.file ?? null, front: customAgent?.front ?? null, body: customAgent?.body ?? null,
@@ -707,7 +708,20 @@ async function runAcp() {
       session = { data, tail: Promise.resolve(), epoch: 0, token: null, closed: false, toolSeq: 0, mcpStart: null };
       sessions.set(data.sessionId, session);
     }
-    const specs = mcpSpecs(mcpServers);
+    // --agent のカスタムエージェント（Skills・MCP を止める会話）は、その frontmatter の mcpServers を使う（session/new の mcpServers は空）
+    const given = mcpSpecs(mcpServers);
+    const specs = given.length ? given : (Array.isArray(customAgent?.front?.mcpServers) ? customAgent.front.mcpServers : []);
+    // --agent の無い会話（Skills・MCP を Pleiad が持たない）は、中継が session/new の mcpServers で、指示が systemPrompt.append で届く。同じ形で控える
+    if (process.env.FAKE_AGY_AGENT_FILE && !customAgent) {
+      const envOf = (key) => given.map((spec) => spec.env?.[key]).find((value) => value !== undefined) ?? null;
+      try {
+        fs.writeFileSync(process.env.FAKE_AGY_AGENT_FILE, JSON.stringify({
+          agent: null, found: false, file: null, front: { mcpServers: given.map(({ env: _env, ...rest }) => rest) }, body: data.systemPrompt ?? null,
+          authorization: envOf("PLY_CONTEXT_AUTHORIZATION"), url: envOf("PLY_CONTEXT_URL"),
+          computerAuthorization: envOf("PLY_COMPUTER_AUTHORIZATION"), computerUrl: envOf("PLY_COMPUTER_URL"),
+        }));
+      } catch {}
+    }
     if (specs.length && !session.mcpStart && process.env.FAKE_AGY_MCP_DISABLED !== "1") session.mcpStart = connectMcp(specs).catch(() => []);
     return session;
   };
@@ -972,7 +986,7 @@ async function runAcp() {
   const methods = {
     initialize: async () => ({
       protocolVersion: 1,
-      agentInfo: { name: "agy", title: "Antigravity CLI", version: process.env.FAKE_AGY_VERSION || "1.2.5" },
+      agentInfo: { name: "agy", title: "Antigravity CLI", version: process.env.FAKE_AGY_VERSION || "1.5.15" },
       agentCapabilities: {
         loadSession: true, load_session: true,
         promptCapabilities: { image: true, embeddedContext: true },
@@ -1012,6 +1026,7 @@ async function runAcp() {
       requireAuth();
       const data = read(params.sessionId);
       if (params.cwd) data.cwd = params.cwd;
+      { const appended = appendedPrompt(params._meta); if (appended != null) data.systemPrompt = appended; }   // 付け直しの systemPrompt が最新の指示
       const session = attach(data, params.mcpServers);
       // load は残した会話を返事の前に再生する（resume は再生しない）
       for (const message of session.data.messages) {
@@ -1024,6 +1039,7 @@ async function runAcp() {
       requireAuth();
       const data = read(params.sessionId);
       if (params.cwd) data.cwd = params.cwd;
+      { const appended = appendedPrompt(params._meta); if (appended != null) data.systemPrompt = appended; }   // 付け直しの systemPrompt が最新の指示
       const session = attach(data, params.mcpServers);
       announce(session, ctx);
       return sessionSetup(session.data);

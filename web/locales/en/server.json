@@ -53,7 +53,8 @@
     "full": "Fully automatic",
     "readonly": "Read only",
     "acceptEdits": "Auto-accept edits",
-    "plan": "Plan only"
+    "plan": "Plan only",
+    "auto": "Auto-judge"
   },
   "models": {
     "default": "Use default"
@@ -849,16 +850,20 @@
     },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {
-      "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise; an organization admin policy that requires confirmation takes precedence)."
+      "default": "Asks for each tool (answered in Pleiad's approval card).",
+      "accept-edits": "Edits files without asking; asks for other tools.",
+      "auto": "Asks only when the model decides it is needed.",
+      "plan": "Plans only (no edits or commands).",
+      "yolo": "Never asks. Allows every tool (an organization admin policy that requires confirmation takes precedence). The approval style is fixed when the conversation starts, so switching to or from this mode restarts agy."
     },
     "truncated": "… (truncated)",
     "errors": {
       "endedWith": "agy ended with {{status}}.",
       "unknownStatus": "an unknown status",
-      "printTimeout": "agy cut off its output (--print-timeout). The reply is incomplete, and agy may still be working on this turn. To avoid mixing things up, this agy process was stopped (the conversation is kept, so you can continue). To handle long turns, increase AGENT_HOST_AGY_PRINT_TIMEOUT (a Go duration string; the default is 24h).",
-      "startTimeout": "agy did not respond within {{ms}} ms.",
+      "acpTooOld": "agy {{version}} does not support ACP (version {{min}} or later is required). Run `agy update`.",
+      "modeUnavailable": "This agy could not switch to the selected approval mode.",
+      "modelRejected": "agy did not accept the selected model or level.",
       "noModels": "agy models returned nothing.",
-      "exited": "agy exited: {{why}}",
       "notConnected": "Not connected to agy.",
       "badConversationId": "Invalid conversation id: {{id}}",
       "backgroundGone": "That background command is no longer running",
@@ -1336,7 +1341,8 @@
     "full": "Auto",
     "readonly": "Read",
     "acceptEdits": "Edits",
-    "plan": "Plan"
+    "plan": "Plan",
+    "auto": "Auto"
   },
   "routing": {
     "settings": {

@@ -34,7 +34,7 @@ export default async function (t) {
   await new Promise(r => jev.listen(0, '127.0.0.1', r));
   const server = await startServer({ dataDir: scratch, env: {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
-    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high', AGENT_HOST_ROUTING_USAGE: 'on',
+    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-lite-high', AGENT_HOST_ROUTING_USAGE: 'on',
     AGENT_HOST_OPENROUTER_API: `http://127.0.0.1:${jev.address().port}/api`, ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')) } });
   // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
@@ -151,7 +151,7 @@ export default async function (t) {
     t.ok('選んだ候補に効いた枠の使用率を routing に残す（委譲カードの内訳）', r.targetWindows?.length === 2 && r.targetWindows.every(w => typeof w.usedPercent === 'number' && w.label), JSON.stringify(r.targetWindows));
 
     // ---- 別の候補でやり直す（委譲カードの操作。retryAgentTask）
-    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'], t2: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-lite-high'] } } });
     let pro;
     for (let i = 0; i < 100; i++) {
       pro = (await c.cmd('delegationRouting')).candidates.find(x => x.candidate === 'antigravity:gemini-3.8-pro-high');
@@ -166,10 +166,9 @@ export default async function (t) {
     await retryErr({ candidate: 'claude:haiku' }, /使えません/, '今使えない候補ではやり直さない');
     await retryErr({ candidate: 'nope' }, /形/, '候補の形が不正なら断る');
     for (let i = 0; i < 200 && (await c.cmd('agentTasks')).find(x => x.taskId === origin.data.taskId)?.status !== 'completed'; i++) await sleep(100);
-    const asked = await c.cmd('retryAgentTask', { taskId: origin.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high' });
-    t.ok('依頼元より強い承認モードになるなら、作らずに確かめる（confirm）', asked.confirm?.agent && asked.confirm.mode && !asked.task
-      && (await c.cmd('agentTasks')).every(x => x.routing?.retry?.of !== origin.data.taskId), JSON.stringify(asked));
-    const retried = await c.cmd('retryAgentTask', { taskId: origin.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high', approved: true });
+    // agy も ACP の承認モードを持つので依頼元より強くはならない。確かめずに、そのまま作る
+    const retried = await c.cmd('retryAgentTask', { taskId: origin.data.taskId, candidate: 'antigravity:gemini-3.8-pro-high' });
+    t.ok('依頼元より強い承認モードにならないので、確かめずに作る', !retried.confirm && Boolean(retried.task), JSON.stringify(retried).slice(0, 300));
     const rr = retried.task?.routing;
     t.ok('やり直しは新しいタスク。元のタスクと「人が委譲先を変えた」を routing に残す', retried.task?.taskId !== origin.data.taskId && rr?.mode === 'manual'
       && rr.retry?.of === origin.data.taskId && rr.retry.by === 'user' && rr.retry.from?.model === 'gemini-3.8-flash-high' && rr.kind === 'trivial'
@@ -235,7 +234,7 @@ export default async function (t) {
       return id;
     };
     const registered = await seedClaudeAccount(scratch, 'routing');
-    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'], t2: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-lite-high'] } } });
     await c.cmd('delegationRouting', { refresh: true });
     const owner = await parentOn(registered);
     const limited = await call(owner, { kind: 'trivial', task: 'limit-no-reply' });
@@ -243,12 +242,12 @@ export default async function (t) {
       && (await c.cmd('listSessions')).find(s => s.id === owner)?.claudeAccount === registered, limited.text.slice(0, 300));
     const stoppedRow = await settle(limited.data?.taskId);
     // flash から同じ子のまま pro に切り替える。pro も上限で断る。偽の agy の Claude と GPT の枠は 5 時間が 100% だが、
-    // 使用率では先回りして外さない（ADR 0352）ので、段の外の claude-opus-4-6-thinking にも切り替え、そこも断られて止まる枠は 3 つになる
+    // 使用率では先回りして外さない（ADR 0352）ので、段の外の（t2 の）gemini-3.8-lite-high にも切り替え、そこも断られて止まる枠は 3 つになる
     t.ok('agy の子は依頼元の会話の Claude のアカウントを継いで走り、上限で止まる',
       stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === registered,
       JSON.stringify(stoppedRow?.limit ?? stoppedRow?.status));
     t.ok('止まった枠の記録は、アカウントを持たないエージェントなので account: null（継いだ id を載せない）', stoppedRow?.limit && stoppedRow.limit.account === null && stoppedRow.routing?.target?.account === null, JSON.stringify(stoppedRow?.limit));
-    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high', 'antigravity:gemini-3.8-mini-high'] } } });
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high', 'antigravity:gemini-3.8-mini-high'], t2: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-lite-high'] } } });
     const after = await call(owner, { kind: 'trivial', task: 'agy-after-limit' });
     const afterSkipped = after.data?.routing?.skipped ?? [];
     const skippedFlash = afterSkipped.find(s => s.candidate === 'antigravity:gemini-3.8-flash-high');
@@ -270,14 +269,14 @@ export default async function (t) {
     t.ok('ply_usage の agy の行にも、継いだ Claude のアカウントを載せない', plyHeld.some(x => x.model === 'gemini-3.8-flash-high' && !('account' in x)) && !usageText.includes(registered), usageText.slice(0, 600));
 
     // 対照: ログイン中のアカウント（claudeAccount が空）の会話。別のモデルの枠で同じことをする
-    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high'] } } });
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high'], t2: ['antigravity:gemini-3.8-mini-high'] } } });
     const loginOwner = await parentOn('');
     const loginStopped = await call(loginOwner, { kind: 'trivial', task: 'limit-no-reply' });
     const loginRow = await settle(loginStopped.data?.taskId);
     t.ok('（対照）ログイン中のアカウントの会話から任せた agy の子も上限で止まる', loginStopped.data?.routing?.target?.model === 'gemini-3.8-mini-high'
       && (await c.cmd('listSessions')).find(s => s.id === loginOwner)?.claudeAccount === '' && loginRow?.status === 'failed' && loginRow.limit?.model === 'gemini-3.8-mini-high', JSON.stringify(loginRow?.limit ?? loginStopped.text.slice(0, 300)));
     const loginHeldUntil = (await c.cmd('providerUsage', { backend: 'antigravity' })).held?.find(x => x.model === loginRow?.limit?.model)?.until;
-    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high', 'antigravity:gemini-3.8-nano-high'] } } });
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high', 'antigravity:gemini-3.8-nano-high'], t2: ['antigravity:gemini-3.8-mini-high', 'antigravity:gemini-3.8-nano-high'] } } });
     const loginAfter = await call(loginOwner, { kind: 'trivial', task: 'agy-after-limit' });
     // 次の候補（nano-high）が使えれば選ばれ、使えなければ全部だめのエラーになる。どちらでも止まった枠（mini-high）は飛ばす
     const loginUntil = loginAfter.data?.routing?.skipped?.find(s => s.candidate === 'antigravity:gemini-3.8-mini-high' && s.reason === 'recently_limited')?.until

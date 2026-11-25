@@ -4,24 +4,17 @@
 // gemini-cli の個人向けログインは 2026-06-18 に終了し、Gemini API キーは別建ての従量課金、
 // Antigravity SDK は API キーか Vertex しか受けない（docs/multi-backend.md §2.8）。
 //
-// **代わりに諦めているもの**（プロトコルの制約。こちらの手抜きではない）:
-//   1. **ターン中の対話承認が無い。** 公式に非対応。承認が取れないツールは soft-deny され、
-//      ターンは止まらない。Pleiad の承認カードは出せず、**承認モードも「全部自動」1 つだけ**
-//      （それ以外を選ばせると黙って何もできないだけになる。MODES のコメント参照）
-//   2. **思考が流れない。** `thinking_tokens` は完了時の集計にしか出ない
-// 本文のデルタは流れ、ツールも「実行中」から出る（同じ step_index で state: ACTIVE -> DONE の
-// 2 回来るのを分けている。docs/multi-backend.md §2.8）ので、会話が流れる見た目そのものは
-// 他のバックエンドと変わらない。
+// **口は ACP（`agy acp`。1.5.15 以降）。** JSON-RPC を stdio で話す共通の口（acp-client.mjs）に、agy 固有の差（antigravity-acp.mjs）を載せる。
+// 会話ごとに 1 プロセス（live）を持ち、次の発言まで IDLE_MS だけ生かす。承認は session/request_permission を Pleiad の承認カードへ繋ぎ、
+// モード・モデル・段はターンの途中でも session/set_mode・set_config_option で替えられる。古い agy（1.5.15 未満）は
+// 古い口へ落とさず、更新を促す（antigravity.errors.acpTooOld）。
 //
-// **出力の打ち切りに気をつける。** agy の `--print-timeout`（既定 5m0s）はターンを打ち切り、
-// 本文が空のまま `status:"SUCCESS"` を返す。しかも agy 自身は裏で走り続ける。
-// そこで (a) 十分長い `--print-timeout` を渡し（antigravity-cli.mjs）、
-// (b) それでも打ち切られたら失敗として畳み、その agy を落とす（onPrintTimeout）。
+// **組織の管理ポリシーは承認の省略（yolo）より強い。** 確認を求める設定のとき、確認の要るツールは拒否される。黙らせずに知らせる（adminNotice）。
+// **思考は流れない**（thought chunk は捨てる。thinking_tokens は usage_update の集計にだけ出る）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
-import { AgySession, START_TIMEOUT_MS } from "./antigravity-cli.mjs";
-import { AGENT_NAME, adoptHome, antigravityAgentOwners, antigravitySkipsNativeInstructions, prepareAgent, sweep } from "./antigravity-context.mjs";
+import { AgyAcp, MIN_ACP_VERSION, agyLaunchProfile, tooOldAcp } from "./antigravity-acp.mjs";
+import { AGENT_NAME, adoptHome, agyRestricted, antigravityAgentOwners, antigravitySkipsNativeInstructions, prepareAgent, sweep, sweepHeldHomes, systemPromptAppend } from "./antigravity-context.mjs";
 import { nativeInstructionEntries } from "../context-session.mjs";
-import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
@@ -29,7 +22,10 @@ import { writeAtomic } from "../atomic-file.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
-import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
+import { createHeldAcp, heldAcpPlan, sweepIdleAcp } from "./acp-held.mjs";
+import { createAcpSteer } from "./acp-steer.mjs";
+import { holderLink } from "../holder/link.mjs";
+import { bootEnv } from "../boot-env.mjs";
 // antigravity-suggest.mjs（使い捨てホームで候補を作る）は、内部呼出しを分離して呼べる保証が無いため使わない（Issue #180）
 import { commandLabel, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { killTree, listProcesses } from "../process-tree.mjs";
@@ -45,13 +41,14 @@ import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { readAgyRuns, rotateAgyRuns } from '../hooks-unify.mjs';
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
-/**
- * 本文の無い SUCCESS を確定するまでに、打ち切りの印（stderr）を待つ時間。
- * 印は stderr、result は stdout と**別のパイプ**で届くので、着く順は保証されない
- * （agy は印を先に書くが、Linux では result が先に読めることがある）。
- */
-const EMPTY_SUCCESS_GRACE_MS = Number(process.env.AGENT_HOST_AGY_EMPTY_SUCCESS_MS ?? 500);
-const LATE = Symbol("late");
+/** `agy acp` の起動と握手を待つ上限（ms） */
+const START_TIMEOUT_MS = Number(process.env.AGENT_HOST_AGY_START_MS ?? 120_000);
+
+/** 中断（session/cancel）に agy が応じるのを待つ上限。過ぎたらその agy を落とす（会話は残るので次のターンで起こし直す） */
+const CANCEL_GRACE_MS = Number(process.env.AGENT_HOST_AGY_CANCEL_MS ?? 5_000);
+
+/** 保持役の子の id の頭。保持役は Claude・fake の子とも共有するので、agy の子だけを見分ける */
+const ACP_CHILD_PREFIX = 'acp-agy-';
 
 /** ターンの途中で本文を控えに書き足す間隔。ツールの完了はすぐ書く */
 const TEXT_SAVE_MS = Number(process.env.AGENT_HOST_AGY_SAVE_MS ?? 2_000);
@@ -88,32 +85,60 @@ export function idleDelay(value) {
 const IDLE_MS = idleDelay(process.env.AGENT_HOST_AGY_IDLE_MS ?? 30 * 60_000);
 
 /**
- * 承認モード。**`yolo` の 1 つだけ**にしてある。
+ * 承認モード。ACP の mode（session/set_config_option の configId: 'mode'）に対応する。`acp` が agy 側の id。
  *
- * `agy --help` には `--mode plan` と `--mode accept-edits` もあるが、**ヘッドレスでは使い物にならない**。
- * ターン中の対話承認がプロトコルに無いため、`--dangerously-skip-permissions` を付けない限り
- * 許可の要るツールは **soft-deny** される（ターンは止まらず、stderr に通知が出るだけ）。
- * しかも `--print` モードは settings.json の `permissions.allow` を見ない（[antigravity-cli#548]）ので、
- * 事前付与で埋めることもできない。
- *
- * つまり plan / accept-edits を選べるようにすると、「モードを選んだのにエージェントが
- * 黙って何もできない」だけになる。**選べる形で出さない**。
- * 同じ理由で「都度確認」も無い（聞くと言って聞かないものを作らない）。
+ * - `default`（都度確認）・`accept-edits`・`auto`・`plan` は、ツールの承認を session/request_permission で受けて Pleiad の承認カードへ繋ぐ。
+ * - `yolo` は起動の旗（`--dangerously-skip-permissions`）。**起動の時にしか決まらない**ので、yolo と それ以外の行き来は agy の起こし直し（keysOf・setModeLive が false）。
+ *   新しい会話の既定は今までどおり `yolo`。
  *
  * **組織の管理ポリシーは skip より強い。** Gemini Enterprise の管理者が確認を求める設定にしていると、
- * `--dangerously-skip-permissions` を付けても init の `permission_mode` は `request-review` になり、
- * 確認の要るツールは拒否される。黙らせずに知らせる（下の adminNotice。docs/multi-backend.md §2.8「組織の管理ポリシー」）
- *
- * [antigravity-cli#548]: https://github.com/google-antigravity/antigravity-cli/issues/548
+ * `--dangerously-skip-permissions` を付けても `permission_mode` は `request-review` になり、確認の要るツールは拒否される。
+ * 黙らせずに知らせる（下の adminNotice。docs/multi-backend.md §2.8「組織の管理ポリシー」）
  */
 const MODES = {
-  yolo: {
+  default: {
     // label / note はゲッター（サーバーの言語は実行中に変わる。core/i18n.mjs）
+    get label() { return t("modes.ask"); },
+    get short() { return t("modesShort.ask"); },
+    get note() { return t("antigravity.modes.default"); },
+    acp: "default",
+    scope: "full",
+    autonomy: "ask",
+    enforced: false,
+  },
+  "accept-edits": {
+    get label() { return t("modes.acceptEdits"); },
+    get short() { return t("modesShort.acceptEdits"); },
+    get note() { return t("antigravity.modes.accept-edits"); },
+    acp: "accept-edits",
+    scope: "full",
+    autonomy: "ask",
+    enforced: false,
+  },
+  auto: {
+    get label() { return t("modes.auto"); },
+    get short() { return t("modesShort.auto"); },
+    get note() { return t("antigravity.modes.auto"); },
+    acp: "auto",
+    scope: "full",
+    autonomy: "judge",
+    enforced: false,
+  },
+  plan: {
+    get label() { return t("modes.plan"); },
+    get short() { return t("modesShort.plan"); },
+    get note() { return t("antigravity.modes.plan"); },
+    acp: "plan",
+    scope: "readonly",
+    autonomy: "ask",
+    enforced: false,
+  },
+  yolo: {
     get label() { return t("modes.full"); },
     get short() { return t("modesShort.full"); },
     get note() { return t("antigravity.modes.yolo"); },
     skip: true,
-    // 軸（core/modes.mjs）。範囲を絞る手段が無いので full、強制もできない。
+    // 軸（core/modes.mjs）。確認しないので never。範囲は絞らない
     scope: "full",
     autonomy: "never",
     enforced: false,
@@ -146,16 +171,130 @@ const TOOL_HINTS = {
   search_web:    hint("webSearch", "web"),
 };
 
-/** 会話ごとの生きたプロセス。**1 プロセス = 1 会話**（antigravity-cli.mjs 冒頭）。 */
-const live = new Map();   // conversationId -> AgySession
+/** 会話ごとの生きたプロセス。**1 プロセス = 1 会話**（entry は newEntry）。 */
+const live = new Map();   // conversationId -> entry
 
-// 前の起動が残した孤児を掃除する（強制終了・クラッシュでは下の exit が走らないため）。
-// 待たない。**実行ファイル名を確かめたものしか落とさない**（antigravity-pids.mjs）
-const reaped = pids.reap().catch(() => []);
 // 前の起動が残した、Pleiad のコンテキストを渡すためのエージェント定義も消す（antigravity-context.mjs）
 sweep();
 
-/** 会話から手を引く。生かしている印（live / pid の控え）を揃って落とす。 */
+/** 会話の生きた agy 1 本の状態。client は AgyAcp。turn は走っているターンの受け口（無いときは出来事を捨てる） */
+function newEntry(conversationId, fields = {}) {
+  return { conversationId, client: null, held: null, keys: null, home: null, hookRuns: null, cleanup: () => {}, mcpTokens: [], mcpServers: [],
+    permissionMode: "", reviewNoticed: false, mcpChecked: false, behind: null, idleTimer: null, turn: null, sessionId: null,
+    caps: null, modeId: null, modelId: null, config: [], commands: [],
+    get pid() { return this.client?.pid ?? null; },
+    kill() { closeEntry(this); },
+    ...fields };
+}
+
+function processGone(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return false; } catch (e) { return e?.code === 'ESRCH'; }
+}
+
+/** agy を止める（ACP の close → プロセスの木）。保持役の子も同じ口で止まる（AcpClient が held を通す） */
+function closeEntry(entry) {
+  if (!entry?.client) return;
+  const client = entry.client;
+  void (async () => {
+    try {
+      if (entry.sessionId && entry.caps?.sessionCapabilities?.close && client.alive) {
+        await client.call("session/close", { sessionId: entry.sessionId }, { timeoutMs: 2_000 }).catch(() => {});
+      }
+    } finally { await client.close().catch(() => {}); }
+  })();
+}
+
+/** 会話から手を引く。live の印を落とし、止めるタイマーも外す */
+function release(conversationId, entry) {
+  disarmIdle(entry);
+  if (conversationId && live.get(conversationId) === entry) live.delete(conversationId);
+  if (entry?.conversationId && live.get(entry.conversationId) === entry) live.delete(entry.conversationId);
+}
+
+/** 次のターンを待ち始めた agy に、IDLE_MS で止めるタイマーを付ける。止めた後の次のターンは session/resume で起こし直す（会話は agy が持つ） */
+function armIdle(conversationId, entry) {
+  disarmIdle(entry);
+  if (IDLE_MS === null || !conversationId || !entry?.client?.alive || live.get(conversationId) !== entry) return;
+  entry.idleTimer = setTimeout(() => {
+    entry.idleTimer = null;
+    if (live.get(conversationId) !== entry) return;
+    closeEntry(entry);
+    release(conversationId, entry);
+    entry.cleanup?.();
+  }, IDLE_MS);
+  entry.idleTimer.unref?.();
+}
+
+function disarmIdle(entry) {
+  if (!entry?.idleTimer) return;
+  clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
+}
+
+/** ターンの途中の切り替えの対象（runTurn が control.handle に置く { sessionId }）。生きていて走っているターンの会話だけ */
+function liveEntry(handle) {
+  const entry = live.get(handle?.sessionId ?? handle?.conversationId);
+  return entry?.client?.alive && entry.sessionId ? entry : null;
+}
+
+/** モデル・段（agyTarget の結果）を agy の設定に反映して確かめる。断られたら configRejected の印つきで投げる */
+async function applyTarget(on, target) {
+  const options = [];
+  if (target.model && target.model !== on.modelId) options.push(["model", target.model]);
+  if (!target.model && target.effort) options.push(["thought_level", target.effort]);
+  for (const [configId, value] of options) {
+    const applied = await on.client.call("session/set_config_option", { sessionId: on.sessionId, configId, value });
+    if (Array.isArray(applied?.configOptions)) on.config = applied.configOptions;
+    const current = applied?.configOptions?.find((o) => o.id === configId)?.currentValue;
+    if (current !== value) throw Object.assign(new Error(t("antigravity.errors.modelRejected")), { configRejected: { option: configId } });
+    if (configId === "model") on.modelId = value;
+  }
+}
+
+/** session/new が返したモデルの一覧から、まだ一覧が無いときだけ控えを作る（`agy models` を起こさずに済む）。形が違えば何もしない */
+function learnModels(state) {
+  const list = state?.models?.availableModels;
+  if (modelCache !== null || !Array.isArray(list) || !list.length) return;
+  const rows = list.map((m) => ({ id: String(m?.modelId ?? m?.id ?? ""), label: String(m?.name ?? m?.label ?? m?.modelId ?? m?.id ?? "") })).filter((r) => r.id);
+  if (!rows.length) return;
+  void rememberModels(buildAgyModels(rows, null)).catch(() => {});
+}
+
+let sweptIdle = false;
+/**
+ * このプロセスで 1 回だけ（起動の sweepIdleAtStart か、そこでつなげなければ最初の保持役の使用）、前のサーバーが残した agy の子を片付ける: **札か印の欠けた**（idle の）子は止める。
+ * agent の置き場（held-*）も、生きている子が指していないものを消す。この呼び出しの前に保持役へつないでいた自分の子（ids）は止めない
+ */
+async function sweepIdleOnce(client, { ids = new Set() } = {}) {
+  if (sweptIdle) return [];
+  sweptIdle = true;
+  return sweepIdleAcp(client, {
+    prefix: ACP_CHILD_PREFIX,
+    ids,
+    onHomes: (kept) => sweepHeldHomes(new Set(kept.map((child) => child.label?.backendCard?.agy?.home).filter(Boolean))),
+  });
+}
+
+/**
+ * サーバーの起動で、前のサーバーが保持役に残した idle の agy を止める（sweepIdleOnce）。server が起動の付け直し（restoreAdoptedTurns）の後に呼ぶ。
+ * 居る保持役にだけつなぐ（起こさない）。保持役が居ない・つなげないときは何もせず、次の保持役の使用に任せる
+ */
+export async function sweepIdleAtStart({ dataDir, log = console.error } = {}) {
+  const root = bootEnv("AGENT_HOST_RUNTIME_ROOT");
+  if (sweptIdle || !dataDir || !root) return [];
+  let client;
+  try { client = await holderLink({ dataDir, root, key: bootEnv("AGENT_HOST_RUNTIME_KEY") ?? "", launch: false }); }
+  catch (error) {
+    // i18n-ignore: サーバーのログ（log は console.error）
+    if (error?.code !== "HOLDER_NONE") log("  保持役につなげないので、前のサーバーが残した agy は次の使用で片付ける:", String(error?.code ?? error?.message ?? error));
+    return [];
+  }
+  return sweepIdleOnce(client);
+}
+
+/** テスト用: sweepIdleOnce の「1 回だけ」を戻す */
+export function resetSweep() { sweptIdle = false; }
 /**
  * Pleiad が渡した hooks の発火（アダプターが置き場の runs.jsonl に書いたもの）を記録にする。agy は hooks の実行を stream に出さないため。
  * ネイティブの定義の発火は分からない（止めたはずの定義が走ったかは観測できない）
@@ -187,30 +326,6 @@ async function reportHookRuns(session, hooksRuntime, emit) {
       ...(Number.isInteger(r.exitCode) ? { exitCode: r.exitCode } : {}), ...(Number.isInteger(r.ms) ? { ms: r.ms } : {}) } : {}) });
 }
 
-function release(conversationId, session) {
-  disarmIdle(session);
-  if (conversationId && live.get(conversationId) === session) live.delete(conversationId);
-  if (session?.pid) pids.forget(session.pid);
-}
-
-/** 次のターンを待ち始めた agy に、IDLE_MS で止めるタイマーを付ける。止めた後の次のターンは起こし直す（会話は --conversation で続く） */
-function armIdle(conversationId, session) {
-  disarmIdle(session);
-  if (IDLE_MS === null || !conversationId || !session?.proc || live.get(conversationId) !== session) return;
-  session.idleTimer = setTimeout(() => {
-    session.idleTimer = null;
-    if (live.get(conversationId) !== session) return;
-    try { session.kill(); } catch {}
-    release(conversationId, session);
-  }, IDLE_MS);
-  session.idleTimer.unref?.();
-}
-
-function disarmIdle(session) {
-  if (!session?.idleTimer) return;
-  clearTimeout(session.idleTimer);
-  session.idleTimer = null;
-}
 
 /** 直近に引けたモデル一覧。`agy models` は認証が要るので、引けたときだけ覚える。 */
 let modelCache = null;
@@ -386,16 +501,17 @@ const digest = (value) => (value == null ? null : crypto.createHash("sha256").up
  * 起動時にしか渡せないもの（Pleiad のコンテキスト・ブラウザー・Hooks・ply_computer・ply_control・bot の人格）の印。起動時と違う渡し方になる次のターンは agy を起こし直す。
  * トークンを含むものは頭の文字列ではなくダイジェストで持つ: 保持役に載せた agy の札（server の takeCard）にそのまま置いても秘密が出ず、付け直した先が同じ印で比べられる
  */
-function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey = null, browserKey, controlKey, botKey, secretsKey = null, useAgent = false, target = {} }) {
+function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey = null, browserKey, controlKey, botKey, secretsKey = null, useAgent = false, profileKey = "default", yolo = false }) {
   return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
     computer: digest(computerKey), agents: digest(agentsKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
-    // custom: カスタムエージェント（agent.md）で動いているか。ターンが注入で読み替える口の判定にも使う（agent.md の本文は再開で持ち越されるため印に入れない）
+    // custom: Skills・MCP を止める会話（agent 定義 ply-context）で動いているか。ターンが注入で読み替える口の判定にも使う（agent.md の本文は再開で持ち越されるため印に入れない）
     custom: useAgent ? 1 : 0,
+    // 起動の旗（--dangerously-skip-permissions）。yolo とそれ以外の行き来は起こし直し（それ以外の承認モードの行き来は session の mode で替える）
+    yolo: yolo ? 1 : 0,
+    // 起動の型（agyLaunchProfile）。アカウントごとに環境・引数が変わる将来のための区別（今は 'default' だけ）
+    profile: profileKey,
     // 秘密情報と変数（ADR 0217）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
-    ...(secretsKey ? { secrets: digest(secretsKey) } : {}),
-    // 渡す --model / --effort（agyTarget）も起動時にしか渡せない。モデルを選び直した・覚えた既定が変わったら起こし直す（issue #161）。
-    // 何も渡さない会話は今までと同じ印
-    ...(target.model || target.effort ? { target: [target.model ?? null, target.effort ?? null] } : {}) };
+    ...(secretsKey ? { secrets: digest(secretsKey) } : {}) };
 }
 /**
  * agy 自身が認証・接続先に読む環境変数（Gemini CLI と同じ名前）。秘密情報と変数に同じ名前があっても agy のプロセスには入れない
@@ -503,6 +619,8 @@ export const backend = {
   async requireModelCatalog() {
     await loadModelsCache();
     if (modelCache !== null) return;
+    const old = await tooOldAcp();
+    if (old) throw new Error(t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }));
     // 本体の掃除は外側の .finally に付ける: IIFE が await せずに終わる経路（失敗の連発止め・out の案内）では、
     // finally が ??= の代入より先に走り、決まったはずの拒否 promise が modelsGate に残ってしまう
     modelsGate ??= (async () => {
@@ -531,50 +649,45 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, visualizeInstructions = null, shellAppends = [], computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {} }, adopt = null) {
+  // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, visualizeInstructions = null, shellAppends = [], computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {}, askPermission = null, onPromptDelivered = null }, adopt = null) {
     if (account != null) {
       const error = new Error(t('antigravity.accounts.unavailable'));
       error.code = 'AGY_ACCOUNTS_UNSUPPORTED';
       throw error;
     }
-    const m = MODES[modeFor(mode)];
+    const modeId = modeFor(mode);
+    const m = MODES[modeId];
+    const yolo = modeId === 'yolo';
     const k = adopt?.card?.agy ?? null;   // 付け直しの札のバックエンドの欄（backendCard）
+    const profile = agyLaunchProfile({ account });
 
-    // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**
-    // AI の発言は書くたびにその時刻、終わりで完了の時刻に打ち直す。
-    // ユーザー発言まで後の時刻で打つと、長いターンでは送信が数分ずれて見えるうえ、
-    // ターンの途中で出た提示（visualization は生成時刻を持つ）がユーザー発言より前に並ぶ。
-    // その並びは分岐の切り口にそのまま効く（core/conversations.mjs の buildItems）ので、
-    // ユーザー発言で切った枝に、まだ走っていないはずの成果物が入り込む。
+    // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**（AI の発言は書くたびにその時刻、終わりで完了の時刻に打ち直す）
     const sentAt = k ? Number(k.sentAt) || Date.now() : Date.now();
-    // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く。
     // 付け直しは、旧サーバーが控えに書いた発言（同じ uuid）から引く。引けなければ null（控えの発言を書き換えない）
-    const sent = k ? await adoptedSent(sessionId, sentAt, k.sentHash) : [...shellAppends, [...notes, String(prompt ?? "")].join("")].filter(Boolean).join("\n\n");
+    const sent = k ? await adoptedSent(k.sessionId ?? sessionId, sentAt, k.sentHash) : [...shellAppends, [...notes, String(prompt ?? '')].join('')].filter(Boolean).join('\n\n');
 
-    let conversationId = sessionId ?? null;
-    // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
+    let conversationId = k?.sessionId ?? sessionId ?? null;
+    const originalId = sessionId ?? null;
+    // 再開した会話の途中の書き込みでは控えを作らない
     const resumed = k ? Boolean(k.resumed) : Boolean(sessionId);
     // agy の usage は会話の累計なので、前のターンの累計（控えのターンの記録）との差を使用量にする
-    const usageBase = resumed ? usageBaseOf(await transcript.getRecord(sessionId).catch(() => null), sentAt) : null;
+    const usageBase = resumed ? usageBaseOf(await transcript.getRecord(sessionId ?? conversationId).catch(() => null), sentAt) : null;
     let sawText = false;
-    let text = "";                 // 控えに残す本文
-    let finishedReply = false;     // agent_response の DONE。途中までの文とは分ける
-    let replyTextSinceTool = "";
-    const toolCalls = [];          // 控えに残すツール呼び出し
-    let settle = null;
+    let text = '';
+    let replyTextSinceTool = '';
+    const toolCalls = [];
     let failed = null;
-    let retracted = false;         // agy が何も実行せずに断った（rejectedBeforeRun）。発言を控えから外す
-    let resultTrace = null;        // 終了経路と生の status。本文や usage だけでは後から分からない
-    let timedOut = false;          // agy が出力を打ち切った（下の onPrintTimeout）
-    const started = new Map();     // tool.start を出した step -> { name, input }
-    let closed = false;            // このターンを畳み終えた（settle 済み）
-    // 裏へ回ったコマンド（run_command が BACKGROUND_AFTER_MS を超えて ACTIVE のまま）。一覧（background）は全量で出す。
-    // id はツールの id（委譲の取り消し cancelBackground がツールの id で引く）。DONE とターンの終わり（settle）で外す
+    let retracted = false;         // agy が何も実行せずに断った（thought signature）。発言を控えから外す
+    let resultTrace = null;
+    const started = new Map();     // tool id -> { name, input, computer }
+    let closed = false;            // このターンを畳み終えた
+    let lastUsage = null;          // usage_update の累計（_meta.antigravity.usage）
+    // 裏へ回ったコマンド（run_command が BACKGROUND_AFTER_MS を超えて実行中のまま）
     const behind = {
-      timers: new Map(),   // tool id -> まだ一覧に出していない run_command の見張り
-      tasks: new Map(),    // tool id -> { task, command }
-      gone: new Map(),     // tool id -> 外れたときに呼ぶもの（stopBackground が DONE を待つ）
+      timers: new Map(),
+      tasks: new Map(),
+      gone: new Map(),
       wait(id, ms) {
         return new Promise((resolve) => {
           if (!behind.tasks.has(id)) return resolve();
@@ -584,7 +697,7 @@ export const backend = {
         });
       },
     };
-    const sendBehind = (out = emit) => out({ type: "background", tasks: [...behind.tasks.values()].map((b) => b.task) });
+    const sendBehind = (out = emit) => out({ type: 'background', tasks: [...behind.tasks.values()].map((b) => b.task) });
     const dropBehind = (id, out) => {
       clearTimeout(behind.timers.get(id));
       behind.timers.delete(id);
@@ -602,29 +715,23 @@ export const backend = {
       behind.gone.clear();
       if (had) sendBehind();
     };
-    const finished = new Promise((resolve) => { settle = () => { closed = true; clearBehind(); resolve(); }; });
 
     // ---- 控え。**ターンの途中から書き足す**（agy に履歴の取り出し口が無い。antigravity-store.mjs 冒頭）
-    // ユーザー発言は id が分かって本文を渡したら、AI の発言はツールの完了ごと・本文は間を空けて、同じ uuid で差し替える。
-    // 失敗・中断・打ち切りでも、終わりにそこまでの分を書く。書き込みは 1 本ずつ（控えの read-modify-write を重ねない）
-    let delivered = Boolean(adopt);   // プロンプトを渡した（渡せなかったターンは控えに残さない）。付け直しは旧サーバーが渡し済み
-    // このターンで発言の前に足したネイティブの指示ファイル（カスタムエージェントが読めない分の補填）。server が会話の記録（contextRecord）に載せる
+    let delivered = Boolean(adopt);   // プロンプトを渡した（渡せなかったターンは控えに残さない）
     let nativeInjected = null;
     let writes = Promise.resolve();
-    let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
-    let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
+    let queued = false;
+    let final = null;
     let textTimer = null;
     const userUuid = () => `${conversationId}:u${sentAt}`;
     const snapshot = (at) => [
-      ...(sent === null || retracted ? [] : [{ role: "user", text: sent, uuid: userUuid(), at: new Date(sentAt).toISOString() }]),
-      // uuid はターンの間変えない（送信の時刻から作る）。変えると控えにも写しの会話（core/conversations.mjs の mergeMessages）にも二重に並ぶ
+      ...(sent === null || retracted ? [] : [{ role: 'user', text: sent, uuid: userUuid(), at: new Date(sentAt).toISOString() }]),
       ...(text || toolCalls.length ? [{
-        role: "assistant", text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
+        role: 'assistant', text, uuid: `${conversationId}:a${sentAt}`, at: new Date(at).toISOString(),
         ...(toolCalls.length ? { tools: toolCalls.map((c) => c.name), toolCalls: [...toolCalls] } : {}),
       }] : []),
     ];
     const save = ({ last = false } = {}) => {
-      // 畳んだ後は終わりの分（seal）だけを書く。遅れて届いた出来事で書き直さない
       if (!delivered || !conversationId || queued || (final && !last)) return writes;
       queued = true;
       writes = writes.then(() => {
@@ -632,462 +739,449 @@ export const backend = {
         const messages = final?.messages ?? snapshot(Date.now());
         return transcript.appendMessages(conversationId, { cwd, messages, create: final?.create ?? !resumed,
           ...(final?.turnResult ? { turnResult: final.turnResult } : {}), ...(final?.drop ? { drop: final.drop } : {}) });
-      }).catch((err) => console.error("  agy の控えを書けなかった:", String(err?.message ?? err)));
+      }).catch((err) => console.error('  agy の控えを書けなかった:', String(err?.message ?? err)));
       return writes;
     };
-    // 本文のデルタは細かいので、間を空けてまとめて書く
     const saveSoon = () => {
       if (textTimer || final) return;
       textTimer = setTimeout(() => { textTimer = null; if (!final) save(); }, TEXT_SAVE_MS);
       textTimer.unref?.();
     };
-    /** ターンの終わりの分を書く。成功なら完了の時刻で、控えが無ければ作る（今までどおり） */
     const seal = ({ ok }) => {
       clearTimeout(textTimer);
       if (final || !delivered) return writes;
       final = { messages: snapshot(Date.now()), create: ok || !resumed,
         turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null,
-        // 何も実行せずに断られたターンの発言は、途中（session.prompt の直後・init）で書いた分も外す。送り直しで二重に入らない
         ...(retracted ? { drop: [userUuid()] } : {}) };
       return save({ last: true });
     };
 
-    // 生きているプロセスを使い回す。落ちていれば立て直す（会話は --conversation で拾える）
-    let session = !adopt && conversationId ? live.get(conversationId) : null;
-    disarmIdle(session);
-    if (session && !session.proc) { live.delete(conversationId); session = null; }
-    // Pleiad のコンテキストは起動時にしか渡せない（エージェント定義と env）。起動時と違う渡し方になるなら起こし直す。
-    // 担当や渡すツール（shape）が変わったときも同じ（コンテキストの設定の変更を次のターンから効かせる。会話は --conversation で続く）
+    // ---- 起動時にしか渡せないものの印（変われば会話の agy を起こし直す）
     const contextKey = contextRuntime?.headers?.Authorization ?? null, contextShape = contextRuntime?.shape ?? null;
-    // 内蔵ブラウザーの接続（browserEnv）と、Hooks を Pleiad がそろえる会話（ADR 0049）の置き場の .agents/hooks.json も起動時にしか渡せない。
-    // ブラウザーの設定・登録・止める名前が変われば起こし直す
     const hooksShape = hooksRuntime?.shape ?? null;
-    // ply_computer（中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
     const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
-    // ply_agents（委譲の橋）も起動時にしか渡せない（中継の接続先は agent.md の MCP として書く）。口は会話のあいだ同じ
     const agentsKey = agentRuntime ? `${agentRuntime.url} ${agentRuntime.headers?.Authorization ?? ''}` : null;
-    // ply_browser（ADR 0148。ply_context・ply_computer と同じ 1 本の中継に束ねる）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
     const browserKey = browserRuntime ? `${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : null;
-    // ply_control（操作の一覧。ADR 0081）と、会話のシェルへ渡す CLI の接続情報（PLEIAD_CONTROL_*）も起動時にしか渡せない。口は会話のあいだ同じ
     const controlKey = controlRuntime ? `${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : null;
-    // bot の人格（エージェント定義の本文）と触れてよいフォルダー（--add-dir）も起動時にしか渡せない。人格を直した・フォルダーを変えたら起こし直す。
-    // 起動中のプロセスは指示の文そのものを比べないので、人格のハッシュで判定する（bot でなければ null で、今までと同じ）
     const botKey = botSessionKey(botInstructions, botFolders);
-    // 秘密情報と変数（ADR 0217）も起動時にしか渡せない（プロセスの env と指示）。変われば起こし直す
     const secretsEnv = agySecretsEnv(secretsRuntime?.env);
     const secretsKey = Object.keys(secretsEnv).length || secretsRuntime?.instructions ? JSON.stringify([secretsEnv, secretsRuntime?.instructions ?? '']) : null;
-    // カスタムエージェントを使うか。agent.md の本文は keys に入れない: 同じ会話を --conversation で再開すると agy は
-    // 開始時のエージェント定義を持ち越す（既知の制約）ので、本文の変化で起こし直しても届かない。確実に届ける文
-    // （Pleiad の指示・補填したネイティブの指示）は発言への前置きで毎ターン渡す（issue #107）
     const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
     const agentPrompt = [contextRuntime?.prompt, browserInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n');
     const useAgent = Boolean(contextRuntime || browserInstructions || agentRuntime || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
-    // --model と --effort は同時に渡さない。段は同じ系統の段違いの id に解決し、「既定」は覚えた既定のモデルを明示する（antigravity-models.mjs）
-    const target = agyTarget(model, effortFor(effort), modelCache ?? {});
-    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey, browserKey, controlKey, botKey, secretsKey, useAgent, target });
-    if (session && !sameKeys(session.keys, keys)) { session.kill(); release(conversationId, session); session = null; }
+    const owners = antigravityAgentOwners(contextRuntime);
+    // Skills・MCP を止める会話だけ agent 定義（--agent ply-context）で動かす。それ以外は session/new の MCP と systemPrompt で渡す
+    const restricted = useAgent && agyRestricted(owners);
+    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey, browserKey, controlKey, botKey, secretsKey, useAgent: restricted, profileKey: profile.key, yolo });
 
-    const fresh = !session && !adopt;
-    if (adopt) {
-      // 付け直す子（保持役が持つ agy）。起動の引数・env は要らない（子はもう走っている）。agent の置き場は札の home。次のターンの印の比べは札の keys
-      if (!conversationId) throw new Error("antigravity: the card has no conversation id");
-      session = new AgySession({ cwd, conversationId, held: createHeldAgy({ source: adopt.source }), onGone: adoptHome(k.home) });
-      session.keys = k.keys ?? null;
-      session.home = k.home ?? null;
-      session.hookRuns = k.hookRuns ?? null;
-      session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
-    }
-    if (fresh) {
-      // 保持役に載せるか（antigravity-held.mjs）。載せるなら、前のサーバーが残した idle の子を最初に 1 回片付けてから起こす
-      const plan = await heldPlan({ dataDir: store.dataDir, argv: cliCommand("antigravity"), bot: Boolean(botInstructions) });
-      if (plan) await sweepIdle(plan.client);
-      // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の橋（ply_agents の中継）を渡すときだけ。
-      // Pleiad の指示（addedInstructions / agentRuntime.instructions）は発言の前に毎ターン足すので、それだけではカスタムエージェントを作らない。
-      // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
-      const botDirs = botFolders?.additionalDirectories ?? [];
-      const ownersForAgent = antigravityAgentOwners(contextRuntime);
-      const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: ownersForAgent,
-        prompt: agentPrompt, cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
-        context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
-        agents: agentRuntime ? { url: agentRuntime.url, authorization: agentRuntime.headers?.Authorization } : null,
-        browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
-        control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
-      session = new AgySession({
-        cwd,
-        conversationId,
-        ...target,
-        mode: m.flag,
-        skipPermissions: Boolean(m.skip),
-        // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
-        addDirs: [...(cwd ? [cwd] : []), ...botDirs],
-        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), ...botDirs, agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...secretsEnv, ...agent.env, ...browserEnv }, onGone: agent.cleanup }
-          : browserEnv || Object.keys(secretsEnv).length ? { env: { ...secretsEnv, ...browserEnv } } : {}),
-        ...(plan ? { held: createHeldAgy({ client: plan.client }) } : {}),
-      });
-      session.hookRuns = agent?.runs ? { file: agent.runs, offset: 0 } : null;
-      session.home = plan && agent ? agent.home : null;
-      session.onShapeMismatch = () => { void recordBackendShapeMismatch({ dataDir: store.dataDir, backend: 'antigravity', kind: 'stream-json-shape', detectedVersion: null }); };
-      session.keys = keys;
-      // agy が Pleiad の MCP を起こしたかを見るトークン（adminNotice）。付け直しでは見ない（前のサーバーが受けた接続は分からない）
-      session.mcpTokens = useAgent && agent ? relayTokens(agent.env) : [];
-    }
+    // ---- 会話の agy（1 会話 = 1 プロセス）。生きていて印が合えば使い回す
+    let entry = !adopt && conversationId ? live.get(conversationId) : null;
+    if (entry) disarmIdle(entry);
+    // 終了の知らせが届く前でも、プロセスが無ければ使い回さない（書き込みの失敗にしない）
+    if (entry && (!entry.client?.alive || processGone(entry.client.pid))) { release(conversationId, entry); entry = null; }
+    if (entry && !sameKeys(entry.keys, keys)) { closeEntry(entry); release(conversationId, entry); entry = null; }
+    const reused = Boolean(entry);
 
-    // opts は feedLine から来る（付け直しの再生の行は { replay: true }。server の makeEmit が画面へ流さず、実行中のスナップショットとメモリの状態だけを作る）
-    const handle = (ev, opts) => {
-      const out = (event) => emit(event, opts?.replay ? { replay: true } : undefined);
-      switch (ev?.event) {
-        case "init": {
-          const id = ev.conversation_id ?? ev.init?.conversation_id ?? null;
-          if (!id) return;
-          const isNew = !conversationId;
-          conversationId = id;
-          live.set(id, session);
-          // 組織の管理ポリシーが skip より勝っていれば request-review などになる（adminNotice）
-          if (ev.init?.permission_mode) session.permissionMode = String(ev.init.permission_mode).slice(0, 100);
-          if (isNew) {
-            // **これを出さないと web が id を受け取れない。**`first: true` は
-            // 「id が確定した最初の1本」の印で、再開ターンでは出さない
-            out({
-              type: "session", sessionId: id, first: true,
-              ...(ev.init?.model ? { model: ev.init.model } : {}),
-            });
+    let client = entry?.client ?? null, sessionKnown = Boolean(entry?.sessionId && entry.sessionId === conversationId);
+    let prompting = false, sent2 = false, fatal = null, closing = false, watchdog = null, steered = null, promptId = null, replaying = false;
+    const local = new AbortController();
+    let forceReject;
+    const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
+    let finish;
+
+    const hostSignal = signal?.signal ?? signal;
+    const abortError = () => Object.assign(new Error(t('turn.aborted')), { aborted: true });
+    const check = () => { if (fatal) throw fatal; if (local.signal.aborted) throw abortError(); };
+    const stop = (error) => {
+      if (error && !fatal) fatal = error;
+      local.abort();
+      try { if (entry?.client && entry.sessionId) entry.client.notify('session/cancel', { sessionId: entry.sessionId }); } catch {}
+      if (prompting && !watchdog) watchdog = setTimeout(() => { forceReject(fatal ?? abortError()); if (entry) closeEntry(entry); }, CANCEL_GRACE_MS);
+      else if (!prompting && entry) closeEntry(entry);
+    };
+    const onAbort = () => stop();
+    hostSignal?.addEventListener?.('abort', onAbort, { once: true });
+    if (hostSignal?.aborted) local.abort();
+
+    const out = (event) => emit(event, replaying ? { replay: true } : undefined);
+
+    const finishTool = (id, update, prev) => {
+      dropBehind(id, out);
+      const name = prev.name, input = prev.input, computer = prev.computer;
+      const failedStep = update.status === 'failed';
+      const outputText = (() => {
+        const raw = update.rawOutput;
+        if (raw && typeof raw === 'object' && raw.output != null) return typeof raw.output === 'string' ? raw.output : JSON.stringify(raw.output);
+        if (typeof raw === 'string') return raw;
+        return (Array.isArray(update.content) ? update.content : []).map((c) => c?.content?.text ?? c?.text ?? '').filter(Boolean).join('\n');
+      })();
+      const errorText = failedStep ? outputText : '';
+      const cutResult = computer ? computerResult(outputText, cut) : cut(outputText);
+      const denied = failedStep && DENIED_RE.test(errorText);
+      const r = denied ? { ...cutResult, text: `${cutResult.text}\n\n${t('antigravity.admin.toolDenied', { ask: t('antigravity.admin.askTools') })}` } : cutResult;
+      const isError = failedStep || (computer ? computerFailed(r.computer) : false);
+      const rejection = denied ? { tool: name, kind: 'policy', via: 'antigravity',
+        command: String(input?.CommandLine ?? input?.AbsolutePath ?? input?.TargetFile ?? input?.Path ?? '') || null,
+        reason: t('antigravity.admin.reason'), raw: errorText.slice(0, 1000) } : null;
+      out({ type: 'tool.result', id, ...r, isError, ...(rejection ? { rejection } : {}) });
+      toolCalls.push({ id, name, input, result: { ...r, isError } });
+      save();
+    };
+
+    const onUpdate = (params, opts) => {
+      if (!entry || (entry.sessionId && params.sessionId !== entry.sessionId)) return;
+      const update = params.update ?? {};
+      switch (update.sessionUpdate) {
+        case 'current_mode_update': entry.modeId = update.currentModeId ?? entry.modeId; return;
+        case 'config_option_update': if (Array.isArray(update.configOptions)) entry.config = update.configOptions; return;
+        case 'available_commands_update': entry.commands = Array.isArray(update.availableCommands) ? update.availableCommands : entry.commands; return;
+        default: break;
+      }
+      // 履歴の再生（session/load）や、プロンプトの前の出来事は会話に出さない
+      if (!prompting || fatal) return;
+      replaying = Boolean(opts?.replay);
+      try {
+        switch (update.sessionUpdate) {
+          case 'usage_update': {
+            const used = Number(update.used), size = Number(update.size);
+            if (Number.isFinite(used) && Number.isFinite(size) && size > 0) out({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+            const total = usageTotal(update._meta?.antigravity?.usage);
+            if (total) lastUsage = total;
+            return;
           }
-          // 新しい会話は id がここで分かる。ユーザー発言を控えに書く
-          save();
-          return;
-        }
-
-        case "step_update": {
-          // Step updates without a history entry still show that the child is active.
-          // 握手（init）や終了の制御（result）では出さない。委譲の「仕事を始める前に断られた」（ADR 0302）の untouched は、
-          // この出来事を仕事の痕跡として数えるので、制御の往復だけで立つと任せ直せなくなる
-          out({ type: 'task.activity', output: true });
-          const s = ev.step_update ?? {};
-          if (s.step_type === "agent_response") {
-            if (String(s.state ?? "").toUpperCase() === "DONE" && (replyTextSinceTool.trim() || String(s.text_delta ?? '').trim())) finishedReply = true;
-            const delta = s.text_delta;
+          case 'agent_message_chunk': {
+            out({ type: 'task.activity', output: true });
+            const delta = update.content?.type === 'text' ? update.content.text : null;
             if (!delta) return;
-            if (!sawText) { sawText = true; out({ type: "activity", state: "writing" }); }
+            if (!sawText) { sawText = true; out({ type: 'activity', state: 'writing' }); }
             text += delta;
             replyTextSinceTool += delta;
             saveSoon();
-            return out({ type: "text.delta", text: String(delta) });
+            return out({ type: 'text.delta', text: String(delta) });
           }
-          if (s.step_type === "tool") {
-            finishedReply = false; // 返事の後に道具が続けば、その返事はまだ最終文ではない
-            replyTextSinceTool = "";
-            // **同じ step_index で 2 回来る**: `ACTIVE`（output 無し）-> `DONE`（output あり）。
-            // 開始と完了に分ける。同じに扱うとツールが二重に並び、1 つ目は結果が空になる
-            // （実測。docs/multi-backend.md §2.8）
-            const id = `${conversationId ?? "agy"}:${s.step_index ?? started.size}`;
-            const prev = started.get(id);
-            // ply_computer は call_mcp_tool（{ ServerName, ToolName, Arguments }）で出る。3 つのエージェントでそろえた
-            // mcp__ply_computer__<ツール> と、その引数に直す（docs/computer-use.md「tool.start / tool.result」）
-            const params = s.tool_info?.parameters;
-            const computer = prev?.computer ?? (s.tool_name === "call_mcp_tool" ? agyComputerName(params) : null);
-            const name = computer ?? toolName(s.tool_name ?? s.tool_info?.name ?? prev?.name);
-            const input = computer ? prev?.input ?? computerToolInput(computer, params?.Arguments && typeof params.Arguments === "object" ? params.Arguments : {})
-              : params ?? prev?.input ?? {};
-            const output = s.tool_info?.output;
-            const state = String(s.state ?? "").toUpperCase();
-            // 拒否・失敗したツールは output 無しの ERROR と tool_info.error で来る（組織の管理ポリシーの「要審査」など。実機で確認）
-            const toolError = s.tool_info?.error;
-            const failedStep = state !== "ACTIVE" && (state === "ERROR" || Boolean(toolError));
-            // 知らない state・state 無しでも取りこぼさない: output があれば完了、無ければ開始
-            const done = state === "ACTIVE" ? false
-              : state === "DONE" || failedStep ? true
-              : output !== undefined && output !== null && output !== "";
-
-            if (!started.has(id)) {
-              started.set(id, { name, input, computer });
-              out({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
-              out({ type: "tool.start", id, name, input });
-              // 終わらないコマンドは agy が裏へ回し、DONE が来ないまま AI が wait で待ち続ける。しばらく ACTIVE のままなら裏のコマンドとして出す
-              if (!done && name === "run_command" && !closed) {
-                const command = String(input?.CommandLine ?? "");
+          case 'tool_call':
+          case 'tool_call_update': {
+            out({ type: 'task.activity', output: true });
+            replyTextSinceTool = '';
+            const id = `${conversationId ?? 'agy'}:${update.toolCallId ?? started.size}`;
+            let prev = started.get(id);
+            const params2 = update.rawInput && typeof update.rawInput === 'object' ? update.rawInput : null;
+            if (!prev) {
+              const toolRaw = String(update.title ?? update.kind ?? 'tool');
+              const computer = toolRaw === 'call_mcp_tool' ? agyComputerName(params2) : null;
+              const name = computer ?? toolName(toolRaw);
+              const input = computer ? computerToolInput(computer, params2?.Arguments && typeof params2.Arguments === 'object' ? params2.Arguments : {}) : params2 ?? {};
+              prev = { name, input, computer };
+              started.set(id, prev);
+              out({ type: 'activity', state: 'running', label: t('activity.tool', { label: TOOL_HINTS[name]?.label ?? name }) });
+              out({ type: 'tool.start', id, name, input });
+              const done = update.status === 'completed' || update.status === 'failed';
+              // 終わらないコマンドは agy が裏へ回す。しばらく実行中のままなら裏のコマンドとして出す
+              if (!done && name === 'run_command' && !closed) {
+                const command = String(input?.CommandLine ?? '');
                 const timer = setTimeout(() => {
                   behind.timers.delete(id);
                   if (closed) return;
-                  behind.tasks.set(id, { task: { id, kind: "shell", label: commandLabel(command) || name }, command });
+                  behind.tasks.set(id, { task: { id, kind: 'shell', label: commandLabel(command) || name }, command });
                   sendBehind();
                 }, BACKGROUND_AFTER_MS);
                 timer.unref?.();
                 behind.timers.set(id, timer);
               }
+            } else if (params2 && update.sessionUpdate === 'tool_call_update' && !prev.computer) {
+              prev.input = params2;
             }
-            if (!done) return;
-            dropBehind(id, out);
-            const errorText = failedStep ? String(toolError?.message ?? toolError?.type ?? (typeof toolError === "string" ? toolError : "")) : "";
-            const raw = failedStep && (output === undefined || output === null || output === "") ? errorText
-              : typeof output === "string" ? output : JSON.stringify(output ?? "");
-            // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
-            const cutResult = computer ? computerResult(raw, cut) : cut(raw);
-            // 確認を出せずに拒否された: 管理者に頼む設定を添え、委譲の結果へ拒否として集める（server が tool.result の rejection を拾う）
-            const denied = failedStep && DENIED_RE.test(errorText);
-            const r = denied ? { ...cutResult, text: `${cutResult.text}\n\n${t("antigravity.admin.toolDenied", { ask: t("antigravity.admin.askTools") })}` } : cutResult;
-            const isError = failedStep || (computer ? computerFailed(r.computer) : false);
-            const rejection = denied ? { tool: name, kind: "policy", via: "antigravity",
-              command: String(input?.CommandLine ?? input?.AbsolutePath ?? input?.TargetFile ?? input?.Path ?? "") || null,
-              reason: t("antigravity.admin.reason"), raw: errorText.slice(0, 1000) } : null;
-            out({ type: "tool.result", id, ...r, isError, ...(rejection ? { rejection } : {}) });
-            toolCalls.push({ id, name, input, result: { ...r, isError } });
-            save();
+            if (update.status === 'completed' || update.status === 'failed') {
+              if (!prev.finished) { prev.finished = true; finishTool(id, update, prev); }
+            }
             return;
           }
-          // user_input / checkpoint。会話には出さない
-          return;
+          default: return;
         }
-
-        case "result": {
-          // 打ち切られた後の result は SUCCESS でも信じない（onPrintTimeout が畳んでいる）
-          if (timedOut || closed) return;
-          const r = ev.result ?? {};
-          // 本文の無い SUCCESS は、打ち切り（onPrintTimeout）と見分けがつかない。印が遅れて
-          // 届く分だけ待ってから確定する。その間に印が来れば onPrintTimeout が失敗として畳む
-          if (!ev[LATE] && !opts?.replay && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS") {
-            // 保持役の読みは、確定するまで ack しない（待つ間に手を離しても、新しいサーバーが同じ result を読み直す）
-            return new Promise((resolve) => setTimeout(() => resolve(handle({ ...ev, [LATE]: true }, opts)), EMPTY_SUCCESS_GRACE_MS));
-          }
-          // 認証の要るターンが通った＝このプロセスでログイン済みが確かめられた（一覧の自動の引き直しを開ける）。
-          // 証拠にするのは「このプロセスが受けた・本文のある SUCCESS」だけ:
-          //   - 再生の行（opts.replay）は、付け直しで読み直した過去の出来事で、このプロセスが確かめた訳ではない
-          //   - 本文の無い SUCCESS は、猶予（EMPTY_SUCCESS_GRACE_MS）の前は打ち切りと見分けがつかず、
-          //     猶予の後（LATE）も本文が来ていなければ安全側で証拠にしない
-          if (!opts?.replay && String(r.status ?? "").toUpperCase() === "SUCCESS" && (sawText || r.response)) authGuess = 'in';
-          conversationId ||= r.conversation_id || null;
-          // 返答の無いまま拒否された操作だけが残った SUCCESS は、普通の完了にしない（組織の管理ポリシー。docs/multi-backend.md §2.8）
-          const deniedActions = Array.isArray(r.denied_actions) ? r.denied_actions : [];
-          const deniedTurn = deniedActions.length > 0 && !sawText && !r.response && String(r.status ?? "").toUpperCase() === "SUCCESS";
-          // agy の最初の result で 1 度だけ、管理ポリシーの知らせを返答の後ろに足す（本文として控えにも残る。付け直しの再生では足さない）
-          // 認証の失敗などで終わったターンは見ない（中継を起こす前に終わる。次の成功したターンで見る）
-          const notice = opts?.replay || String(r.status ?? "").toUpperCase() !== "SUCCESS" ? "" : adminNotice(session, { askedSkip: Boolean(m.skip), deniedTurn });
-          if (notice) {
-            const add = `${text ? "\n\n" : ""}${notice}`;
-            if (!sawText) { sawText = true; out({ type: "activity", state: "writing" }); }
-            text += add;
-            out({ type: "text.delta", text: add });
-          }
-          if (sawText) out({ type: "text.end" });
-          // 新しい agy の会話（再開でない・別の会話になった）は 0 から数える。基準の無い再開（更新前から続く会話）は出さない。
-          // 全部 0 は数えていない result（打ち切りなど）なので、出さず、再開では基準にもしない
-          const total = usageTotal(r.usage);
-          const usageFresh = !resumed || conversationId !== sessionId;
-          const counted = total && USAGE_KEYS.some((key) => total[key]);
-          const usage = counted ? usageFor(usageDelta(total, usageFresh ? usageTotal({}) : usageBase)) : null;
-          if (usage) out(usage);
-          const actions = deniedActions.map((a) => String(a?.display_name ?? a?.action ?? "").slice(0, 100)).filter(Boolean);
-          const outcome = deniedTurn ? { type: "turnResult", outcome: "error", turns: r.num_turns ?? 1,
-            error: t("antigravity.admin.deniedTurn", { actions: [...new Set(actions)].join(", "), ask: t("antigravity.admin.askTools") }) }
-            : turnResultFor(r, { finishedReply });
-          resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
-            ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}),
-            ...(deniedActions.length ? { denied: deniedActions.length } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
-          if (outcome.outcome === "error" && !deniedTurn && rejectedBeforeRun(r, { steps: started.size, sawText })) {
-            // 何も実行していないので、送信待ちは「失敗」にする（undelivered。「2 回届くことがあります」にしない）。
-            // 再開した会話は同じ会話へ送っても断られ続けるので、作り直す印（nativeUnusable）を付けて返す。
-            // conversations.mjs の wrapped.runTurn が記録を新しい会話へ引き継いで 1 回だけ送り直すので、ここでは失敗を出さない
-            // （作り直せなければ server が失敗を出す）。新しい会話で断られたときは作り直さず、そのまま失敗にする
-            retracted = true;
-            failed = Object.assign(undelivered(new Error(outcome.error)), { retracted: [userUuid()] }, resumed ? { nativeUnusable: true } : {});
-            clearBehind();
-            if (!resumed) out(outcome);
-            return settle?.();
-          }
-          if (outcome.outcome === "error") failed = new Error(outcome.error);
-          clearBehind();
-          out(outcome);
-          return settle?.();
-        }
-
-        default:
-          return;
-      }
-    };
-    session.onEvent = handle;
-    session.behind = behind;   // stopBackground が引く（このターンの裏のコマンド）
-
-    // 未ログインのままターンを投げた。**ここから Pleiad がログインを回すことはできない**
-    // （認可コードは端末からしか読まれない。auth.login のコメント参照）。
-    // 出た URL ではなく、端末で叩くコマンドを案内する。このターン自体は 60 秒で失敗する
-    session.onAuthUrl = () => {
-      authGuess = 'out';   // agy が自ら認証を求めた＝未ログインが確定
-      const argv = cliCommand("antigravity");
-      emit({
-        type: "auth", backend: "antigravity", phase: "url",
-        url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ") : "agy",
-        message: t("antigravity.auth.notLoggedInTurn"),
-      });
+      } finally { replaying = false; }
     };
 
-    /**
-     * agy が出力を打ち切った（`--print-timeout`）。**ここが空の SUCCESS を撥ねる保険。**
-     *
-     * 打ち切られた agy は本文が空のまま `status:"SUCCESS"` を吐くので、そのまま写すと
-     * 「正常に終わったのに何も言わない」ターンになる。`--print-timeout` は長く渡している
-     * （antigravity-cli.mjs）が、値を変えれば同じ穴が開くので、文言でも気づけるようにする。
-     */
-    session.onPrintTimeout = () => {
-      if (timedOut || failed || closed) return;
-      timedOut = true;
-      if (sawText) emit({ type: "text.end" });
-      const message = t("antigravity.errors.printTimeout");
-      failed = new Error(message);
-      resultTrace = { source: "printTimeout", status: null, outcome: "error", error: message };
-      clearBehind();
-      emit({ type: "turnResult", outcome: "error", error: message });
-      // **裏で走り続ける agy を残さない。** 放っておくと Pleiad の見ていない所でファイルを
-      // 書き換え、Google の枠も食い続ける。会話は `--conversation <id>` で拾い直せる
-      session.kill();
-      release(conversationId, session);
-      settle?.();
+    const onGone = (error) => {
+      if (entry) { release(conversationId, entry); entry.cleanup?.(); }
+      if (!closing) { fatal ??= error; local.abort(); forceReject(error); }
     };
 
-    session.onExit = (err) => {
-      release(conversationId, session);
-      // result で畳んだターンは、直後に agy が終了してもその結果を変えない。
-      if (closed) return;
-      // ターンの途中で落ちた。中断（kill）なら abort 側が畳むので、ここでは失敗にしない
-      if (signal?.signal?.aborted) return settle?.();
-      failed = err;
-      resultTrace = { source: "exit", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
-      clearBehind();
-      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
-      settle?.();
+    const onRequest = async (method, params) => {
+      if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
+      if (!prompting || params.sessionId !== entry?.sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
+      const allow = params.options?.find((o) => o.kind === 'allow_once'), deny = params.options?.find((o) => o.kind === 'reject_once');
+      const always = params.options?.find((o) => o.kind === 'allow_always');
+      const title = String(params.toolCall?.title ?? params.toolCall?.kind ?? '');
+      if (!title.trim() || typeof askPermission !== 'function') return { outcome: typeof deny?.optionId === 'string' ? { outcome: 'selected', optionId: deny.optionId } : { outcome: 'cancelled' } };
+      emit({ type: 'activity', state: 'waiting', sessionId: entry.sessionId });
+      const answer = await Promise.resolve(askPermission({ toolName: title, input: params.toolCall?.rawInput ?? {}, sessionId: entry.sessionId,
+        toolUseID: params.toolCall?.toolCallId ?? null, signal: local.signal, canAlways: typeof always?.optionId === 'string', kind: 'tool', locale })).catch(() => ({ allow: false }));
+      if (local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
+      const selected = answer?.allow ? (answer.always && typeof always?.optionId === 'string' ? always : allow) : deny;
+      return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
     };
 
-    // 中断はプロセスを落とすしかない（プロトコルに中断が無い）。
-    // **落としたことを自分で畳む。** kill() は先に proc を手放すので exit の通知は来ない
-    // （来ないのが正しい。立て直しの die と取り違えないため）。ここで settle しないと
-    // runTurn が返らず、server の実行中一覧から消えなくなる
-    const abort = () => {
-      resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
-      session.kill();
-      release(conversationId, session);
-      settle?.();
+    const onResponse = ({ method, result }) => {
+      if (!entry) return;
+      if (Array.isArray(result?.configOptions)) entry.config = result.configOptions;
+      if (method === 'session/new') learnModels(result);
     };
-    if (signal?.signal?.aborted) abort();
-    else signal?.signal?.addEventListener?.("abort", abort, { once: true });
 
-    const timer = setTimeout(() => {
-      if (!conversationId) {
-        failed = new Error(t("antigravity.errors.startTimeout", { ms: START_TIMEOUT_MS }));
-        resultTrace = { source: "startTimeout", status: null, outcome: "error", error: failed.message };
-        abort(); settle?.();
-      }
-    }, START_TIMEOUT_MS);
-    timer.unref?.();
+    const bindHandlers = () => { entry.turn = { onUpdate, onGone, onRequest, onResponse }; entry.behind = behind; };
 
-    /**
-     * 札のバックエンドの欄（保持役に載せたターンだけ。core/server.mjs の takeCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
-     * 付け直しに要る、再生では作れないものだけ: 発言の時刻（控えの発言の uuid）・再開した会話か・発言のハッシュ（控えから本文を引く）・agent の置き場・
-     * 次のターンの印の比べ（keys。トークンはダイジェスト）・hooks の発火の記録の読み位置。ツール・本文・会話の id は印からの再生と札の sessionId で戻る
-     */
-    const backendCard = () => ({ held: true, agy: { sentAt, resumed, sentHash: sent === null ? null : digest(sent), home: session.home ?? null, keys: session.keys ?? null,
-      hookRuns: session.hookRuns ? { file: session.hookRuns.file, offset: session.hookRuns.offset,
-        old: session.hookRuns.old ? { file: session.hookRuns.old.file, offset: session.hookRuns.old.offset } : null } : null } });
-    // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）
+    const backendCard = () => ({ held: true, agy: { promptId, sessionId: entry?.sessionId ?? conversationId, sentAt, resumed, sentHash: sent === null ? null : digest(sent),
+      prompts: client?.pendingPromptIds?.() ?? [], home: entry?.home ?? null, keys: entry?.keys ?? null,
+      hookRuns: entry?.hookRuns ? { file: entry.hookRuns.file, offset: entry.hookRuns.offset,
+        old: entry.hookRuns.old ? { file: entry.hookRuns.old.file, offset: entry.hookRuns.old.offset } : null } : null } });
     const bindHolder = () => {
-      const held = session.held;
+      const held = entry?.held;
       if (!control || !held) return;
       control.holder = { label: (card) => held.label(card) };
       control.backendCard = backendCard;
       control.touch?.();
     };
 
+    let outcome = 'ok', error = null, response = null, result = null;
     try {
+      check();
       if (adopt) {
-        // 付け直した子は会話の次のターンも使う。印から ack までの再生と続きは、start が始める読みが handle へ流す（子が終わっていれば記録だけで締まる）
-        live.set(conversationId, session);
-        session.start();
-      } else if (fresh) {
-        await reaped;   // 前の孤児を掃除し終えてから起こす（自分のを巻き込まない）
-        session.start();
-        // 強制終了で取り残されたときに、次の起動が掃除できるように控える（保持役の子は pid を持たず、控えない）
-        pids.remember(session.pid);
-      }
-      bindHolder();
-      if (control) control.handle = { get conversationId() { return conversationId; } };
-      control?.onReady?.();
-      if (!adopt) {
-        emit({ type: "activity", state: "thinking" });
-        session.held?.markTurn();   // 印は最初の行の直前（再生はここから）
-        // カスタムエージェントは作業場所の指示ファイル（AGENTS.md・GEMINI.md）を自分で読まない（antigravity-context.mjs 冒頭の実測）。
-        // 指示の担当がエージェント任せのままなら、Pleiad がネイティブと同じ探索（nativeInstructionEntries）で拾い、発言の前に毎ターン足す。
-        // 改訂が次のターンに効き、渡した分は nativeInjected で記録に残る
-        // 探索が失敗してもターンは続けるが、黙って落とさない: 失敗・診断（読めなかったファイル・上限超過）は記録に残し、
-        // コンソールにも出す（sessionContext の nativeInjected.error / diagnostics で見える）
+        // 付け直す子（保持役が持つ agy）。起動も握手も session の準備も済んでいる。走っている session/prompt の応答を拾い直し、印から ack までを再生する
+        if (!k?.promptId || typeof adopt.source?.write !== 'function') throw new Error('antigravity: the card has no prompt id');
+        const held = createHeldAcp({ source: adopt.source, lifetime: 'conversation', childPrefix: ACP_CHILD_PREFIX });
+        entry = newEntry(conversationId, { keys: k.keys ?? null, home: k.home ?? null, hookRuns: k.hookRuns ?? null, cleanup: adoptHome(k.home), held });
+        entry.sessionId = conversationId;
+        entry.client = client = new AgyAcp({ cwd, held, adopt: { promptId: k.promptId }, ...entryHandlers(entry) });
+        promptId = k.promptId;
+        live.set(conversationId, entry);
+        bindHandlers();
+        await client.start();
+        await client.open(1);
+        client.adoptTrailing((Array.isArray(k.prompts) ? k.prompts : []).filter((id) => id !== promptId));
+        steered = createAcpSteer({ client, sessionId: conversationId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+          onSent: () => {}, confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.() });
+        if (control) { control.handle = { sessionId: conversationId, get conversationId() { return conversationId; } }; control.steer = (item) => steered.steer(item); control.steerConfirms = true; }
+        bindHolder();
+        sent2 = true; prompting = true;
+        client.begin();
+        response = client.running;
+        control?.onReady?.();
+      } else {
+        // ---- 起動（生きていなければ）
+        if (!entry) {
+          const old = await tooOldAcp();
+          if (old) throw undelivered(new Error(t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION })));
+          const plan = await heldAcpPlan({ dataDir: store.dataDir, argv: cliCommand('antigravity'), envName: 'AGENT_HOST_AGY_HOLDER' });
+          if (plan) await sweepIdleOnce(plan.client);
+          const botDirs = botFolders?.additionalDirectories ?? [];
+          const agent = useAgent || hooksRuntime ? await prepareAgent({ owners,
+            prompt: agentPrompt, cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
+            context: useAgent, restricted, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
+            agents: agentRuntime ? { url: agentRuntime.url, authorization: agentRuntime.headers?.Authorization } : null,
+            browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
+            control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
+          const held = plan ? createHeldAcp({ client: plan.client, lifetime: 'conversation', childPrefix: ACP_CHILD_PREFIX }) : null;
+          entry = newEntry(conversationId, { keys, home: plan && agent ? agent.home : null, hookRuns: agent?.runs ? { file: agent.runs, offset: 0 } : null,
+            cleanup: agent?.cleanup ?? (() => {}), held, mcpServers: restricted ? [] : agent?.mcpServers ?? [],
+            mcpTokens: useAgent && agent ? relayTokens(agent.env) : [], cwd });
+          entry.client = client = new AgyAcp({ cwd, home: agent?.home, extraDirs: botDirs, restricted, skipPermissions: yolo, profile,
+            env: { ...process.env, ...secretsEnv, ...(agent?.env ?? {}), ...(browserEnv ?? {}) }, held, timeoutMs: START_TIMEOUT_MS, ...entryHandlers(entry) });
+          bindHandlers();
+          if (conversationId) live.set(conversationId, entry);
+          emit({ type: 'activity', state: 'preparing' });
+          const init = await client.start();
+          entry.caps = init?.agentCapabilities ?? null;
+          check();
+        } else {
+          client = entry.client;
+          bindHandlers();
+        }
+        // ---- 会話（session/new・resume・load）
+        if (!sessionKnown) {
+          const base = { cwd, mcpServers: entry.mcpServers ?? [] };
+          const meta = !restricted && useAgent ? { _meta: { antigravity: { systemPrompt: { append: systemPromptAppend({ prompt: agentPrompt, cwd, home: entry.home, locale: contextRuntime?.locale ?? locale }) } } } } : {};
+          let state = null, missing = false, lastError = null;
+          if (conversationId) {
+            for (const method of ['session/resume', 'session/load']) {
+              try { state = await client.call(method, { sessionId: conversationId, ...base, ...meta }); break; }
+              catch (e) { if (e?.notFound) { missing = true; break; } lastError = e; }
+            }
+            if (!state && !missing) throw lastError ?? new Error(t('antigravity.errors.notConnected'));
+          }
+          if (!state) {
+            state = await client.call('session/new', { ...base, ...meta });
+            const id = state?.sessionId;
+            if (typeof id !== 'string' || !id) throw new Error(t('antigravity.errors.notConnected'));
+            conversationId = id;
+            live.set(id, entry);
+            emit({ type: 'session', sessionId: id, ...(originalId ? {} : { first: true }), ...(state?.models?.currentModelId ? { model: state.models.currentModelId } : {}) });
+          }
+          entry.sessionId = conversationId;
+          entry.conversationId = conversationId;
+          entry.permissionMode = String(state?._meta?.antigravity?.permissionMode ?? state?.modes?.currentModeId ?? entry.permissionMode ?? '').slice(0, 100);
+          if (Array.isArray(state?.configOptions)) entry.config = state.configOptions;
+          if (state?.modes?.currentModeId) entry.modeId = state.modes.currentModeId;
+          if (state?.models?.currentModelId) entry.modelId = state.models.currentModelId;
+          learnModels(state);
+        }
+        check();
+        // ---- 承認モードとモデルの適用（yolo は起動の旗。それ以外は ACP の mode）
+        if (!yolo && (entry.modeId ?? '') !== m.acp) {
+          const applied = await client.call('session/set_config_option', { sessionId: conversationId, configId: 'mode', value: m.acp }).catch(() => null);
+          const current = applied?.configOptions?.find((o) => o.id === 'mode')?.currentValue;
+          if (current !== m.acp && entry.modeId !== m.acp) throw new Error(t('antigravity.errors.modeUnavailable'));
+          entry.modeId = m.acp;
+        }
+        const target = agyTarget(model, effortFor(effort), modelCache ?? {});
+        await applyTarget(entry, target);
+        entry.baseModel = model ?? "";
+        entry.effort = effortFor(effort);
+        check();
+        // ---- 指示ファイルの補填（Skills・MCP を止める会話だけ。ほかは systemPrompt で渡している）
         let injected = [], scanError = null, scanDiagnostics = null, scanLimited = false, injectedRan = false;
-        const skipNativeInject = antigravitySkipsNativeInstructions(contextRuntime);
-        if (session.keys?.custom && !skipNativeInject) {
+        if (restricted && !antigravitySkipsNativeInstructions(contextRuntime)) {
           injectedRan = true;
-          const scan = await nativeInstructionEntries(cwd, 'antigravity', scanOptions).catch(e => ({ entries: null, error: String(e?.message ?? e) }));
+          const scan = await nativeInstructionEntries(cwd, 'antigravity', scanOptions).catch((e) => ({ entries: null, error: String(e?.message ?? e) }));
           injected = scan?.entries ?? [];
           scanError = scan?.error ?? null;
           scanDiagnostics = scan?.diagnostics?.length ? scan.diagnostics.slice(0, 20) : null;
           scanLimited = Boolean(scan?.limited);
           if (scanError) console.error(`  ネイティブの指示ファイルを読めなかったので、このターンは注入しません（${conversationId}）:`, scanError);
         }
-        // 探したが 0 件のターンも entries:[] で記録する（前のターンの分を残さない）。注入を試みなかったターンはフィールド自体を出さない
         nativeInjected = injectedRan
-          ? { entries: injected.map(e => ({ id: e.id, name: e.name, path: e.path, scope: e.scope, appliesTo: e.appliesTo, hash: e.hash, tokens: e.tokens })),
+          ? { entries: injected.map((e) => ({ id: e.id, name: e.name, path: e.path, scope: e.scope, appliesTo: e.appliesTo, hash: e.hash, tokens: e.tokens })),
               ...(scanError ? { error: scanError } : {}), ...(scanDiagnostics ? { diagnostics: scanDiagnostics } : {}), ...(scanLimited ? { limited: true } : {}) }
           : null;
-        const injectedText = injected.map(e => agentT(locale, 'context.instructionsFrom', { path: e.path, scope: e.appliesTo ?? agentT(locale, 'context.allDirectories'), content: e.content })).join('\n\n') || null;
-        // ply_agents の説明と Pleiad の指示も発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため）。
-        // 控えに残すのは人が書いた分だけ（sent。Devin の mapper.beginTurn と同じ分け方）
-        session.prompt([injectedText, agentRuntime?.instructions ?? addedInstructions, visualizeInstructions, sent].filter(Boolean).join("\n\n"));
-        // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
+        const injectedText = injected.map((e) => agentT(locale, 'context.instructionsFrom', { path: e.path, scope: e.appliesTo ?? agentT(locale, 'context.allDirectories'), content: e.content })).join('\n\n') || null;
+        // ply_agents の説明と Pleiad の指示は発言の本文の前に毎ターン足す。控えに残すのは人が書いた分だけ（sent）
+        const promptText = [injectedText, agentRuntime?.instructions ?? addedInstructions, visualizeInstructions, sent].filter(Boolean).join('\n\n');
+        steered = createAcpSteer({ client, sessionId: conversationId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+          onSent: () => {}, confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.() });
+        if (control) { control.handle = { sessionId: conversationId, get conversationId() { return conversationId; } }; control.steer = (item) => steered.steer(item); control.steerConfirms = true; }
+        check();
+        prompting = true;
+        promptId = client.newId();
+        bindHolder();
+        await new Promise((resolve) => setImmediate(resolve));
+        entry.held?.markTurn();
+        emit({ type: 'activity', state: 'thinking' });
+        response = client.call('session/prompt', { sessionId: conversationId, prompt: [{ type: 'text', text: promptText }] }, { timeoutMs: 0, id: promptId });
+        sent2 = true;
         delivered = true;
         save();
+        onPromptDelivered?.(userUuid());
+        control?.onReady?.();
       }
-      await finished;
-      await reportHookRuns(session, hooksRuntime, emit);
 
-      // 終わりの分を書く（時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る）。
-      // 失敗・中断・打ち切りでも、そこまでのツールと本文を残す（中断の印は sidecar の interrupted が持つ）
-      const aborted = Boolean(signal?.signal?.aborted);
-      if (aborted) resultTrace ??= { source: "abort", status: null, outcome: "aborted" };
-      await seal({ ok: !aborted && !failed });
-      // 断られた会話のプロセスは次のターンに使い回さない（作り直す会話・送り直しは新しく起こす）
-      if (retracted) { session.kill(); release(conversationId, session); }
-
-      if (aborted) {
-        emit({ type: "turnResult", outcome: "aborted" });
-        return { sessionId: conversationId, nativeInjected };
+      result = await Promise.race([response, stopped]);
+      if (fatal) throw fatal;
+      const stopReason = result?.stopReason;
+      // ---- 返答の締め
+      const denials = Array.isArray(result?._meta?.antigravity?.deniedActions) ? result._meta.antigravity.deniedActions : [];
+      const deniedTurn = denials.length > 0 && !sawText && stopReason === 'end_turn';
+      const notice = replaying || stopReason !== 'end_turn' ? '' : adminNotice(entry, { askedSkip: yolo, deniedTurn });
+      if (notice) {
+        const add = `${text ? '\n\n' : ''}${notice}`;
+        if (!sawText) { sawText = true; out({ type: 'activity', state: 'writing' }); }
+        text += add;
+        out({ type: 'text.delta', text: add });
       }
-      if (failed) throw failed;
-    } catch (err) {
-      if (resultTrace?.outcome === "ok") resultTrace = { ...resultTrace, source: "postResultException", outcome: "error",
-        error: String(err?.message ?? err).slice(0, 1000) };
-      else resultTrace ??= { source: "exception", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
-      // 発言を渡した後に失敗しても、注入した分は記録に残す（server が err から拾う）
-      if (nativeInjected && err && typeof err === 'object') err.nativeInjected = nativeInjected;
-      throw err;
+      if (sawText) out({ type: 'text.end' });
+      if (stopReason === 'end_turn' && sawText && !adopt) authGuess = 'in';   // 付け直しの再生は、このプロセスが確かめた訳ではない
+      // 新しい会話（再開でない・別の会話になった）は 0 から数える。基準の無い再開は出さない
+      const total = lastUsage;
+      const usageFresh = !resumed || conversationId !== originalId;
+      const counted = total && USAGE_KEYS.some((key) => total[key]);
+      const usage = counted ? usageFor(usageDelta(total, usageFresh ? usageTotal({}) : usageBase)) : null;
+      if (usage) out(usage);
+      const actions = denials.map((a) => String(a?.display_name ?? a?.action ?? '').slice(0, 100)).filter(Boolean);
+      if (deniedTurn) {
+        outcome = 'error';
+        failed = new Error(t('antigravity.admin.deniedTurn', { actions: [...new Set(actions)].join(', '), ask: t('antigravity.admin.askTools') }));
+      } else if (local.signal.aborted || stopReason === 'cancelled') outcome = 'aborted';
+      else if (['max_tokens', 'max_turn_requests'].includes(stopReason)) outcome = 'limited';
+      else if (stopReason !== 'end_turn') { outcome = 'error'; failed = new Error(t('antigravity.errors.endedWith', { status: stopReason ?? t('antigravity.errors.unknownStatus') })); }
+      resultTrace = { source: 'result', status: String(stopReason ?? '').slice(0, 100), outcome, ...(failed ? { error: String(failed.message).slice(0, 1000) } : {}),
+        ...(denials.length ? { denied: denials.length } : {}), ...(total && (counted || usageFresh) ? { usage: total } : {}) };
+    } catch (e) {
+      error = fatal ?? e;
+      if (!fatal && (hostSignal?.aborted || error?.aborted)) outcome = 'aborted';
+      else if (!fatal && sent2 && error?.acpLimit) outcome = 'limited';
+      else outcome = 'error';
+      if (outcome === 'error' && AUTH_REQUIRED.test(String(error?.message ?? ''))) {
+        authGuess = 'out';   // agy が自ら認証を求めた＝未ログインが確定
+        const argv = cliCommand('antigravity');
+        emit({ type: 'auth', backend: 'antigravity', phase: 'url', url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ') : 'agy', message: t('antigravity.auth.notLoggedInTurn') });
+      }
+      // 何も実行せずに thought signature で断られた: 発言を控えから外し、再開した会話はネイティブの会話を使えない印を付ける
+      if (outcome === 'error' && error?.thoughtSignature && started.size === 0 && !sawText) {
+        retracted = true;
+        error = Object.assign(sent2 ? undelivered(error) : error, { retracted: [userUuid()] }, resumed ? { nativeUnusable: true } : {});
+      }
+      failed = outcome === 'error' ? error : null;
+      resultTrace = { source: 'exception', status: null, outcome, ...(outcome === 'error' ? { error: String(error?.message ?? error).slice(0, 1000) } : {}) };
     } finally {
-      clearTimeout(timer);
+      clearTimeout(watchdog);
+      hostSignal?.removeEventListener?.('abort', onAbort);
+      closing = true;
+      if (outcome === 'ok') await steered?.drain?.({ alive: () => !local.signal.aborted && !fatal }).catch(() => {});
+      if (adopt) await client?.settleTrailing?.(1500).catch(() => {});
+      prompting = false;
+      closed = true;
       clearBehind();
-      if (session.behind === behind) session.behind = null;
-      // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
-      // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）。手を離したターンは新しいサーバーが書く
-      await seal({ ok: false });
-      // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す
-      session.held?.endTurn();
-      // 次の発言を待つ agy は IDLE_MS で止める（保持役の子も同じ）
-      armIdle(conversationId, session);
-      if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
+      if (entry) {
+        if (entry.behind === behind) entry.behind = null;
+        entry.turn = null;
+      }
+      void finish;
     }
 
+    try {
+      if (entry) await reportHookRuns(entry, hooksRuntime, emit).catch(() => {});
+      if (outcome === 'aborted') resultTrace ??= { source: 'abort', status: null, outcome: 'aborted' };
+      await seal({ ok: outcome === 'ok' });
+    } finally {
+      // ターンが終わった子は付け直す対象から外す。生きていれば次の発言を待つ（IDLE_MS で止める）。断られた・落ちた・中断を畳めなかった会話は使い回さない
+      entry?.held?.endTurn();
+      const dead = !entry?.client?.alive || retracted || (outcome === 'aborted' && Boolean(fatal)) || outcome === 'error' && Boolean(error?.code === 'AGY_GONE');
+      if (entry) {
+        if (dead || retracted) { closeEntry(entry); release(conversationId, entry); }
+        else { live.set(conversationId, entry); armIdle(conversationId, entry); }
+      }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
+    }
+
+    // 選んだモデル・段を agy が断った: kind: 'model' で知らせ、委譲の自動の振り分けでは次の候補へ回す
+    const modelRejected = outcome === 'error' && Boolean(error?.configRejected);
+    if (retracted && resumed) { /* 作り直しは server が行う（nativeUnusable）。ここでは turnResult を出さない */ }
+    else emit({ type: 'turnResult', outcome, turns: 1, ...(conversationId ? { sessionId: conversationId } : {}),
+      ...(outcome === 'error' ? { error: String(failed?.message ?? error?.message ?? t('antigravity.errors.unknownStatus')) } : {}),
+      ...(modelRejected ? { kind: 'model', pristine: !sent2 } : {}),
+      ...(outcome === 'limited' && error?.acpLimit ? { error: String(error.message), resetsAt: error.acpLimit.resetsAt, window: null } : {}) });
+    if (outcome === 'error') {
+      const thrown = failed ?? error;
+      if (nativeInjected && thrown && typeof thrown === 'object') thrown.nativeInjected = nativeInjected;
+      throw sent2 || thrown?.retracted ? thrown : undelivered(thrown);
+    }
     return { sessionId: conversationId, nativeInjected };
+
+    // ---- このターンの中の小道具（関数の宣言は巻き上げられる）
+    function entryHandlers(target) {
+      return {
+        onUpdate: (params, opts) => target.turn?.onUpdate(params, opts),
+        onResponse: (info) => target.turn?.onResponse(info),
+        onRequest: (method, params, opts) => target.turn ? target.turn.onRequest(method, params, opts) : Promise.reject(Object.assign(new Error('Unsupported ACP client request'), { code: -32601 })),
+        onGone: (e) => { if (target.turn) target.turn.onGone(e); else { release(target.conversationId, target); target.cleanup?.(); } },
+      };
+    }
   },
 
   /**
-   * 付け直し（無停止の更新 段階 3。antigravity-held.mjs）: 保持役が持つ走っている agy の続きを受ける。card は runTurn が札に置いた分
+   * 付け直し（無停止の更新 段階 3。acp-held.mjs）: 保持役が持つ走っている `agy acp` の続きを受ける。card は runTurn が札に置いた分
    * （control.backendCard の { held, agy }）、source は保持役の子（core/adopt.mjs の holderSource）。印から ack までは記録を読み直して状態（本文・ツール・結果）を作り
-   * （emit の replay）、続きは普通に流して行ごとに ack する。agy に握手は要らない（stage0-codex-agy.md §3）。sessionId は agy の会話の id
+   * （emit の replay）、続きは普通に流して行ごとに ack する。握手も session の準備も要らない。sessionId は agy の会話の id
    */
   async adoptTurn(args) {
-    if (!args.card?.held || !args.card.agy || typeof args.source?.write !== "function") throw new Error("antigravity: the turn was not on the holder");
+    if (!args.card?.held || !args.card.agy || typeof args.source?.write !== 'function') throw new Error('antigravity: the turn was not on the holder');
     return backend.runTurn(args, { source: args.source, card: args.card });
   },
 
@@ -1110,22 +1204,118 @@ export const backend = {
 
   // 生かしている agy のプロセスを止める。巻き戻して送り直す会話（core/conversations.mjs の rewind）は、新しい agy の会話を起こすので、古いプロセスは使わない
   releaseConversation(conversationId) {
-    const session = conversationId ? live.get(conversationId) : null;
-    if (!session) return;
-    try { session.kill(); } catch {}
-    release(conversationId, session);
+    const entry = conversationId ? live.get(conversationId) : null;
+    if (!entry) return;
+    closeEntry(entry);
+    release(conversationId, entry);
+    entry.cleanup?.();
   },
 
   /**
    * 裏へ回ったコマンドを 1 本止める（ターンは止めない）。その会話の agy の直下の子で、コマンドを走らせているシェルを木ごと落とし、
-   * agy の DONE を待つ（一覧から外れるのは DONE。AI は出力を受けてターンを続ける）。見つからない・あいまいなら何も落とさずに断る
+   * agy の完了の通知を待つ（一覧から外れるのは完了。AI は出力を受けてターンを続ける）。見つからない・あいまいなら何も落とさずに断る
    */
   async stopBackground(sessionId, taskId) {
-    const session = sessionId ? live.get(sessionId) : null;
-    const entry = session?.behind?.tasks.get(taskId);
-    if (!entry) throw new Error(t("antigravity.errors.backgroundGone"));
-    entry.stopping ??= stopCommand(session, entry.command, taskId).catch((err) => { entry.stopping = null; throw err; });
-    return entry.stopping;
+    const entry = sessionId ? live.get(sessionId) : null;
+    const task = entry?.behind?.tasks.get(taskId);
+    if (!task) throw new Error(t("antigravity.errors.backgroundGone"));
+    task.stopping ??= stopCommand(entry, task.command, taskId).catch((err) => { task.stopping = null; throw err; });
+    return task.stopping;
+  },
+
+  // ---- ターンの途中の切り替え ------------------------------------------------
+  // handle は runTurn が control.handle に置く { sessionId }。止めずに替えられないときは false（server が止める道へ落とす）
+
+  async setModelLive(handle, model) {
+    const entry = liveEntry(handle);
+    if (!entry || typeof model !== "string" || !model) return false;
+    try { await applyTarget(entry, agyTarget(model, entry.effort ?? "", modelCache ?? {})); entry.baseModel = model; return true; }
+    catch { return false; }
+  },
+
+  async setEffortLive(handle, effort) {
+    const entry = liveEntry(handle);
+    if (!entry) return false;
+    try { await applyTarget(entry, agyTarget(entry.baseModel ?? "", effortFor(effort), modelCache ?? {})); entry.effort = effortFor(effort); return true; }
+    catch { return false; }
+  },
+
+  async setModeLive(handle, mode) {
+    const entry = liveEntry(handle);
+    if (!entry) return false;
+    const next = MODES[modeFor(mode)];
+    // yolo は起動の旗。yolo とそれ以外の行き来は起こし直しが要る
+    if (Boolean(next.skip) !== Boolean(entry.keys?.yolo)) return false;
+    if (next.skip) return true;
+    try {
+      const applied = await entry.client.call("session/set_config_option", { sessionId: entry.sessionId, configId: "mode", value: next.acp });
+      const current = applied?.configOptions?.find((o) => o.id === "mode")?.currentValue;
+      if (current !== next.acp && entry.modeId !== next.acp) return false;
+      entry.modeId = next.acp;
+      return true;
+    } catch { return false; }
+  },
+
+  /**
+   * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る（agy が available_commands_update に compact を出しているときだけ）。
+   * 走っているターンでは呼ばれない。前後の文脈量は usage_update（文脈の占有）から取る
+   */
+  async compact({ sessionId, emit, cwd, trigger = "manual", signal, hostSessionId, hostBackend }) {
+    const dir = path.resolve(cwd ?? process.cwd());
+    const hostSignal = signal?.signal ?? signal;
+    let client, fatal = null, usage = null, before = null, commands = [];
+    const onAbort = () => { try { client?.notify("session/cancel", { sessionId }); } catch {} };
+    hostSignal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      const last = (hostBackend && hostSessionId ? await hostBackend.getMessages(hostSessionId).catch(() => []) : []).filter((m) => m?.uuid).at(-1);
+      const boundary = last?.uuid ? { afterMessageId: last.uuid } : {};
+      const old = await tooOldAcp();
+      if (old) { emit({ type: "compaction", phase: "failed", trigger, ...boundary, reason: t("antigravity.errors.acpTooOld", { version: old, min: MIN_ACP_VERSION }) }); return { sessionId }; }
+      const existing = live.get(sessionId);
+      if (existing?.turn) throw new Error(t("antigravity.errors.notConnected"));
+      if (existing) { closeEntry(existing); release(sessionId, existing); existing.cleanup?.(); }
+      client = new AgyAcp({ cwd: dir, timeoutMs: START_TIMEOUT_MS, skipPermissions: true,
+        onGone: (error) => { fatal = error; },
+        onUpdate: (params) => {
+          if (params.sessionId !== sessionId) return;
+          const u = params.update;
+          if (u?.sessionUpdate === "available_commands_update") commands = Array.isArray(u.availableCommands) ? u.availableCommands : commands;
+          if (u?.sessionUpdate === "usage_update") {
+            const used = Number(u.used), size = Number(u.size);
+            if (!Number.isFinite(used) || !Number.isFinite(size) || size <= 0) return;
+            usage = { usedTokens: used, windowTokens: size };
+            emit({ type: "contextWindow", usedTokens: used, windowTokens: size });
+          }
+        } });
+      await client.start();
+      let state = null, lastError = null;
+      for (const method of ["session/resume", "session/load"]) {
+        try { state = await client.call(method, { sessionId, cwd: dir, mcpServers: [] }); break; } catch (e) { lastError = e; if (e?.notFound) break; }
+      }
+      if (!state) throw lastError ?? new Error(t("antigravity.errors.notConnected"));
+      await new Promise((resolve) => setImmediate(resolve));
+      if (fatal) throw fatal;
+      if (!commands.some((c) => String(c?.name ?? "").replace(/^\//, "") === "compact")) {
+        emit({ type: "compaction", phase: "failed", trigger, ...boundary, reason: t("compaction.nothingToCompact") });
+        return { sessionId };
+      }
+      before = usage?.usedTokens;
+      emit({ type: "compaction", phase: "start", trigger, ...boundary });
+      emit({ type: "activity", state: "compacting" });
+      const result = await client.call("session/prompt", { sessionId, prompt: [{ type: "text", text: "/compact" }] }, { timeoutMs: 0 });
+      if (fatal) throw fatal;
+      if (result?.stopReason !== "end_turn") {
+        emit({ type: "compaction", phase: "failed", trigger, ...boundary, reason: result?.stopReason === "cancelled" ? t("turn.aborted") : t("compaction.noCompletion") });
+        return { sessionId };
+      }
+      const after = usage?.usedTokens;
+      const dropped = Number.isFinite(before) && Number.isFinite(after) && after < before;
+      emit({ type: "compaction", phase: "complete", trigger, ...boundary, ...(dropped ? { beforeTokens: before, afterTokens: after } : {}) });
+      return { sessionId };
+    } finally {
+      hostSignal?.removeEventListener("abort", onAbort);
+      if (client) await client.close().catch(() => {});
+    }
   },
 
   // ---- 認証 ---------------------------------------------------------------
@@ -1149,6 +1339,8 @@ export const backend = {
         if (authGuess === 'out') return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn") };
         return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
       }
+      const old = await tooOldAcp();
+      if (old) return { loggedIn: false, account: null, unconfirmed: true, detail: t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }) };
       try {
         await fetchModels();
         authGuess = 'in';
@@ -1228,6 +1420,16 @@ export const backend = {
      * Pleiad からは消せないので、そのことを伝える。
      */
     async logout() {
+      // ACP に logout があるときだけ agy に頼む（無ければ端末での操作を案内する）
+      const client = new AgyAcp({ timeoutMs: START_TIMEOUT_MS });
+      try {
+        const init = await client.start();
+        if (init?.agentCapabilities?.auth?.logout) {
+          await client.call("logout", {});
+          authGuess = "out";
+          return;
+        }
+      } catch { /* 案内に落とす */ } finally { await client.close().catch(() => {}); }
       throw new Error(t("antigravity.auth.logoutInAgy"));
     },
   },
@@ -1308,15 +1510,15 @@ function spawnModels(log) {
   return spawnCli(cliCommand("antigravity"), ["--log-file", log, "models"], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
-/** 裏のコマンドを止める（backend.stopBackground）。agy の直下の子だけから選び、落とした後は DONE（一覧から外れる）を待つ */
-async function stopCommand(session, command, taskId) {
-  const agyPid = await agyPidOf(session).catch(() => null);
+/** 裏のコマンドを止める（backend.stopBackground）。agy の直下の子だけから選び、落とした後は完了の通知（一覧から外れる）を待つ */
+async function stopCommand(entry, command, taskId) {
+  const agyPid = await agyPidOf(entry).catch(() => null);
   if (!agyPid) throw new Error(t("antigravity.errors.backgroundNoAgy"));
   const list = await listProcesses({ parent: agyPid });
   const hit = pickCommandProcess(list, { agyPid, command });
   if (hit.error === "ambiguous") throw new Error(t("antigravity.errors.backgroundAmbiguous", { count: hit.count }));
   if (hit.error) throw new Error(t("antigravity.errors.backgroundNotFound"));
-  const gone = session.behind?.wait(taskId, STOP_WAIT_MS);
+  const gone = entry.behind?.wait(taskId, STOP_WAIT_MS);
   try {
     await killTree(hit.pid);   // list は agy の直下の子だけ。POSIX は子孫を辿るので、killTree が全部の一覧を取り直す
   } catch (err) {
@@ -1327,32 +1529,32 @@ async function stopCommand(session, command, taskId) {
 }
 
 /**
- * 会話の agy の pid。直に起こした agy は session.pid。保持役が持つ agy は pid を持たないので、付け直した子は保持役の子の状態（attach の答え・
- * 起動時の一覧）から、このサーバーが起こさせた子は保持役の直下の子のうち、起動の引数（agent の置き場・--conversation）で決まる 1 つから引く
+ * 会話の agy の pid。直に起こした agy は client.pid。保持役が持つ agy は pid を持たないので、付け直した子は保持役の子の状態（attach の答え・
+ * 起動時の一覧）から、このサーバーが起こさせた子は保持役の直下の子のうち、起動の引数（agent の置き場）で決まる 1 つから引く
  */
-async function agyPidOf(session) {
-  if (Number.isInteger(session.pid)) return session.pid;
-  const held = session.held;
+async function agyPidOf(entry) {
+  if (Number.isInteger(entry.pid)) return entry.pid;
+  const held = entry.held;
   if (!held) return null;
   const known = held.source?.attachedState?.pid ?? held.source?.state?.pid;
   if (Number.isInteger(known)) return known;
   const holderPid = held.client?.pid;
   if (!Number.isInteger(holderPid)) return null;
-  const markers = [session.home, session.conversationId ? `--conversation ${session.conversationId}` : null].filter(Boolean);
+  const markers = [entry.home].filter(Boolean);
   if (!markers.length) return null;
   return pickHeldAgy(await listProcesses({ parent: holderPid }), { holderPid, markers });
 }
 
 /**
  * アプリの終了で、保持役の agy（idle の子も、走っている子も）を止める（server の stopHeldChildren）。更新・落ちたときは呼ばない
- * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動が止める。antigravity-held.mjs の sweepIdleAtStart）
+ * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動が止める。sweepIdleAtStart）
  */
 export async function stopHeldAgy() {
-  for (const [id, session] of [...live]) {
-    if (!session.held) continue;
-    try { session.kill(); } catch {}
-    release(id, session);
-    session.cleanup();
+  for (const [id, entry] of [...live]) {
+    if (!entry.held) continue;
+    closeEntry(entry);
+    release(id, entry);
+    entry.cleanup?.();
   }
 }
 
@@ -1459,17 +1661,15 @@ function refreshModelsSoon() {
 // **SIGINT / SIGTERM のハンドラは足さない**（server はワーカースレッドでも動く。
 // 既定の終了挙動を変えないため、`exit` の範囲に留める）。
 process.once("exit", () => {
-  const gone = [];
-  for (const session of live.values()) {
+  for (const entry of live.values()) {
     // 保持役の子は保持役が持つ（新しいサーバーが付け直す。アプリの終了は stopHeldChildren が止める）。agent の置き場も残す
-    if (session.held) continue;
-    try { session.kill(); } catch {}
-    // Pleiad のコンテキストを渡したエージェント定義も消す（agy の exit はもう受け取れない）
-    session.cleanup();
-    if (session.pid) gone.push(session.pid);
+    if (entry.held) continue;
+    // exit の中では非同期が走らない。プロセスの木は同期で落とせないので、直下の agy だけ止める（残りの子は stdin が閉じて終わる）
+    try { entry.client?.proc?.kill?.(); } catch {}
+    // Pleiad のコンテキストを渡したエージェント定義も消す
+    try { entry.cleanup?.(); } catch {}
   }
   live.clear();
-  pids.forget(...gone);
 });
 
 export { MODES, TOOL_HINTS, botSessionKey, rejectedBeforeRun, turnResultFor, usageFor, usageTotal, usageDelta, usageBaseOf };

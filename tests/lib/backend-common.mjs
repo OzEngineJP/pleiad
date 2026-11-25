@@ -438,7 +438,9 @@ async function probeAntigravity({ scratch, caps }) {
       await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-SIBLING'], visualizeInstructions: 'PLY-SIBLING-VISUALIZE-ONLY', hooksRuntime, emit: (e) => events.sibling.push(e) }));
     });
   } finally { await killAgy(pidFile); }
-  const seenEntry = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]')))?.[0] ?? {};
+  // 起こされた agy は全部ここに控えられる（--version・models・acp）。会話の agy は --agent を持つ 1 本目
+  const spawnedEntries = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]'))) ?? [];
+  const seenEntry = spawnedEntries.find((entry) => entry?.agent) ?? spawnedEntries.find((entry) => entry?.agentMd) ?? spawnedEntries[0] ?? {};
   const wires = Object.fromEntries(Object.entries(events).map(([key, value]) => [key, String(jsonOf(textOf(value))?.wire ?? '')]));
   const firstMessages = sessionId ? await antigravity.getMessages(sessionId).catch(() => []) : [];
   const siblingSessionId = events.sibling.find((event) => event.type === 'session')?.sessionId ?? null;

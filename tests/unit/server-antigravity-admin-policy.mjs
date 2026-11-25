@@ -30,17 +30,18 @@ export default async function (t) {
   await fs.mkdir(cwd, { recursive: true });
   let host = null, client = null, dataDir = path.join(tmp, 'data');
   try {
-    const argsFile = path.join(tmp, 'args.json');
+    const acpLog = path.join(tmp, 'acp.log');
     host = await startServer({ dataDir, timeoutMs: 30_000, env: {
       AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: FAKE_AGY,
-      FAKE_AGY_ADMIN_REVIEW: '1', FAKE_AGY_MCP_DISABLED: '1', FAKE_AGY_ARGS_FILE: argsFile,
+      FAKE_AGY_ADMIN_REVIEW: '1', FAKE_AGY_MCP_DISABLED: '1', FAKE_AGY_ACP_LOG: acpLog,
     } });
     client = await open({ ...host, autoAllow: true });
 
     // ---- 返答の無いまま拒否だけが残ったターン
     const denied = await client.runTurn({ prompt: 'admin-denied', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
-    const args = JSON.parse(await fs.readFile(argsFile, 'utf8'))[0];
-    t.ok('Pleiad は確認なしで動かすよう渡し、カスタムエージェント（中継の MCP）を使う', args.includes('--dangerously-skip-permissions') && args.includes('--agent'), JSON.stringify(args));
+    const frames = (await fs.readFile(acpLog, 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const sessionNew = frames.find(f => f.method === 'session/new');
+    t.ok('ACP の session/new に作業ディレクトリと、Pleiad の MCP（中継）を渡す', sessionNew?.params?.cwd === cwd && Array.isArray(sessionNew.params.mcpServers) && sessionNew.params.mcpServers.length > 0, JSON.stringify(sessionNew?.params));
     const result = denied.events.find(e => e.type === 'turnResult');
     t.ok('空の SUCCESS と denied_actions は普通の完了にせず失敗にし、拒否された操作と管理者に頼む設定と値を書く', result?.outcome === 'error'
       && result.error.includes('RunCommand') && result.error.includes('「ターミナル自動実行モード」を「常に続行」') && result.error.includes('「ファイル アクセス ポリシーの外部」を「許可」')

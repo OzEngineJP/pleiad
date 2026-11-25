@@ -103,7 +103,7 @@ export default async function (t) {
     // 会話の agy の pid（控えには送信の関所・裏の一覧取得も残る。会話の起こしは --input-format を持つ）
     const agyPids = JSON.parse(await fs.readFile(pidFile, "utf8"));
     const agyArgs = JSON.parse(await fs.readFile(argsFile, "utf8"));
-    const agyPid = agyPids.filter((_, i) => agyArgs[i]?.includes("--input-format")).at(-1);
+    const agyPid = agyPids.filter((_, i) => agyArgs[i]?.[0] === "acp").at(-1);
 
     const unknown = await c.cmd("stopBackground", { sessionId, taskId: `${sessionId}:999` }).then(() => null, (e) => e.message);
     t.ok("知らない id は止めずに断る", Boolean(unknown) && alive(shell), String(unknown));
