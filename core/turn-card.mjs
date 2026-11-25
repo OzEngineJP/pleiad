@@ -193,7 +193,7 @@ export function cardOf(ctx, options = {}) {
     skipped: Array.isArray(ctx.shellHandoff.skipped) ? [...ctx.shellHandoff.skipped] : [],
   } : null;
 
-  // 6. （欠番）git の撮影 (T33) は ADR 0352 でやめた。古い版が書いた card.git は restoreFields が読まずに捨てる
+  // 6. （欠番）git の撮影 (T33) は ADR 0353 でやめた。古い版が書いた card.git は restoreFields が読まずに捨てる
 
   // 7. 会話の口のトークン (M2, O9-O12)
   const connectionTokens = extractTokensFromCtx(ctx);

@@ -100,7 +100,7 @@ export function cliVersion(exe, { run = askVersion } = {}) {
 async function askVersion(exe) {
   const target = commandOf(exe);
   if (!target) return null;
-  // 完了を待つ短命の子（ADR 0270 の規則 ①。core/process.mjs の runBackground。ターンの前の確認で、止めても終わらない子は待たずに戻る。ADR 0352）
+  // 完了を待つ短命の子（ADR 0270 の規則 ①。core/process.mjs の runBackground。ターンの前の確認で、止めても終わらない子は待たずに戻る。ADR 0353）
   const result = await runBackground(target.command, [...target.args, '--version'], { timeoutMs: 10_000 }).catch(() => null);
   return result && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
 }

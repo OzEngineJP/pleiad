@@ -1,6 +1,6 @@
 // git パネルの読み込み（core/git-history.mjs・git-activity.mjs）: 履歴のページ（limit と skip）・
 // 作業場所は一覧だけを先に返し、中身は同時に読む行の数を絞る。一時リポジトリで確かめる。
-// 会話の始まりの位置（startPosition）と「始まりまで読む」は、「この会話の間」とともに ADR 0352 でやめた。
+// 会話の始まりの位置（startPosition）と「始まりまで読む」は、「この会話の間」とともに ADR 0353 でやめた。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -26,7 +26,7 @@ export default async function (t) {
   t.ok('mapLimit: 同時は n 個まで・結果は元の順', peak === 3 && done.join() === '2,4,6,8,10,12,14,16,18,20', `peak=${peak} ${done}`);
   t.ok('mapLimit: 空でも落ちない', (await history.mapLimit([], 4, async () => 1)).length === 0);
   t.ok('同時に読む行の既定は 4〜6', history.WORKTREE_READ_CONCURRENCY >= 4 && history.WORKTREE_READ_CONCURRENCY <= 6);
-  t.ok('会話の始まりを探す口は無い（ADR 0352）', history.startPosition === undefined && history.START_SEARCH_MAX === undefined);
+  t.ok('会話の始まりを探す口は無い（ADR 0353）', history.startPosition === undefined && history.START_SEARCH_MAX === undefined);
 
   try { execFileSync('git', ['--version'], { windowsHide: true }); } catch { t.skip('git が無い'); return; }
   const scratch = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-git-panel-load-')));
@@ -39,7 +39,7 @@ export default async function (t) {
     const activity = createGitActivity();
     for (let i = 1; i <= 7; i++) await commitN(i, 'new');
 
-    // ---- 履歴のページ（会話の始まりの位置・「始まりまで読む」は ADR 0352 でやめた。ページは limit と skip だけ）
+    // ---- 履歴のページ（会話の始まりの位置・「始まりまで読む」は ADR 0353 でやめた。ページは limit と skip だけ）
     const all = await history.readHistory(repo, { limit: 50 });
     const first = await activity.commits(repo, { limit: 3 });
     t.ok('commits: 1 ページ目は limit 件・next は次の位置・会話の始まり（session）は付けない',

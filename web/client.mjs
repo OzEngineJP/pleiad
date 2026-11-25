@@ -7332,7 +7332,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   // 追加指示の行は、受け付けた位置（出来事・錨・受付時刻）に置く。配送中・待機・届かなかった分も同じ行で状態だけ変わる
   for (const it of buildItems(messages, presents)) {
     // worktree の印の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
-    // （古い保存分の kind: 'git' は buildItems が既に省く。ADR 0352）
+    // （古い保存分の kind: 'git' は buildItems が既に省く。ADR 0353）
     if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
     if (it.m?.role === 'instruction') {
@@ -7637,7 +7637,7 @@ function decorateDelegateCard(card) {
   (card.querySelector('.tc-pane-main') ?? card.querySelector('.tc-details-body'))?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
-  // 開いたとき、子の作業場所（worktree のブランチ）の行を出す。「変更」の行（ADR 0085 の決定 6）は ADR 0352 でやめた
+  // 開いたとき、子の作業場所（worktree のブランチ）の行を出す。「変更」の行（ADR 0085 の決定 6）は ADR 0353 でやめた
   const shell = card.querySelector('.tc-details');
   if (shell && !shell.dataset.gitHook) {
     shell.dataset.gitHook = '1';

@@ -1,5 +1,5 @@
 // git パネルの読み込みをサーバー越しに（fake + 一時リポジトリ）。
-// 履歴のページ（gitHistory。会話の始まりまで読む through は ADR 0352 でやめた）・作業場所は一覧だけ先に（gitWorktrees only: list）・
+// 履歴のページ（gitHistory。会話の始まりまで読む through は ADR 0353 でやめた）・作業場所は一覧だけ先に（gitWorktrees only: list）・
 // パネルを開いたときの worktree の片付けは、開いたリポジトリだけを、間隔を空けて 1 回（AGENT_HOST_WORKTREE_PANEL_SWEEP_MS）。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -36,7 +36,7 @@ export default async function (t) {
     const sid = first.sessionId;
     for (let i = 1; i <= 8; i++) await commit(i);
 
-    // ---- 履歴: limit 件ずつ。会話の始まりの位置（session）と「始まりまで読む」（through）は ADR 0352 でやめた
+    // ---- 履歴: limit 件ずつ。会話の始まりの位置（session）と「始まりまで読む」（through）は ADR 0353 でやめた
     const page1 = (await c.cmd('gitHistory', { sessionId: sid, limit: 3 })).history;
     t.ok('gitHistory: 1 ページ目は limit 件・next あり・会話の始まり（session）は付けない', page1.commits.length === 3 && page1.next !== null && page1.session === undefined, JSON.stringify({ n: page1.commits.length, next: page1.next, session: page1.session }));
     const plainNext = (await c.cmd('gitHistory', { sessionId: sid, limit: 3, cursor: page1.next })).history;

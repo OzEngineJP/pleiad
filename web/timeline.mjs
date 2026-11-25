@@ -61,7 +61,7 @@ export function buildItems(messages, presents, base = 0, presentBase = 0) {
   });
   presents.forEach((p, i) => {
     const pi = presentBase + i;
-    // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0352）。古い会話に残った行は黙って出さない（通し番号 pi は詰めない）
+    // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0353）。古い会話に残った行は黙って出さない（通し番号 pi は詰めない）
     if (p?.kind === 'git') return;
     const anchorMi = p.kind === 'visualization' && p.reference
       ? (visualAnchors.get(p.reference)?.shift() ?? -1) : absolute(attachmentMessageIndex(messages, p));

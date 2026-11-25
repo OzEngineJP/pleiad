@@ -50,7 +50,7 @@ export function layoutGraph(commits, { withWorktree = false, headHash = null } =
  * 範囲に入るコミット（行の添字の Set）と、比べる起点の行。
  *  - uncommitted: 作業ツリーの行だけ。起点は HEAD
  *  - commit: 押したコミットだけ。起点は null
- * （「この会話の間」の範囲は ADR 0352 でやめた）
+ * （「この会話の間」の範囲は ADR 0353 でやめた）
  */
 export function rangeNodes(layout, commits, { kind, hash = null, head = null }) {
   const offset = layout.rows[0]?.wt ? 1 : 0;

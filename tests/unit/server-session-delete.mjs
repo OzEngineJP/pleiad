@@ -1,7 +1,7 @@
 // 送った会話の削除（sessions.delete。ADR 0147）をサーバー越しに（fake + 一時リポジトリ。LLM は呼ばない）。
 //   - 送った会話が一覧から消え、別の接続（端末）にも sessionsChanged の deleted で届く
 //   - 一緒に片付けるデータ（DB の sessions・session_fields・conversations、本文のファイル、presents）が消え、使用量の記録は残る
-//     （git の撮影の ref は、ターンごとの撮影をやめた ADR 0352 で作られなくなった。残りは場所を最初に読んだときに 1 回だけ消す）
+//     （git の撮影の ref は、ターンごとの撮影をやめた ADR 0353 で作られなくなった。残りは場所を最初に読んだときに 1 回だけ消す）
 //   - ネイティブの会話は消さない（fake の deleteSession が呼ばれず、fake の会話が残る）。残したネイティブの会話は一覧に戻らない
 //   - 走っている会話・委譲した子が終わっていない会話は断る
 //   - AI（会話に束縛された口）からは承認カードを経る。自分の会話は消せない
@@ -66,7 +66,7 @@ export default async function (t) {
     const body = path.join(dataDir, 'conversations', `${sid}.json`);
     const filesDeadline = Date.now() + 10_000;
     while (Date.now() < filesDeadline && !(await exists(body))) await sleep(20);
-    // ターンごとの撮影は ADR 0352 でやめた: ref は作られない。presents は、この ADR より前の版が残した行（kind: 'git'）を置いて、消す対象にする
+    // ターンごとの撮影は ADR 0353 でやめた: ref は作られない。presents は、この ADR より前の版が残した行（kind: 'git'）を置いて、消す対象にする
     t.ok('撮影をやめたので、ターンを走らせても refs/pleiad/turn/ の ref は作られない', refsOf(sid).length === 0, refsOf(sid).join(','));
     await fs.mkdir(path.dirname(presents), { recursive: true });
     await fs.writeFile(presents, JSON.stringify({ kind: 'git', by: 'ai', at: new Date().toISOString(), git: { branch: 'main', files: 1, add: 1, del: 0, commits: 0 } }) + '\n');

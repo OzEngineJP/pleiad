@@ -1,5 +1,5 @@
-// git の動きをサーバー越しに（fake + 一時リポジトリ。ADR 0085・ADR 0352）。
-// ターンごとの変更の記録（始まり・終わりの撮影と、返答の下の present kind: git）は ADR 0352 でやめた。
+// git の動きをサーバー越しに（fake + 一時リポジトリ。ADR 0085・ADR 0353）。
+// ターンごとの変更の記録（始まり・終わりの撮影と、返答の下の present kind: git）は ADR 0353 でやめた。
 // 何も記録せず・隠し ref も作らず・present も出さないこと、git 管理外は何もしないこと、
 // gitStatus / gitPanel / gitDiff の口、委譲の子の完了通知に「変更:」の行が無いことを確かめる。
 // （worktree の子の「作業場所: worktree …」の行は server-worktree の試験が確かめる）
@@ -27,7 +27,7 @@ export default async function (t) {
   sh(repo, 'init', '-q', '-b', 'main');
   await fs.writeFile(path.join(repo, 'core', 'a.mjs'), 'one\ntwo\n');
   sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'first');
-  // 前の版が撮って残した隠し ref（ADR 0085）。サーバーが作業場所を初めて読んだときに 1 回だけ消す（ADR 0352）。archive の ref は残す
+  // 前の版が撮って残した隠し ref（ADR 0085）。サーバーが作業場所を初めて読んだときに 1 回だけ消す（ADR 0353）。archive の ref は残す
   const first0 = sh(repo, 'rev-parse', 'HEAD');
   sh(repo, 'update-ref', 'refs/pleiad/turn/old-session/1-start', first0);
   sh(repo, 'update-ref', 'refs/pleiad/turn/old-session/1-end', first0);

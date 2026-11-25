@@ -14,7 +14,7 @@ const store = await import("../../core/store.mjs");
 
 const iso = n => new Date(Date.UTC(2026, 9, 3, 10, 0, n)).toISOString();
 const msg = (role, uuid, n, extra = {}) => ({ role, uuid, text: `${role}:${uuid}`, at: iso(n), ...extra });
-// 時刻（at）を渡せる提示の種類（worktree の印の行）。kind: "git" は ADR 0352 で記録をやめたので使わない
+// 時刻（at）を渡せる提示の種類（worktree の印の行）。kind: "git" は ADR 0353 で記録をやめたので使わない
 const git = (id, n) => recordPresent(id, { kind: "worktree", at: iso(n), worktree: { n }, by: "ai" });
 let seq = 0;
 

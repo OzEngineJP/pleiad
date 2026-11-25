@@ -30,7 +30,7 @@ export default async function (t) {
   const newer = layoutGraph([c('x', 'h'), c('h', 'p'), c('p')], { headHash: 'h' });
   t.ok('HEAD より新しい枝があっても HEAD がレーン 0・新しい枝はレーン 1', newer.rows[1].lane === 0 && newer.rows[0].lane === 1 && newer.rows[1].head === true, JSON.stringify(newer.rows));
 
-  // 範囲: HEAD h と、別の枝 s。「この会話の間」の範囲は ADR 0352 でやめた（kind: 'session' は渡しても作業ツリーの行の扱いにならない）
+  // 範囲: HEAD h と、別の枝 s。「この会話の間」の範囲は ADR 0353 でやめた（kind: 'session' は渡しても作業ツリーの行の扱いにならない）
   const commits = [c('s', 'p'), c('h', 'p2'), c('p2', 'p'), c('p', 'o'), c('o')];
   const lay = layoutGraph(commits, { withWorktree: true, headHash: 'h' });
   const un = rangeNodes(lay, commits, { kind: 'uncommitted', head: 'h' });

@@ -54,7 +54,7 @@ export async function runGh(args, { env = process.env } = {}) {
   const custom = env.AGENT_HOST_GH;
   const script = custom && /\.m?js$/i.test(custom);
   const file = script ? process.execPath : (custom || 'gh');
-  // PR の状態は画面の裏で取る（誰も止めて待たない）。止めても終わらない gh は待たずに戻る（ADR 0352）
+  // PR の状態は画面の裏で取る（誰も止めて待たない）。止めても終わらない gh は待たずに戻る（ADR 0353）
   const result = await runBackground(file, script ? [custom, ...args] : args, {
     timeoutMs: GH_TIMEOUT_MS, maxOutputChars: 1024 * 1024, windowsHide: true,
     env: { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1', GH_PAGER: '' },

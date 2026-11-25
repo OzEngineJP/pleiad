@@ -213,7 +213,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 - **片付け**: 子が終わったとき（変更なし・取り込み済みなら消す。子の会話の cwd は元の場所へ戻してから）・ターンの終わり・起動時・git のページを開いたときに状態を見る。未取り込みは残り、git のタブの Worktree に出る（取り込みを頼む相手は依頼元の会話）。消す直前に、その中を cwd に持つ外部 MCP を畳んでから消す（Windows は cwd が掴まれた場所を消せない。畳まれた分は次の利用で起き直る）。追加の指示（`ply_task_send`）で片付け済みの子が再開したときは、元の場所から新しい worktree を作り直す。
 - **一覧**: `agentTasks`（と `running` の `tasks`）の行の `worktree` に、台帳にまだあるか（`live`）。画面は作業場所が変わった（`worktreesChanged`）ら会話の分を読み直す。委譲カードの開いた内訳の「作業場所」は `⑂ worktree <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
 
-子の作業場所の変更を伝える完了通知の 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md) の決定 6。タスクの記録の `git`、`ply_task_status` / `ply_task_wait` の `git` / `gitSummary`、委譲カードの内訳の「変更」の行）は、2026-11-25 に消した（[ADR 0352](adr/0352-remove-turn-snapshots-and-guard-background-git.md)）。基準にしていた「会話の最初のターンの始まりの撮影」が無くなり、worktree を切らない子では同じ作業場所の別の会話のコミットまで混ざって当てにならなかったため（実例: main で動いた子に「34 ファイル +731 −1383 · コミット 7」と出た）。親が事実で確かめられるのは、worktree の子の上の `作業場所: worktree <branch>（未取り込み · N ファイル）` の行（ブランチの差）。worktree を切らない子には、変更の行を載せない。
+子の作業場所の変更を伝える完了通知の 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md) の決定 6。タスクの記録の `git`、`ply_task_status` / `ply_task_wait` の `git` / `gitSummary`、委譲カードの内訳の「変更」の行）は、2026-11-25 に消した（[ADR 0353](adr/0353-remove-turn-snapshots-and-guard-background-git.md)）。基準にしていた「会話の最初のターンの始まりの撮影」が無くなり、worktree を切らない子では同じ作業場所の別の会話のコミットまで混ざって当てにならなかったため（実例: main で動いた子に「34 ファイル +731 −1383 · コミット 7」と出た）。親が事実で確かめられるのは、worktree の子の上の `作業場所: worktree <branch>（未取り込み · N ファイル）` の行（ブランチの差）。worktree を切らない子には、変更の行を載せない。
 
 子の承認モードは**親の強さまで継ぎ、それを超えない**。
 承認モードは範囲（`none` < `readonly` < `workspace` < `full`）と自律（`ask` < `judge` < `never`）の

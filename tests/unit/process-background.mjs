@@ -1,4 +1,4 @@
-// 裏の作業の子（core/process.mjs の runBackground・killDeadlineMs。ADR 0352）: 止めても終われない子を待たずに上限で戻る。LLM は呼ばない。
+// 裏の作業の子（core/process.mjs の runBackground・killDeadlineMs。ADR 0353）: 止めても終われない子を待たずに上限で戻る。LLM は呼ばない。
 //   - 止めた後 killDeadlineMs で、終われない子（遅いファイルシステムの I/O 待ちで kill が効かない子）を待たずに締める（stuck・onLeftover）
 //   - 終われる子は今までどおり（stuck を付けず、onLeftover も呼ばない）
 //   - 子は終わったが出力のパイプを握ったプロセスが残るときも、待たずに締める（leftover）

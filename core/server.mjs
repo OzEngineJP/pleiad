@@ -1271,7 +1271,7 @@ const peerRejection = r => ({
   raw: redactForPeer(r.raw ?? null, REJECTION_TEXT_MAX), approvalRequested: r.approvalRequested === true, callId: pick(r.callId, 200), turnId: pick(r.turnId, 200),
 });
 // 子の worktree の 1 行（ADR 0089。ブランチの差とファイル数もここに入る）。分けていない子には何も足さない
-// （同じ作業場所の別の会話のコミットまで混ざり当てにならないため、「変更: … N ファイル」の行は ADR 0352 でやめた）
+// （同じ作業場所の別の会話のコミットまで混ざり当てにならないため、「変更: … N ファイル」の行は ADR 0353 でやめた）
 const workspaceNotice = (lng, task) => (task.worktree ? workspaceLine(lng, task.worktree, task.workspace) + '\n' : '');
 // 完了通知に載せる拒否の件数（先頭から）。全件は ply_task_status の rejections で読む
 const NOTICE_REJECTIONS = 3;
@@ -3502,7 +3502,7 @@ const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.A
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder,
   // 秘密情報と変数（ADR 0217）。エージェントのシェルと同じく、その行の場所に渡すものを足す
   envFor: async run => (await secrets.envFor(run.cwd)).vars });
-// git の動き（ADR 0085・0352）。状態・変更の一覧と差分・履歴・残った隠し ref の片付け。git が無い・git 管理外は null
+// git の動き（ADR 0085・0353）。状態・変更の一覧と差分・履歴・残った隠し ref の片付け。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
 // 会話が作った PR を会話に覚える（親の会話の git パネルが、委譲した子の PR も 1 つの一覧に出すため。ADR 0206）。
 // 作った瞬間（gh pr create の結果が届いたとき）とターンの終わりに呼ぶ。同じ PR は 1 件のまま、変わらなければ書かない。書き込みは順に
@@ -8058,7 +8058,7 @@ function completionNotice(lng, tasks) {
     rejections: rejectionNotice(lng, task.rejections),
     // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
     human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
-    // 子の worktree の 1 行（ブランチの差・ファイル数。ADR 0089）。worktree を切らない子には何も載せない（ADR 0352）
+    // 子の worktree の 1 行（ブランチの差・ファイル数。ADR 0089）。worktree を切らない子には何も載せない（ADR 0353）
     workspace: workspaceNotice(lng, task),
   }));
   const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
@@ -9564,7 +9564,7 @@ function hostInvokeFor(agentLocale) {
 }
 
 async function launchTurn(ctx, dispatch = null) {
-  // ターンの始まりと終わりの変更の撮影（ADR 0085）は、ADR 0352 でやめた。ここで git は走らせない（遅いファイルシステムでターンの始まりを待たせない）
+  // ターンの始まりと終わりの変更の撮影（ADR 0085）は、ADR 0353 でやめた。ここで git は走らせない（遅いファイルシステムでターンの始まりを待たせない）
   const { turn, backend, hooks, runArgs } = ctx;
   await hooks.beforeDelivery?.();
   if (dispatch) {
@@ -9693,7 +9693,7 @@ async function closeTurn(ctx) {
     if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
   });
-  // 作った PR の覚え書きを残す（作った瞬間に書いた分は、変わらないので書かない。返答の下の変更の行は ADR 0352 でやめた）
+  // 作った PR の覚え書きを残す（作った瞬間に書いた分は、変わらないので書かない。返答の下の変更の行は ADR 0353 でやめた）
   if (turn.gitCalls && turn.info.sessionId) await recordPrs(turn.info.sessionId, turn.gitCalls.events());
   await endTurn(turn, emit, { record: ctx.didStart });
 }
@@ -9938,7 +9938,7 @@ async function restoreTurn(card, source) {
   // 止め始めていたターン（T7）。中断をもう一度送るのは adoptTurn
   if (fields.stopping) turn.info.stopping = true;
   turn.savedHookLeaks = savedHookLeaks(contextRecord?.hooks, startedAtMs);
-  // 古い版が書いた turn card の fields.git（始まりの撮影。ADR 0085・T33）は読まない（ADR 0352 で撮影をやめた）
+  // 古い版が書いた turn card の fields.git（始まりの撮影。ADR 0085・T33）は読まない（ADR 0353 で撮影をやめた）
   turn.ac.signal.addEventListener('abort', () => { turn.stops ??= captureStops(turn); touchCard(turn); }, { once: true });
   turn.worktreeId = (await worktreeHost.worktrees.byPath(cwd).catch(() => null))?.id ?? null;
   turn.gitCalls = createCallTracker();

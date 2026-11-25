@@ -625,7 +625,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         await record(r.taskId, row => {
           if (quitStops.has(r.taskId)) return;
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
-          // 子の作業場所の git の要約（row.git。ADR 0085）は ADR 0352 でやめた。古い版が書いた分は、書き直すときに外す
+          // 子の作業場所の git の要約（row.git。ADR 0085）は ADR 0353 でやめた。古い版が書いた分は、書き直すときに外す
           delete row.git;
           // 子の worktree の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
           if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;

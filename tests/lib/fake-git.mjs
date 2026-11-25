@@ -1,4 +1,4 @@
-// 試験用の偽の git（遅い・止まる git を作る。ADR 0352）。`setGitBin(process.execPath, { args: [このファイル] })` で差し替える。
+// 試験用の偽の git（遅い・止まる git を作る。ADR 0353）。`setGitBin(process.execPath, { args: [このファイル] })` で差し替える。
 // 本物の git を呼ばないので、遅い・止まる動きを時間どおりに作れる。リポジトリは要らない（cwd のフォルダーだけあればよい）。
 //
 // 環境変数（呼び出し側のプロセスで決める。run() は process.env を子へ渡す）:

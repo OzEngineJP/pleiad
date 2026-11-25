@@ -1,7 +1,7 @@
-// ホストの git の問い合わせ（core/git-info.mjs・git-timeline.mjs・git-activity.mjs。ADR 0085・0352）。
+// ホストの git の問い合わせ（core/git-info.mjs・git-timeline.mjs・git-activity.mjs。ADR 0085・0353）。
 // 状態の解析・差分の解析・コマンドの結果からのタイムライン・パネルの変更の一覧と差分・残っている隠し ref の片付けを、一時リポジトリで確かめる。
 // ユーザーの index・HEAD・ブランチに触れないこと、git 管理外は null になることも見る。
-// ターンごとの撮影（ADR 0085 の決定 2・3・6）は ADR 0352 でやめた。撮影の試験は無い（呼び出しが残っていないことは git-background-guard が見る）。
+// ターンごとの撮影（ADR 0085 の決定 2・3・6）は ADR 0353 でやめた。撮影の試験は無い（呼び出しが残っていないことは git-background-guard が見る）。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { realpathSync } from 'node:fs';

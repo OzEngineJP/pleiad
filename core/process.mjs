@@ -154,7 +154,7 @@ export function run(command, args = [], {
 }
 
 /**
- * 裏の作業（runBackground）の子は、止めてからこの時間たっても終わらなければ待たずに戻る（ADR 0352）。
+ * 裏の作業（runBackground）の子は、止めてからこの時間たっても終わらなければ待たずに戻る（ADR 0353）。
  * 3 秒の根拠: 正常な木ごとの停止（taskkill /t /f の起動 + 終了）が、この PC で約 1.3 秒かかった（1 秒では、止まる子まで詰まり扱いになる）
  */
 export const BACKGROUND_KILL_DEADLINE_MS = 3_000;

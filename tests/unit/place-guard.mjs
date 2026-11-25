@@ -1,4 +1,4 @@
-// 場所ごとの見張り（core/place-guard.mjs。ADR 0352）: 止めても終われない子の数・時間切れが続いた後の休み・同じ種類の裏の作業を 1 本ずつ。
+// 場所ごとの見張り（core/place-guard.mjs。ADR 0353）: 止めても終われない子の数・時間切れが続いた後の休み・同じ種類の裏の作業を 1 本ずつ。
 // 時計と pid の生死は差し込む（待たずに確かめる）。git は呼ばない。LLM は呼ばない。
 import { createPlaceGuard, placeKey, REST_LADDER_MS, REST_AFTER_TIMEOUTS } from '../../core/place-guard.mjs';
 
