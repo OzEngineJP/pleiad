@@ -181,6 +181,7 @@ export default async function (t) {
     const soon = await timed(() => call('output', { jobId: soonId, waitMs: 60_000 }));
     t.ok('output + waitMs: 待っている間にジョブが終われば、終わった時点で戻る（60 秒は待たない・出力と終了コード・「まだ走っています」とは書かない）',
       soon.ms >= 1000 && soon.ms < 20_000 && soon.value.text.includes('soon-2') && /終了コード 0/.test(soon.value.text) && !soon.value.text.includes('まだ走っています') && !soon.value.isError, `${soon.ms}ms ${soon.value.text}`);
+    t.ok('終了コードを含む output の戻りで、ジョブに「終わりを受け取った」印が付く', jobOf(soonId)?.endReceived === true, JSON.stringify(jobOf(soonId)));
 
     // 新しい出力が出ただけでは戻らない。waitMs が過ぎたら、ここまでの出力と続きの位置を返す（ジョブは止めない）
     const chattyId = await startJob(`${node} -e "let i = 0; setInterval(() => console.log('chat ' + (++i)), 100); setTimeout(() => {}, 30000)"`);

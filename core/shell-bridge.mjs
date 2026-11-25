@@ -113,6 +113,7 @@ export function createShellBridge({ askPermission, isAlwaysAllowed: givenAlways,
   const viewOf = (job) => ({ jobId: job.id, kind: job.kind, listed: isListed(job), command: job.command, cwd: job.cwd, shell: job.shell, startedAt: job.startedAt, running: job.endedAt == null,
     ...(job.held ? { held: true } : {}),
     ...(job.stoppedBy ? { stoppedBy: job.stoppedBy } : {}),
+    ...(job.endReceived ? { endReceived: true } : {}),
     ...(job.endedAt != null ? { endedAt: job.endedAt, exitCode: job.exitCode, ...(job.stopped ? { stopped: true } : {}), ...(job.timedOut ? { timedOut: true } : {}), ...(job.leftover ? { leftover: true } : {}) } : {}),
     outputEnd: job.out.end });
   const trim = (map) => {
@@ -154,7 +155,7 @@ export function createShellBridge({ askPermission, isAlwaysAllowed: givenAlways,
   function launch(sessionId, plan, { timeoutMs, kind }) {
     const map = jobsOf(sessionId);
     const job = { id: `sh-${crypto.randomUUID().slice(0, 8)}`, kind, stoppedBy: null, sessionId, command: plan.command, cwd: plan.cwd, shell: plan.shell, startedAt: now(),
-      endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false, out: outputBuffer(), ac: new AbortController(), env: plan.env, held: null };
+      endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false, endReceived: false, out: outputBuffer(), ac: new AbortController(), env: plan.env, held: null };
     map.set(job.id, job);
     onJobStart(sessionId, viewOf(job));
     job.done = (async () => {
@@ -196,8 +197,16 @@ export function createShellBridge({ askPermission, isAlwaysAllowed: givenAlways,
     onJobChange(job.sessionId, viewOf(job));
   }
 
+  /** 終わったことをツールの戻りで渡した印。保持役に載っているときは札にも残し、サーバーを入れ替えても終わりの知らせを重ねない */
+  function markEndReceived(job) {
+    if (job.endedAt == null || job.endReceived) return;
+    job.endReceived = true;
+    if (job.held) { try { job.held.label(job); } catch { /* 札を置き直せなくてもジョブの結果は返す */ } }
+  }
+
   /** moved: run が待ちを過ぎて裏へ移った、その戻り（「まだ走っています」の代わりに、止めていない・どう続けるかを書く） */
   function resultText(job, lng, { from = 0, moved = false } = {}) {
+    if (job.endedAt != null) markEndReceived(job);
     const read = job.out.read(from);
     const lines = [read.text || agentT(lng, 'shell.noOutput')];
     if (read.skipped) lines.unshift(agentT(lng, 'shell.skipped', { count: read.skipped }));
@@ -304,7 +313,7 @@ export function createShellBridge({ askPermission, isAlwaysAllowed: givenAlways,
       // run の呼び出し（待っていたエージェントの接続）は、サーバーを入れ替えると無くなる。戻り先が無いので、終わりを会話へ知らせる start として扱う
       const job = { id: card.jobId, kind: 'start', stoppedBy: card.stoppedBy ?? null, sessionId: card.sessionId, command: card.command, cwd: card.cwd,
         shell: card.shell, startedAt: card.startedAt, endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false,
-        out: outputBuffer(), ac: new AbortController(), env: null, held };
+        endReceived: card.endReceived === true, out: outputBuffer(), ac: new AbortController(), env: null, held };
       map.set(job.id, job);
       job.done = held.drive({ signal: job.ac.signal, onOutput: (_stream, text) => { if (text) job.out.push(text); } })
         .then((r) => {
