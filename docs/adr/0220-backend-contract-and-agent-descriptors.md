@@ -26,6 +26,8 @@
   モードの名前（`full`・`yolo`）ではなくモードの語彙の `autonomy: never` で見る。
 - **共通の契約の試験。** エージェントごとの身代わり（LLM を呼ばない）で、全エージェントに同じ契約（1 ターン・履歴の形と uuid・続き・タイトル・
   分岐）を回す（`tests/unit/backend-conformance.mjs`）。能力の印ごとに、その契約を確かめる試験の名前を書かせる（`CAPABILITY_CONTRACTS`）。
+  （後の版で、この試験は配達の試験と `tests/unit/backend-common.mjs` に 1 本化し、`CAPABILITY_CONTRACTS` は廃止した。
+  どの試験が何を確かめるかの索引は持たず、エージェントごとの宣言と実際の動きの突き合わせを共通の試験が見る。[0278](0278-capability-delivery-tests.md)）
 - **イベントの形の検査。** バックエンドが出してよいイベントと必ず付けるフィールドを `BACKEND_EVENTS` に書き、試験のサーバーは
   `PLEIAD_BACKEND_CONTRACT=strict` で受け口ごとに照らす。外れたイベントがあれば、どの試験でも `stop()` で落とす。本番では照らさない。
 - **id の直書きはラチェットで減らす。** `tests/lint-backends.mjs` が `core/backends/` の外の id とちょうど同じ文字列リテラルをファイルごとに数え、

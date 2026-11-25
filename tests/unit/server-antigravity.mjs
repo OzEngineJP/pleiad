@@ -87,18 +87,6 @@ export default async function (t) {
     const b = backends[0];
     t.ok("antigravity だけが有効になる", backends.length === 1 && b.id === "antigravity",
          backends.map((x) => x.id).join(",") || "(なし)");
-    t.ok("タイトルも状態タグも持てないと申告する",
-      b.capabilities?.title === false && b.capabilities?.tag === false,
-      JSON.stringify({ title: b.capabilities?.title, tag: b.capabilities?.tag }));
-    t.ok("子の会話本文を取得できないため、サブエージェントには対応しないと申告する",
-      b.capabilities?.subagents === false, String(b.capabilities?.subagents));
-    // agy には対話承認そのものが無い。「常に許可」も出せない
-    t.ok("常に許可は出せないと申告する", b.capabilities?.alwaysAllow === false, String(b.capabilities?.alwaysAllow));
-    t.ok("実行中のモード・モデル切り替えはできないと申告する",
-      b.capabilities?.liveMode === false && b.capabilities?.liveModel === false,
-      JSON.stringify({ liveMode: b.capabilities?.liveMode, liveModel: b.capabilities?.liveModel }));
-    t.ok("ログインはできると申告する", b.capabilities?.login === true, String(b.capabilities?.login));
-    t.ok("入力欄の ! は Pleiad が実行する方式", b.capabilities?.shell === 'host', String(b.capabilities?.shell));
 
     // ---- 語彙。**選べるのは「全部自動」だけ。**
     // agy のヘッドレスは --dangerously-skip-permissions 以外だとツールを soft-deny するので、

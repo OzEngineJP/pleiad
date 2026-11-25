@@ -63,10 +63,6 @@ export default async function (t) {
     const b = backends[0];
     t.ok("codex だけが有効になる", backends.length === 1 && b.id === "codex",
          backends.map((x) => x.id).join(",") || "(なし)");
-    t.ok("状態タグは持てないと申告する", b.capabilities?.tag === false && b.capabilities?.title === true,
-         JSON.stringify({ tag: b.capabilities?.tag, title: b.capabilities?.title }));
-    t.ok("分岐とログインができると申告する", b.capabilities?.fork === true && b.capabilities?.login === true);
-    t.ok("host ツールは持たない", b.capabilities?.hostTools === false);
     t.ok('バックグラウンド端末の詳細と停止を提供する', b.capabilities.backgroundDetails === true && b.capabilities.stopBackground === true);
     t.ok("アイテム名の表示ヒントが付く", b.toolHints?.commandExecution?.shape === "shell",
          JSON.stringify(b.toolHints?.commandExecution ?? null));
@@ -183,10 +179,9 @@ export default async function (t) {
       JSON.stringify(sub.tools));
 
     // ---- サブエージェント一覧（running.subagents / loadSubagent）
-    t.ok("サブエージェントを持てると申告し、委譲の 2 種を委譲カードで描く",
-      b.capabilities?.subagents === true
-        && b.toolHints?.subAgentActivity?.shape === "delegate" && b.toolHints?.collabAgentToolCall?.shape === "delegate",
-      JSON.stringify({ subagents: b.capabilities?.subagents, hints: [b.toolHints?.subAgentActivity, b.toolHints?.collabAgentToolCall] }));
+    t.ok("委譲の 2 種を委譲カードで描く",
+      b.toolHints?.subAgentActivity?.shape === "delegate" && b.toolHints?.collabAgentToolCall?.shape === "delegate",
+      JSON.stringify({ hints: [b.toolHints?.subAgentActivity, b.toolHints?.collabAgentToolCall] }));
     const card = sub.events.find((e) => e.type === "tool.start" && e.name === "subAgentActivity");
     t.ok("委譲カードの見出しは agent_path から /root/ を外したもの",
       card?.input?.description === "csv_fixture_research", JSON.stringify(card?.input ?? null));

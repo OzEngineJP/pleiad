@@ -22,5 +22,5 @@ Antigravity の可視化・入力欄の `!`・子の会話・互換接続・自�
 
 ## 影響
 
-- 可視化と `!` の配達は `tests/lib/backend-delivery.mjs` で偽 CLI に渡ることを検査する。既存の `server-shell`・`server-visualize` 契約も維持する。
+- 可視化と `!` の配達は `tests/lib/backend-common.mjs` で偽 CLI に渡ることを検査する。既存の `server-shell`・`server-visualize` 契約も維持する。
 - CLI の拡張やヘッドレス API が後の版で追加された場合は、実機・公式資料を再確認して該当する不可能の印を更新する。子の会話を ID から取得できる公式の口が追加された場合は `subagents` を再判定する。

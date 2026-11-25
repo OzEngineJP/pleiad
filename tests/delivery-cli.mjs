@@ -3,7 +3,7 @@
 //   npm run test:delivery                 6 エージェントを順に
 //   npm run test:delivery -- claude devin 指定だけ
 //
-// 確かめること（1 ターンで 3 つ。偽のプロセスで確かめる tests/unit/backend-delivery.mjs の実物版）:
+// 確かめること（1 ターンで 3 つ。偽のプロセスで確かめる tests/unit/backend-common.mjs の実物版）:
 //   instructions  設定 › 指示に足した合言葉が返答に入る（plyInstructions・plyAgents の届け方）
 //   plyControl    ply_control の list_ops を呼び、操作の一覧（sessions.list など）が返る
 //   secrets       秘密情報の変数が会話のシェルにある（値は読まず、あるかないかを答えさせる）

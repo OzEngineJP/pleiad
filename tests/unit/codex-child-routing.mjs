@@ -460,9 +460,6 @@ async function subagentsViaFake(t) {
   const ids = await backend.listSubagents(parent);
   const child = ids[0];
   t.ok("listSubagents: 親の直接の子が 1 本だけ返る", ids.length === 1 && /^th_\d+$/.test(child ?? ""), JSON.stringify(ids));
-  t.ok("capabilities.subagents と subagentTools を申告する",
-    backend.capabilities.subagents === true
-      && JSON.stringify(backend.subagentTools) === JSON.stringify(["subAgentActivity", "collabAgentToolCall"]));
 
   // tool.start の event.id と getSubagentOrigin の戻りが同じ id 空間（server の taskHints はこれで引く）
   const origin = await backend.getSubagentOrigin(parent, child);

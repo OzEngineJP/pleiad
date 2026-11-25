@@ -48,5 +48,14 @@
   `agent.md`・`hooks.json`・環境変数・届いた本文、Codex は `thread/start` の `config`（`FAKE_CODEX_LOG`）。
 - `tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS` の形が変わる（配列 → `{ suites, agents }`）。既存の suite の名前はそのまま。
 - 実物の CLI で 2026-10-26 に 6 エージェントを 1 回ずつ流し、すべての項目が届いた（`npm run test:delivery`）。
+- **後の版の整理（実装漏れ対策の統廃合）。** `backend-delivery`・`backend-conformance` は `tests/unit/backend-common.mjs`
+  （部品は `tests/lib/backend-common.mjs`）の 1 本にした。`CAPABILITY_CONTRACTS`（suite の名前の索引）と `DELIVERY_AGENTS` は廃止した。
+  - 配達物の印は `capability-marks.mjs` で `probe: true` を付け、probe が `{ seen, evidence, extra? }` を返す。
+    対応の印は証拠が全部 `true`・要る証拠が全部出ていること、対応でない印の証拠が出ていない・知らない証拠が無いことを見る。
+    probe の証拠のうち、これまで assert されていなかった 4 つ（codex の `autoCompactWindow`・devin の `nativeShellOff`・
+    grok の `compatEndpoints`・agy の `shell` と会話の分離・指示が履歴に入らないこと）も見る。
+  - 全エージェント（fake 含む）で、1 ターン・中断（`turnResult` が 1 つで outcome は `aborted`）・失敗（`turnResult.error`・
+    その後もサーバーが生きる）・再起動後の続き（同じ dataDir・token で同じ sessionId が続く）も流す。
+  - `gateRunArgs` が印の無い配達物を渡さないことは `backend-contract` の単体で確かめる。
 - 印が対応のまま届かないエージェントが見つかったら、印を `todo`・`impossible` に直すか、届ける実装を足す。どちらもせずに
   `agents` の行だけを足すことはできない（`DELIVERY_PROBES` の証拠が要る）。

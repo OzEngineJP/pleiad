@@ -1,21 +1,32 @@
 // バックエンドの契約（core/backends/contract.mjs）の静的な検査: 全エージェントの能力の印の状態・性質・印とメソッドの食い違い・
-// エージェントの記述（core/backends/agents.mjs）のキー・印ごとの契約の試験と説明の置き場・身代わり。
+// エージェントの記述（core/backends/agents.mjs）のキー・性質ごとの契約の試験と説明の置き場・身代わり・runArgs の絞り込み（gateRunArgs）・配達物の証拠の照らし方。
 // 印ごとの検査の規則（required・impossible の cause と理由・todo の Issue・subagentTools の申告）は、contract.mjs の検査そのものを下で確かめる。
-// 動かして確かめる共通の契約は tests/unit/backend-conformance.mjs
+// 動かして確かめる共通の契約と配達物の確かめは tests/unit/backend-common.mjs
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, IMPOSSIBLE_CAUSES, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, TRAIT_KEYS,
-  checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, impossible, isCapabilityState, legacyCapabilities, todo, traitProblem,
+  CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, IMPOSSIBLE_CAUSES, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, TRAIT_KEYS, RUN_ARG_FEATURES,
+  checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, gateRunArgs, impossible, isCapabilityState, legacyCapabilities, todo, traitProblem,
 } from '../../core/backends/contract.mjs';
 import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, definePerAgentMap, idleCompactionKey } from '../../core/backends/agents.mjs';
-import { CAPABILITY_CONTRACTS, RIGS, TRAIT_CONTRACTS } from '../lib/backend-contracts.mjs';
-import { DELIVERY_ARG_KEYS, DELIVERY_CAPABILITIES, DELIVERY_PROBES, deliveryArgs, deliveryContractProblem, deliveryRequired } from '../lib/backend-delivery.mjs';
+import {
+  DELIVERY_ARG_KEYS, DELIVERY_HINTS, DELIVERY_PROBES, EXTRA_PROBES, PROBE_MARKS, RIGS, deliveryArgs, deliveryRequired, probeVerdict,
+} from '../lib/backend-common.mjs';
 import { ABOUT, MATRIX_AGENTS, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
 import { ROOT } from '../lib/server.mjs';
 
+// 性質（能力ではない。ADR 0274）ごとの契約の試験（tests/run.mjs の suite 名）。性質を足すときはここにも足す
+const TRAIT_CONTRACTS = {
+  effortInModelId: ['effort', 'devin-models', 'server-devin'],
+  instructionsAtStart: ['bot-dispatch'],
+  failureDiagnostics: ['server-antigravity', 'server-devin'],
+  promptDelivery: ['message-queue', 'server-antigravity'],
+  secretsViaEnvFile: ['secrets-store'],
+  liveSecrets: ['server-secrets', 'secrets-store', 'server-opencode'],
+};
+
 export const name = 'backend-contract';
-export const title = 'バックエンドの契約: 能力の印を 4 つの状態で全部書く・性質を true/false で書く・印とメソッドが合う・記述のキー・印ごとの契約の試験';
+export const title = 'バックエンドの契約: 能力の印を 4 つの状態で全部書く・性質を true/false で書く・印とメソッドが合う・記述のキー・runArgs の絞り込み・配達物の証拠の照らし方';
 
 export default async function (t) {
   const natives = await loadNatives();
@@ -42,7 +53,7 @@ export default async function (t) {
     const missing = DESCRIPTOR_KEYS.filter((k) => !Object.hasOwn(a, k));
     const extra = Object.keys(a).filter((k) => !DESCRIPTOR_KEYS.includes(k));
     t.ok(`${id}: 記述のキーを全部書く（使わないものは null）`, missing.length === 0 && extra.length === 0, JSON.stringify({ missing, extra }));
-    t.ok(`${id}: 身代わり（tests/lib/backend-contracts.mjs の RIGS）がある`, typeof RIGS[id] === 'function');
+    t.ok(`${id}: 身代わり（tests/lib/backend-common.mjs の RIGS）がある`, typeof RIGS[id] === 'function');
     t.ok(`${id}: hooksVia は hooksAs のエージェントだけが書き、'callback'・'plugin'・'config'`, a.hooksAs ? ['callback', 'plugin', 'config'].includes(a.hooksVia) : a.hooksVia === null, String(a.hooksVia));
     t.ok(`${id}: contextAt は 'turn' か 'conversation'`, ['turn', 'conversation'].includes(a.contextAt), String(a.contextAt));
     if (a.cli) t.ok(`${id}: CLI の記述に exe・binEnv・installUrl がある`, typeof a.cli.exe === 'string' && /^AGENT_HOST_[A-Z_]+_BIN$/.test(a.cli.binEnv) && /^https:\/\//.test(a.cli.installUrl));
@@ -69,7 +80,7 @@ export default async function (t) {
   t.ok('エージェントごとの表: extra で試験用の別名を足せる（足していなければ落とす）',
     perAgentError({ ...fullMap(), fake: 1 }, { extra: ['fake'] }) === null && perAgentError({ ...fullMap(), fake: 1 }) !== null);
 
-  // 印ごとの契約の試験と説明（印を足して、試験を書き忘れたら落とす）
+  // 印ごとの説明（印を足して、書き忘れたら落とす）と、性質ごとの契約の試験の実在
   const suites = new Set([...readFileSync(path.join(ROOT, 'tests', 'run.mjs'), 'utf8').matchAll(/'\.\/unit\/([\w.-]+)\.mjs'/g)].map((m) => m[1]));
   const suiteNames = new Set([...suites].map((file) => {
     const text = readFileSync(path.join(ROOT, 'tests', 'unit', `${file}.mjs`), 'utf8');
@@ -77,9 +88,6 @@ export default async function (t) {
   }));
   const matrix = renderMatrix(natives);
   for (const key of CAPABILITY_KEYS) {
-    const named = CAPABILITY_CONTRACTS[key]?.suites ?? [];
-    const unknown = named.filter((n) => n !== 'conformance' && !suiteNames.has(n));
-    t.ok(`印 ${key}: 契約の試験がある（tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
     // 公開文書（site/docs/scripts/generate.mjs）が使う利用者向けの文。印を足して説明を書き忘れたら落とす
     const doc = CAPABILITY_DOCS[key];
     t.ok(`印 ${key}: 利用者向けの説明（ja・en の label・summary・unavailable）がある`, Boolean(doc)
@@ -87,42 +95,96 @@ export default async function (t) {
         && typeof doc.summary?.[lng] === 'string' && doc.summary[lng].length > 0
         && typeof doc.unavailable?.[lng] === 'string' && doc.unavailable[lng].length > 0));
   }
-  t.ok('契約の試験・説明に、一覧に無い印が無い', Object.keys(CAPABILITY_CONTRACTS).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(ABOUT).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(CAPABILITY_DOCS).every((k) => CAPABILITY_KEYS.includes(k)));
-  // 性質は能力の表に出さない（一覧にも契約の試験にも混ぜない）
+  t.ok('説明に、一覧に無い印が無い', Object.keys(ABOUT).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(CAPABILITY_DOCS).every((k) => CAPABILITY_KEYS.includes(k)));
+  // 性質は能力の表に出さない（一覧にも混ぜない）
   for (const key of TRAIT_KEYS) {
     const named = TRAIT_CONTRACTS[key] ?? [];
     const unknown = named.filter((n) => !suiteNames.has(n));
-    t.ok(`性質 ${key}: 契約の試験がある（tests/lib/backend-contracts.mjs の TRAIT_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
+    t.ok(`性質 ${key}: 契約の試験がある（tests/unit/backend-contract.mjs の TRAIT_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
   }
-  t.ok('性質の契約の試験に、一覧に無い性質が無い', Object.keys(TRAIT_CONTRACTS).every((k) => TRAIT_KEYS.includes(k)) && TRAIT_KEYS.every((k) => !(k in CAPABILITY_CONTRACTS)));
+  t.ok('性質の契約の試験に、一覧に無い性質が無い', Object.keys(TRAIT_CONTRACTS).every((k) => TRAIT_KEYS.includes(k)) && TRAIT_KEYS.every((k) => !CAPABILITY_KEYS.includes(k)));
   t.ok('一覧（端末に出す）に性質を出さない', TRAIT_KEYS.every((k) => !new RegExp(`（\`${k}\`）`).test(matrix) && !Object.hasOwn(ABOUT, k)));
-  // 配達物（runArgs の渡し物）を持つ印は、対応・補うのエージェントごとに「そのエージェントで届く」試験が要る。
-  // 新しいエージェント・新しい配達物を足したときに漏れないよう、印の値（対応か）と身代わり（DELIVERY_PROBES）から機械的に決める
-  for (const key of DELIVERY_CAPABILITIES) {
-    const agents = CAPABILITY_CONTRACTS[key]?.agents ?? {};
-    for (const id of DEFAULT_AGENT_IDS) {
-      if (!deliveryRequired(natives[id]?.capabilities?.[key])) continue;
-      const problem = deliveryContractProblem({ key, id, suite: agents[id], suites: suiteNames, probes: DELIVERY_PROBES,
-        file: AGENTS[id].module.replace(/^\.\//, '') });
-      t.ok(`印 ${key}: ${id} は対応なので、${id} で届くことを確かめる試験がある`, problem === null, problem ?? undefined);
-    }
+  // 配達物（runArgs の渡し物）: 現役のエージェントは全員、1 ターン流して届いた証拠を返す probe を持つ（tests/unit/backend-common.mjs が回す）。
+  // 新しいエージェントを足したときに漏れないよう、記述（AGENTS）から機械的に決める
+  for (const id of MATRIX_AGENTS) {
+    t.ok(`${id}: 配達物の probe がある（tests/lib/backend-common.mjs の DELIVERY_PROBES に、1 ターン流して証拠を返す probe を書く）`,
+      typeof DELIVERY_PROBES[id] === 'function');
   }
-  const missingDelivery = deliveryContractProblem({ key: 'browser', id: 'nobody', suite: undefined, suites: suiteNames, probes: DELIVERY_PROBES });
-  t.ok('配達物の試験が無いときの案内: どのファイルに何を書くかを出す',
-    /tests\/lib\/backend-delivery\.mjs/.test(missingDelivery) && /CAPABILITY_CONTRACTS\.browser\.agents\.nobody/.test(missingDelivery)
-    && /backend-delivery/.test(missingDelivery), missingDelivery);
+  t.ok('配達物の probe の一覧に、記述に無い・現役でないエージェントが無い', Object.keys(DELIVERY_PROBES).every((id) => MATRIX_AGENTS.includes(id)));
   // 配達物のキーは RUN_ARG_FEATURES から作る（手で写さない）。deliveryArgs が全部のキーを実際に渡す（一覧だけ足して渡し忘れない）
   const allCaps = Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, true]));
   const built = deliveryArgs(allCaps, {});
   const unbuilt = DELIVERY_ARG_KEYS.filter((key) => !Object.hasOwn(built, key));
-  t.ok('配達物の試験: deliveryArgs が RUN_ARG_FEATURES のキーを全部渡す（新しいキーは tests/lib/backend-delivery.mjs の deliveryArgs にも足す）',
+  t.ok('配達物の試験: deliveryArgs が RUN_ARG_FEATURES のキーを全部渡す（新しいキーは tests/lib/backend-common.mjs の deliveryArgs にも足す）',
     DELIVERY_ARG_KEYS.length > 0 && unbuilt.length === 0, JSON.stringify(unbuilt));
-  for (const [key, contract] of Object.entries(CAPABILITY_CONTRACTS)) {
-    for (const [id, suite] of Object.entries(contract.agents ?? {})) {
-      t.ok(`印 ${key}: エージェント ${id} の試験 ${suite} が実在する`, Object.hasOwn(AGENTS, id) && suiteNames.has(suite),
-        `tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS.${key}.agents.${id} を、実在するエージェントと suite（tests/run.mjs の名前）にする`);
-    }
+
+  // 証拠の取りこぼしを落とす: runArgs の配達物の印は全部 probe: true（capability-marks.mjs）で、確かめる証拠の集合と一致し、説明がある
+  const featureMarks = [...new Set(Object.values(RUN_ARG_FEATURES))].sort();
+  t.ok('配達物の印（RUN_ARG_FEATURES の印）は、全部 probe: true で、それ以外の印に probe: true が無い（証拠が要る印の取りこぼしが無い）',
+    featureMarks.length > 0 && JSON.stringify([...PROBE_MARKS].sort()) === JSON.stringify(featureMarks)
+    && featureMarks.every((key) => CAPABILITIES[key]?.probe === true), JSON.stringify({ probe: PROBE_MARKS, features: featureMarks }));
+  const extraKeys = Object.values(EXTRA_PROBES).flat();
+  t.ok('エージェントごとの追加の証拠: 現役のエージェントのもので、PROBE_MARKS と重ならない',
+    Object.keys(EXTRA_PROBES).every((id) => MATRIX_AGENTS.includes(id)) && extraKeys.every((key) => !PROBE_MARKS.includes(key)));
+  t.ok('証拠ごとに、届くはずの場所の説明（DELIVERY_HINTS）がある',
+    [...PROBE_MARKS, ...new Set(extraKeys)].every((key) => typeof DELIVERY_HINTS[key] === 'string' && DELIVERY_HINTS[key].length > 0));
+  t.ok('追加の証拠のうち印のものは、そのエージェントの宣言にある（知らない印を書いていない）',
+    Object.entries(EXTRA_PROBES).every(([id, keys]) => keys.every((key) => !Object.hasOwn(CAPABILITIES, key) || Object.hasOwn(natives[id]?.capabilities ?? {}, key))));
+
+  // 証拠の照らし方（probeVerdict）そのもの: 要る証拠が無い・偽・宣言が対応でない印の証拠が真・知らない証拠を、それぞれ見つける
+  const supportedCaps = Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, true]));
+  const goodEvidence = Object.fromEntries(PROBE_MARKS.map((key) => [key, true]));
+  const verdict = (over = {}, caps = supportedCaps, extras = []) => probeVerdict({ id: 'verdict-check', caps, extras, result: { evidence: { ...goodEvidence, ...over } } });
+  const clean = verdict();
+  t.ok('証拠の照らし方: 全部対応で全部届いていれば問題が無い（要る証拠は PROBE_MARKS の全部）',
+    JSON.stringify([...clean.required].sort()) === JSON.stringify([...PROBE_MARKS].sort())
+    && !clean.missing.length && !clean.notDelivered.length && !clean.unknown.length && !clean.stale.length);
+  const dropped = { ...goodEvidence };
+  delete dropped.browser;
+  t.ok('証拠の照らし方: 要る証拠が無いものと偽のものを落とす',
+    probeVerdict({ id: 'verdict-check', caps: supportedCaps, result: { evidence: dropped } }).missing.join() === 'browser'
+    && verdict({ secrets: false }).notDelivered.join() === 'secrets');
+  t.ok('証拠の照らし方: 知らない証拠を落とし、追加の証拠は extras にあれば通す',
+    verdict({ mystery: true }).unknown.join() === 'mystery'
+    && verdict({ conversationIsolation: true }, supportedCaps, ['conversationIsolation']).unknown.length === 0
+    && verdict({ conversationIsolation: true }, supportedCaps, ['conversationIsolation']).required.includes('conversationIsolation')
+    && verdict({}, supportedCaps, ['conversationIsolation']).missing.join() === 'conversationIsolation');
+  const unsupported = [impossible('x', 'design'), todo('#180'), false];
+  t.ok('証拠の照らし方: 宣言が対応でない印は証拠を要求せず、証拠が真なら宣言が古いと落とす（偽なら通す）',
+    unsupported.every((value) => {
+      const caps = { ...supportedCaps, hooks: value };
+      const off = verdict({ hooks: false }, caps);
+      const stale = verdict({ hooks: true }, caps);
+      return !off.required.includes('hooks') && !off.notDelivered.length && !off.stale.length && stale.stale.join() === 'hooks';
+    }));
+  t.ok('証拠の照らし方: 追加の証拠が印のとき、対応のときだけ要求する（印でないものは常に要求する）',
+    verdict({ shell: false }, { ...supportedCaps, shell: todo('#1') }, ['shell']).required.includes('shell') === false
+    && verdict({}, supportedCaps, ['shell']).required.includes('shell')
+    && deliveryRequired(true) && deliveryRequired('host') && deliveryRequired(covered)
+    && !deliveryRequired(false) && !deliveryRequired(todo('#1')) && !deliveryRequired(impossible('x', 'design')));
+
+  // runArgs の絞り込み（gateRunArgs）: 対応でない印（false・impossible・todo・covered）の配達物は消え、対応の印と配管のキーは残る。知らないキーは strict で例外
+  const featureKeys = Object.keys(RUN_ARG_FEATURES);
+  const gateWith = (over, base = supportedCaps) => gateRunArgs({ ...built }, { ...base, ...over }, { strict: false, log() {} });
+  for (const [id, native] of Object.entries(natives)) {
+    const caps = native.capabilities ?? {};
+    const gated = gateRunArgs({ ...built, prompt: 'p' }, caps, { strict: false, log() {} });
+    const wrong = featureKeys.filter((key) => Object.hasOwn(gated, key) !== Boolean(capabilityValue(caps[RUN_ARG_FEATURES[key]])));
+    t.ok(`${id}: runArgs の絞り込みは、宣言が対応の印の配達物だけを残す（false・impossible・todo は消す）`, wrong.length === 0 && gated.prompt === 'p', JSON.stringify(wrong));
   }
+  t.ok('runArgs の絞り込み: 全部の印が対応なら全部残り、false・impossible・todo・covered の印は、その印の配達物だけが消える',
+    featureKeys.every((key) => Object.hasOwn(gateWith({}), key))
+    && [false, impossible('x', 'design'), todo('#1'), covered].every((value) => Object.keys(RUN_ARG_FEATURES).every((key) => {
+      const gated = gateWith({ [RUN_ARG_FEATURES[key]]: value });
+      return !Object.hasOwn(gated, key) && featureKeys.filter((other) => RUN_ARG_FEATURES[other] !== RUN_ARG_FEATURES[key]).every((other) => Object.hasOwn(gated, other));
+    })));
+  t.ok('runArgs の絞り込み: 配管のキー（prompt など）は印に関わらず残る',
+    gateWith(Object.fromEntries(featureKeys.map((key) => [RUN_ARG_FEATURES[key], false]))).prompt === 'delivery check');
+  const strictThrows = (() => { try { gateRunArgs({ prompt: 'p', notRegistered: 1 }, supportedCaps, { strict: true, log() {} }); return false; } catch (e) { return /notRegistered/.test(String(e.message)); } })();
+  const logged = [];
+  const lenient = gateRunArgs({ prompt: 'p', notRegistered: 1 }, supportedCaps, { strict: false, log: (line) => logged.push(line) });
+  t.ok('runArgs の絞り込み: 登録の無いキーは strict なら例外、そうでなければログだけ出して消さない',
+    strictThrows && logged.length === 1 && /notRegistered/.test(logged[0]) && lenient.notRegistered === 1);
   // 一覧（端末に出す）: 不可能は理由、未実装は Issue を、宣言から引いた行そのままに全部出す（宣言の文言を試験に写さない）
   const stateRows = [];
   for (const id of MATRIX_AGENTS) for (const key of CAPABILITY_KEYS) {

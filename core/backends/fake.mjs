@@ -5,7 +5,7 @@
 // ことで SDK を避けていたので、server.mjs のロジックは e2e（本物の LLM）でしか触れなかった。
 //
 // セッションはプロセス内のメモリだけに持つ。サーバを落とせば消えるが、
-// テストは1プロセスの寿命の中で完結するので足りる。
+// テストは1プロセスの寿命の中で完結するので足りる（起こし直しの後の続きを試すときだけ AGENT_HOST_FAKE_STATE_DIR で控える。ファイル末尾）。
 //
 // 台本は prompt の先頭で選ぶ:
 //   "echo:<文字>"  … text.delta を数回 -> turnResult
@@ -1255,6 +1255,24 @@ export const backend = {
     },
   },
 };
+
+// AGENT_HOST_FAKE_STATE_DIR=<ディレクトリ>: 会話を <dir>/sessions.json に控え、サーバーを起こし直した後も履歴と続きが出る
+// （実機の codex・opencode などと同じ。全エージェント共通の「再起動の後の続き」の試験用: tests/lib/backend-common.mjs の checkResume）。指定が無ければメモリだけ
+const STATE_FILE = process.env.AGENT_HOST_FAKE_STATE_DIR ? path.join(process.env.AGENT_HOST_FAKE_STATE_DIR, "sessions.json") : null;
+if (STATE_FILE) {
+  try { for (const saved of JSON.parse(fs.readFileSync(STATE_FILE, "utf8"))) sessions.set(saved.sessionId, saved); } catch { /* 初回は控えが無い */ }
+  const save = () => {
+    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify([...sessions.values()]));
+  };
+  for (const method of ["runTurn", "setTitle", "setTag", "fork", "rewind", "deleteSession"]) {
+    const original = backend[method];
+    if (typeof original !== "function") continue;
+    backend[method] = async function (...args) {
+      try { return await original.apply(this, args); } finally { save(); }
+    };
+  }
+}
 
 /** テストから状態を消したいとき用。サーバ側からは使わない。 */
 export function reset() {

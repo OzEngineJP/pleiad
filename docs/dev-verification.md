@@ -42,7 +42,7 @@ Pleiad が指示を担当する場合、圧縮に残った native 指示はモ�
 
 ### 配達物を実物の CLI で確かめる
 
-偽のプロセスで全エージェントを確かめる `npm test -- backend-delivery`（`tests/unit/backend-delivery.mjs`）とは別に、本物の CLI で
+偽のプロセスで全エージェントを確かめる `npm test -- backend-common`（`tests/unit/backend-common.mjs`）とは別に、本物の CLI で
 1 エージェント 1 ターンだけ流す入口がある（issue #146。CI では回さない）:
 
 ```powershell

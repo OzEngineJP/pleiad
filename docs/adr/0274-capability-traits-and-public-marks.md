@@ -59,7 +59,8 @@
 
 - `describeBackends`（WS の `backends`）から 4 つのキーが消える。画面はどれも読んでいない。`agents.list`（AI 向け）の
   `features` からも消える（性質は機能ではない）。
-- `tests/backend-todos.json` は変わらない（性質は `todo` を持たない）。
+- 性質は `todo` を持たない。
 - 公開文書の `/docs/agents/<id>/` が増える。v0.40.0 の公開では一覧だけ。
 - 印を足すときは、`capability-marks.mjs`（定義・説明）・`agent-marks.mjs`（全エージェントの状態）・`ABOUT`・
-  `CAPABILITY_CONTRACTS`・`CAPABILITY_DOCS` を書く。性質を足すときは `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS`。
+  `CAPABILITY_DOCS` を書く（当時は `CAPABILITY_CONTRACTS` も要ったが、後の版で廃止した。[0278](0278-capability-delivery-tests.md)）。
+  性質を足すときは `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS`。

@@ -259,12 +259,11 @@ const SUITES = [
   './unit/ops-policy.mjs',
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
-  // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
-  // 配達物（runArgs）が全エージェントに届くこと（印ごと・エージェントごとの偽のプロセス・プロトコル）、core/backends/ の外のエージェントの id の直書き（ラチェット）
+  // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・性質ごとの契約の試験・runArgs の絞り込み・配達物の証拠の照らし方・対応表（静的）
+  // （全エージェントに共通の試験 backend-common は下: 基本の流れ・中断・エラー・再起動の後の続きと、配達物が届くこと）
   './unit/backend-contract.mjs',
   // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
   './unit/docs-source.mjs',
-  './unit/backend-delivery.mjs',
   './unit/backend-registry.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',
@@ -289,7 +288,7 @@ const SUITES = [
   './unit/grok-meter.mjs',
   // Devin・Grok のモデルの一覧の置き場（models() の TTL キャッシュ）: 取りかけの分け合い・失敗は覚えない・強制の取り直し
   './unit/backend-model-cache.mjs',
-  './unit/backend-conformance.mjs',
+  './unit/backend-common.mjs',
   './unit/backends-lint.mjs',
   // エージェントを足したときの一覧への入れ忘れ（core/backends/ の外）: 一覧の走査の lint と README・AGENTS.md の一致
   './unit/agent-lists.mjs',

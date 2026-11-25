@@ -787,6 +787,10 @@ async function handle(method, params) {
         threadId: t.id, turn: { id: turnId, items: [], status: "failed", error: { message: "You've hit your usage limit" } },
       }))
         : text.startsWith("slow") ? runSlowTurn(t, turnId, text)
+        // fail-turn: 上限でも認証でもない失敗で、ターンを failed で閉じる（共通の契約のエラーの試験。tests/unit/backend-common.mjs）
+        : text.startsWith("fail-turn") ? Promise.resolve().then(() => notify("turn/completed", {
+          threadId: t.id, turn: { id: turnId, items: [], status: "failed", error: { message: "fake codex failure" } },
+        }))
         : text.startsWith("question") ? runQuestionTurn(t, turnId)
         : text.startsWith("subagent-slow") ? runSubagentTurn(t, turnId, { slow: true })
         : text.startsWith("subagent") ? runSubagentTurn(t, turnId)

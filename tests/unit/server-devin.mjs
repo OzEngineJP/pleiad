@@ -23,7 +23,7 @@ export default async function (t) {
     const models = await c.cmd('models', { backend: 'devin', cwd });
     t.ok('ACP の model の選択肢（既定と他の候補）を返す',models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
     const backends = await c.cmd('backends');
-    t.ok('未実装機能を表示せず、思考はモデル名ではなく強さの軸で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && !('effortInModelId' in backends[0].capabilities) && backends[0].capabilities.approvals === 'interactive');
+    t.ok('思考はモデル名ではなく強さの軸で選ぶ（性質 effortInModelId は能力の表に出さない）', !('effortInModelId' in backends[0].capabilities));
     const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-high', effort: 'medium', mode: 'accept-edits' });
     const sid = first.sessionId, loaded = await c.cmd('loadSession', { sessionId: sid });
     t.ok('承認を Pleiad に渡し、本文・思考・ツールの結果を保存する', first.outcome === 'ok' && permissions.length === 1 && loaded.messages.some(m => m.role === 'assistant' && m.thinking && m.toolCalls?.length));
@@ -268,7 +268,6 @@ export default async function (t) {
     t.ok('新規・再開の両方に認証付きply_shellとその指示を渡す',
       deliveryCalls.filter(c => ['session/new', 'session/load'].includes(c.method)).every(c => c.params.mcpServers.some(s => s.name === 'ply_shell' && s.type === 'http' && s.headers[0].value === 'Bearer fixture-shell'))
       && deliveryCalls.filter(c => c.method === 'session/prompt').every(c => c.params.prompt[0].text.includes('fixture-shell-instructions')));
-    t.ok('Devinでも入力欄の!とPleiadシェルが使える', deliveryBackend.capabilities.shell === 'host' && deliveryBackend.capabilities.plyShell);
     const deliveryMark = deliveryCalls.length;
     await deliveryBackend.runTurn({ cwd, prompt: 'no shell', model: 'swe-2-high', mode: 'ask', emit: () => {} });
     t.ok('別のターンにply_shellを持ち越さない', deliveryCalls.slice(deliveryMark).find(c => c.method === 'session/new').params.mcpServers.length === 0);

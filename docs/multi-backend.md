@@ -287,12 +287,14 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 `backend.traits` から読み、画面（`describeBackends`）・一覧・公開文書には出さない。
 
 **配達物を持つ印は、エージェントごとに「届いたか」を確かめる試験が要る**（[ADR 0278](adr/0278-capability-delivery-tests.md)）。配達物の印は
-`RUN_ARG_FEATURES` の値（`browser`・`computerUse`・`plyControl`・`secrets`・`plyShell`・`plyAgents`・`plyContext`・`plyInstructions`・`visualize`・`hooks`）。
+`RUN_ARG_FEATURES` の値（`browser`・`computerUse`・`plyControl`・`secrets`・`plyShell`・`plyAgents`・`plyContext`・`plyInstructions`・`visualize`・`hooks`）で、
+`capability-marks.mjs` の印に `probe: true` が付く。
 対応（または `covered`）のエージェントには、そのエージェントの偽のプロセス・プロトコル（`tests/lib/fake-<id>.mjs`・Claude の SDK の `query` の身代わり・
 Codex の app-server の身代わり）に 1 ターン流し、起動の引数・環境変数・MCP の登録・発言に足した指示のどこで受け取ったかを見る試験がある
-（`tests/unit/backend-delivery.mjs`。届け方は `tests/lib/backend-delivery.mjs` の `DELIVERY_PROBES`）。印が対応なのに試験が無いと
-backend-contract が落ち、書き先を案内する。`todo`・`impossible` のエージェントには要求しない（印と実際の届け方が食い違わないよう、
-`gateRunArgs` が状態の配達物を消す）。
+（`tests/unit/backend-common.mjs`。届け方は `tests/lib/backend-common.mjs` の `DELIVERY_PROBES`。probe は `{ seen, evidence }` を返す）。
+証拠の取りこぼし（要る証拠が無い・偽）・宣言が対応でない印の証拠が真（宣言が古い）・知らない証拠（`EXTRA_PROBES` に無い）は `probeVerdict` が落とす。
+印が対応なのに probe が無いと backend-contract が落とし、書き先を案内する。`todo`・`impossible` のエージェントには要求しない（印と実際の届け方が食い違わないよう、
+`gateRunArgs` が状態の配達物を消す。この絞り込みは `tests/unit/backend-contract.mjs` が負例で確かめる）。
 
 ```js
 export const backend = {
@@ -987,19 +989,20 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
    `AGENT_TRAITS` に `TRAITS` の全部のキーを `true` / `false` で書く。バックエンドはそこから `capabilities: CAPABILITY_STATES.<id>`・
    `traits: AGENT_TRAITS.<id>` と読む（写しを持たない）。試験用の fake だけは環境変数で印を切り替えるので capabilities を自分に持つ。
 3. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形で書く。
-4. **身代わり**（`tests/lib/fake-<id>.mjs`）と `tests/lib/backend-contracts.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
-   配達物（`RUN_ARG_FEATURES` の印）を 1 つでも対応にするなら、`tests/lib/backend-delivery.mjs` の `DELIVERY_PROBES` にそのエージェントの
-   1 ターンの確かめを書き、`CAPABILITY_CONTRACTS.<印>.agents.<id>` に `'backend-delivery'` を書く（backend-contract が案内する）。
-5. **確かめる**。`npm test -- backend-contract backend-delivery backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
+4. **身代わり**（`tests/lib/fake-<id>.mjs`。slow・fail の合図と、再起動の後も会話を残す置き場を持つ）と `tests/lib/backend-common.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
+   配達物（`RUN_ARG_FEATURES` の印）を 1 つでも対応にするなら、`tests/lib/backend-common.mjs` の `DELIVERY_PROBES` にそのエージェントの
+   1 ターンの確かめ（`{ seen, evidence }`）を書く（backend-contract が案内する）。そのエージェントだけの証拠は `EXTRA_PROBES` にも書く。
+5. **確かめる**。`npm test -- backend-contract backend-common`。落ちた文が「どのファイルに何を書くか」を案内する。
+   `backend-common` は全エージェント（fake を含む）に同じ流れ（1 ターン・履歴・続き・分岐・中断・エラー・再起動の後の続き）と配達物を流す。
    そのエージェント固有の試験は `tests/run.mjs` に登録する。backend-registry は CLI の差し替え・インストール案内・既定と指定順の登録を確かめる。
    実物の CLI で 1 ターン流す: `npm run test:delivery -- <id>`（1 エージェント 1 ターン。CI では回さない。下の「実物の CLI で確かめる」）。
 6. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
 
 **能力の印を足すとき**は、`capability-marks.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）と
-`CAPABILITY_DOCS` に利用者向けの説明（ja・en の `label`・`summary`・`unavailable`）、全バックエンドの状態（`agent-marks.mjs`）、
-その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
-`'conformance'` か既存の suite の名前）を足す。**その印が配達物**（`RUN_ARG_FEATURES` の値）なら、対応・`covered` のエージェントごとに
-`CAPABILITY_CONTRACTS.<印>.agents.<id>` と `DELIVERY_PROBES` も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。
+`CAPABILITY_DOCS` に利用者向けの説明（ja・en の `label`・`summary`・`unavailable`）、全バックエンドの状態（`agent-marks.mjs`）を足す。
+印ごとの試験の索引は持たない（試験が無い印を数で見張るより、各エージェントの宣言と実際の動きを `backend-common` が突き合わせる）。
+**その印が配達物**（`RUN_ARG_FEATURES` の値）なら、`probe: true` を付け、対応・`covered` のエージェントごとに
+`DELIVERY_PROBES` の証拠も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。
 現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
 **性質を足すとき**は `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS` に足す（性質は能力の表・公開文書に出さない）。
 
@@ -1026,7 +1029,7 @@ SDK などを読まない。`site/tools/build-site.mjs` は、最新の安定版
 
 #### 実物の CLI で確かめる
 
-偽のプロセスで確かめる `tests/unit/backend-delivery.mjs` とは別に、本物の CLI で 1 エージェント 1 ターンだけ流す入口を持つ:
+偽のプロセスで確かめる `tests/unit/backend-common.mjs` とは別に、本物の CLI で 1 エージェント 1 ターンだけ流す入口を持つ:
 `npm run test:delivery`（引数なしは 6 エージェント。`npm run test:delivery -- claude devin` で選ぶ）。1 ターンで、Pleiad の指示
 （設定 › 指示に足した合言葉）が返答に入るか、`ply_control` の `list_ops` を呼べるか、秘密情報の変数が会話のシェルにあるかを見る。
 データ置き場と作業場所は一時ディレクトリ、モードは Bypass（承認で止まらないように）。CI では回さない。CLI が無い・ログインしていない

@@ -64,6 +64,9 @@ export function legacyCapabilities(capabilities) {
  * absent は状態のときに server・画面へ渡す今までの値（false など）。無ければ状態を持てない（approvals・mcpApproval）。
  * covered は Pleiad の共通処理が補える印だけ true。coveredRequires は covered のときに要るメソッド。
  * required: true は、現役のエージェントなら対応の値だけ（impossible・todo にできない。contract.mjs の capabilityProblem）。
+ * probe: true は、対応（補う）のエージェント全部で「届いた」ことを、偽のプロセスに 1 ターン流して確かめる印（tests/lib/backend-common.mjs の probe）。
+ * 対応なのに証拠が無い・証拠が偽・知らない証拠が出る、を tests/unit/backend-common.mjs が落とす。runArgs の配達物の印（RUN_ARG_FEATURES）は全部これを持つ
+ * （持たないと tests/unit/backend-contract.mjs が落とす）。一部のエージェントだけで確かめる印は、tests/lib/backend-common.mjs の EXTRA_PROBES に書く。
  * hint は落ちたときの文に出す値の形。意味は一覧（node tests/lib/backend-matrix.mjs）
  */
 export const CAPABILITIES = {
@@ -104,18 +107,18 @@ export const CAPABILITIES = {
   internalCall: { valid: oneOf('ephemeral', 'isolated'), absent: false, hint: "'ephemeral' or 'isolated'", requires: (v) => (v === 'ephemeral' || v === 'isolated' ? ['internalTurn'] : []) },
   // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
   // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）
-  plyInstructions: { valid: yes, absent: false, required: true, hint: 'true' },
+  plyInstructions: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // ply_agents（委譲の橋）を受け取る。agentRuntime（url・headers・instructions）が渡る。
   // instructions の後ろには Pleiad の指示（plyInstructions の分）も足される
-  plyAgents: { valid: yes, absent: false, required: true, hint: 'true' },
+  plyAgents: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // Pleiad のコンテキスト（ply_context）の受け取り方（turn: ターンごと / conversation: 会話ごとの同じトークン）
-  plyContext: { valid: oneOf('turn', 'conversation'), absent: false, hint: "'turn' or 'conversation'" },
+  plyContext: { valid: oneOf('turn', 'conversation'), absent: false, probe: true, hint: "'turn' or 'conversation'" },
   // ply_computer を受け取る（画像の渡し方と待ちの区切り。docs/computer-use.md）
-  computerUse: { valid: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs)), absent: false, hint: "{ images: 'inline' | 'path', waitSliceMs: number | null }" },
+  computerUse: { valid: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs)), absent: false, probe: true, hint: "{ images: 'inline' | 'path', waitSliceMs: number | null }" },
   // 入力欄の `!`（host: Pleiad が走らせて次のターンで渡す / native: エージェントが走らせる。ADR 0054）
   shell: { valid: oneOf('host', 'native'), absent: false, hint: "'host' or 'native'", requires: (v) => (v === 'native' ? ['shell'] : []) },
   // Pleiad のシェルのツール（ply_shell。runArgs.shellRuntime）を受け取る（ADR 0227 §1）
-  plyShell: { valid: yes, absent: false, hint: 'true' },
+  plyShell: { valid: yes, absent: false, probe: true, hint: 'true' },
   // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0227 §3）。切るのは ply_shell を受け取るときだけ
   nativeShellOff: { valid: yes, absent: false, hint: 'true' },
   // エージェント自身の外部 MCP を会話ごとに名前単位で止められる（contextRuntime.mcp.suppress。ADR 0327・0336）。
@@ -127,15 +130,15 @@ export const CAPABILITIES = {
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['adoptTurn'] : []) },
   // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
-  browser: { valid: yes, absent: false, required: true, hint: 'true' },
+  browser: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // ply_control（操作の一覧の MCP）と、会話に束縛した CLI の環境変数（PLEIAD_CONTROL_*）を受け取る（ADR 0081）
-  plyControl: { valid: yes, absent: false, required: true, hint: 'true' },
+  plyControl: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // 秘密情報と変数（runArgs.secretsRuntime。会話のシェルの環境変数と一覧の文）を受け取る（ADR 0217）
-  secrets: { valid: yes, absent: false, required: true, hint: 'true' },
+  secrets: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // 可視化の指示（runArgs.visualizeInstructions）を受け取る
-  visualize: { valid: yes, absent: false, hint: 'true' },
+  visualize: { valid: yes, absent: false, probe: true, hint: 'true' },
   // Pleiad がそろえる Hooks（runArgs.hooksRuntime）を受け取る（ADR 0049）
-  hooks: { valid: yes, absent: false, hint: 'true' },
+  hooks: { valid: yes, absent: false, probe: true, hint: 'true' },
 };
 
 export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
