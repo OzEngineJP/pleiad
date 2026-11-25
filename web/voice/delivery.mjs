@@ -22,7 +22,6 @@ function icon(kind) {
 /** 送信待ちが何を待っているか（core/message-queue.mjs の waiting）。声の言い方（時計の一行）の字 */
 function queuedText(wait) {
   if (wait?.reason === 'order') return t('voice.delivery.queuedOrder');
-  if (wait?.reason === 'limit') return t('voice.delivery.queuedLimit');
   return t('voice.delivery.queued');
 }
 

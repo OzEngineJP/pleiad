@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
   warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted,
-  limitResumeState, limitLineNote, limitTime, resumeShortLabel, versionReload,
+  limitLineNote, limitTime, versionReload,
 } from '../../web/interrupt.mjs';
 
 export const name = 'web-interrupt';
@@ -43,37 +43,17 @@ export default function (t) {
   t.ok('保留の未送信だけを数える', pausedCount([{ status: 'paused' }, { status: 'queued' }, { status: 'paused' }, null]) === 2 && pausedCount(undefined) === 0);
   t.ok('保留が無ければ「再開」、あれば「保留中の N 件を送って再開」', resumeLabel(0) === '再開' && resumeLabel(2) === '保留中の 2 件を送って再開');
   t.ok('通常中断の注記は保留があるときだけ', resumeNoteText(0) === '' && resumeNoteText(3) === '送ると、保留中の 3 件の後にこの指示で続けます');
-  // 上限で止まった会話（docs/design-system.md「中断と再開」）。自動では再開しない（ADR 0161）。解除前は押せない時計、解除の後と時刻不明は普通の「再開」
+  // 上限で止まった会話（docs/design-system.md「中断と再開」）。解除時刻は末尾の 2 行目に載せる情報だけ。再開は先回りして待たせない（ADR 0352）。
+  // 解除の前でも普通の「再開」（押せる・時計にしない）。まだ上限なら、送ってもう一度止まるだけ
   const nowMs = Date.parse('2026-10-04T10:00:00');
   const soon = nowMs + 2 * 3600_000;
   const week = Date.parse('2026-10-07T09:00:00');
   const limit = { reason: 'limit', at: nowMs, resetsAt: soon };
-  t.ok('上限の会話の状態: 解除前 = release、解除の後・時刻不明 = ready、上限でなければ null',
-    limitResumeState(limit, nowMs) === 'release' && limitResumeState(limit, soon + 1) === 'ready' && limitResumeState({ ...limit, resetsAt: null }, nowMs) === 'ready'
-    && limitResumeState({ reason: 'user' }, nowMs) === null);
-  t.ok('古い自動再開の印が残っていても、同じ扱い（自動で戻る時計にしない）', limitResumeState({ ...limit, autoResume: true }, nowMs) === 'release'
-    && limitResumeState({ ...limit, autoResume: true }, soon + 1) === 'ready' && limitResumeState({ ...limit, resetsAt: null, autoResume: true }, nowMs) === 'ready');
-  t.ok('解除前の入力欄は「◷ 時刻 に解除」の時計、解除の後は普通の「再開」', /に解除$/.test(resumeLabel(0, limit, nowMs)) && resumeLabel(0, limit, nowMs).includes(limitTime(soon))
-    && resumeLabel(0, limit, soon + 1) === '再開' && resumeLabel(2, limit, soon + 1) === '保留中の 2 件を送って再開');
-  t.ok('解除時刻が分からない上限は、時計にせず普通の「再開」', resumeLabel(0, { ...limit, resetsAt: null }, nowMs) === '再開');
-  t.ok('狭い幅の時計の字は時刻だけ（解除の後・時刻不明・上限でないときは空）', /^\d{1,2}:\d{2}( ?[AP]M)?$/i.test(resumeShortLabel(limit, nowMs)) && resumeShortLabel({ ...limit, resetsAt: null }, nowMs) === ''
-    && resumeShortLabel(limit, soon + 1) === '' && resumeShortLabel({ reason: 'user' }, nowMs) === '');
+  t.ok('上限で止まった会話でも、再開ボタンは普通の字（時計・「に解除」にしない）', resumeLabel(0) === '再開' && !/に解除/.test(resumeLabel(0)) && resumeNoteText(0) === '');
   t.ok('今日でない解除は日付つき（週の上限は「10/7（水）9:00」）', /^10\/7（水）/.test(limitTime(week, nowMs)) && limitLineNote({ ...limit, resetsAt: week }, nowMs).startsWith('10/7（水）'));
   t.ok('末尾の 2 行目は解除時刻か、時刻が分からない旨を示す',
     limitLineNote(limit, nowMs) === `${limitTime(soon, nowMs)} に解除` && limitLineNote({ ...limit, resetsAt: null }) === '解除時刻は分かりません');
-  t.ok('解除前の欄の下の一行は解除を待つ文、解除の後と時刻不明で保留がなければ空', resumeNoteText(0, limit, nowMs).includes('上限の解除')
-    && resumeNoteText(0, limit, soon + 1) === '' && resumeNoteText(0, { ...limit, resetsAt: null }, nowMs) === '');
-  const source = { backend: 'claude', account: 'first', endpoint: '', model: 'opus', scope: 'model' };
-  const target = { ...source, hasAccounts: true };
-  const modelLimit = { ...limit, ...source };
-  t.ok('元の送信先では時計と上限注記を表示', limitResumeState(modelLimit, target, nowMs) === 'release'
-    && resumeNoteText(2, modelLimit, target, nowMs).includes('上限の解除'));
-  for (const change of [{ backend: 'codex' }, { account: 'second' }, { endpoint: 'proxy' }, { model: 'sonnet' }]) {
-    const selected = { ...target, ...change };
-    t.ok(`変更先では再開でき、保留がなければ注記を表示しない ${JSON.stringify(change)}`,
-      resumeLabel(0, modelLimit, selected, nowMs) === '再開' && resumeShortLabel(modelLimit, selected, nowMs) === ''
-      && resumeNoteText(0, modelLimit, selected, nowMs) === '' && resumeNoteText(2, modelLimit, selected, nowMs).includes('保留中の 2 件'));
-  }
+  t.ok('時刻でない値は解除時刻にしない', limitTime(null) === null && limitTime(undefined) === null && limitTime(Number.NaN) === null);
   const base = { interrupted: true, running: false, waiting: false, text: '', attached: false };
   t.ok('中断状態・走っていない・欄が空なら出す', resumeVisible(base));
   t.ok('欄に字があれば隠す（空白だけなら出す）', !resumeVisible({ ...base, text: '別の指示' }) && resumeVisible({ ...base, text: '  \n' }));
