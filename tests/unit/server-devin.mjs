@@ -384,13 +384,14 @@ export default async function (t) {
     const followFrom = c.mark(), followId = 'devin-limit-followup';
     await c.cmd('sendMessage', { sessionId: limitTurn.sessionId, messageId: followId, prompt: 'after cooldown' });
     const queued = (await c.cmd('listMessages', { sessionId: limitTurn.sessionId })).find(x => x.id === followId);
-    t.ok('解除前の次の指示を API に渡さず送信待ちへ保持する', queued?.waiting?.reason === 'limit', JSON.stringify(queued));
+    t.ok('解除前の次の指示も先回りして止めず、送信待ちの「上限」で保持しない（ADR 0352）', queued?.waiting?.reason !== 'limit', JSON.stringify(queued));
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === limitTurn.sessionId && e.outcome === 'ok', { from: followFrom, ms: 15000 });
     const recovered = await c.cmd('loadSession', { sessionId: limitTurn.sessionId });
     const userTexts = recovered.messages.filter(x => x.role === 'user').map(x => x.text);
-    t.ok('解除後に次の指示だけを一度送り、失敗した最初の指示は送り直さない', userTexts.filter(x => x === 'after cooldown').length === 1 && userTexts.filter(x => x.endsWith('[rate-limit] pause')).length === 1 && userTexts.length === 2, JSON.stringify(userTexts.map(x => x.slice(-40))));
+    t.ok('次の指示を解除前でも一度だけ送り、失敗した最初の指示は送り直さない', userTexts.filter(x => x === 'after cooldown').length === 1 && userTexts.filter(x => x.endsWith('[rate-limit] pause')).length === 1 && userTexts.length === 2, JSON.stringify(userTexts.map(x => x.slice(-40))));
+    // 止まった枠の記録（slot-limits）は、実際に断られた枠だけ。同じ枠のターンが通れば外す（送信を止める仕組みではない。ADR 0302・0352）
     const recoveredRouting = await c.cmd('delegationRouting');
-    t.ok('解除後は同じモデルの制限による除外を外す', recoveredRouting.candidates.find(x => x.candidate === 'devin:swe-2-high')?.reason !== 'recently_limited');
+    t.ok('次の指示が通った後は、同じモデルの制限による除外を外す', recoveredRouting.candidates.find(x => x.candidate === 'devin:swe-2-high')?.reason !== 'recently_limited');
 
     // ---- 委譲の子が「N minutes」の上限で止まった（Issue #111）。日次・週次は 0% のままでも、通知・使用量・自動の振り分けに止まった枠が出る
     const pc = await open({ port: server.port, token: server.token, autoAllow: true });

@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 fs.mkdirSync(path.join(ROOT, 'temporary'), { recursive: true });
@@ -72,8 +73,8 @@ try {
   await client.waitFor(e => e.type === 'turnEnd' && e.sessionId !== parent, { from: 0, ms: 30_000 });
   const running = await delegate('走っている子', `steps:@${runFile}`);
   await sleep(1200);
-  // アカウントの節を出すための登録（委譲の依頼のあとに。登録すると委譲の設定の対象になる。トークンの持ち主の確認は失敗してもそのまま保存される）
-  await client.cmd('saveClaudeAccount', { name: '仕事用', token: 'sk-ant-oat01-work-dialog-composer-test' });
+  // アカウントの節を出すための登録（委譲の依頼のあとに。登録すると委譲の設定の対象になる。ログインの済んだ形で置く）
+  await seedClaudeAccount(path.join(base, 'data'), '仕事用');
 
   const pageUrl = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   ab('set', 'viewport', '1280', '800');

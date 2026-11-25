@@ -889,35 +889,18 @@
     "close": "Close",
     "intro": "You can choose a registered account next to the model in the composer. Conversations without one use the signed-in account.",
     "add": "＋ Add account",
-    "usageNote": "Showing usage and using claude.ai connectors both require a claude.ai login for each account. If the ANTHROPIC_API_KEY environment variable is set, it takes precedence.",
-    "token": "Conversation token",
+    "usageNote": "Conversations, usage, and claude.ai connectors all run on each account’s own claude.ai login. If the ANTHROPIC_API_KEY environment variable is set, it takes precedence.",
     "login": "claude.ai login",
-    "summary": "Conversation token: {{token}} · claude.ai login: {{login}}",
+    "summary": "claude.ai login: {{login}}",
     "status": {
       "expired": "Expired",
-      "registered": "Registered",
       "done": "Done",
       "none": "Not yet",
-      "tokenFresh": "✓ Registered",
       "loginFresh": "✓ Done"
     },
-    "owner": {
-      "reissue": "Switch the claude.ai account in your browser, then issue the token again.",
-      "expected": " (the claude.ai login is {{email}})",
-      "email": " ({{email}})",
-      "named": "This conversation token was issued by the account “{{owner}}”{{expected}}. {{reissue}}",
-      "loggedIn": "This conversation token was issued by the signed-in account{{email}}{{expected}}. {{reissue}}",
-      "other": "This conversation token was issued by a different account from the claude.ai login{{email}}. {{reissue}}",
-      "same": "This conversation token was issued by the same account as “{{names}}”. To use it as a separate account, switch the claude.ai account in your browser, then issue the token again.",
-      "nameJoin": "”, “"
-    },
-    "reissue": "Issue token again",
-    "reissueMissing": "That account couldn’t be found. Choose it from the list and issue the token again.",
-    "issue": "Issue token",
+    "loginMissing": "That account couldn’t be found. Choose it from the list and sign in to claude.ai again.",
     "redoUsage": "Log in to claude.ai again",
     "authorizeUsage": "Log in to claude.ai",
-    "manualReplace": "Paste again manually",
-    "manualNew": "Paste manually",
     "edit": "Edit",
     "done": "Done",
     "delete": "Delete",
@@ -934,10 +917,6 @@
     "confirmDelete": "Delete “{{name}}”? Conversations using this account can't send until you choose another. Its claude.ai login is also removed.",
     "confirmDeleteButton": "Delete",
     "empty": "No accounts yet.",
-    "storage": {
-      "encrypted": "Tokens are encrypted with the OS credential store.",
-      "plain": "Encryption isn't available in this session, so tokens are saved to a file only you can read (opening Pleiad Desktop encrypts them again)."
-    },
     "deleteFailed": "Couldn't delete: {{error}}",
     "loading": "Loading…",
     "name": {
@@ -950,7 +929,7 @@
       "openLink": "Click here if the browser doesn't open",
       "starting": "Starting Claude Code…",
       "step1Usage": "1. In the browser, sign in to Claude with this account and click “Authorize”.",
-      "step1Token": "1. In the browser, sign in to Claude with the account you want to use and click “Authorize”.",
+      "step1New": "1. In the browser, sign in to Claude with the account you want to add and click “Authorize”.",
       "step2": "2. Paste the code shown in the browser.",
       "codePlaceholder": "Paste the code",
       "codeLabel": "Code shown in the browser",
@@ -959,16 +938,6 @@
       "failed": "Couldn't authorize.",
       "retry": "Try again",
       "codeRequired": "Paste the code shown in the browser."
-    },
-    "manual": {
-      "note": "If Pleiad can't authorize, run {{command}} in a terminal with the account you want to use and paste the token it shows.",
-      "token": "Token",
-      "show": "Show",
-      "hide": "Hide",
-      "save": "Save",
-      "saving": "Saving…",
-      "hint": "Paste the issued token (sk-ant-oat01-…) as is. Saved tokens are never shown.",
-      "required": "Paste the token."
     }
   },
   "git": {
@@ -1261,10 +1230,8 @@
       "group": "claude.ai connectors ({{name}})",
       "off": "Off for \"{{name}}\".",
       "turnOn": "Turn on in External MCP",
-      "expired": "Unavailable because the claude.ai login has expired.",
       "stopped": "Unavailable ({{why}}).",
       "relogin": "Log in again",
-      "openAccount": "Open account",
       "change": "Change in External MCP",
       "unread": "The connector list hasn't been read yet",
       "none": "No connectors on claude.ai",
@@ -1791,9 +1758,7 @@
         "none": "On · No connectors on claude.ai",
         "on": "On · {{n}} available",
         "onAuth": "On · {{n}} available · {{auth}} need auth",
-        "expired": "The claude.ai login has expired",
         "login": "Can't read the claude.ai login",
-        "owner": "The conversation token and claude.ai login have different owners",
         "version": "Unverified Claude Code version",
         "platform": "Not available on this OS yet",
         "env": "Environment variable auth takes priority",
@@ -1806,14 +1771,11 @@
         "ssh": "Not available over ssh",
         "ownDirLinks": "Couldn't prepare links to shared settings",
         "ownDirLinksWindows": "Check Windows permissions to create links",
-        "ownDirProfile": "Couldn't apply settings to the dedicated folder",
-        "format": "Can't read the claude.ai login format"
+        "ownDirProfile": "Couldn't apply settings to the dedicated folder"
       },
       "tip": {
         "nologin": "\"{{name}}\" isn't logged in to claude.ai",
-        "expired": "The claude.ai login for \"{{name}}\" has expired. Log in again to turn this on",
         "login": "Can't read the claude.ai login for \"{{name}}\". Log in again to turn this on",
-        "owner": "The conversation token and claude.ai login for \"{{name}}\" have different owners. Open the account to check",
         "version": "Your Claude Code version hasn't been verified for connectors, so this can't be turned on",
         "platform": "claude.ai connectors for registered accounts aren't available on this OS yet",
         "env": "Environment variable auth (such as ANTHROPIC_API_KEY) takes priority, so this can't be turned on",
@@ -1826,12 +1788,10 @@
         "ssh": "Not available from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
         "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
         "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
-        "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
-        "format": "Can't read the claude.ai login format for \"{{name}}\". Log in again to turn this on"
+        "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”."
       },
       "login": "Log in",
       "relogin": "Log in again",
-      "openAccount": "Open account",
       "reload": "Reload",
       "reloadAria": "Reload claude.ai connectors for \"{{name}}\"",
       "switchAria": "Use claude.ai connectors with \"{{name}}\"",
@@ -2069,44 +2029,36 @@
   "chat": {
     "connectorsFail": {
       "why": {
-        "ownDirLogin": "Sign in to claude.ai in the dedicated config folder for “{{name}}”.",
+        "ownDirLogin": "“{{name}}” isn't signed in to claude.ai, or the sign-in has expired. Sign in to send.",
         "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
         "keychainAuth": "The sign-in for “{{name}}” was refused. Unlock the Mac keychain, then send again. If it keeps happening after unlocking, sign in again.",
-        "ssh": "claude.ai connectors for registered accounts can't be used from a login without a screen, such as ssh. Start Pleiad from the Mac's screen, or turn connectors off to send.",
+        "ssh": "Registered Claude accounts can't send from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
         "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
         "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
         "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
-        "expired": "The claude.ai login for \"{{name}}\" has expired, so this can't be sent with connectors. Log in again, or turn connectors off and send.",
-        "login": "To use claude.ai connectors with \"{{name}}\", log in to claude.ai first.",
-        "owner": "The conversation token and the claude.ai login for \"{{name}}\" belong to different owners (organizations). Check it in Claude accounts, or turn connectors off and send.",
-        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified for connectors yet (verified: {{verified}}). Turn connectors off to send.",
-        "platform": "claude.ai connectors for registered accounts aren't available on this OS yet. Turn connectors off to send.",
-        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so connectors can't be used. Remove them, or turn connectors off.",
-        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with connectors. Remove the setting, or turn connectors off.",
-        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with connectors. Remove it, or turn connectors off.",
-        "profile": "Stopped because the connector settings for \"{{name}}\" couldn't be applied to the shared config folder. Send again, or turn connectors off and send.",
-        "format": "Stopped because the credentials or shared settings couldn't be read or written. Log in to claude.ai again, or turn connectors off and send."
+        "login": "To send with \"{{name}}\", log in to claude.ai first.",
+        "version": "Stopped because your Claude Code (CLI {{cli}} / SDK {{sdk}}) hasn't been verified with registered accounts yet (verified: {{verified}}). Update Claude Code.",
+        "platform": "Registered Claude accounts aren't available on this OS yet.",
+        "env": "Environment variables (such as ANTHROPIC_API_KEY) switch to other credentials, so the registered account's sign-in can't be used. Remove them.",
+        "settings": "settings.json (shared, workspace, local or managed) has another auth setting (apiKeyHelper or env) or can't be read, so this can't start with the registered account. Remove the setting.",
+        "history": "A setting moves the conversation history (environment variable or settings.json), so this can't start with the registered account. Remove it.",
+        "profile": "Stopped because the connector settings for \"{{name}}\" couldn't be applied to the shared config folder. Send again."
       },
       "fix": {
         "relogin": "Log in to claude.ai again",
         "login": "Log in to claude.ai",
-        "openAccount": "Open account",
         "resend": "Resend"
       },
-      "off": "Turn connectors off and send",
-      "offNote": "This also turns them off in other conversations using \"{{name}}\"",
       "cancel": "Cancel",
       "waiting": "Waiting for the claude.ai login…",
       "sending": "Sending again…",
       "done": {
         "relogin": "✓ Logged in to claude.ai again and sent it again",
         "login": "✓ Logged in to claude.ai and sent it again",
-        "off": "✓ Turned off claude.ai connectors for \"{{name}}\" and sent it again",
         "resend": "✓ Sent it again"
       },
       "resendFailed": "Couldn't send it again: {{error}}",
-      "loginFailed": "Couldn't log in to claude.ai. Please try again",
-      "offFailed": "Couldn't turn connectors off: {{error}}"
+      "loginFailed": "Couldn't log in to claude.ai. Please try again"
     },
     "secretRequest": {
       "headingMark": "Secret needed",
@@ -2499,17 +2451,16 @@
     "authExpired": {
       "login": "Your {{agent}} sign-in ({{email}}) has expired.",
       "loginNoEmail": "Your {{agent}} sign-in has expired.",
-      "token": "The conversation token for Claude account “{{name}}” has expired.",
+      "token": "The claude.ai login for Claude account “{{name}}” has expired.",
       "account": "Sign-in expired for account \"{{name}}\" ({{agent}})",
       "openAccounts": "Open accounts",
-      "tokenUnnamed": "The conversation token for this Claude account has expired.",
+      "tokenUnnamed": "The claude.ai login for this Claude account has expired.",
       "signInAgain": "Sign in again",
       "waiting": "Sign in in your browser…",
       "cancel": "Cancel",
       "signedIn": "✓ Signed in",
       "resent": "✓ Signed in again and resent",
       "sendAgain": "Send again",
-      "reissue": "Issue token again",
       "loginFailed": "Couldn’t sign in: {{error}}"
     },
     "sendFail": {
@@ -3475,16 +3426,13 @@
         "countAuth": "{{n}} connectors · {{auth}} need auth",
         "stopped": "Connectors stopped ({{why}})",
         "why": {
-          "expired": "login expired",
           "login": "not logged in",
-          "owner": "owner mismatch",
           "version": "unverified version",
           "platform": "OS not supported",
           "env": "environment variables",
           "settings": "settings.json",
           "history": "history location",
           "profile": "couldn't apply settings",
-          "format": "unreadable login",
           "ownDirLogin": "dedicated folder login required",
           "keychain": "keychain can't be opened",
           "keychainAuth": "sign-in refused",
@@ -3819,7 +3767,6 @@
     "waitReply": "Waiting to be sent — sends automatically when the current reply finishes",
     "waitOrder": "Waiting to be sent — sends after the previous message is sent",
     "preparing": "Preparing to send",
-    "waitLimit": "Waiting to be sent — sends after the limit resets at {{time}}",
     "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
     "retry": "Resend",
     "cancel": "Cancel"
@@ -4695,9 +4642,6 @@
       "auth": "Stopped because the login expired"
     },
     "resume": "Resume",
-    "unknownTime": "unknown reset time",
-    "limitSendNote": "Sending will continue with this instruction after the limit resets at {{time}}",
-    "limitReleaseAt": "Resets at {{time}}",
     "limitResetAt": "Resets at {{time}}",
     "limitResetUnknown": "The reset time is unknown",
     "limitHead": "{{line}} ({{scope}})",
@@ -5312,8 +5256,7 @@
       "sent": "Handed to the AI",
       "pending": "Waiting to slip in · handed over at the next break",
       "queued": "Queued · sent when this work finishes",
-      "queuedOrder": "Queued · sent after the earlier message",
-      "queuedLimit": "Queued · sent when the limit lifts"
+      "queuedOrder": "Queued · sent after the earlier message"
     },
     "openSettings": "Open settings",
     "hint": {

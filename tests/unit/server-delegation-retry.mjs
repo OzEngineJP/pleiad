@@ -1,7 +1,7 @@
 // 委譲の子の再試行の待ちと上限（ADR 0229）を、fake バックエンドでサーバー全体を通して確かめる（LLM は呼ばない）。
 //   - "retry-wait limit <秒> gate:<名前>": OpenCode が上限のあと再試行を待っている形（activity retrying）。タスクは waiting、依頼元へ 1 回知らせ、明ければ完了
 //   - "retry-wait error <秒> gate:<名前>": 一時的な失敗の短い待ち。running のままで、依頼元を起こさない
-//   - "limit <resetsAt>": 上限で止まった子。failed に limit を残し、完了通知に解除の見込み、ply_task_send は解除まで走らせない
+//   - "limit <resetsAt>": 上限で止まった子。failed に limit を残し、完了通知に解除の見込み。ply_task_send は解除の前でもふつうに走る（ADR 0352）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +10,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { createFakeGates } from '../lib/fake-gate.mjs';
 
 export const name = 'server-delegation-retry';
-export const title = '委譲の子の再試行の待ちと上限: 長い待ちは waiting と依頼元への 1 回の知らせ・短い待ちは起こさない・上限で止まった子は解除の見込みを知らせ、指示は解除まで走らせない';
+export const title = '委譲の子の再試行の待ちと上限: 長い待ちは waiting と依頼元への 1 回の知らせ・短い待ちは起こさない・上限で止まった子は解除の見込みを知らせ、次の指示は解除の前でもふつうに走らせる';
 
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const HOUR = 3_600_000;
@@ -81,7 +81,7 @@ export default async function (t) {
     await gates.open('short-wait');
     await until(async () => (await taskOf(short.task.taskId))?.status === 'completed');
 
-    // ---- 3. 上限で止まった子: failed に limit、完了通知に解除の見込み、ply_task_send は解除まで走らせない
+    // ---- 3. 上限で止まった子: failed に limit、完了通知に解除の見込み、ply_task_send は解除の前でもふつうに走らせる
     const resetsAt = Date.now() + 3 * HOUR;
     const limited = await delegate(`limit ${resetsAt}`);
     const failed = await until(async () => { const r = await taskOf(limited.task.taskId); return r?.status === 'failed' ? r : null; });
@@ -89,10 +89,10 @@ export default async function (t) {
     const notice = await until(async () => (await notices(limited.parent)).find((m) => m.text.includes('使用量の上限で止まりました')));
     t.ok('完了通知に、解除の見込みを一行だけ載せる', /^使用量の上限で止まりました。.+ に枠が戻ります。$/.test(notice?.text ?? ''), notice?.text);
     const sent = await callTool(limited.parent, 'ply_task_send', { taskId: limited.task.taskId, message: 'echo:続き' });
-    t.ok('解除の前の ply_task_send は積むだけで、警告（解除の時刻）と limitHeld を返す', sent.status === 'queued' && /解除まで走らせません/.test(sent.warning ?? '')
-      && sent.limitHeld?.resetsAt === new Date(resetsAt).toISOString(), JSON.stringify(sent));
-    await sleep(1500);
-    t.ok('解除の前は子の次の回が走らない', (await taskOf(limited.task.taskId))?.status === 'queued');
+    t.ok('解除の前の ply_task_send も、警告や limitHeld を付けずにふつうに受け付ける（先回りして待たせない。ADR 0352）',
+      sent.taskId === limited.task.taskId && !('warning' in sent) && !('limitHeld' in sent), JSON.stringify(sent));
+    const continued = await until(async () => { const r = await taskOf(limited.task.taskId); return r?.status === 'completed' ? r : null; });
+    t.ok('解除の前でも子の次の回が走り、通れば完了して limit を消す', continued?.result?.includes('続き') && !('limit' in continued), JSON.stringify(continued ?? await taskOf(limited.task.taskId)));
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

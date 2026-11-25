@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 const require = createRequire(import.meta.url);
@@ -28,7 +29,7 @@ try {
   await client.cmd('authLogin', { backend: 'fake' });
   await client.cmd('authStatus', { backend: 'antigravity', probe: true });
   await client.cmd('completeSetup', { backend: 'fake' });
-  const { id: privateId } = await client.cmd('saveClaudeAccount', { name: 'Private', token: 'sk-ant-oat01-' + 'X'.repeat(48) });
+  const privateId = await seedClaudeAccount(path.join(scratch, 'data'), 'Private');
   const { sessionId } = await client.cmd('newSession', { backend: 'fake', cwd: scratch });
   await client.cmd('setTurnSettings', { sessionId, account: '' });
   await client.runTurn({ sessionId, prompt: 'echo:デザイン案の続きに取りかかります。' });
@@ -61,19 +62,20 @@ try {
     const resume = document.getElementById('resume');
     return !resume.hidden && resume.disabled === disabled;
   }, disabled);
-  await waitResume(true);
+  // 上限で止まった会話も、解除の前から普通の「再開」（時計にしない・待たせない。ADR 0352）。末尾の 2 行目に解除の時刻だけ出す
+  await waitResume(false);
   const fact = (await tail.innerText()).trim();
   assert.match(fact, /に解除$/);
+  assert.equal(await resume.getAttribute('aria-label'), '再開');
   await type('再開してください');
-  await note.waitFor({ state: 'visible' });
-  assert.match(await note.innerText(), /上限の解除/);
+  await note.waitFor({ state: 'hidden' });
   await type('');
 
   await choose('account', 'account:' + privateId);
   await waitResume(false);
   await note.waitFor({ state: 'hidden' });
   await choose('account', 'account:');
-  await waitResume(true);
+  await waitResume(false);
 
   // The fake provider advertises host compaction. Antigravity manages its own.
   await type('/compact');
@@ -161,11 +163,11 @@ try {
   await client.cmd('setTurnSettings', { sessionId: compatId, endpoint });
   assert.equal((await client.runTurn({ sessionId: compatId, prompt: 'hit usage limit' })).outcome, 'limited');
   await page.locator('#groups .row[data-session="' + compatId + '"]').evaluate(row => row.click());
-  await waitResume(true);
+  await waitResume(false);
   await choose('endpoint', 'endpoint:');
   await waitResume(false);
   await choose('endpoint', 'endpoint:' + endpoint);
-  await waitResume(true);
+  await waitResume(false);
   await choose('endpoint', 'endpoint:');
   await waitResume(false);
   await type('continue on official');

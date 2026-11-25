@@ -22,8 +22,6 @@ export default async function (t) {
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,codex,antigravity',
     AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`,
     AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
-    // 使用枠: 身代わりの agy の「Claude and GPT models」は 5 時間の枠が 100%（quota_full の確かめ）。取り置きは定期的に取る
-    AGENT_HOST_ROUTING_USAGE: 'on', FAKE_AGY_EXTRA_MODELS: 'claude-opus-4-6-thinking',
     // 台本 slow も途中送信を受ける（エージェントを替える指示が、今のターンへ途中送信されないことの確かめ）
     AGENT_HOST_FAKE_SLOW_STEER: '1' } });
   const permissions = [];
@@ -172,17 +170,6 @@ export default async function (t) {
     done = (await tasks()).find(r => r.taskId === made.taskId);
     t.ok('空白だけの message は断り、思考の強さの予約も入れない', Boolean(blank.error) && done.effort !== 'high' && !(await row(made.sessionId)).nextSettings,
       JSON.stringify({ blank, effort: done.effort, next: (await row(made.sessionId)).nextSettings }));
-
-    // ---- 使用枠が満杯と分かっている委譲先は断る（承認カードも出さない）
-    for (let i = 0; i < 200; i++) {
-      const cand = (await c.cmd('delegationRouting')).candidates.find(x => x.candidate === 'antigravity:claude-opus-4-6-thinking');
-      if (cand?.reason === 'quota_full' || cand?.checkedAt) break;
-      await sleep(100);
-    }
-    const askedBefore = asked().length;
-    const full = await call(parent, 'ply_task_send', { taskId: made.taskId, backend: 'antigravity', model: 'claude-opus-4-6-thinking' });
-    t.ok('使用枠が満杯の委譲先は quota_full で断り、聞かずに何も変えない', String(full.error ?? '').includes('quota_full') && asked().length === askedBefore
-      && (await tasks()).find(r => r.taskId === made.taskId).backend === 'fake', JSON.stringify(full));
 
     // ---- ply_control の call_op（delegation.taskSend）からも同じ道で替えられる
     const viaControl = await c.runTurn({ sessionId: parent, prompt: 'control:' + JSON.stringify({ name: 'call_op', arguments: { op: 'delegation.taskSend', args: { taskId: made.taskId, effort: 'low' } } }) });

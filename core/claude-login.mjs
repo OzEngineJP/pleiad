@@ -1,17 +1,14 @@
 // Claude のアカウントの認可を Pleiad から行う（設定の「Claude のアカウント」）。
 //
-// 2 種類:
-//   setup-token  `claude setup-token` を回し、表示された長期トークン（sk-ant-oat01-…）をアカウントの秘密へ直接しまう。
-//                会話はこのトークンを CLAUDE_CODE_OAUTH_TOKEN で使う（core/claude-accounts.mjs）。
-//   usage-login  アカウントごとの設定フォルダ（<data>/claude-usage/<id>）を CLAUDE_CONFIG_DIR にして `claude auth login` を回す。
-//                setup-token のトークンは scope が user:inference だけで使用量を読めないため、使用量の読み取りだけに使う。
+// usage-login だけ（ADR 0353）: アカウントごとの設定フォルダ（<data>/claude-usage/<id>）を CLAUDE_CONFIG_DIR にして
+// `claude auth login --claudeai` を回す。会話・使用量・モデル一覧・コネクターは、このログインで動く（専用フォルダ方式）。
+// 新しいアカウントは id を先に決めてその設定フォルダでログインし、済んだときだけ一覧に載せる（取り消し・失敗では片付ける）。
 //
-// `claude setup-token` は端末（TTY）が無いと何も出さずに止まる（2026-09-23 確認）ので、疑似端末（node-pty）の下で動かす。
 // CLI は認可 URL と `Paste code here if prompted >` を出して、ブラウザーに表示されたコードを待つ。
 // CLI 自身にはブラウザーを開かせない（BROWSER を存在しないパスにする。CLI は BROWSER を尊重し、開けなければ URL を出すだけ）。
-// URL は Pleiad が開き、コードは画面で受け取って疑似端末へ書く。
+// URL は Pleiad が開き、コードは画面で受け取って疑似端末（無ければパイプ）へ書く。
 //
-// トークンは画面にも返さず、ログ・エラーメッセージからは伏せる。疑似端末の生成は差し替えられる（テストは偽物を使う）。
+// 貼ったコードはログ・エラーメッセージから伏せる。疑似端末の生成は差し替えられる（テストは偽物を使う）。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,10 +18,9 @@ import { systemTool } from './win-system.mjs';
 import { createRequire } from 'node:module';
 import { t } from './i18n.mjs';
 
-export const LOGIN_KINDS = new Set(['setup-token', 'usage-login']);
+export const LOGIN_KINDS = new Set(['usage-login']);
 export const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_BUFFER = 256 * 1024;
-const TOKEN_SETTLE_MS = 800;
 const SUCCESS_EXIT_WAIT_MS = 5_000;
 
 // ---------------------------------------------------------------- 出力の読み取り
@@ -47,7 +43,6 @@ export function stripAnsi(text) {
 }
 
 const URL_CHARS = /^[A-Za-z0-9%&=?._~:/+#@!$'()*,;[\]-]+$/;
-const TOKEN_CHARS = /^[A-Za-z0-9_-]+$/;
 // 枠線（Ink の Box）や行頭・行末の空白は、折り返された続きの行を拾うときに取り除く
 const trimFrame = line => line.replace(/^[\s│┃║|]+|[\s│┃║|]+$/g, '');
 
@@ -74,21 +69,6 @@ export function findAuthUrl(text) {
     if (/\/oauth\/authorize\?/.test(url) && URL_CHARS.test(url)) return url;
   }
   return null;
-}
-
-/**
- * setup-token が表示したトークン。無ければ null。
- * 端末の再描画で一部だけが出ることもあるので、見つかったうちいちばん長いものを採る
- */
-export function findToken(text) {
-  const plain = stripAnsi(text);
-  let best = null;
-  const re = /sk-ant-[A-Za-z0-9_-]+/g;
-  for (let m; (m = re.exec(plain));) {
-    const token = joinWrapped(plain, m.index, TOKEN_CHARS).match(/^sk-ant-[A-Za-z0-9_-]+/)?.[0];
-    if (token && token.length >= 20 && (!best || token.length > best.length)) best = token;
-  }
-  return best;
 }
 
 const PASTE_PROMPT = /paste\s+(?:the\s+)?(?:authentication\s+|authorization\s+)?code/gi;
@@ -157,7 +137,7 @@ export function loadPty() {
 
 /**
  * 疑似端末で起動する。返すのは { onData, onExit, write, kill } だけの薄い形（テストの偽物と同じ形）。
- * 幅は十分に広くして、URL やトークンが折り返されにくいようにする（折り返されても findAuthUrl / findToken がつなげる）。
+ * 幅は十分に広くして、URL が折り返されにくいようにする（折り返されても findAuthUrl がつなげる）。
  */
 export function ptySpawner(pty = loadPty()) {
   if (!pty) return null;
@@ -208,23 +188,17 @@ export function pipeSpawner() {
  * @param {object} o
  * @param {() => string[] | null} o.command   Claude Code の argv（cli-installation の cliCommand('claude')）
  * @param {(event: object) => void} o.emit     画面へ送る { phase: url|code|verifying|done|error|cancelled, ... }
- * @param {(o: { accountId?: string, name?: string, token: string }) => Promise<{ id: string }>} o.saveToken
- * @param {(accountId: string) => string} o.usageDir         使用量用の設定フォルダ
- * @param {(accountId: string) => Promise<void>} o.markUsageLogin
- * @param {string} o.scratchDir   setup-token を回す使い捨ての設定フォルダの置き場
+ * @param {(accountId: string) => string} o.usageDir         アカウントの設定フォルダ（CLAUDE_CONFIG_DIR）
+ * @param {(accountId: string, add?: { name: string }) => Promise<void>} o.markUsageLogin  済んだときの記録。add は新しいアカウントを載せる
+ * @param {() => string} o.newAccountId      新しいアカウントの id
+ * @param {(accountId: string) => Promise<void>} [o.discardNew]  新しいアカウントのログインが済まなかったとき、設定フォルダを片付ける
  * @param {Function} [o.spawn]    疑似端末の生成（既定は node-pty。無ければパイプ）
  * @param {(url: string) => void} [o.openExternal]
  */
-export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsageLogin, scratchDir, spawn, pipe = pipeSpawner(),
+export function createClaudeLogin({ command, emit, usageDir, markUsageLogin, newAccountId, discardNew = async () => {}, spawn, pipe = pipeSpawner(),
   openExternal = () => {}, timeoutMs = LOGIN_TIMEOUT_MS, env: baseEnv = process.env } = {}) {
   const sessions = new Map();
-  const pickSpawner = kind => {
-    const pty = spawn === undefined ? ptySpawner() : spawn;
-    if (pty) return pty;
-    // setup-token は TTY が無いと止まるので、パイプでは代われない
-    if (kind === 'usage-login') return pipe;
-    return null;
-  };
+  const pickSpawner = () => (spawn === undefined ? ptySpawner() : spawn) || pipe;
 
   function finish(s, event) {
     if (s.ended) return;
@@ -233,12 +207,17 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
     sessions.delete(s.id);
     // 済んだときは自分で終わるのを少し待つ（終わりかけを kill すると Windows で node-pty の補助が騒ぐ）。取り消し・失敗はすぐ止める
     if (event.phase === 'done') setTimeout(() => s.proc?.kill(), 1500).unref?.();
-    else s.proc?.kill();
-    if (s.scratch) fs.rm(s.scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {});
+    else {
+      s.proc?.kill();
+      // 載せる前の新しいアカウントは、ログインの途中の設定フォルダを残さない（子が終わってから消す）
+      if (s.isNew) setTimeout(() => { Promise.resolve().then(() => discardNew(s.accountId)).catch(() => {}); }, 500).unref?.();
+    }
     send(s, event);
   }
   function send(s, event) {
-    emit({ type: 'claudeLogin', loginId: s.id, kind: s.kind, accountId: s.accountId ?? null, ...event });
+    // 載せる前の新しいアカウントの id は画面に渡さない（やり直しで、一覧に無い id を送らせない）
+    const accountId = s.isNew && event.phase !== 'done' ? null : s.accountId;
+    emit({ type: 'claudeLogin', loginId: s.id, kind: s.kind, accountId, ...event });
   }
   function fail(s, message) {
     finish(s, { phase: 'error', message: redactSecrets(message, s.codes) });
@@ -249,14 +228,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
     s.completing = true;
     clearTimeout(s.timer); clearTimeout(s.settle); clearTimeout(s.exitWait);
     try {
-      if (s.kind === 'setup-token') {
-        const token = findToken(s.raw);
-        if (!token) throw new Error(t('claude.login.tokenUnreadable'));
-        const saved = await saveToken({ accountId: s.accountId, name: s.name, token });
-        s.accountId = saved.id;
-      } else {
-        await markUsageLogin(s.accountId);
-      }
+      await markUsageLogin(s.accountId, s.isNew ? { name: s.name } : undefined);
       finish(s, { phase: 'done' });
     } catch (e) {
       fail(s, t('claude.login.saveFailed', { message: e?.message ?? e }));
@@ -285,12 +257,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
       s.waitingCode = true; s.submittedAt = s.raw.length;
       send(s, { phase: 'code', message: tail ? t('claude.login.codeRejectedDetail', { detail: tail }) : t('claude.login.codeRejected') });
     }
-    if (s.kind === 'setup-token' && findToken(s.raw)) {
-      // 折り返しの続きが届くまで少し待ってから読む
-      clearTimeout(s.settle);
-      s.settle = setTimeout(() => complete(s), TOKEN_SETTLE_MS);
-    }
-    if (s.kind === 'usage-login' && s.submitted && !s.exitWait && SUCCESS.test(stripAnsi(s.raw.slice(s.submittedAt)))) {
+    if (s.submitted && !s.exitWait && SUCCESS.test(stripAnsi(s.raw.slice(s.submittedAt)))) {
       // 成功を表示したあと終わらないときは、少し待って閉じる
       s.exitWait = setTimeout(() => complete(s), SUCCESS_EXIT_WAIT_MS);
     }
@@ -298,8 +265,7 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
 
   function onExit(s, { code, error }) {
     if (s.ended || s.completing) return;
-    if (s.kind === 'setup-token' && findToken(s.raw)) return void complete(s);
-    if (s.kind === 'usage-login' && code === 0 && s.url) return void complete(s);
+    if (code === 0 && s.url) return void complete(s);
     const tail = outputTail(s.raw, s.codes);
     const exitCode = code ?? t('claude.login.unknownCode');
     const why = error ? t('claude.login.launchFailed', { message: error.message })
@@ -313,30 +279,28 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
 
   return {
     /**
-     * 始める。同じアカウント（新規の setup-token は名前ごと）の進行中のものは取り消してから始める。
+     * 始める。accountId が無ければ新しいアカウント（name が要る。名前の検査は呼ぶ側）。進行中のものは取り消してから始める。
      * @returns {{ loginId: string }}
      */
-    start({ kind, accountId, name, open = false } = {}) {
+    start({ kind = 'usage-login', accountId, name, open = false } = {}) {
       if (!LOGIN_KINDS.has(kind)) throw new Error(t('claude.login.badKind'));
-      if (kind === 'usage-login' && !accountId) throw new Error(t('claude.login.accountRequired'));
+      if (!accountId && !String(name ?? '').trim()) throw new Error(t('claude.accounts.nameRequired'));
       const argv = command();
       if (!argv) throw new Error(t('claude.login.notInstalled'));
-      const spawner = pickSpawner(kind);
-      if (!spawner) throw new Error(t('claude.login.noPty'));
+      const spawner = pickSpawner();
       // 一度に 1 つだけ（コードの貼り付け先を取り違えないように）
       cancelWhere(() => true);
 
       const id = 'login-' + crypto.randomBytes(8).toString('hex');
-      const s = { id, kind, accountId: accountId || null, name, open, raw: '', url: null, codeAsked: false, submitted: 0, submittedAt: 0, codes: [], ended: false };
-      let configDir;
-      if (kind === 'usage-login') configDir = usageDir(accountId);
-      else configDir = s.scratch = path.join(scratchDir, id);
+      const isNew = !accountId;
+      const s = { id, kind, accountId: accountId || newAccountId(), isNew, name: isNew ? String(name).trim() : undefined, open,
+        raw: '', url: null, codeAsked: false, submitted: 0, submittedAt: 0, codes: [], ended: false };
+      const configDir = usageDir(s.accountId);
       fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
       const env = loginEnv(baseEnv, { configDir });
-      const args = kind === 'setup-token' ? ['setup-token'] : ['auth', 'login', '--claudeai'];
-      try { s.proc = spawner(argv, args, { env, cwd: configDir }); }
+      try { s.proc = spawner(argv, ['auth', 'login', '--claudeai'], { env, cwd: configDir }); }
       catch (e) {
-        if (s.scratch) fs.rmSync(s.scratch, { recursive: true, force: true });
+        if (isNew) Promise.resolve().then(() => discardNew(s.accountId)).catch(() => {});
         throw new Error(t('claude.login.launchFailed', { message: e?.message ?? e }));
       }
       sessions.set(id, s);
@@ -366,8 +330,11 @@ export function createClaudeLogin({ command, emit, saveToken, usageDir, markUsag
       return {};
     },
     /** アカウントを消すとき・終了するとき */
-    cancelAccount(accountId) { cancelWhere(s => s.accountId === accountId); },
+    cancelAccount(accountId) { cancelWhere(s => !s.isNew && s.accountId === accountId); },
     cancelAll() { cancelWhere(() => true); },
-    active() { return [...sessions.values()].map(s => ({ loginId: s.id, kind: s.kind, accountId: s.accountId, url: s.url, waitingCode: Boolean(s.waitingCode) })); },
+    active() {
+      return [...sessions.values()].map(s => ({ loginId: s.id, kind: s.kind, accountId: s.isNew ? null : s.accountId,
+        name: s.isNew ? s.name : undefined, url: s.url, waitingCode: Boolean(s.waitingCode) }));
+    },
   };
 }

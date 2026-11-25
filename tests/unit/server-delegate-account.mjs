@@ -1,8 +1,8 @@
 // 依頼元の AI が、委譲する子の Claude のアカウントを登録済みの中から選ぶ（ADR 0205、docs/agent-delegation.md「Claude のアカウントを選ぶ」）。
 // 依頼元は fake、子は身代わりの Claude CLI でサーバー全体を通す。LLM は呼ばない
-//   - ply_usage: Claude の各アカウントに account の名前（login・内部の id）。トークンの無い行は runnable: false。資格情報・メールアドレスは出さない
+//   - ply_usage: Claude の各アカウントに account の名前（login・内部の id）。claude.ai のログインが無い行は runnable: false。資格情報・メールアドレスは出さない
 //   - ply_delegate: backend: "claude" と account で、その子はそのアカウントで走り、routing.target に残る
-//   - 断る: 登録に無い名前（選べる名前を添える）・トークンの無いアカウント・backend なし・Claude 以外の backend。断ったら何も作らない
+//   - 断る: 登録に無い名前（選べる名前を添える）・ログインの無いアカウント・backend なし・Claude 以外の backend。断ったら何も作らない
 //   - ply_task_send: account で子のアカウントを次のターンから替える。変更の記録・routing.changed に残る。断ったら何も変えない
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -10,27 +10,27 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { installFakeClaude } from '../lib/fake-claude.mjs';
-import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
+import { VERIFIED_VERSIONS } from '../../core/claude-connectors-auth.mjs';
 
 export const name = 'server-delegate-account';
 export const title = '依頼元の AI が ply_delegate・ply_task_send の account で子の Claude のアカウントを選ぶ';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 
-const TOKEN = 'sk-ant-oat01-' + 'D'.repeat(48);
 const ORG = '33333333-1111-4000-8000-00000000000c';
-// トークンを入れていない登録（表示名にメールアドレスを含む）
+// claude.ai のログインが無い登録（表示名にメールアドレスを含む）
 const NO_TOKEN = 'acct-aaaaaaaaaaaa';
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-delegate-account-'));
-  const api = await startFakeAnthropicApi({ [TOKEN]: ORG });
   const cliDir = path.join(scratch, 'cli-config');
   await fs.mkdir(cliDir, { recursive: true });
   await fs.writeFile(path.join(cliDir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: 'logged-in@example.com' } }));
-  await fs.writeFile(path.join(scratch, 'claude-accounts.json'), JSON.stringify({ version: 1, accounts: [{ id: NO_TOKEN, name: 'no-token@example.com' }] }));
+  await seedClaudeAccount(scratch, 'no-token@example.com', { id: NO_TOKEN, login: false });
+  const work = await seedClaudeAccount(scratch, '仕事用 work@example.com');
   const fake = await installFakeClaude(path.join(scratch, 'cli'));
-  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', FAKE_ACCOUNTS: 'off', ...fake.env, CLAUDE_CONFIG_DIR: cliDir, AGENT_HOST_ANTHROPIC_API: api.url } });
+  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', FAKE_ACCOUNTS: 'off', ...fake.env, FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, CLAUDE_CONFIG_DIR: cliDir } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const tasks = async () => c.cmd('agentTasks');
   const task = async taskId => (await tasks()).find(r => r.taskId === taskId);
@@ -64,8 +64,6 @@ export default async function (t) {
     for (let i = 0; i < 200 && (await c.cmd('running')).turns.some(x => x.sessionId === parent); i++) await sleep(50);
   };
   try {
-    const saved = await c.cmd('saveClaudeAccount', { name: '仕事用 work@example.com', token: TOKEN });
-    const work = saved.id;
     t.ok('登録したアカウントの id は acct- と 12 桁の 16 進', /^acct-[0-9a-f]{12}$/.test(work), work);
 
     // ---- ply_usage に account の名前。資格情報・メールアドレスは出さない
@@ -74,15 +72,15 @@ export default async function (t) {
     const usageText = first.events.find(e => e.type === 'tool.result').text;
     const accounts = JSON.parse(usageText).backends[0].accounts ?? [];
     t.ok('ply_usage の Claude の各アカウントに account の名前（login・登録した id）', ['login', work, NO_TOKEN].every(a => accounts.some(x => x.account === a)), JSON.stringify(accounts.map(a => a.account)));
-    t.ok('トークンの無いアカウントは runnable: false', accounts.find(x => x.account === NO_TOKEN)?.runnable === false && accounts.find(x => x.account === work)?.runnable === undefined);
-    t.ok('ply_usage に資格情報・メールアドレスを出さない', !usageText.includes(TOKEN) && !/sk-ant|work@example|no-token@example|logged-in@example|hasToken/.test(usageText), usageText.slice(0, 300));
+    t.ok('ログインの無いアカウントは runnable: false', accounts.find(x => x.account === NO_TOKEN)?.runnable === false && accounts.find(x => x.account === work)?.runnable === undefined);
+    t.ok('ply_usage に資格情報・メールアドレスを出さない', !/sk-ant|fake-access|work@example|no-token@example|logged-in@example|hasToken/.test(usageText), usageText.slice(0, 300));
 
     // ---- 断る。断ったら何も作らない
     const before = (await tasks()).length;
     const unknown = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'claude', account: 'acct-ffffffffffff', task: 'hello' });
     t.ok('登録に無い名前は account_unknown で断り、選べる名前を添える', String(unknown.error ?? '').includes('account_unknown') && unknown.error.includes(work) && unknown.error.includes('login') && !unknown.error.includes(NO_TOKEN), unknown.error);
     const noToken = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'claude', account: NO_TOKEN, task: 'hello' });
-    t.ok('トークンの無いアカウントは account_no_token で断る', String(noToken.error ?? '').includes('account_no_token'), noToken.error);
+    t.ok('ログインの無いアカウントは account_no_token で断る', String(noToken.error ?? '').includes('account_no_token'), noToken.error);
     const noBackend = await call(parent, 'ply_delegate', { kind: 'mechanical', account: work, task: 'hello' });
     t.ok('backend なしの account は断る（自動の振り分けは今どおり）', Boolean(noBackend.error) && noBackend.error.includes('backend'), noBackend.error);
     const otherBackend = await call(parent, 'ply_delegate', { kind: 'mechanical', backend: 'fake', account: work, task: 'hello' });
@@ -105,7 +103,7 @@ export default async function (t) {
     const badSend = await call(parent, 'ply_task_send', { taskId: made.taskId, account: 'nope' });
     t.ok('ply_task_send でも登録に無い名前は断る', String(badSend.error ?? '').includes('account_unknown'), badSend.error);
     const noTokenSend = await call(parent, 'ply_task_send', { taskId: made.taskId, account: NO_TOKEN, message: 'again' });
-    t.ok('トークンの無いアカウントは message と一緒でも断る', String(noTokenSend.error ?? '').includes('account_no_token'), noTokenSend.error);
+    t.ok('ログインの無いアカウントは message と一緒でも断る', String(noTokenSend.error ?? '').includes('account_no_token'), noTokenSend.error);
     t.ok('断ったらタスク・子の会話・変更の記録を変えない', (await snapshot()) === kept);
 
     // ---- ply_task_send でアカウントを替える（次のターンから）
@@ -138,7 +136,6 @@ export default async function (t) {
   } finally {
     c.close();
     await server.stop();
-    await api.close?.();
     await cleanupTestHolder(scratch);
     await fs.rm(scratch, { recursive: true, force: true });
   }

@@ -7,6 +7,7 @@ import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
+import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -233,7 +234,7 @@ export default async function (t) {
       await c.cmd('setTurnSettings', { sessionId: id, account });
       return id;
     };
-    const registered = (await c.cmd('saveClaudeAccount', { name: 'routing', token: 'sk-ant-oat01-' + 'R'.repeat(48) })).id;
+    const registered = await seedClaudeAccount(scratch, 'routing');
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
     await c.cmd('delegationRouting', { refresh: true });
     const owner = await parentOn(registered);
@@ -241,7 +242,8 @@ export default async function (t) {
     t.ok('（準備）登録した Claude のアカウントの会話から、自動で agy に任せる', limited.data?.routing?.target?.model === 'gemini-3.8-flash-high'
       && (await c.cmd('listSessions')).find(s => s.id === owner)?.claudeAccount === registered, limited.text.slice(0, 300));
     const stoppedRow = await settle(limited.data?.taskId);
-    // flash から同じ子のまま pro に切り替える。pro も上限で断るので、止まる枠は 2 つになる
+    // flash から同じ子のまま pro に切り替える。pro も上限で断る。偽の agy の Claude と GPT の枠は 5 時間が 100% だが、
+    // 使用率では先回りして外さない（ADR 0352）ので、段の外の claude-opus-4-6-thinking にも切り替え、そこも断られて止まる枠は 3 つになる
     t.ok('agy の子は依頼元の会話の Claude のアカウントを継いで走り、上限で止まる',
       stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === registered,
       JSON.stringify(stoppedRow?.limit ?? stoppedRow?.status));
@@ -250,13 +252,15 @@ export default async function (t) {
     const after = await call(owner, { kind: 'trivial', task: 'agy-after-limit' });
     const afterSkipped = after.data?.routing?.skipped ?? [];
     const skippedFlash = afterSkipped.find(s => s.candidate === 'antigravity:gemini-3.8-flash-high');
-    const skippedHeld = afterSkipped.find(s => s.candidate === `antigravity:${stoppedRow.limit.model}`);
+    const skippedHeld = afterSkipped.find(s => s.candidate === 'antigravity:gemini-3.8-pro-high');
     t.ok('次の自動の振り分けは、止まった枠を recently_limited で飛ばして次の候補を選ぶ',
       !after.isError && after.data.routing.target.model === 'gemini-3.8-mini-high' && skippedFlash?.reason === 'recently_limited', after.text.slice(0, 600));
     const heldAgy = (await c.cmd('providerUsage', { backend: 'antigravity' })).held ?? [];
-    const heldUntil = heldAgy.find(x => x.model === stoppedRow.limit.model)?.until;
+    const heldUntil = heldAgy.find(x => x.model === 'gemini-3.8-pro-high')?.until;
     t.ok('使用量で止まっている枠の時刻と、振り分けで飛ばした until が一致する', Boolean(heldUntil) && skippedHeld?.until === heldUntil,
       JSON.stringify({ heldUntil, skippedUntil: skippedHeld?.until }));
+    t.ok('実際に断られた枠だけが止まる（5 時間が 100% でも断られるまでは枠を止めない。止まるのは 3 つ）', heldAgy.length === 3
+      && heldAgy.every(x => x.reason === 'recently_limited'), JSON.stringify(heldAgy));
     t.ok('使用量（providerUsage の held）の agy の行に、継いだ Claude のアカウントを載せない',
       heldAgy.some(x => x.model === 'gemini-3.8-flash-high' && x.reason === 'recently_limited' && x.account === null) && !JSON.stringify(heldAgy).includes(registered), JSON.stringify(heldAgy));
     const usageFrom = c.mark();

@@ -89,8 +89,6 @@ export default async function (t) {
         const s = line("queued", { waiting, act: { cancel: act.cancel } });
         t.ok(`送信待ち（${waiting.reason}${waiting.detail ? `・${waiting.detail}` : ""}）: 理由の文と［取り消す］だけ（再送は出さない）`, s.textContent.includes(text) && labels(s).join() === cancel);
       }
-      const limit = line("queued", { waiting: { reason: "limit", resetsAt: Date.now() + 3600e3 }, act: { cancel: act.cancel } });
-      t.ok("送信待ち（上限）: 上限の解除の文と［取り消す］", limit.textContent.includes(tr("outbox.waitLimit", { time: limit.textContent.match(/\d{1,2}:\d{2}/)?.[0] ?? "?" })) && labels(limit).join() === cancel);
       t.ok("送信待ちで［編集］の動きがあれば［編集］［取り消す］の順（スレッド・子の入力欄）", labels(line("queued", { act })).join() === [edit, cancel].join());
       t.ok("待つ理由が無い送信待ち（受け付けたばかり）は「送信中」と読む", line("queued", { act: { cancel: act.cancel } }).textContent.includes(tr("chat.delivery.sending")));
       t.ok("動きを渡さなければボタンを出さない", buttons(line("failed", { error: "x" })).length === 0);

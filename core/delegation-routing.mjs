@@ -378,7 +378,7 @@ export function windowsFor(backend, model, windows = []) {
 
 /**
  * 枠の集まりで使えるか。{ ok, reason?, window? }。
- *   どれかの枠が 100% 以上 → quota_full（使えない）。5 時間以外が後回しの線以上 → quota_high
+ *   5 時間以外が後回しの線以上 → quota_high（後回し。100% でも使えない扱いにはしない。ADR 0352）
  *   週次の枠のペースが上限を超える（経過率 20% 未満は見ない）→ pace_high
  *   経過率が出せない週次の枠は、使用率が 20% × 上限以下ならペースで後回しにならず、超えれば pace_unknown
  *   5 時間以外の使用率が分からない・枠が 1 つも無い → usage_unknown
@@ -386,8 +386,6 @@ export function windowsFor(backend, model, windows = []) {
 export function judgeWindows(windows, { now, avoidPercent, paceLimit }) {
   if (!windows.length) return { ok: false, reason: 'usage_unknown' };
   const rows = windows.map(w => ({ w, used: usedNow(w, now) }));
-  const full = rows.filter(r => r.used >= 100).sort((a, b) => b.used - a.used)[0];
-  if (full) return { ok: false, reason: 'quota_full', window: brief(full.w, full.used) };
   const priorityRows = rows.filter(r => r.w.minutes !== 300);
   const unknown = priorityRows.find(r => r.used == null);
   if (unknown) return { ok: false, reason: 'usage_unknown', window: brief(unknown.w, null) };
@@ -473,7 +471,7 @@ export function checkCandidate(candidate, { usage, settings, now, blocked = () =
   if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), account: entry.accountable ? '' : null, checkedAt };
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
   const verdict = judgeWindows(windows, policy);
-  const check = selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict);
+  const check = selectable(staleReason ? { ok: false, reason: staleReason } : verdict);
   // アカウントを持てるエージェントは、登録が無ければログイン中のアカウント（''）。持てないエージェントは null
   return { ...check, account: entry.accountable ? '' : null, checkedAt,
     ...(check.deferred ? { avoidPercent: settings.avoidPercent, maxUsed: maxUsage(windows, now), weeklyRate: weeklyPace(windows, now) } : {}),

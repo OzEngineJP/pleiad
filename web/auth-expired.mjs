@@ -5,7 +5,8 @@
 //     （URL が届いたら［ログインの画面を開く］［リンクをコピー］も。web/auth-links.mjs、ADR 0243）
 //     → 済んだら、この行から始めた・失敗したターンで何も出ていない（pristine）・前と同じアカウント、がそろえば自動でもう一度送り
 //       （「✓ ログインし直して、もう一度送りました」）、そろわなければ「✓ ログインしました」と［もう一度送る］
-//   - Pleiad の Claude のアカウントの会話用のトークン（mode: token）: ［トークンを発行し直す］（Claude のアカウントの面を開いて発行し直しを始める）。自動では送らない
+//   - ADR 0353 より前に保存された、Claude のアカウントの会話用のトークンの中断（mode: token）: ［ログインし直す］（Claude のアカウントの面を開いて
+//     claude.ai のログインし直しを始める）。自動では送らない。いまの Claude のアカウントの失敗は mode: connectorsLogin（web/connectors-fail.mjs）
 //   - リモートの窓は CLI のログインを始めない（ログインの戻り先はホストの PC）。ボタンの代わりに remote.loginOnHost の一文
 // 行は会話の流れの中だけ（ほかの失敗の行と同じく、開き直すと出ない）。動き（ログイン・送り直し・面を開く）は呼び手（web/client.mjs）が渡す
 import { el } from './dom.mjs';
@@ -36,7 +37,7 @@ export function shouldAutoResend({ fromRow = false, pristine = false, before = n
  * opts:
  *   auth, pristine, agent, accountName, before（失敗した時点のアカウント）, remote（リモートの窓）
  *   login() → Promise<{ account }>（authLogin。失敗は reject、取り消しは code: 'CANCELLED'）, cancel()
- *   resend({ auto }) → Promise<boolean>（送れたら true）, reissue()（トークンの再発行を始める）, spinner()（回る印。web/arc.mjs の runMark）
+ *   resend({ auto }) → Promise<boolean>（送れたら true）, reissue()（アカウントの面を開いてログインし直しを始める）, spinner()（回る印。web/arc.mjs の runMark）
  */
 export function paintAuthFailure(node, opts) {
   const { auth, pristine = false, agent = '', accountName = '', before = null, remote = false, login, cancel, resend, reissue, spinner = () => el('span') } = opts;
@@ -66,7 +67,7 @@ export function paintAuthFailure(node, opts) {
       return;
     }
     if (auth?.mode === 'token') {
-      acts.replaceChildren(button(t('chat.authExpired.reissue'), () => reissue?.(), true));
+      acts.replaceChildren(button(t('chat.authExpired.signInAgain'), () => reissue?.(), true));
       return;
     }
     if (next === 'expired') {

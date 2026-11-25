@@ -22,7 +22,7 @@ async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.n
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-task-end-'));
   let seq = 0;
-  const notReady = new Set(), stoppedOwners = new Set(), limitHeld = new Set(), gates = new Map(), flags = { requeueExternal: false };
+  const notReady = new Set(), stoppedOwners = new Set(), gates = new Map(), flags = { requeueExternal: false, startable: true };
   // 届いた終了通知: [依頼元, taskId, status, stoppedBy, result, events, 行の写し]
   const delivered = [];
   const externalRuns = [];
@@ -57,8 +57,8 @@ export default async function(t) {
     },
     ready: async task => !notReady.has(task.parentSessionId),
     ownerStopped: owner => stoppedOwners.has(owner),
-    // 上限の明けを待っている子の会話（積まれた指示で次の回を始めない）
-    held: row => limitHeld.has(row.sessionId) ? { resetsAt: Date.now() + 3 * 3600_000 } : null,
+    // 次の回を始めてよいか（更新の準備中などは false。積まれた指示は queued のまま残る）
+    canStart: () => flags.startable,
     deliver: async tasks => {
       for (const x of tasks) delivered.push([x.parentSessionId, x.taskId, x.status, x.stoppedBy ?? null, x.result, x.events ?? [], structuredClone(x)]);
       return 'ok';
@@ -112,14 +112,16 @@ export default async function(t) {
     t.ok('完了したが注意書きの付いた回は、回の終わりの出来事に返答とエラーを残す',
       warnedRun?.status === 'completed' && warnedRun.result === '作業は終えた' && warnedRun.error === '注意: 履歴を読めませんでした', JSON.stringify(warnedRun));
 
-    // ---- 上限の明けを待って積まれた子（走る回が無い）を人が止めた: 止めたことを終了通知で届け、上限の一言にしない。「止めたもの」には返さない
+    // ---- 前の回が上限で終わり、積まれた指示がまだ走り出していない子（走る回が無い）を人が止めた:
+    //      止めたことを終了通知で届け、上限の一言にしない。「止めたもの」には返さない
     const limited = await manager.call('parent', 'ply_delegate', { backend: 'fake', task: 'limited' });
     await until(() => manager.get(limited.taskId).status === 'failed' && manager.get(limited.taskId).notification === 'sent');
-    limitHeld.add(manager.get(limited.taskId).sessionId);
+    flags.startable = false;
     const queuedSend = await manager.call('parent', 'ply_task_send', { taskId: limited.taskId, message: 'つづき' });
     await sleep(300);
     const queuedBefore = manager.get(limited.taskId).status;
     const limitedStop = await manager.cancel(limited.taskId, { by: 'human' });
+    flags.startable = true;
     await until(() => of(limited.taskId).length === 2);
     const limitedNotice = of(limited.taskId)[1];
     t.ok('積まれた子を人が止めると、人が止めた回の終わりを終了通知で届け、前の回の上限（limit）を外す',

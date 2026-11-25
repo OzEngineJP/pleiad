@@ -2,6 +2,7 @@
 
 - 状態: 提案
 - 関連: [0222](0222-agent-accounts-and-provider-quota.md)（エージェントの使用枠）、[0040](0040-delegation-routing-headroom.md)（委譲の振り分けの余裕）、[0048](0048-delegation-silence-notice.md)（無音の通知）、[0170](0170-delegation-background-notify-not-stop.md)（裏の作業の通知）
+- 改めた: [0352](0352-no-preemptive-limit-stop.md)（上限で止まった子への `ply_task_send` を解除時刻まで走らせない部分。すぐ渡す）
 
 ## 状況
 

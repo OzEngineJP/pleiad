@@ -1597,13 +1597,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 再開。中断と同じ位置・同じ薄い面。再生の三角と字（480px 以下は三角だけ） */
 .resume{flex:none;margin-left:4px}
 .resume svg.i{width:16px;height:16px}
-/* 上限で止まった会話の自動で戻る間は「◷ 2:30 に再開」。押せない表示（面の無い字）で、三角は時計に替わる。解除の後の「再開」は普通の再開 */
-.resume .resume-clock{display:none}
-.resume.is-limit .resume-play{display:none}
-.resume.is-limit .resume-clock{display:block}
-.resume.is-limit{font-variant-numeric:tabular-nums;background:transparent;color:var(--ink-weak);cursor:default;opacity:1}
-.resume .resume-short{display:none}
-/* 上限待機と保留の注記。注記があるときは空欄でも高さを保つ。 */
+/* 保留の注記。注記があるときは空欄でも高さを保つ。 */
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
 .resume-note.quiet{visibility:hidden}
@@ -2407,10 +2401,6 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .resume:hover,.resume:active{background:var(--surface-2)}
   .resume svg.i{width:var(--icon);height:var(--icon)}
   .resume span{display:none}
-  .resume.is-limit{width:auto;min-width:36px;padding:0 10px;border-radius:var(--r-pill)}
-  .resume.is-limit :is(#resumeLabel,#thResumeLabel,#wkResumeLabel){display:none}
-  .resume.is-limit .resume-short{display:inline}
-  .resume.is-limit .resume-short:empty{display:none}
   .send-more{display:none}
 }
 @media (max-width:399px){

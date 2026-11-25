@@ -48,12 +48,12 @@ export const COMMANDS = new Set([
   'setVoiceKey',    // { key } -> { hasKey, storage, today, active, check: ok|invalid|unreachable }
   'deleteVoiceKey', // {} -> { hasKey, storage, today, active }
   'providerUsage', // { backend } -> subscription quota + locally recorded usage（Claude はアカウントを登録していれば quota.accounts にアカウントごと）
-  // Claude のアカウント（会話ごとに選ぶ。core/claude-accounts.mjs）。トークンは返さない
-  'claudeAccounts',      // {} -> { accounts: [{ id, name, hasToken, usageLogin }], storage: { encrypted, backend, reason? } }
-  'saveClaudeAccount',   // { id?, name, token? } -> 追加（id 無し。token 必須）/ 名前の変更・トークンの差し替え（id 有り。token を省けば残す）
-  'deleteClaudeAccount', // { id } -> 一覧とトークンから消す（使用量の設定フォルダも）。選んでいた会話は次の送信でエラーになる
+  // Claude のアカウント（会話ごとに選ぶ。アカウントごとの専用フォルダのログイン。core/claude-accounts.mjs・ADR 0353）
+  'claudeAccounts',      // {} -> { accounts: [{ id, name, usageLogin, usageExpired, connectors? }] }
+  'saveClaudeAccount',   // { id, name } -> 名前の変更（追加は claudeLoginStart の name とログイン）
+  'deleteClaudeAccount', // { id } -> 一覧から消す（専用フォルダも）。選んでいた会話は次の送信でエラーになる
   // アカウントの認可を Pleiad から行う（core/claude-login.mjs）。進み具合は claudeLogin イベント。一度に 1 つだけ（始めると前のものは取り消す）
-  'claudeLoginStart',    // { kind: setup-token|usage-login, accountId?, name?, open? } -> { loginId }。setup-token は accountId 無しなら name で新規追加
+  'claudeLoginStart',    // { kind?: usage-login, accountId?, name?, open? } -> { loginId }。accountId 無しなら name の新しいアカウント（ログインが済んだときだけ登録）
   'claudeLoginCode',     // { loginId, code } -> {}。ブラウザーに表示されたコードを CLI へ渡す
   'claudeLoginCancel',   // { loginId } -> {}
   // 互換の接続先（エージェントごと。会話ごとに選ぶ。core/compat-endpoints.mjs）。キーは返さない

@@ -125,7 +125,7 @@ import { parseTaskNotice, parseSettingNotices } from "./task-notice.mjs";
 import { createShellComposer } from "./shell-composer.mjs";
 import { createReadCompletions } from "./unread.mjs";
 import { isInterrupted, interruptUnread, interruptReadPoint, interruptLineText, reasonOf, stopMark, pausedCount, resumeLabel,
-  resumeNoteText, resumeVisible, updateInterrupted, limitResumeState, limitLineNote, resumeShortLabel, versionReload } from './interrupt.mjs';
+  resumeNoteText, resumeVisible, updateInterrupted, limitLineNote, versionReload } from './interrupt.mjs';
 import { workStop } from './work-stop.mjs';
 import { setupContext } from './context.mjs';
 import { setupSessionContext } from './session-context.mjs';
@@ -3383,8 +3383,6 @@ function connectorsFailure(node, { sessionId, messageId, ce, layout, pristine = 
       connectorsLogins.set(accountId, set);
       claudeAccounts.open({ usageLogin: accountId });
     }),
-    openAccount: () => claudeAccounts.open({ focus: accountId }),
-    off: () => cmd('invoke', { op: 'accounts.setConnectors', args: { id: accountId, enabled: false } }),
     resend: async ({ auto }) => {
       if (outbox) { await cmd('messageAction', { sessionId, messageId, action: 'retry' }); return true; }
       return resendFailedTurn({ sessionId, messageId, node, auto, pristine, auth: ev?.auth, agent: b?.label ?? '' });
@@ -3504,7 +3502,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === "read") { if (readCompletions.apply(ev.reads)) renderSessions(); return; }
   // Pleiad に登録した外部 MCP のログインの進み具合。会話には出さず、設定 › コンテキストと会話の右パネル（web/context.mjs・web/session-context.mjs）へ渡す
   if (ev.type === 'mcpAuth') { window.dispatchEvent(new CustomEvent('ply:mcp-auth', { detail: ev })); return; }
-  // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
+  // Claude のアカウントの claude.ai のログイン（claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); connectorsLoginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
@@ -4403,7 +4401,7 @@ function authFailureRow(node, ev) {
     login: () => authLogin(b, { fromRow: true }),
     cancel: () => cmd('authCancel', { backend: ev.backend }).catch(() => {}),
     resend: ({ auto }) => resendFailedTurn({ sessionId: ev.sessionId, messageId: ev.messageId, node, auto, pristine, auth, agent }),
-    reissue: () => auth.mode === 'token' ? claudeAccounts.open({ reissue: auth.accountId }) : agentAccounts.open(ev.backend),
+    reissue: () => auth.mode === 'token' ? claudeAccounts.open({ usageLogin: auth.accountId }) : agentAccounts.open(ev.backend),
     spinner: () => runMark(),
   });
   authRows = authRows.filter((x) => x.node.isConnected);
@@ -4803,7 +4801,7 @@ const agentAccounts = setupAgentAccounts({ cmd, labelOf,
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
   if (kind === 'token') return claudeAccounts.list().map((a) => ({
-    id: a.id, name: a.name, ready: Boolean(a.hasToken) || a.connectors?.enabled === true, connectors: a.connectors ?? null,
+    id: a.id, name: a.name, ready: Boolean(a.usageLogin), connectors: a.connectors ?? null,
   }));
   if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
   return [];
@@ -5476,10 +5474,9 @@ function paintAuthInterrupt(interrupted, line, lastUser, s) {
   if (line) line.replaceWith(m); else append(m);
 }
 
-let limitClockTimer = null;
 /**
  * 入力欄の「▶ 再開」。中断状態・走っていない・欄が空のときだけ「中断」の位置に出す。
- * 字を書くと再開を隠す。上限待機または保留の未送信があるときは、欄の下に注記を出す。
+ * 字を書くと再開を隠す。保留の未送信があるときは、欄の下に注記を出す。
  * 中断中だけプレースホルダを「指示を変えて続ける…」にする
  */
 function syncResume() {
@@ -5491,29 +5488,17 @@ function syncResume() {
   const show = resumeVisible({ interrupted, running, waiting: isWaitingHere(), text, attached });
   const button = $('resume');
   const paused = interrupted ? pausedCount(outboxes.get(state.current)) : 0;
-  const target = composerSelection();
-  const label = resumeLabel(paused, s?.interrupted, target);
-  const limitState = interrupted ? limitResumeState(s.interrupted, target) : null;
+  const label = resumeLabel(paused);
   if ($('resumeLabel').textContent !== label) {
     $('resumeLabel').textContent = label;
     button.title = label;
     button.setAttribute('aria-label', label);
   }
-  // 480px 以下の上限の時計は時刻だけ（全文は title と読み上げ名に残る）
-  $('resumeShort').textContent = resumeShortLabel(s?.interrupted, target);
-  // 上限の解除前の時計は押せない表示。解除の後（解除時刻が分からない上限も）は普通の「再開」
-  const waitingClock = limitState === 'release';
-  button.classList.toggle('is-limit', waitingClock);
-  button.disabled = resuming.has(state.current) || waitingClock;
-  clearTimeout(limitClockTimer);
-  // 解除時刻に時計から「再開」へ描き直す
-  if (waitingClock) {
-    const switchAt = s.interrupted.resetsAt + 500;
-    limitClockTimer = setTimeout(() => { syncResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
-  }
+  // 上限で止まった会話も、解除前から押せる（先回りして待たせない。まだ上限ならもう一度止まるだけ。ADR 0352）
+  button.disabled = resuming.has(state.current);
   const note = $('resumeNote');
   // 保留があれば、送った指示は保留の後ろに並ぶ（サーバーが保留を先に送り直す。sendMessage）
-  const noteText = resumeNoteText(paused, s?.interrupted, target);
+  const noteText = resumeNoteText(paused);
   note.hidden = !interrupted || running || !noteText;
   if (note.textContent !== noteText) note.textContent = noteText;
   // 書いていない間も高さは取っておく（書き始めたときに入力欄が跳ねない）
@@ -5549,7 +5534,6 @@ async function resumeSession(sessionId) {
   return true;
 }
 
-let workLimitClockTimer = null;
 /**
  * 子の会話のモーダルの「▶ 再開」と欄の下の一行。出す条件と字はメインの syncResume と同じ（web/interrupt.mjs）。
  * 子が中断状態・走っていない・承認待ちでない・欄が空のときだけ再開を出す。
@@ -5559,27 +5543,16 @@ function syncWorkResume() {
   const id = workComposer.childId;
   const s = id ? state.sessions.find(x => x.id === id) : null;
   const interrupted = Boolean(s) && isInterrupted(s) && !s.deletedBot && !s.retired;
-  clearTimeout(workLimitClockTimer);
   if (!interrupted) { workComposer.setResume({}); return; }
   const running = state.runningIds.has(id) || submittingMessages.has(id);
   const waiting = (state.work.permissions ?? []).some((p) => (p.blocking ?? !p.detached) && p.sessionId === id);
   const written = workComposer.hasDraft();
   const paused = pausedCount(outboxes.get(id));
-  const selection = workControls.selection(id);
-  const target = { ...selection, hasAccounts: Boolean(capsOf(selection.backend).accounts) };
-  const limitState = limitResumeState(s.interrupted, target);
-  const waitingClock = limitState === 'release';
-  if (waitingClock) {
-    const switchAt = s.interrupted.resetsAt + 500;
-    workLimitClockTimer = setTimeout(() => { syncWorkResume(); renderSessions(); }, Math.min(2_147_000_000, Math.max(1000, switchAt - Date.now())));
-  }
   workComposer.setResume({
     show: resumeVisible({ interrupted, running, waiting, text: '', attached: written }),
-    label: resumeLabel(paused, s.interrupted, target),
-    short: resumeShortLabel(s.interrupted, target),
-    limit: waitingClock,
-    disabled: resuming.has(id) || waitingClock,
-    note: running ? '' : resumeNoteText(paused, s.interrupted, target),
+    label: resumeLabel(paused),
+    disabled: resuming.has(id),
+    note: running ? '' : resumeNoteText(paused),
     quiet: !written,
     placeholder: running ? '' : t('interrupt.placeholder'),
   });
