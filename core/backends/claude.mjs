@@ -45,7 +45,7 @@ import { promptHash } from "../turn-card.mjs";
 import { ADOPT_TURN_MARK } from "../adopt.mjs";
 import { createHeldCli, heldPlan, cliVersion } from "./claude-held.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
-import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
+import { SHELL_SERVER, CALL_TIMEOUT_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { identitySuffix } from "../claude-connectors.mjs";
@@ -1051,8 +1051,10 @@ export const backend = {
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
       // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
       ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}),
-      // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0227）。run は最長 10 分待つので、待ちの上限をそれより長くする
-      ...(shellRuntime ? { [SHELL_SERVER]: { type: 'http', url: shellRuntime.url, headers: shellRuntime.headers, timeout: RUN_TIMEOUT_MAX_MS + 60_000 } } : {}) };
+      // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0227）。承認を待つ時間と run の待ちを足した分より、待ちの上限を長くする。
+      // ネイティブのシェルを切った会話（nativeOff）では ply_shell が唯一のシェルなので、ツール検索の後ろに回さず最初から読み込む（alwaysLoad。
+      // 後ろに回すと、スキーマを読む前に呼んで一度失敗する・検索の 1 手が増える。2026-11-25 の実測）。切っていない会話は今のまま（ネイティブの Bash がある）
+      ...(shellRuntime ? { [SHELL_SERVER]: { type: 'http', url: shellRuntime.url, headers: shellRuntime.headers, timeout: CALL_TIMEOUT_MS, ...(shellRuntime.nativeOff ? { alwaysLoad: true } : {}) } } : {}) };
     // SDK がインプロセスで持つ sdk 型（host）と、CLI の設定に載るもの（HTTP。トークンを headers に持つ）に分ける。
     // mcpServers に入れたものは SDK が --mcp-config の JSON に直列化して argv に載せるので、
     // HTTP 系は 0600 のファイルに書き、--mcp-config にはパスだけを渡す（ADR 0284。core/claude-mcp-file.mjs）

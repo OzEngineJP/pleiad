@@ -36,7 +36,7 @@ import { readThread } from "./codex-history.mjs";
 import { listThreads } from './codex-list.mjs';
 import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
-import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
+import { SHELL_SERVER, CALL_TIMEOUT_MS } from "../shell-bridge.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
 import { loginCancelledError, loginTimeoutError } from "../auth/login-watch.mjs";
@@ -1900,7 +1900,7 @@ const backend = {
           // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。承認は registry.invoke が会話の承認モードで決めるので、ツールごとには聞かない
           ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
           // Pleiad のシェルのツール（ADR 0227）。承認は橋が会話の承認モードで決める。run は最長 10 分待つ
-          ...(shellRuntime ? { [`mcp_servers.${SHELL_SERVER}`]: { url: shellRuntime.url, http_headers: shellRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: Math.ceil(RUN_TIMEOUT_MAX_MS / 1000) + 60 } } : {}),
+          ...(shellRuntime ? { [`mcp_servers.${SHELL_SERVER}`]: { url: shellRuntime.url, http_headers: shellRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: Math.ceil(CALL_TIMEOUT_MS / 1000) } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           // コンピューターの操作（ply_computer）と、同梱の computer use を切る上書き。渡さない会話には何も足さない（利用者の ~/.codex に任せる）
