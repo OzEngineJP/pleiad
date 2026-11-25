@@ -87,7 +87,7 @@ export function run(command, args = [], {
       if (!child?.pid) return;
       if (killWith) { try { killWith(child); } catch { /* 試験の差し込み */ } return; }
       if (!killTree) { try { child.kill('SIGKILL'); } catch { /* 既に終わっている */ } return; }
-      // taskkill は待たない（spawnSync だとサーバー全体が止まる。止まらないプロセスを相手にすると長く掛かる）。終わりは exit / close で見る
+      // taskkill は待たない（同期版だとサーバー全体が止まる。止まらないプロセスを相手にすると長く掛かる）。終わりは exit / close で見る
       if (process.platform === 'win32') {
         try {
           const killer = spawn(systemTool('taskkill'), ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore', timeout: TASKKILL_TIMEOUT_MS });
@@ -153,8 +153,11 @@ export function run(command, args = [], {
   });
 }
 
-/** 裏の作業（runBackground）の子は、止めてからこの時間たっても終わらなければ待たずに戻る（ADR 0352） */
-export const BACKGROUND_KILL_DEADLINE_MS = 1_000;
+/**
+ * 裏の作業（runBackground）の子は、止めてからこの時間たっても終わらなければ待たずに戻る（ADR 0352）。
+ * 3 秒の根拠: 正常な木ごとの停止（taskkill /t /f の起動 + 終了）が、この PC で約 1.3 秒かかった（1 秒では、止まる子まで詰まり扱いになる）
+ */
+export const BACKGROUND_KILL_DEADLINE_MS = 3_000;
 
 /**
  * Pleiad が自分から始める裏の作業（git の状態・撮影、gh、ps の確認など。誰も結果を待たない）の子を走らせる。run() との違い:

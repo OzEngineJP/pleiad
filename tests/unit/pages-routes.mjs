@@ -68,7 +68,7 @@ export async function createFixture() {
       calls.push({ actor, id, input });
       let result;
       if (id === 'git.status') result = { git:{ root:cwd, branch:'feat/browser-unify' } };
-      else if (id === 'git.changes') result = { git:{ root:cwd, branch:'feat/browser-unify', head:'a'.repeat(40) }, changes:{ hasSession:true, files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
+      else if (id === 'git.changes') result = { git:{ root:cwd, branch:'feat/browser-unify', head:'a'.repeat(40) }, changes:{ range:'uncommitted', files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
       else if (id === 'git.history') result = { history:{ root:cwd, head:'a'.repeat(40), next:null, session:null, commits:[{ hash:'a'.repeat(40), short:'aaaaaaa', parents:[], author:'Pleiad', at:Date.now(), refs:[{ kind:'head', name:'feat/browser-unify' }], subject:'ファイルをページで開く' }] } };
       else if (id === 'git.commit') result = { commit:{ commit:{ hash:input.hash, short:input.hash.slice(0, 7), subject:'ファイルをページで開く', author:'Pleiad', at:Date.now(), parents:[] }, files:[{ path:'app.mjs', state:'M', add:1, del:1 }], total:{ files:1, add:1, del:1 } } };
       else if (id === 'git.worktrees') result = { worktrees:{ total:2, partial:input.only === 'list', base:{ path:input.sessionId === 'review' ? dataDir : cwd, branch:'main' }, rows:[{ path:cwd, branch:'feat/browser-unify', exists:true, kind:'here', main:true, dirty:1 }, { path:path.join(cwd, 'notes'), branch:'feat/notes', exists:true, kind:'left', leftover:{ id:'notes', mergeSessionId:'alpha' } }] } };

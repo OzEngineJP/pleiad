@@ -2,7 +2,7 @@
 // スレッドのサブエージェント（bot が委譲した子。docs/design-system.md「バックグラウンド」「委譲カード」、ADR 0139）:
 // 入力欄の上のチップ（子がいなければ出さない）・押すと bot ごとに子を並べる一覧・子の会話を開ける・作業ログの委譲カードが Chats と同じ形。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7438, token thread-subagents-test):
-//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_GIT_SNAPSHOTS=off AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-subagents-test AGENT_HOST_PORT=7438 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
+//   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-subagents-test AGENT_HOST_PORT=7438 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // Never run against live data. bot・チャンネル・スレッドは本物の操作（bots.create・channels.post ほか）で作り、fake の bot が ply_delegate を呼び、fake の子が走る。
 async page => {
   const URL = 'http://127.0.0.1:7438/?token=thread-subagents-test';

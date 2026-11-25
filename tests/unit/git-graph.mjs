@@ -30,15 +30,12 @@ export default async function (t) {
   const newer = layoutGraph([c('x', 'h'), c('h', 'p'), c('p')], { headHash: 'h' });
   t.ok('HEAD より新しい枝があっても HEAD がレーン 0・新しい枝はレーン 1', newer.rows[1].lane === 0 && newer.rows[0].lane === 1 && newer.rows[1].head === true, JSON.stringify(newer.rows));
 
-  // 範囲: 会話の始まりの HEAD は p。HEAD h と、別の枝 s（始まり p から出たが HEAD から辿れない）
+  // 範囲: HEAD h と、別の枝 s。「この会話の間」の範囲は ADR 0352 でやめた（kind: 'session' は渡しても作業ツリーの行の扱いにならない）
   const commits = [c('s', 'p'), c('h', 'p2'), c('p2', 'p'), c('p', 'o'), c('o')];
   const lay = layoutGraph(commits, { withWorktree: true, headHash: 'h' });
   const un = rangeNodes(lay, commits, { kind: 'uncommitted', head: 'h' });
   t.ok('コミットしていない分: 作業ツリーの行だけ・起点は HEAD の行', [...un.nodes].join() === '0' && un.base === 2);
-  const se = rangeNodes(lay, commits, { kind: 'session', head: 'h', start: 'p' });
-  t.ok('この会話の間: 始まりの HEAD..HEAD のコミットと作業ツリー。HEAD から辿れない枝は入らない', [...se.nodes].sort().join() === '0,2,3' && se.base === 4, JSON.stringify([...se.nodes]));
-  const unknown = rangeNodes(lay, commits, { kind: 'session', head: 'h', start: 'zzz' });
-  t.ok('始まりが読み込みの外なら unknownStart', unknown.unknownStart === true);
+  t.ok('範囲に unknownStart は無い（会話の始まりの札は消した）', un.unknownStart === undefined);
   const one = rangeNodes(lay, commits, { kind: 'commit', hash: 'p2' });
   t.ok('コミットを押した: そのコミットだけ', [...one.nodes].join() === '3' && one.base === null);
 

@@ -1,5 +1,5 @@
 // git パネルの読み込みをサーバー越しに（fake + 一時リポジトリ）。
-// 履歴の「始まりまで読む」（gitHistory through）・作業場所は一覧だけ先に（gitWorktrees only: list）・
+// 履歴のページ（gitHistory。会話の始まりまで読む through は ADR 0352 でやめた）・作業場所は一覧だけ先に（gitWorktrees only: list）・
 // パネルを開いたときの worktree の片付けは、開いたリポジトリだけを、間隔を空けて 1 回（AGENT_HOST_WORKTREE_PANEL_SWEEP_MS）。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -9,7 +9,7 @@ import { startServer } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-git-panel-load';
-export const title = 'git パネルの読み込み（サーバー越し）: 始まりまで読む・作業場所は一覧だけ先に・開いたときの片付けは間隔を空ける';
+export const title = 'git パネルの読み込み（サーバー越し）: 履歴のページ・作業場所は一覧だけ先に・開いたときの片付けは間隔を空ける';
 
 const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true }).trim();
 const exists = (p) => fs.stat(p).then(() => true, () => false);
@@ -26,24 +26,23 @@ export default async function (t) {
   await commit(0);
 
   const server = await startServer({
-    env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0', AGENT_HOST_GIT_SNAPSHOTS: 'on', AGENT_HOST_WORKTREE_PANEL_SWEEP_MS: String(SWEEP_MS) },
+    env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0', AGENT_HOST_WORKTREE_PANEL_SWEEP_MS: String(SWEEP_MS) },
     dataDir: `${scratch}/data`, timeoutMs: 30_000,
   });
   const c = await open({ port: server.port, token: server.token });
   try {
-    // 会話の始まり = 最初のターンの撮影の親（c0）。そのあとに 8 コミット
+    // 最初のターンで会話を作り、そのあとに 8 コミット
     const first = await c.runTurn({ backend: 'fake', cwd: repo, prompt: 'echo:start' });
     const sid = first.sessionId;
-    const startHash = sh(repo, 'rev-parse', 'HEAD');
     for (let i = 1; i <= 8; i++) await commit(i);
 
-    // ---- 履歴: 1 ページ目で始まりの位置が分かり、「始まりまで読む」で続きを 1 回で読む
+    // ---- 履歴: limit 件ずつ。会話の始まりの位置（session）と「始まりまで読む」（through）は ADR 0352 でやめた
     const page1 = (await c.cmd('gitHistory', { sessionId: sid, limit: 3 })).history;
-    t.ok('gitHistory: 始まりが読んだ範囲より後ろでも、session.pos が分かる（札を出す元）', page1.commits.length === 3 && page1.next !== null && page1.session?.head === startHash && page1.session.pos === 8 && !page1.session.lost, JSON.stringify(page1.session));
-    const rest = (await c.cmd('gitHistory', { sessionId: sid, limit: 3, cursor: page1.next, through: true })).history;
-    t.ok('gitHistory through: 続きから始まりのコミットまでを 1 回で読む（3 件 + 6 件ではなく、4〜8 の 6 件）', rest.commits.length === 6 && rest.commits.at(-1).hash === startHash && rest.session.pos === 8, JSON.stringify({ n: rest.commits.length, s: rest.session }));
+    t.ok('gitHistory: 1 ページ目は limit 件・next あり・会話の始まり（session）は付けない', page1.commits.length === 3 && page1.next !== null && page1.session === undefined, JSON.stringify({ n: page1.commits.length, next: page1.next, session: page1.session }));
     const plainNext = (await c.cmd('gitHistory', { sessionId: sid, limit: 3, cursor: page1.next })).history;
-    t.ok('through を付けなければ、これまでどおり limit 件', plainNext.commits.length === 3);
+    t.ok('gitHistory: 続きも limit 件（3 + 3）', plainNext.commits.length === 3 && plainNext.commits[0].hash !== page1.commits[0].hash);
+    const ignored = (await c.cmd('gitHistory', { sessionId: sid, limit: 3, cursor: page1.next, through: true })).history;
+    t.ok('through を付けても無視され、limit 件のまま', ignored.commits.length === 3 && ignored.commits[0].hash === plainNext.commits[0].hash, JSON.stringify({ n: ignored.commits.length }));
     const none = (await c.cmd('gitHistory', { sessionId: 'no-such-session', limit: 3 })).history;
     t.ok('知らない会話は null（落ちない）', none === null);
 

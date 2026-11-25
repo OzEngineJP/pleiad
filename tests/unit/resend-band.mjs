@@ -59,8 +59,11 @@ export default async function(t) {
   t.ok("消える範囲の要約", JSON.stringify(removedSummary(chain, 2)) === JSON.stringify({ messages: 2, userMessages: 0, replies: 1 }) && removedSummary(chain, 0).userMessages === 1);
   const at = (n) => `2026-10-03T10:00:0${n}Z`;
   const msgs = [user("u1", { at: at(1) }), ai("a1", { at: at(2) }), user("u2", { at: at(4) }), ai("a2", { at: at(5) })];
-  const presents = [{ kind: "git", by: "ai", at: at(0) }, { kind: "git", by: "ai", at: at(3) }, { kind: "git", by: "ai", at: at(6) }];
+  // 時刻で並ぶ提示は worktree の印の行で作る（返答の下の変更の行 kind: "git" は ADR 0352 で記録をやめ、古い行は出さない）
+  const presents = [{ kind: "worktree", by: "ai", at: at(0) }, { kind: "worktree", by: "ai", at: at(3) }, { kind: "worktree", by: "ai", at: at(6) }];
   t.ok("切り口（a1）より後に並ぶ提示は捨てる（「ここから分岐」と同じ選び方）", [...keptPresentIndexes(msgs, presents, 1)].join() === "0");
+  t.ok("古い保存分の kind: git は出さない行なので、切り口の前でも引き継がない（通し番号は詰めず、ほかの提示の番号を変えない）",
+    [...keptPresentIndexes(msgs, [{ kind: "git", by: "ai", at: at(0) }, ...presents], 1)].join() === "1");
   t.ok("何も残さないなら提示も全部捨てる", keptPresentIndexes(msgs, presents, -1).size === 0);
   t.ok("末尾を残すなら全部残す", keptPresentIndexes(msgs, presents, 3).size === 3);
   let refused = false;

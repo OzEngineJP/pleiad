@@ -1,5 +1,5 @@
 // playwright-cli run-code --filename=tests/browser/git-panel.cjs
-// git パネル（docs/design-system.md「git の動き」、ADR 0135）: Ctrl+Shift+G・タブ（線画 + 語）・範囲の切り替え・コミットの行を開く箱（同時に 1 つ・Esc）・
+// git パネル（docs/design-system.md「git の動き」、ADR 0135）: Ctrl+Shift+G・タブ（線画 + 語）・コミットの行を開く箱（同時に 1 つ・Esc）・
 // 差分（左右は常に折り返す・新規のファイルは 1 列）・キーボード。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (token git-panel-test, port 7433, AGENT_HOST_LOCALE=ja). Never run against live data.
 // 「コミットしていない分」の一覧はグラフの下に出さず、「未コミットの変更」の行の箱にまとめる（作業場所に未コミットの変更があれば、その箱を初めから開く。
@@ -44,13 +44,9 @@ async (page) => {
   check(await page.locator('.gp-tab svg path, .gp-tab svg circle').count() >= 4, 'the tab icons are drawn');
 
   await page.locator('.cg-row').first().waitFor();
-  // 会話の始まりが HEAD なら、それより古い履歴は畳まれている。箱を開く試験のために先に広げる
-  const older = page.locator('.cg-more[data-older]');
-  if (await older.count() && await older.getAttribute('aria-expanded') === 'false') await older.click();
   await page.waitForFunction(() => [...document.querySelectorAll('.cg-row:not(.wt)')].filter((r) => r.getBoundingClientRect().height > 0).length >= 3);
-  const hasSession = await page.locator('[data-rg="session"]').count();
-  // 範囲の切り替えは「この会話の間」がある会話だけ（範囲が 1 つなら切り替えは出さない）
-  check(hasSession ? await page.locator('.rbar [data-rg="uncommitted"][aria-pressed="true"]').count() === 1 : await page.locator('.rbar').count() === 0, 'range starts at uncommitted from the shortcut');
+  // 範囲の切り替え（「この会話の間」）は ADR 0352 で消した。残る範囲は「コミットしていない変更」と履歴だけなので、切り替えは出さない
+  check(await page.locator('.rbar, [data-rg]').count() === 0, 'no range switch: only the uncommitted changes and the history remain');
   const rowCount = await page.locator('.cg-row').count();
   check(rowCount >= 3, 'the graph has commit rows');
   check(await page.locator('.cg-row .chev').count() === rowCount, 'every row ends with a chevron');
@@ -78,7 +74,7 @@ async (page) => {
   // コミットの行を押すと、その行のすぐ下に箱が開く（同時に 1 つ。札も薄くもならない）
   const commitRows = page.locator('.cg-row:not(.wt)');
   const a = commitRows.nth(0), b = commitRows.nth(1);
-  // 箱の開閉の動きの途中は行が動くので、行は DOM の click で押す（範囲の帯が重なることもある）
+  // 箱の開閉の動きの途中は行が動くので、行は DOM の click で押す
   const tap = (loc) => loc.evaluate((x) => x.click());
   await tap(a);
   check(await a.getAttribute('aria-expanded') === 'true', 'the row opens (aria-expanded)');
@@ -102,7 +98,6 @@ async (page) => {
   check(flat(await iconBox('.gp .ins .fr .btn.sm svg.i'), '13px'), 'small button icons are 13px with no face');
   check(flat(await iconBox('.gp .cg-row .chev svg.i'), '12px'), 'row chevrons are 12px with no face');
   check(flat(await iconBox('.gp-tab svg.i'), '18px'), 'tab icons are 18px with no face');
-  check(await page.evaluate(() => { const c = getComputedStyle(document.querySelector('.gp .rseg')); return c.backgroundColor !== 'rgba(0, 0, 0, 0)' && c.paddingLeft === '3px'; }), 'the segmented control keeps its face');
 
   // 別の行を押すと前の箱は閉じる。同じ行をもう一度で閉じる
   await tap(b);
@@ -180,30 +175,12 @@ async (page) => {
     await page.waitForTimeout(450);
   }
 
-  // 範囲の切り替え（この会話の間は撮影のある会話だけ。無ければ切り替え自体を出さない）。複数のコミットにまたがる範囲だけは、箱でなくグラフの外の一覧
-  if (hasSession) {
-    await page.locator('[data-rg="session"]').click();
-    check(await page.locator('[data-rg="session"][aria-pressed="true"]').count() === 1, 'switches to the session range');
-    await page.locator('.cl .cl-h').waitFor();
-    check(await page.locator('.cl .cl-h').count() === 1 && await page.locator('.cg-row[aria-expanded="true"]').count() === 0, 'the session range keeps its list under the graph, with no box beside it');
-    await page.locator('[data-rg="uncommitted"]').click();
-    check(await page.locator('.cl .cl-h, .cl .fr').count() === 0, 'back to the uncommitted range: the list under the graph is gone');
-    check(dirty ? await wt.getAttribute('aria-expanded') === 'true' : await page.locator('.cg-row[aria-expanded="true"]').count() === 0, 'the uncommitted range opens the uncommitted row');
-    if (dirty) {
-      await page.locator('[data-rg="session"]').click();
-      check(await wt.getAttribute('aria-expanded') === 'false', 'the session range closes the uncommitted box so the files are not listed twice');
-      await page.evaluate(() => document.querySelector('.cg-row.wt').click());
-      check(await page.locator('[data-rg="uncommitted"][aria-pressed="true"]').count() === 1 && await wt.getAttribute('aria-expanded') === 'true' && await page.locator('.cl .cl-h').count() === 0, 'opening the uncommitted row from the session range moves to the uncommitted range');
-    }
-  }
-
   // 左右の差分: 広げると選べ、常に折り返す。新規のファイルは 1 列にして理由を添える
   await page.locator('.gp-tab[data-t="changes"]').click();
-  if (hasSession) await page.locator('[data-rg="uncommitted"]').click();
   await page.locator('#filePreview button[aria-label="広げる"]').click();
   await page.waitForFunction(() => document.querySelector('.gp-view')?.clientWidth >= 740);
   const openFiles = page.locator('.cg-row[aria-expanded="true"] + .fold .fr[data-key]');
-  // 行は押した位置の上に範囲の帯（sticky）が重なることがあるので、DOM の click で押す
+  // 箱の開閉の動きの途中は行が動くので、DOM の click で押す
   const press = (loc) => loc.evaluate((x) => x.click());
   const openRow = async (i) => {
     if (await page.locator('.cg-row[aria-expanded="true"]').count()) await press(page.locator('.cg-row[aria-expanded="true"]'));

@@ -1,7 +1,8 @@
-// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085）。
+// ホストの git の問い合わせ（docs/design.md「git の動き」、ADR 0085・0352）。
 //
 // execFile('git', …) でシェルを通さない。windowsHide・タイムアウト・GIT_OPTIONAL_LOCKS=0・読み取り系だけ。
-// 書くのは隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）と、そのための一時 index・commit オブジェクトだけで、
+// 書くのは隠し ref（worktree を退避する refs/pleiad/archive/…。ターンごとの refs/pleiad/turn/… は ADR 0352 でやめたので、残りを消すだけ）と、
+// そのための一時 index・commit オブジェクトだけで、
 // ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。git が無い・git 管理外・時間切れは、例外にせず ok: false を返す
 // （画面は静かに「情報なし」にする）。子は core/process.mjs の runBackground()（ADR 0270 の規則 ①。裏の作業なので、止めても終われない子は待たない）。
 // 遅いファイルシステムで積み上げない: 場所（リポジトリ）ごとに、止めても終われない子が生きている間と、時間切れが続いた後の休みの間は、
@@ -18,6 +19,7 @@ const READ = new Set(['rev-parse', 'status', 'log', 'diff', 'diff-tree', 'for-ea
 /** 隠し ref を作る側。read-tree・add・write-tree は GIT_INDEX_FILE が一時 index のときだけ、update-ref は refs/pleiad/ だけ */
 const WRITE = new Set(['read-tree', 'add', 'write-tree', 'commit-tree', 'update-ref']);
 
+/** ターンごとの撮影の隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）。撮影は ADR 0352 でやめた。今は残りを消す（dropTurnRefs）ためだけに持つ */
 export const REF_PREFIX = 'refs/pleiad/turn/';
 /** worktree を退避して消すときの隠し ref（refs/pleiad/archive/<id>/<時刻>。ADR 0089） */
 export const ARCHIVE_PREFIX = 'refs/pleiad/archive/';
@@ -96,7 +98,6 @@ export function refSession(sessionId) {
   const safe = String(sessionId ?? '').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_').replace(/\.lock$/i, '_lock');
   return safe || '_';
 }
-export const refName = (sessionId, n, kind) => `${REF_PREFIX}${refSession(sessionId)}/${n}-${kind}`;
 
 /**
  * cwd の git のルートと種類。git 管理外・git が無い・bare は null。
@@ -338,16 +339,11 @@ async function copyIndex(src, dst) {
  * 失敗・時間切れは null。
  * 同じ場所の撮影は 1 本ずつ（走っているものの次の 1 回を、待つ側みんなで共有する。走り始めた後に頼んだ側へ前の結果は渡さない）。
  * 場所が BUSY・REST のときは起こさず null。signal が止まったら（待つ側が諦めた）、その側は null で抜け、待つ側が誰も居なければ走っている git も止める。
- * skipUnborn: まだコミットが無いリポジトリは撮らない（null）。HEAD が無いと、毎回すべてのファイルを読み直す重い撮影になる。
- *   裏の作業（ターンの始まりと終わり・数えるだけの呼び出し）が付ける。利用者が開いた画面（変更の一覧・差分）は付けない
+ * 使うのは、利用者が開いた画面（変更の一覧・差分・新しいタブの変更の数）と worktree の退避だけ。ターンごとの撮影は ADR 0352 でやめた
  */
-export async function snapshotTree(root, { signal = null, skipUnborn = false } = {}) {
+export async function snapshotTree(root, { signal = null } = {}) {
   const place = placeGuard.placeOf(root);
   if (placeGuard.blocked(place, 'heavy')) return null;
-  if (skipUnborn) {
-    const head = await readGit(root, ['rev-parse', '--verify', '-q', 'HEAD'], { signal });
-    if (!head.ok || signal?.aborted) return null;
-  }
   try {
     return await placeGuard.coalesce(`snapshot:${place}`, (sig) => takeSnapshot(root, sig), { mode: 'trailing', signal });
   } catch { return null; }
@@ -388,11 +384,8 @@ export async function headCommit(root) {
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-/**
- * tree から commit を作る（親は HEAD。start の親が「始めた時の HEAD」になるので、そこからコミット数を数えられる）。
- * ブランチには載らない。失敗は null
- */
-export async function commitTree(root, tree, parent, message = 'pleiad turn snapshot') {
+/** tree から commit を作る（ブランチには載らない。worktree の退避が使う）。失敗は null */
+export async function commitTree(root, tree, parent, message = 'pleiad snapshot') {
   const r = await writeGit(root, ['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', message], { env: IDENT });
   return r.ok && /^[0-9a-f]{40,64}$/.test(r.stdout.trim()) ? r.stdout.trim() : null;
 }
@@ -400,20 +393,6 @@ export async function commitTree(root, tree, parent, message = 'pleiad turn snap
 export async function updateRef(root, ref, commit) {
   if (!ref.startsWith(REF_PREFIX) && !ref.startsWith(ARCHIVE_PREFIX)) throw new Error('git: refs/pleiad/ only');
   return (await writeGit(root, ['update-ref', ref, commit])).ok;
-}
-
-/** 会話の隠し ref の一覧 [{ ref, n, kind: 'start'|'end', commit, at }]（n の小さい順） */
-export async function listTurnRefs(root, sessionId = null) {
-  const pattern = sessionId == null ? REF_PREFIX : `${REF_PREFIX}${refSession(sessionId)}/`;
-  const r = await readGit(root, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(committerdate:unix)', pattern]);
-  if (!r.ok) return [];
-  const out = [];
-  for (const line of r.stdout.split('\n')) {
-    const [ref, commit, at] = line.split('\0');
-    const m = /^refs\/pleiad\/turn\/([^/]+)\/(\d+)-(start|end)$/.exec(ref ?? '');
-    if (m) out.push({ ref, session: m[1], n: Number(m[2]), kind: m[3], commit, at: Number(at) * 1000 });
-  }
-  return out.sort((a, b) => a.n - b.n || (a.kind === 'start' ? -1 : 1));
 }
 
 /** ref を消す（まとめて 1 回）。消した数 */
@@ -424,25 +403,17 @@ export async function deleteRefs(root, refs) {
   return r.ok ? list.length : 0;
 }
 
-/** 古い隠し ref を消す。maxAgeMs より前のもの */
-export async function pruneTurnRefs(root, maxAgeMs, now = Date.now()) {
-  const old = (await listTurnRefs(root)).filter((r) => now - r.at > maxAgeMs).map((r) => r.ref);
-  return deleteRefs(root, old);
-}
-
-/** 会話の隠し ref を全部消す（会話を消したとき） */
-export async function forgetSession(root, sessionId) {
-  return deleteRefs(root, (await listTurnRefs(root, sessionId)).map((r) => r.ref));
-}
-
-/** from の後に増えたコミットの数と、新しい順の先頭 limit 件 [{ hash, subject }]。from が HEAD の祖先でなくても「HEAD にあって from に無い」を数える */
-export async function commitsSince(root, from, limit = 20) {
-  const range = from ? `${from}..HEAD` : 'HEAD';
-  const [count, log] = await Promise.all([
-    readGit(root, ['rev-list', '--count', range]),
-    readGit(root, ['log', `--max-count=${limit}`, '--format=%h%x00%s', range]),
-  ]);
-  if (!count.ok) return { count: 0, commits: [] };
-  const commits = log.ok ? log.stdout.split('\n').filter(Boolean).map((l) => { const [hash, subject] = l.split('\0'); return { hash, subject: subject ?? '' }; }) : [];
-  return { count: Number(count.stdout.trim()) || 0, commits };
+/**
+ * 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）を、全部消す（ADR 0352）。消すのは refs/pleiad/turn/ の ref だけ
+ * （ブランチ・タグ・index・作業ツリー・worktree の退避の ref refs/pleiad/archive/ には触れない）。
+ * 読めなかった・消せなかった（場所が BUSY・REST のとき、時間切れ、git が断った）ときは null（呼び出し側が、あとでやり直す）。消した数（0 を含む）を返せたら済み。
+ * 同じ ref が 1 本も無ければ、for-each-ref 1 回で済む
+ */
+export async function dropTurnRefs(root) {
+  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX]);
+  if (!r.ok) return null;
+  const refs = r.stdout.split('\n').map((s) => s.trim()).filter((ref) => ref.startsWith(REF_PREFIX));
+  if (!refs.length) return 0;
+  const removed = await deleteRefs(root, refs);
+  return removed === refs.length ? removed : null;
 }

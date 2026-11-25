@@ -76,6 +76,7 @@ export default async function (t) {
         lines: ['! echo hello'],
       },
       turn: {
+        // 撮影（ADR 0085）は ADR 0352 でやめた。残っていても札には入らない
         gitSetup: { branch: 'main' },
         git: { snapshot: 'refs/pleiad/1' },
         gitLate: false,
@@ -167,10 +168,10 @@ export default async function (t) {
     for (const body of ['中断注記テキスト', '中断注記本文', '! echo hello', '途中送信の本文'])
       assert.equal(JSON.stringify(card).includes(body), false, `${body} は札に入らない`);
 
-    // git
-    assert.equal(restored.git.setup, true);
-    assert.equal(restored.git.activity.snapshot, 'refs/pleiad/1');
-    assert.equal(restored.git.late, false);
+    // git の撮影（T33）は札に入らず、古い版が書いた札の git は読まずに捨てる（ADR 0352）
+    assert.equal('git' in card, false);
+    assert.equal('git' in restored, false);
+    assert.equal('git' in restoreFields({ ...card, git: { setup: true, activity: { snapshot: 'refs/pleiad/1' }, late: false } }), false);
 
     // トークン
     assert.equal(restored.connectionTokens.agents, TOKEN_64);

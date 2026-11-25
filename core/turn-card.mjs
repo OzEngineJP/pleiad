@@ -193,13 +193,7 @@ export function cardOf(ctx, options = {}) {
     skipped: Array.isArray(ctx.shellHandoff.skipped) ? [...ctx.shellHandoff.skipped] : [],
   } : null;
 
-  // 6. git の撮影 (T33)
-  // setup は撮影を始めたか（turn.gitSetup は Promise なので値を写さない）
-  const git = (ctx.turn?.gitSetup || ctx.turn?.git || ctx.turn?.gitLate) ? {
-    setup: Boolean(ctx.turn.gitSetup),
-    activity: ctx.turn.git ?? null,
-    late: Boolean(ctx.turn.gitLate),
-  } : null;
+  // 6. （欠番）git の撮影 (T33) は ADR 0352 でやめた。古い版が書いた card.git は restoreFields が読まずに捨てる
 
   // 7. 会話の口のトークン (M2, O9-O12)
   const connectionTokens = extractTokensFromCtx(ctx);
@@ -271,7 +265,6 @@ export function cardOf(ctx, options = {}) {
     delivery,
     interruption,
     shellHandoff,
-    git,
     connectionTokens,
     steers,
     hooks,
@@ -380,9 +373,6 @@ export function restoreFields(card) {
     },
     interruption: card.interruption ? { ...card.interruption } : null,
     shellHandoff: card.shellHandoff ? { ...card.shellHandoff } : null,
-
-    // git
-    git: card.git ? { ...card.git } : null,
 
     // 会話の口のトークン
     connectionTokens: normalizeConnectionTokens(card.connectionTokens),

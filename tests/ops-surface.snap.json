@@ -2506,7 +2506,7 @@
         }
       },
       "legacyCommand": "gitPanel",
-      "input": "5c5938771e78"
+      "input": "1d22843b68a5"
     },
     {
       "id": "git.commit",
@@ -2552,7 +2552,7 @@
         }
       },
       "legacyCommand": "gitDiff",
-      "input": "2a7fd4d807b8"
+      "input": "e0b476a45e7f"
     },
     {
       "id": "git.history",
@@ -2572,7 +2572,7 @@
         }
       },
       "legacyCommand": "gitHistory",
-      "input": "15c61013e176"
+      "input": "e894f481f4d9"
     },
     {
       "id": "git.prs",
@@ -2612,7 +2612,7 @@
         }
       },
       "legacyCommand": "gitStatus",
-      "input": "c16539d234db"
+      "input": "7620e1dd03b4"
     },
     {
       "id": "git.worktree",

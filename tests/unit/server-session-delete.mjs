@@ -1,6 +1,7 @@
 // 送った会話の削除（sessions.delete。ADR 0147）をサーバー越しに（fake + 一時リポジトリ。LLM は呼ばない）。
 //   - 送った会話が一覧から消え、別の接続（端末）にも sessionsChanged の deleted で届く
-//   - 一緒に片付けるデータ（DB の sessions・session_fields・conversations、本文のファイル、presents、git の撮影の ref）が消え、使用量の記録は残る
+//   - 一緒に片付けるデータ（DB の sessions・session_fields・conversations、本文のファイル、presents）が消え、使用量の記録は残る
+//     （git の撮影の ref は、ターンごとの撮影をやめた ADR 0352 で作られなくなった。残りは場所を最初に読んだときに 1 回だけ消す）
 //   - ネイティブの会話は消さない（fake の deleteSession が呼ばれず、fake の会話が残る）。残したネイティブの会話は一覧に戻らない
 //   - 走っている会話・委譲した子が終わっていない会話は断る
 //   - AI（会話に束縛された口）からは承認カードを経る。自分の会話は消せない
@@ -31,7 +32,7 @@ export default async function (t) {
   await fs.writeFile(path.join(repo, 'a.txt'), 'one\n');
   sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'first');
 
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_GIT_SNAPSHOTS: 'on', AGENT_HOST_FAKE_USAGE: '1' }, dataDir, timeoutMs: 30_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_USAGE: '1' }, dataDir, timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   const other = await open({ port: server.port, token: server.token });   // 別の端末（同じホストの別の画面・リモート）
   const refsOf = (sid) => sh(repo, 'for-each-ref', '--format=%(refname)', `refs/pleiad/turn/${sid}/`).split('\n').filter(Boolean);
@@ -56,7 +57,7 @@ export default async function (t) {
   try {
     t.ok('WS のコマンド deleteSession を protocol に登録している', COMMANDS.has('deleteSession'));
 
-    // ---- 1. 送った会話（画面の新しい会話。Pleiad の記録を持つ。git の撮影と present・使用量の記録がある）
+    // ---- 1. 送った会話（画面の新しい会話。Pleiad の記録を持つ。present・使用量の記録がある）
     const steps = { steps: [{ tool: 'Bash', input: { command: 'echo x > b.txt' }, result: 'ok', ms: 400 }, { text: '直しました' }] };
     const { sessionId: sid } = await c.cmd('newSession', { backend: 'fake', cwd: repo });
     await turnWithChanges({ sessionId: sid, prompt: `steps:${JSON.stringify(steps)}` }, () => fs.writeFile(path.join(repo, 'b.txt'), 'x\n'));
@@ -64,13 +65,17 @@ export default async function (t) {
     const presents = path.join(dataDir, 'presents', `${sid}.jsonl`);
     const body = path.join(dataDir, 'conversations', `${sid}.json`);
     const filesDeadline = Date.now() + 10_000;
-    while (Date.now() < filesDeadline && (!(await exists(body)) || !(await exists(presents)))) await sleep(20);
+    while (Date.now() < filesDeadline && !(await exists(body))) await sleep(20);
+    // ターンごとの撮影は ADR 0352 でやめた: ref は作られない。presents は、この ADR より前の版が残した行（kind: 'git'）を置いて、消す対象にする
+    t.ok('撮影をやめたので、ターンを走らせても refs/pleiad/turn/ の ref は作られない', refsOf(sid).length === 0, refsOf(sid).join(','));
+    await fs.mkdir(path.dirname(presents), { recursive: true });
+    await fs.writeFile(presents, JSON.stringify({ kind: 'git', by: 'ai', at: new Date().toISOString(), git: { branch: 'main', files: 1, add: 1, del: 0, commits: 0 } }) + '\n');
     const usageCount = () => rows("SELECT COUNT(*) AS n FROM usage_records WHERE json_extract(data, '$.sessionId') = ?", sid)[0].n;
     let usageBefore = usageCount();
-    t.ok('前提: 送った会話の記録（DB の行・本文・presents・git の撮影の ref・使用量）がある', Boolean(nativeId)
+    t.ok('前提: 送った会話の記録（DB の行・本文・古い presents・使用量）がある', Boolean(nativeId)
       && rows('SELECT 1 FROM sessions WHERE session_id = ?', sid).length === 1 && rows('SELECT 1 FROM session_fields WHERE session_id = ?', sid).length > 0
-      && await exists(body) && await exists(presents) && refsOf(sid).length > 0 && usageBefore > 0,
-    JSON.stringify({ nativeId, refs: refsOf(sid), usageBefore, presents: await exists(presents), body: await exists(body), sessions: rows('SELECT 1 FROM sessions WHERE session_id = ?', sid).length, fields: rows('SELECT 1 FROM session_fields WHERE session_id = ?', sid).length }));
+      && await exists(body) && await exists(presents) && usageBefore > 0,
+    JSON.stringify({ nativeId, usageBefore, presents: await exists(presents), body: await exists(body), sessions: rows('SELECT 1 FROM sessions WHERE session_id = ?', sid).length, fields: rows('SELECT 1 FROM session_fields WHERE session_id = ?', sid).length }));
 
     // ---- 2. 走っている会話は断る
     let from = c.mark();
@@ -95,9 +100,6 @@ export default async function (t) {
       ['sessions', 'session_fields', 'context_entry_refs'].every((table) => rows(`SELECT 1 FROM ${table} WHERE session_id = ?`, sid).length === 0)
       && rows('SELECT 1 FROM conversations WHERE id = ?', sid).length === 0);
     t.ok('本文のファイル（conversations/<id>.json）と提示の記録（presents）が消える', !(await exists(body)) && !(await exists(presents)));
-    let refsGone = false;
-    for (let i = 0; i < 50 && !refsGone; i++) { refsGone = refsOf(sid).length === 0; if (!refsGone) await sleep(100); }
-    t.ok('git の撮影の ref（refs/pleiad/turn/<id>/）が消える', refsGone, refsOf(sid).join(','));
     t.ok('使用量の記録は集計の履歴として残る', usageCount() === usageBefore);
     t.ok('消した会話のネイティブの id を覚える（deleted_natives）', rows('SELECT session_id FROM deleted_natives WHERE native_id = ?', nativeId)[0]?.session_id === sid);
     const natives = await fakeNatives();

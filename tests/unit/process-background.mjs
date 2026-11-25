@@ -20,7 +20,7 @@ export default async function (t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-process-bg-'));
   const stray = [];
   try {
-    t.ok('裏の作業の子が止めてから待つ上限は 1 秒', BACKGROUND_KILL_DEADLINE_MS === 1_000);
+    t.ok('裏の作業の子が止めてから待つ上限は 3 秒（木ごとの停止が約 1.3 秒かかる PC でも、止まる子を詰まり扱いにしない）', BACKGROUND_KILL_DEADLINE_MS === 3_000);
 
     // ---- kill を無視する子（killWith が何もしない）: 上限で戻り、生き残りを onLeftover で渡す
     {
@@ -95,7 +95,7 @@ export default async function (t) {
 
     // ---- taskkill は非同期（spawnSync はイベントループを止める。runSync だけが持つ）
     {
-      const source = fs.readFileSync(new URL('../../core/process.mjs', import.meta.url), 'utf8');
+      const source = fs.readFileSync(new URL('../../core/process.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
       const start = source.indexOf('export function runSync');
       const end = source.indexOf('\n}\n', start);
       const outside = source.slice(0, start) + source.slice(end);

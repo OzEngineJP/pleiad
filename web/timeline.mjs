@@ -61,6 +61,8 @@ export function buildItems(messages, presents, base = 0, presentBase = 0) {
   });
   presents.forEach((p, i) => {
     const pi = presentBase + i;
+    // 返答の下の変更の行（kind: 'git'。ADR 0085）は、記録をやめた（ADR 0352）。古い会話に残った行は黙って出さない（通し番号 pi は詰めない）
+    if (p?.kind === 'git') return;
     const anchorMi = p.kind === 'visualization' && p.reference
       ? (visualAnchors.get(p.reference)?.shift() ?? -1) : absolute(attachmentMessageIndex(messages, p));
     const item = { kind:"present", p, pi, anchorMi, at:p.at, sortAt:time(p.at) };
@@ -92,4 +94,4 @@ export function inlineAttachments(items) {
  * present の item を、発言の後ろの別カードとして出すか。取り込み済みの発言（inlined = 本文に取り込んで描いた発言の添字）に
  * 結び付いた human の present は出さない（二重にしない）。結び付かなかった human の present・AI の present・可視化は出す
  */
-export const showsAsCard = (item, inlined) => !(item.p.by === "human" && item.anchorMi >= 0 && inlined.has(item.anchorMi));
+export const showsAsCard = (item, inlined) => item.p.kind !== "git" && !(item.p.by === "human" && item.anchorMi >= 0 && inlined.has(item.anchorMi));

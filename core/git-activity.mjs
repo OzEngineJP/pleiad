@@ -1,21 +1,19 @@
-// 会話ごとの git の動き（docs/design.md「git の動き」、ADR 0085）。サーバーが 1 つ持つ。
+// 会話ごとの git の動き（docs/design.md「git の動き」、ADR 0085・0352）。サーバーが 1 つ持つ。
 //
 //   - 状態（ブランチ・ahead/behind・変更の数）: cwd ごとに短い TTL のキャッシュ。取り直しは呼び出し側が決める
-//   - ターンの始まりと終わりの撮影: 隠し ref refs/pleiad/turn/<会話 id>/<n>-start|end（一時 index → write-tree → commit-tree → update-ref）。
-//     「この会話の間」の基準は最初の -start（前のターンの終わりではない。同じ場所でユーザーや別の会話が変えた分を取り込まないため）
-//   - ターンの終わりの要約: ファイル・コミット・ブランチ・PR のどれかが動いたときだけ作る（返答の下の 1 行の元）
-//   - パネル用の変更の一覧と差分（開いたときだけ）
+//   - パネル用の変更の一覧（コミットしていない変更）・差分・コミットの履歴（開いたときだけ）
+//   - 撮影をやめた後に残っている隠し ref（refs/pleiad/turn/…）の片付け（作業場所を初めて読んだとき 1 回。ADR 0352）
+// ターンの始まりと終わりの撮影（ADR 0085 の決定 2・3・6）は、ADR 0352 でやめた。
 // 会話ごとに直列化する。git が無い・git 管理外は、どの口も null（画面は「情報なし」）。
 import * as git from './git-info.mjs';
 import * as history from './git-history.mjs';
 
 const TTL_MS = 2_000;
-const PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+// 片付けが読めなかった（遅い場所で止まっている・git が断った）ときの、次に試すまでの間。止まっている場所は見張りが止めるので、ここは普通の失敗用
+const TIDY_RETRY_MS = 60_000;
 const EMPTY_TREE = git.EMPTY_TREE;
 
-const SESSION_RANGES = ['uncommitted', 'session'];
-
-export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_MS } = {}) {
+export function createGitActivity({ now = Date.now } = {}) {
   const chains = new Map();
   /** 同じ鍵の仕事を順に走らせる（会話ごと。鍵の無いものは cwd） */
   function serial(key, work) {
@@ -28,15 +26,27 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
   }
   const cache = new Map();      // cwd → { at（読み終えた時刻）, value }
   const lastGood = new Map();   // 場所 → 最後に読めた状態（場所が BUSY・REST のとき、これを返す）
-  const pruned = new Set();
 
-  /** 今のブランチと先頭のコミット。変更の数は数えない（ターンの始まりと終わりに使う軽い版） */
-  async function readHead(root, signal = null) {
-    const r = await git.readGit(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], { signal });
-    // failed: 読めなかった（場所が BUSY・REST のときも）。コミットが無いのとは違う。比べる側（finish）が、読めなかった分で「動いた」と見ないために区別する
-    if (!r.ok) return { branch: null, detached: false, head: null, failed: true };
-    const s = git.parseStatus(r.stdout);
-    return { branch: s.branch, detached: s.detached, head: s.oid };
+  // ------------------------------------------------------------ 隠し ref の片付け（1 回だけ）
+
+  const tidied = new Set();     // 片付けが済んだ根（この起動の間。もう無いと分かったものも）
+  const tidyTried = new Map();  // 根 → 最後に試した時刻（読めなかったときの、やり直しの間隔）
+  /**
+   * 撮影をやめた後に残っている refs/pleiad/turn/ の ref を、リポジトリごとに 1 回だけ消す。呼び出し元は待たない（結果を返さない）。
+   * 触るのは refs/pleiad/turn/ の ref だけ（ブランチ・index・作業ツリーには触れない。git-info の writeGit が refs/pleiad/ 以外の update-ref を断る）。
+   * 他の git と同じ見張りに乗る: 同じ場所の片付けは 1 本ずつ（合流）、場所が BUSY・REST のときは起こさない、時間切れは数える。
+   * 読めなかった・消せなかったときは済みにせず、TIDY_RETRY_MS あけて次の読み取りでやり直す
+   */
+  function tidy(root) {
+    if (!root || tidied.has(root)) return;
+    const last = tidyTried.get(root);
+    if (last != null && now() - last < TIDY_RETRY_MS) return;
+    if (git.placeBlocked(root)) return;
+    tidyTried.set(root, now());
+    git.placeGuard.coalesce(`tidy:${git.placeGuard.placeOf(root)}`, async () => {
+      const removed = await git.dropTurnRefs(root);
+      if (removed != null) { tidied.add(root); tidyTried.delete(root); }
+    }, { mode: 'join' }).catch(() => {});
   }
 
   /**
@@ -62,120 +72,34 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     }, { mode: fresh ? 'trailing' : 'join' }).then((value) => {
       // 失敗（null）・前の値を返したものは覚えない。git の出入りがすぐ反映されるように
       if (value && value.at >= now() - TTL_MS && !git.placeBlocked(cwd)) cache.set(cwd, { at: now(), value }); else cache.delete(cwd);
+      if (value?.root) tidy(value.root);
       return value;
     });
   }
   const invalidate = (cwd) => { if (cwd) cache.delete(cwd); else cache.clear(); };
 
-  // ------------------------------------------------------------ ターンの撮影
-
-  /**
-   * ターンの始まり。git の作業場所でなければ null。撮影できなかったときも、ブランチと HEAD は控えて要約に使う。
-   * ref は会話の id が決まってから attach で書く（新しい会話は最初のターンの途中で決まる）。
-   * signal: 呼び出し側が待つのを諦めたら止める（走っている git を残さない。ADR 0352）。止まったら null。
-   * 撮影は skipUnborn（まだコミットが無いリポジトリは撮らない。HEAD が無いと毎回すべてのファイルを読み直すため）。撮れなかったときと同じ扱い
-   */
-  async function begin({ cwd, signal = null }) {
-    const info = await git.repoInfo(cwd, { signal });
-    if (!info || signal?.aborted) return null;
-    const [head, tree] = await Promise.all([readHead(info.root, signal), git.snapshotTree(info.root, { signal, skipUnborn: true })]);
-    if (signal?.aborted) return null;
-    const parent = head.head;
-    const commit = tree ? await git.commitTree(info.root, tree, parent) : null;
-    return { cwd, root: info.root, linked: info.linked, headStart: head.head, branchStart: head.branch, detachedStart: head.detached, headKnown: !head.failed,
-      startTree: tree, startCommit: commit, n: null, first: false };
-  }
-
-  /** 会話の id が分かった。start の ref を書く（二度呼んでも 1 度だけ） */
-  function attach(turn, sessionId) {
-    if (!turn || !sessionId || turn.n != null) return Promise.resolve(turn);
-    return serial(`session:${sessionId}`, async () => {
-      if (turn.n != null) return turn;
-      const refs = await git.listTurnRefs(turn.root, sessionId);
-      turn.n = refs.reduce((m, r) => Math.max(m, r.n), 0) + 1;
-      turn.first = refs.length === 0;
-      if (turn.startCommit) await git.updateRef(turn.root, git.refName(sessionId, turn.n, 'start'), turn.startCommit);
-      return turn;
-    });
-  }
-
-  /**
-   * ターンの終わり。何も動かなければ null（その場合、最初でない start の ref は消す）。
-   * 動いていれば end の ref を書き、返答の下の 1 行の元になる要約を返す。events は git-timeline の createCallTracker().events()
-   */
-  async function finish(turn, sessionId, events = []) {
-    if (!turn) return null;
-    await attach(turn, sessionId);
-    return serial(`session:${sessionId ?? turn.root}`, async () => {
-      const [head, tree] = await Promise.all([readHead(turn.root), git.snapshotTree(turn.root, { skipUnborn: true })]);
-      invalidate(turn.cwd);
-      const endCommit = tree ? await git.commitTree(turn.root, tree, head.head) : null;
-      const diff = turn.startTree && tree ? await git.diffFiles(turn.root, turn.startTree, tree) : null;
-      // 始めか終わりの HEAD が読めなかった（遅い場所で止まっていた）ときは、コミット・ブランチの動きは比べない（読めなかった分を「動いた」と見ない）
-      const comparable = turn.headKnown !== false && !head.failed;
-      const moved = comparable && head.head !== turn.headStart;
-      const since = moved ? await git.commitsSince(turn.root, turn.headStart) : { count: 0, commits: [] };
-      const switched = comparable && (head.branch !== turn.branchStart || head.detached !== turn.detachedStart);
-      const pr = [...events].reverse().find((e) => e.kind === 'pr') ?? null;
-      const created = events.some((e) => e.kind === 'branch');
-      const total = diff?.total ?? { files: 0, add: 0, del: 0 };
-      const changed = total.files > 0 || since.count > 0 || switched || created || Boolean(pr);
-      if (turn.n != null && sessionId) {
-        if (changed && endCommit) await git.updateRef(turn.root, git.refName(sessionId, turn.n, 'end'), endCommit);
-        else if (!changed && !turn.first) await git.deleteRefs(turn.root, [git.refName(sessionId, turn.n, 'start')]);
-      }
-      if (!pruned.has(turn.root)) { pruned.add(turn.root); git.pruneTurnRefs(turn.root, pruneAfterMs, now()).catch(() => {}); }
-      if (!changed) return null;
-      return {
-        branch: head.branch, detached: head.detached, head: head.head ? head.head.slice(0, 7) : null, linked: turn.linked,
-        files: total.files, add: total.add, del: total.del,
-        commits: since.commits.slice(0, 5).map((c) => ({ hash: c.hash, subject: c.subject })), commitCount: since.count,
-        pr: pr ? { number: pr.number, url: pr.url } : null,
-        created,
-        n: turn.n,
-      };
-    });
-  }
-
   // ------------------------------------------------------------ パネル
 
-  /** 会話の最初の start（「この会話の間」の基準）。無ければ null */
-  async function sessionBase(root, sessionId) {
-    if (!sessionId) return null;
-    const refs = await git.listTurnRefs(root, sessionId);
-    return refs.find((r) => r.kind === 'start') ?? null;
-  }
-
-  /** 今の作業ツリーの tree と、範囲ごとの比べる元。元が無いもの（会話の始まりの撮影が無い）は null */
-  async function bases(root, sessionId) {
-    const head = await git.headCommit(root);
-    const first = await sessionBase(root, sessionId);
-    return { head: head ?? EMPTY_TREE, session: first?.commit ?? null };
-  }
-
   /**
-   * パネルの変更の一覧。range は 'uncommitted'（HEAD と今）か 'session'（会話の最初の撮影と今）。
-   * hasSession は「この会話の間」の基準があるか（無いと範囲の札を出さない）。
-   * uncommitted のときは groups = { staged, work }（ステージ済みと変更。ファイルは名前の変更も見つける）も返し、
-   * files の各行に staged / unstaged の印を付ける
+   * パネルの変更の一覧（コミットしていない変更。HEAD と今の作業ツリー）。
+   * groups = { staged, work }（ステージ済みと変更。ファイルは名前の変更も見つける）も返し、files の各行に staged / unstaged の印を付ける。
+   * sessionId は直列にする単位（会話ごと）だけに使う
    */
-  function changes(cwd, sessionId, range = 'uncommitted') {
+  function changes(cwd, sessionId) {
     return serial(`session:${sessionId ?? cwd}`, async () => {
       const info = await git.repoInfo(cwd);
       if (!info) return null;
-      const b = await bases(info.root, sessionId);
-      const use = range === 'session' && b.session ? 'session' : 'uncommitted';
-      const failed = { range: use, hasSession: Boolean(b.session), files: [], total: { files: 0, add: 0, del: 0 }, failed: true };
-      const groups = use === 'uncommitted' ? await history.uncommittedGroups(info.root) : null;
-      const tree = groups ? groups.tree : use === 'session' ? await git.snapshotTree(info.root) : null;
-      if (!tree) return failed;
-      const diff = await git.diffFiles(info.root, use === 'session' ? b.session : b.head, tree);
+      tidy(info.root);
+      const head = await git.headCommit(info.root);
+      const failed = { range: 'uncommitted', files: [], total: { files: 0, add: 0, del: 0 }, failed: true };
+      const groups = await history.uncommittedGroups(info.root);
+      if (!groups?.tree) return failed;
+      const diff = await git.diffFiles(info.root, head ?? EMPTY_TREE, groups.tree);
       if (!diff) return failed;
-      if (!groups) return { range: use, hasSession: Boolean(b.session), files: diff.files, total: diff.total };
       const stagedPaths = new Set(groups.staged.flatMap((f) => [f.path, f.orig].filter(Boolean)));
       const workPaths = new Set(groups.work.flatMap((f) => [f.path, f.orig].filter(Boolean)));
       const files = diff.files.map((f) => ({ ...f, ...(stagedPaths.has(f.path) ? { staged: true } : {}), ...(workPaths.has(f.path) ? { unstaged: true } : {}) }));
-      return { range: use, hasSession: Boolean(b.session), files, total: diff.total, groups: { staged: groups.staged, work: groups.work } };
+      return { range: 'uncommitted', files, total: diff.total, groups: { staged: groups.staged, work: groups.work } };
     });
   }
 
@@ -188,23 +112,22 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
   async function changeCount(cwd) {
     const info = await git.repoInfo(cwd);
     if (!info) return null;
+    tidy(info.root);
     // 新しいタブの描画・refreshNewTabs・複数の会話が重なっても、大きいリポジトリで git add -A（撮影）を並べて走らせない
     const running = counting.get(info.root);
     if (running) return running;
     const run = (async () => {
-      // まだコミットが無いリポジトリは数えない（null）。撮影は毎回すべてのファイルを読み直す重い作業になるため（ADR 0352）
       const head = await git.headCommit(info.root);
-      if (!head) return null;
-      const tree = await git.snapshotTree(info.root, { skipUnborn: true });
+      const tree = await git.snapshotTree(info.root);
       if (!tree) return null;
-      return git.countDiffFiles(info.root, head, tree);
+      return git.countDiffFiles(info.root, head ?? EMPTY_TREE, tree);
     })().finally(() => counting.delete(info.root));
     counting.set(info.root, run);
     return run;
   }
 
   /** 差分の比べる元と先（tree-ish）。commit・from/to は hash だけ。ステージ済みは HEAD と index、変更は index と作業ツリー */
-  async function diffSource(root, sessionId, range, { stage, commit, from, to } = {}) {
+  async function diffSource(root, { stage, commit, from, to } = {}) {
     if (history.isHash(commit)) {
       const c = await history.resolveCommit(root, commit);
       if (!c) return null;
@@ -215,33 +138,29 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
       const [a, z] = await Promise.all([history.resolveCommit(root, from), history.resolveCommit(root, to)]);
       return a && z ? { from: a, to: z, range: 'commits' } : null;
     }
-    const b = await bases(root, sessionId);
-    if (range === 'session' && b.session) {
-      const tree = await git.snapshotTree(root);
-      return tree ? { from: b.session, to: tree, range: 'session' } : null;
-    }
+    const head = (await git.headCommit(root)) ?? EMPTY_TREE;
     if (stage === 'staged') {
       const index = await git.indexTree(root);
-      return index ? { from: b.head, to: index, range: 'uncommitted', stage } : null;
+      return index ? { from: head, to: index, range: 'uncommitted', stage } : null;
     }
     if (stage === 'work') {
       const [index, tree] = await Promise.all([git.indexTree(root), git.snapshotTree(root)]);
-      return tree ? { from: index ?? b.head, to: tree, range: 'uncommitted', stage } : null;
+      return tree ? { from: index ?? head, to: tree, range: 'uncommitted', stage } : null;
     }
     const tree = await git.snapshotTree(root);
-    return tree ? { from: b.head, to: tree, range: 'uncommitted' } : null;
+    return tree ? { from: head, to: tree, range: 'uncommitted' } : null;
   }
 
   /**
-   * 1 ファイルの統一差分（path はルート相対）。範囲は changes と同じに、押したコミット（commit）・2 つのコミットの間（from・to）・
+   * 1 ファイルの統一差分（path はルート相対）。コミットしていない変更が基本で、押したコミット（commit）・2 つのコミットの間（from・to）・
    * ステージ済み／変更の区別（stage）も選べる。orig は名前の変更の元のパス、context は前後の行数。
    * after: true なら、畳んだ「変更なし」の行を開くための差分の後ろ側のファイルの全行（大きい・消えたものは null）も返す
    */
-  function diff(cwd, sessionId, range, file, opts = {}) {
+  function diff(cwd, sessionId, file, opts = {}) {
     return serial(`session:${sessionId ?? cwd}`, async () => {
       const info = await git.repoInfo(cwd);
       if (!info || typeof file !== 'string' || !file || file.includes('\0')) return null;
-      const src = await diffSource(info.root, sessionId, range, opts);
+      const src = await diffSource(info.root, opts);
       if (!src) return null;
       const orig = typeof opts.orig === 'string' && opts.orig && !opts.orig.includes('\0') ? opts.orig : null;
       const result = await git.diffFile(info.root, src.from, src.to, file, { orig, context: opts.context });
@@ -251,67 +170,13 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     });
   }
 
-  // 会話の始まり（最初の撮影の親）は、決まったら変わらない。ページごとに ref の一覧を読み直さないよう、見つかったものだけ覚える
-  const starts = new Map();
-  const START_CACHE_MAX = 200;
-  /** 履歴の先頭から数えた始まりの位置。同じ問いを続けて呼んでも 1 回で済ませる（短い間だけ。履歴は動くので） */
-  const positions = new Map();
-  const POSITION_TTL_MS = 5_000;
-  function startPosition(root, hash, headHash) {
-    const key = `${root}\0${hash}\0${headHash ?? ''}`;
-    const hit = positions.get(key);
-    if (hit && now() - hit.at < POSITION_TTL_MS) return hit.value;
-    const value = history.startPosition(root, hash);
-    positions.set(key, { at: now(), value });
-    if (positions.size > 50) positions.delete(positions.keys().next().value);
-    return value;
-  }
-
-  /** 会話の始まり: 最初のターンの撮影の時刻と、そのときの HEAD（グラフの ⚑）。撮影が無い会話は null */
-  async function sessionStart(root, sessionId) {
-    const key = `${root}\0${sessionId}`;
-    if (sessionId && starts.has(key)) return starts.get(key);
-    const first = await sessionBase(root, sessionId);
-    if (!first) return null;
-    const parent = await git.readGit(root, ['rev-parse', '--verify', '-q', `${first.commit}^`]);
-    const value = { n: first.n, at: first.at, head: parent.ok && parent.stdout.trim() ? parent.stdout.trim() : null };
-    if (sessionId) {
-      starts.set(key, value);
-      if (starts.size > START_CACHE_MAX) starts.delete(starts.keys().next().value);
-    }
-    return value;
-  }
-
-  /**
-   * コミットの履歴の 1 ページ（グラフ）。session は会話の始まりで、pos は履歴の先頭から数えた始まりの位置（0 始まり）。
-   * 読んだページに入っていればそこから、無ければ 1 回の rev-list で（START_SEARCH_MAX 件まで）。見つからなければ lost: true。
-   * through: true は「始まりまで」（skip から始まりのコミットまでを 1 回で読む。上限は START_SEARCH_MAX 件）。git 管理外・読めないときは null
-   */
-  async function commits(cwd, sessionId, { limit, skip, through = false } = {}) {
+  /** コミットの履歴の 1 ページ（グラフ）。git 管理外・読めないときは null */
+  async function commits(cwd, { limit, skip } = {}) {
     const info = await git.repoInfo(cwd);
     if (!info) return null;
-    const start = await sessionStart(info.root, sessionId);
-    const from = Math.max(Number(skip) || 0, 0);
-    let page;
-    let pos = null, lost = false;
-    if (through && start?.head) {
-      const head = await git.headCommit(info.root);
-      const found = await startPosition(info.root, start.head, head);
-      pos = found.pos; lost = pos == null;
-      if (lost) return { commits: [], next: null, head, session: { ...start, lost: true }, root: info.root };
-      page = await history.readHistory(info.root, { limit: Math.max(pos + 1 - from, 1), skip: from, max: history.START_SEARCH_MAX });
-    } else {
-      page = await history.readHistory(info.root, { limit, skip: from });
-    }
-    if (!page) return null;
-    if (!start?.head) return { ...page, session: start, root: info.root };
-    if (pos == null) {
-      const at = page.commits.findIndex((c) => c.hash === start.head);
-      if (at >= 0) pos = from + at;
-      else if (from === 0 && page.next == null) lost = true;   // 履歴を読み切っても無い
-      else if (from === 0) { const found = await startPosition(info.root, start.head, page.head); pos = found.pos; lost = pos == null; }
-    }
-    return { ...page, session: { ...start, ...(pos != null ? { pos } : {}), ...(lost ? { lost: true } : {}) }, root: info.root };
+    tidy(info.root);
+    const page = await history.readHistory(info.root, { limit, skip: Math.max(Number(skip) || 0, 0) });
+    return page ? { ...page, root: info.root } : null;
   }
 
   /** コミット 1 つの題・本文と変わったファイル */
@@ -320,30 +185,5 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     return info ? history.commitFiles(info.root, hash) : null;
   }
 
-  /**
-   * 委譲カードと完了通知の 1 行の元。子の作業場所の状態と、会話の間（最初の撮影から今まで）のファイル・コミットの数。
-   * 撮影が無ければ session は null（状態だけ）
-   */
-  function summary(cwd, sessionId) {
-    return serial(`session:${sessionId ?? cwd}`, async () => {
-      const s = await status(cwd, { fresh: true });
-      if (!s) return null;
-      const base = await sessionBase(s.root, sessionId);
-      if (!base) return { ...s, session: null };
-      const tree = await git.snapshotTree(s.root);
-      const diff = tree ? await git.diffFiles(s.root, base.commit, tree) : null;
-      const parent = await git.readGit(s.root, ['rev-parse', '--verify', '-q', `${base.commit}^`]);
-      const since = await git.commitsSince(s.root, parent.ok ? parent.stdout.trim() : null, 0);
-      return { ...s, session: { files: diff?.total.files ?? 0, add: diff?.total.add ?? 0, del: diff?.total.del ?? 0, commits: since.count } };
-    });
-  }
-
-  /** 会話を消したときに、その会話の隠し ref を消す */
-  async function forget(cwd, sessionId) {
-    for (const key of [...starts.keys()]) if (key.endsWith(`\0${sessionId}`)) starts.delete(key);
-    const info = await git.repoInfo(cwd);
-    return info ? git.forgetSession(info.root, sessionId) : 0;
-  }
-
-  return { status, invalidate, begin, attach, finish, changes, changeCount, diff, commits, commit, sessionStart, summary, forget, ranges: SESSION_RANGES };
+  return { status, invalidate, changes, changeCount, diff, commits, commit };
 }

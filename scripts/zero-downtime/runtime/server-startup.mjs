@@ -36,7 +36,7 @@ function startServer() {
   const child = spawn(process.execPath, [path.join(serverRoot, 'core', 'server.mjs')], {
     cwd: os.homedir(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     env: { ...process.env, AGENT_HOST_DATA: dataDir, AGENT_HOST_PORT: String(port), AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_TOKEN: TOKEN,
-      AGENT_HOST_CLAUDE_BIN: missing, AGENT_HOST_CODEX_BIN: missing, AGENT_HOST_AGY_BIN: missing, AGENT_HOST_GIT_SNAPSHOTS: 'off', AGENT_HOST_WORKTREES: 'off', AGENT_HOST_LOCALE: 'ja' },
+      AGENT_HOST_CLAUDE_BIN: missing, AGENT_HOST_CODEX_BIN: missing, AGENT_HOST_AGY_BIN: missing, AGENT_HOST_WORKTREES: 'off', AGENT_HOST_LOCALE: 'ja' },
   });
   const server = { child, t0, out: '', exited: null, listenAt: null, listenPort: null };
   const onData = d => {
