@@ -28,7 +28,7 @@ Pleiad の画面・サーバー・Electron を一つの `package.json.version` �
    - 速い確認（`node tests/run.mjs release-ci-gate`）を流す。
    - 版・原稿・生成物の 4 ファイルだけを commit し（題は `<版>: <原稿の見出し>`。`--subject`・`--trailer` で変えられる）、タグ `v0.12.0-beta.10` を付ける。
    - 途中で失敗したら、版と生成物は元に戻る（commit もタグも作らない）。
-3. 既定では push しない。表示された `git push --atomic origin main v0.12.0-beta.10` を打つ（main とタグが一緒に通るか一緒に落ちる）。`--push` を付けたときだけ、スクリプトが送る。送ると `Evaluation release` が起動し、同じ commit の CI の結果を待って公開する。
+3. 既定では push しない。表示された `git push --atomic origin main v0.12.0-beta.10` を打つ（main とタグが一緒に通るか一緒に落ちる）。`--push` を付けたときだけ、スクリプトが送る。送ると `Evaluation release` が起動し、同じ commit の CI の結果を待って公開する。main に取り込んだ変更を push せずに残したまま版を上げない（確認前の変更がリリースに混ざる）。
 `--dry-run` は前提の検査だけ（何も書かない）。`--offline` は origin を見ない（一時の clone での練習用）。
 
 CIのElectron本体の取得は `scripts/prepare-electron.mjs` が行う。通常の公式配布URLがサーバー障害や通信エラーで使えないときは、同じ公式リリースのGitHub APIへ切り替える。どちらもnpmパッケージに固定されたSHA-256で検証してから展開し、配布物の生成にも同じ検証済みアーカイブを渡す。古いタグのやり直しでも、同じ固定の SHA-256 での検証は維持する。
