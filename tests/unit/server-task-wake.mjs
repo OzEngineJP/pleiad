@@ -1,6 +1,6 @@
 // 止まった委譲の子が外から起きたとき（ADR 0352）をサーバー越しに（fake バックエンド）。
 //   - 終わった子へ人が直接送ると、タスクが running に戻り（lastActivityAt も動く）、止まったら completed・最新の返答を結果にして、依頼元へ 1 回知らせる
-//   - 走っている間に人がもう 1 件送っても（途中送信を受けないターン＝次のターンで渡る）、知らせは止まったときの 1 回。「再び動いたきっかけ: 人の指示 2 件」
+//   - 走っている間に人がもう 1 件送っても（途中送信を受けないターン＝次のターンで渡る）、知らせは止まったときの 1 回。人の指示 2 件の中身と、回の終わり（きっかけ：人の指示）を起きた順に載せる（ADR 0352）
 //   - 人が子のターンを止める（走っているタスクとして取り消す）→「再開」を押すと、再開のターンも running → completed で知らせ、きっかけに「再開」が載る
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -52,7 +52,7 @@ export default async function (t) {
     const wokeNotices = noticesOf(parent, mark);
     t.ok('止まったら completed・sent になり、知らせは 1 回', wokeNotices.length === 1, wokeNotices.map(n => n.text).join(' ||| '));
     t.ok('結果は最新の返答', woke.result?.includes('二つ目の返答') && !woke.result?.includes('一つ目の返答'), woke.result);
-    t.ok('知らせに「再び動いたきっかけ: 人の指示 2 件」', /再び動いたきっかけ: 人の指示 2 件/.test(wokeNotices[0]?.text ?? ''), wokeNotices[0]?.text);
+    t.ok('知らせに人の指示 2 件と回の終わり（きっかけ：人の指示）が起きた順に載る', /人が子に指示しました：「steps:[^\n]*一つ目の返答[^\n]*」\n- その後、人が子に指示しました：「echo:二つ目の返答」\n- その後、子の回が終わりました：完了しました（きっかけ：人の指示）\n/.test(wokeNotices[0]?.text ?? ''), wokeNotices[0]?.text);
     t.ok('知らせの本文も最新の返答', wokeNotices[0]?.text.includes('二つ目の返答'), wokeNotices[0]?.text);
     const childTurns = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === child).length;
     t.ok('子のターンは 2 回走った（2 件目は次のターンで渡った）', childTurns === 2, String(childTurns));
@@ -66,6 +66,9 @@ export default async function (t) {
     // 子の会話を直接止めると、走っているタスクは取り消す（今までの決まり。起きた子も running なので同じ）
     const stopped = await awaitRow(first.taskId, r => r.status === 'cancelled');
     t.ok('起きた子の会話を止めると、走っているタスクとして取り消す', stopped.status === 'cancelled', JSON.stringify(stopped));
+    // 人が止めた回の知らせ（人の指示「slow」→ 人が止めた）が届いてから再開する
+    await awaitRow(first.taskId, r => r.notification === 'sent' && noticesOf(parent, mark2).length === 1);
+    t.ok('人が止めた回の知らせに、その前の人の指示と「人が止めた」が順に載る', /人が子に指示しました：「slow」\n- その後、子の回が終わりました：人が止めました/.test(noticesOf(parent, mark2)[0]?.text ?? ''), noticesOf(parent, mark2)[0]?.text);
     const mark3 = c.mark();
     let resumed = null;
     for (let i = 0; i < 80 && !resumed; i++) {
@@ -77,7 +80,7 @@ export default async function (t) {
     await sleep(500);
     const resumeNotices = noticesOf(parent, mark3);
     t.ok('再開のターンが止まったら 1 回知らせる', resumeNotices.length === 1, resumeNotices.map(n => n.text).join(' ||| '));
-    t.ok('知らせのきっかけに「再開」', /再び動いたきっかけ: 再開/.test(resumeNotices[0]?.text ?? ''), resumeNotices[0]?.text);
+    t.ok('知らせのきっかけに「再開」', /子の回が終わりました：完了しました（きっかけ：再開）/.test(resumeNotices[0]?.text ?? ''), resumeNotices[0]?.text);
     t.ok('再開は人の指示に数えない', after.humanInstructions === 3, String(after.humanInstructions));
   } finally {
     c.close();

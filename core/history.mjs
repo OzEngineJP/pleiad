@@ -105,7 +105,7 @@ export async function prepareMessages(sessionId, raw) {
   const notices = new Set(side.taskNotices ?? []);
   const relayed = new Map((side.relayed ?? []).map(r => [r.hash, r.sentBy]));
   // 委譲の子の会話へ実際に渡った発言の台帳（core/server.mjs の recordDelivery。ADR 0317）。人が直接送った発言か、依頼元の AI の追加の指示かを決める元
-  // Chrome を戻した続き（by: handoff。ADR 0352）は人の発言とも AI の指示とも分けて、別の名札（sentByHandoff）にする
+  // Chrome を戻した続き（by: handoff。ADR 0352）と再開の文（by: resume）は人の発言とも AI の指示とも分けて、別の名札（sentByHandoff・sentByResume）にする
   const human = humanMessages(messages, side.deliveries ?? []);
   for (const m of messages) {
     if (m.role !== 'user' || m.kind) continue;
@@ -114,6 +114,7 @@ export async function prepareMessages(sessionId, raw) {
     else if (relayed.has(hash)) m.sentBy = relayed.get(hash);
     else if (human.get(m) === 'human') m.sentByHuman = true;
     else if (human.get(m) === 'handoff') m.sentByHandoff = true;
+    else if (human.get(m) === 'resume') m.sentByResume = true;
   }
   return messages;
 }
@@ -126,7 +127,7 @@ export async function prepareMessages(sessionId, raw) {
  */
 function humanMessages(messages, ledger) {
   const human = new Map();
-  const marked = by => by === 'human' || by === 'handoff';
+  const marked = by => by === 'human' || by === 'handoff' || by === 'resume';
   if (!ledger.length) return human;
   const byNative = new Map(messages.filter(m => m.role === 'user' && !m.kind && m.uuid).map(m => [m.uuid, m]));
   const taken = new Set();

@@ -67,9 +67,9 @@ export default async function (t) {
     await sleep(1500);
     const notices = noticesOf(mark);
     t.ok('続きのターンが止まったら completed・sent になり、1 回だけ知らせる', notices.length === 1, notices.map(n => n.text).join(' ||| '));
-    t.ok('知らせのきっかけは「Chrome を戻した続き」', /再び動いたきっかけ: Chrome を戻した続き/.test(notices[0]?.text ?? ''), notices[0]?.text);
+    t.ok('知らせのきっかけは「Chrome を戻した続き」', /（きっかけ：Chrome を戻した続き）/.test(notices[0]?.text ?? ''), notices[0]?.text);
     t.ok('人の指示には数えない', !after.humanInstructions, String(after.humanInstructions));
-    t.ok('知らせに「人からの指示」は載らない', !notices[0]?.text.includes('人からの指示'), notices[0]?.text);
+    t.ok('知らせに人の指示は載らない', !notices[0]?.text.includes('人が子に指示しました'), notices[0]?.text);
     const turns = c.since(mark).filter(e => e.type === 'turnEnd' && e.sessionId === child).length;
     t.ok('二度押しても、走り直しは 1 回', turns === 1, String(turns));
 

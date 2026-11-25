@@ -86,9 +86,21 @@ export default async function(t) {
     const slow = await manager.call('parent', 'ply_delegate', { backend: 'claude', task: 'hold' });
     await until(() => release);
     await manager.call('parent', 'ply_task_send', { taskId: slow.taskId, message: 'stop pending' });
-    await manager.call('parent', 'ply_task_cancel', { taskId: slow.taskId });
+    const sentBefore = notifications.length;
+    const cancelOut = await manager.call('parent', 'ply_task_cancel', { taskId: slow.taskId });
+    t.ok('ply_task_cancel は止める合図を送ってすぐ戻り、結果は渡さない（ADR 0352）',
+      ['cancelling', 'cancelled'].includes(cancelOut.status) && typeof cancelOut.message === 'string' && !('result' in cancelOut), JSON.stringify(cancelOut));
     await until(() => manager.get(slow.taskId).status === 'cancelled');
-    t.ok('停止を実行に伝播する', manager.get(slow.taskId).notification === 'suppressed');
+    await until(() => manager.get(slow.taskId).notification === 'sent');
+    await sleep(100);
+    t.ok('停止を実行に伝播し、止まったら終了通知を 1 つ届ける（止めた時点までの返答）',
+      notifications.slice(sentBefore).filter(([id]) => id === slow.taskId).length === 1
+      && notifications.slice(sentBefore).find(([id]) => id === slow.taskId)?.[1] === 'hold');
+    const again = await manager.call('parent', 'ply_task_cancel', { taskId: slow.taskId });
+    await sleep(100);
+    t.ok('終わって通知も届いた子の ply_task_cancel は「もう終わっています」だけで、通知を足さない',
+      again.status === 'cancelled' && /もう終わっています|already ended/.test(again.message) && !('result' in again)
+      && notifications.slice(sentBefore).filter(([id]) => id === slow.taskId).length === 1, JSON.stringify(again));
     t.ok('停止後も未配送の本文を残す', manager.instructions(slow.taskId).instructions[0]?.state === 'dropped'
       && manager.instructions(slow.taskId).instructions[0]?.text === 'stop pending');
     await manager.call('parent', 'ply_task_send', { taskId: slow.taskId, message: 'after stop' });

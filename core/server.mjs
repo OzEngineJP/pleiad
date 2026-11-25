@@ -443,7 +443,7 @@ import { createShellHolder } from './shell-held.mjs';
 import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { INDEX_FILE as SEARCH_INDEX_FILE } from './session-search-index.mjs';
-import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, settingsResumePrompt } from './interrupt-stops.mjs';
+import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, heldNoticeNote, settingsResumePrompt } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS, isInternalConversationMeta } from './channels/types.mjs';
@@ -2114,7 +2114,7 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   if (decided.escalation && approved !== true) return { confirm: { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode } };
   if (['queued', 'running', 'cancelling'].includes(original.status)) {
     if (typeof stop !== 'boolean') throw new Error(t('routing.retry.stopChoice'));
-    if (stop) await agentTasks.cancel(original.taskId);
+    if (stop) await agentTasks.cancel(original.taskId, { by: 'human' });
   }
   const request = agentTasks.request(original.taskId);
   const routing = manualRouting({ kind: original.routing?.kind ?? null, candidate, check, of: original.taskId, from,
@@ -5333,13 +5333,13 @@ async function recordRelayed(sessionId, prompt, sentBy) {
 // 委譲の子の会話へ「実際に渡った」発言の台帳（sidecar deliveries。ADR 0317）。人が直接送った発言（by: human）と、依頼元の AI の追加の指示
 // （by: ai。ply_task_send）を、渡った順に { id, by, hash, at, nativeId? } で残す。履歴（core/history.mjs の prepareMessages）が
 // 同じ本文の発言を台帳と突き合わせて「あなた」の名札を付ける（本文のハッシュだけで決めると、同じ文面の AI の指示まで「あなた」になる）。
-// 人からの指示の数（完了通知の「人からの指示 N 件」）も、ここで初めて載った id だけを 1 回ずつ数える
+// 人からの指示（完了通知の「これまでの出来事」に中身と添付の数を載せる。ADR 0352）も、ここで初めて載った id だけを 1 回ずつ記録する
 // （受け付けた時ではなく渡った時。取り消した送信待ちは数えない。同じ messageId の送り直しは台帳に既にあるので数えない）。
 // 古いものから捨てる（DELIVERY_KEEP 件）。書けなかったときは送信そのものは止めず、ログに残す
 const DELIVERY_KEEP = 500;
 const deliveryChains = new Map();
 const sha256 = text => crypto.createHash('sha256').update(String(text ?? '')).digest('hex');
-function recordDelivery(sessionId, { id, by, text, nativeId = null }) {
+function recordDelivery(sessionId, { id, by, text, attachments = 0, nativeId = null }) {
   const run = async () => {
     try {
       if (!sessionId || !id || !agentTasks.isChild(sessionId)) return false;
@@ -5352,10 +5352,11 @@ function recordDelivery(sessionId, { id, by, text, nativeId = null }) {
       }
       ledger.push({ id, by, hash: sha256(text), at: Date.now(), ...(nativeId ? { nativeId } : {}) });
       await store.setSessionData(sessionId, 'deliveries', ledger.slice(-DELIVERY_KEEP));
-      if (by === 'human') await agentTasks.humanSent(sessionId);
+      // 人の指示は中身と添付の数も、依頼元へ届ける出来事に残す（ADR 0352。agent-tasks が伏せて 300 字に切る）
+      if (by === 'human') await agentTasks.humanSent(sessionId, { text, attachments });
       return true;
     } catch (e) {
-      console.error('  子の会話へ渡した発言の記録に失敗（名札・人からの指示の数がずれうる）:', sessionId, id, String(e?.message ?? e));
+      console.error('  子の会話へ渡した発言の記録に失敗（名札・人からの指示の記録がずれうる）:', sessionId, id, String(e?.message ?? e));
       return false;
     }
   };
@@ -5366,19 +5367,20 @@ function recordDelivery(sessionId, { id, by, text, nativeId = null }) {
 }
 /**
  * 送信待ちの項目が人の送信なら台帳に載せる（渡った時に呼ぶ。項目は sidecar の outbox から引く＝付け直しの後でも分かる）。
- * Chrome を戻した続き（byHandoff。ADR 0352）も 'handoff' で載せる。名札を「Chrome を戻した続き」にするためで、人の指示には数えない
+ * Chrome を戻した続き（byHandoff。ADR 0352）も 'handoff' で、再開の文（byResume）も 'resume' で載せる。
+ * 名札を「Chrome を戻した続き」「再開」にするためで、人の指示には数えない
  */
 async function recordHumanDelivery(sessionId, messageId, nativeId = null, item = null) {
   if (!sessionId || !messageId) return false;
   const found = item ?? ((await store.get(sessionId).catch(() => null))?.outbox ?? []).find(m => m.id === messageId);
-  const by = found?.args?.byHuman ? 'human' : found?.args?.byHandoff ? 'handoff' : null;
+  const by = found?.args?.byHuman ? 'human' : found?.args?.byHandoff ? 'handoff' : found?.args?.byResume ? 'resume' : null;
   if (!by) return false;
-  return recordDelivery(sessionId, { id: messageId, by, text: found.args.prompt, nativeId });
+  return recordDelivery(sessionId, { id: messageId, by, text: found.args.prompt, attachments: found.args.attachments?.length ?? 0, nativeId });
 }
-/** 子の会話へ渡った発言の名札の印（画面の出来事 userMessage に付ける）。人の送信は「あなた」、Chrome を戻した続きは別の名札（ADR 0352） */
-const senderMark = args => args?.byHuman ? { sentByHuman: true } : args?.byHandoff ? { sentByHandoff: true } : {};
+/** 子の会話へ渡った発言の名札の印（画面の出来事 userMessage に付ける）。人の送信は「あなた」、Chrome を戻した続き・再開は別の名札（ADR 0352） */
+const senderMark = args => args?.byHuman ? { sentByHuman: true } : args?.byHandoff ? { sentByHandoff: true } : args?.byResume ? { sentByResume: true } : {};
 /**
- * 委譲の子の会話で送信待ちから始まるターンの、完了通知に添える「再び動いたきっかけ」（ADR 0352）。
+ * 委譲の子の会話で送信待ちから始まるターンの、回の終わりの出来事に載せるきっかけ（ADR 0352）。
  * 人の送信（human）は数で出すので、ここでは種類だけ返す。依頼元の追加の指示（ply_task_send）は送信待ちを通らない
  */
 const wakeKind = args => args?.byHandoff ? 'handoff' : args?.byResume ? 'resume' : args?.byHuman ? 'human' : args?.sentBy ? 'relay' : null;
@@ -7053,7 +7055,8 @@ function opsDeps(lng = currentLocale()) {
       cancel: async (taskId) => {
         const task = agentTasks.get(taskId);
         if (!task) throw new Error(t('delegation.taskNotFound'));
-        await agentTasks.cancel(task.taskId);
+        // 人が止めた。止まったら終了通知を 1 つ依頼元へ届ける（ADR 0352）
+        await agentTasks.cancel(task.taskId, { by: 'human' });
         return agentTasks.get(task.taskId);
       },
       retry: (args) => retryAgentTask(args),
@@ -8081,10 +8084,8 @@ function completionNotice(lng, tasks) {
       attempt.outcome === 'limited' ? 'delegation.noticeReroutedLimited' : 'delegation.noticeReroutedError',
       { from: candidateNoticeName(attempt.target), to: candidateNoticeName(all[i + 1]?.target ?? task.routing.target) })]).join(''),
     rejections: rejectionNotice(lng, task.rejections),
-    // 人が子の会話へ直接送った分（ADR 0317）。送るたびには知らせず、完了のときにまとめて一行
-    human: task.humanInstructions > 0 ? agentT(lng, 'delegation.noticeHuman', { count: task.humanInstructions }) : '',
-    // 止まった子がまた動いた（ADR 0352）。何がきっかけだったかを 1 行添える
-    wake: wakeNotice(lng, task),
+    // まだ届けていない出来事（子の回の終わり・人が子へ直接送った指示）を起きた順に並べ、今の子の状態を添える（ADR 0352・0317）
+    events: eventsNotice(lng, task),
     git: workspaceNotice(lng, task) + gitNotice(lng, task.git),
   }));
   const completed = parts.length === 1 ? agentT(lng, 'delegation.notice', parts[0])
@@ -8092,15 +8093,54 @@ function completionNotice(lng, tasks) {
   return [...stops, completed].join('\n');
 }
 
-// 完了通知の「再び動いたきっかけ」の文の鍵（ADR 0352）。人の指示は数（humanInstructions の増えた分）で出す
+// 子の回が再び動いたきっかけの文の鍵（ADR 0352）
 // i18n-dynamic: agent:delegation.wake
-const WAKE_NOTICE_KEYS = { parent: 'delegation.wakeParent', handoff: 'delegation.wakeHandoff', resume: 'delegation.wakeResume', relay: 'delegation.wakeRelay' };
-function wakeNotice(lng, task) {
-  if (!task.wake) return '';
-  const causes = (task.wake.kinds ?? []).filter(kind => WAKE_NOTICE_KEYS[kind]).map(kind => agentT(lng, WAKE_NOTICE_KEYS[kind]));
-  const human = (task.humanInstructions ?? 0) - (task.wake.humanBase ?? 0);
-  if (human > 0) causes.push(agentT(lng, 'delegation.wakeHuman', { count: human }));
-  return causes.length ? agentT(lng, 'delegation.noticeWake', { causes: causes.join(agentT(lng, 'delegation.wakeSeparator')) }) : '';
+const WAKE_NOTICE_KEYS = { parent: 'delegation.wakeParent', human: 'delegation.wakeHuman', handoff: 'delegation.wakeHandoff', resume: 'delegation.wakeResume', relay: 'delegation.wakeRelay' };
+// 子の回の終わり方の文の鍵（ADR 0352）。止めた側（stoppedBy）が分からない取り消しは「取り消された」
+// i18n-dynamic: agent:delegation.eventEnd
+const EVENT_END_KEYS = { completed: 'delegation.eventEndCompleted', failed: 'delegation.eventEndFailed', human: 'delegation.eventEndHuman', parent: 'delegation.eventEndParent', owner: 'delegation.eventEndOwner', cancelled: 'delegation.eventEndCancelled' };
+const TASK_ACTIVE = new Set(['queued', 'running', 'cancelling']);
+const STOPPERS = new Set(['human', 'parent', 'owner']);
+
+/**
+ * 完了通知の「これまでの出来事」（ADR 0352）。agent-tasks が残した、まだ届けていない出来事（task.events）を起きた順に 1 行ずつ並べ、
+ * 届ける時点の子の状態を添える。子が止まっているときの最後の回の返答・エラーは、通知の「結果」「エラー」と同じなので行には載せない。
+ * 出来事を持たない古い行（版を上げる前に積まれた通知）は、状態と止めた側から回の終わりを 1 つ組み立てる
+ */
+function eventsNotice(lng, task) {
+  const active = TASK_ACTIVE.has(task.status);
+  let events = Array.isArray(task.events) ? task.events : [];
+  if (!active && !events.some(e => e.kind === 'run') && ['completed', 'failed', 'cancelled'].includes(task.status)) {
+    events = [{ kind: 'run', status: task.status, stoppedBy: task.stoppedBy, cause: task.wake?.kinds ?? [], result: '' }, ...events];
+  }
+  if (!events.length) return '';
+  const lastRun = events.findLastIndex(e => e.kind === 'run');
+  const lines = [];
+  if (task.eventsDropped > 0) lines.push(agentT(lng, 'delegation.eventsDropped', { count: task.eventsDropped }));
+  events.forEach((e, i) => {
+    const then = i ? agentT(lng, 'delegation.eventThen') : '';
+    if (e.kind === 'human') {
+      lines.push(agentT(lng, 'delegation.eventHuman', { then, text: e.text ?? '',
+        attachments: e.attachments > 0 ? agentT(lng, 'delegation.eventAttachments', { count: e.attachments }) : '' }));
+      return;
+    }
+    const how = e.status === 'cancelled' ? (STOPPERS.has(e.stoppedBy) ? e.stoppedBy : 'cancelled') : e.status;
+    const causes = (e.cause ?? []).filter(kind => WAKE_NOTICE_KEYS[kind]).map(kind => agentT(lng, WAKE_NOTICE_KEYS[kind]));
+    const shown = active || i !== lastRun;
+    // i18n-dynamic: agent:delegation.eventPartial
+    // i18n-dynamic: agent:delegation.eventReply
+    lines.push(agentT(lng, 'delegation.eventRun', { then,
+      how: EVENT_END_KEYS[how] ? agentT(lng, EVENT_END_KEYS[how]) : how,
+      cause: causes.length ? agentT(lng, 'delegation.eventCause', { causes: causes.join(agentT(lng, 'delegation.wakeSeparator')) }) : '',
+      reply: shown && e.result ? agentT(lng, e.status === 'cancelled' ? 'delegation.eventPartial' : 'delegation.eventReply', { text: e.result }) : '',
+      error: shown && e.error ? agentT(lng, 'delegation.eventError', { text: e.error }) : '' }));
+  });
+  const hint = (events.some(e => e.kind === 'run' && e.status === 'cancelled') ? agentT(lng, 'delegation.eventStopHint') : '')
+    + (events.some(e => e.kind === 'human') ? agentT(lng, 'delegation.eventHumanHint') : '');
+  // i18n-dynamic: agent:delegation.eventStateRunning
+  // i18n-dynamic: agent:delegation.eventStateStopped
+  return agentT(lng, 'delegation.noticeEvents', { lines: lines.join(''),
+    state: agentT(lng, active ? 'delegation.eventStateRunning' : 'delegation.eventStateStopped'), hint });
 }
 
 function limitNotice(lng, limit) {
@@ -8121,7 +8161,7 @@ async function steerNotice(turn, owner, prompt, tasks, settingNotices = null, ho
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
   if (confirms) {
-    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), settingNotices, hooks));
+    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0, noticeId: x.noticeId ?? null })), settingNotices, hooks));
     touchCard(turn);
   }
   let accepted;
@@ -8689,6 +8729,9 @@ agentTasks = await createAgentTasks({
       return await finishChild(task, signal, execution, outcome, renewed);
     } finally { release(); }
   },
+  // 依頼元の会話が止められているか（直前のターンが中断で終わり、その後ターンが始まっていない。ADR 0352）。
+  // 止められている間は、終了通知でその会話のターンを始めない（次のターンの始めに beginTurn が takeHeld で渡す）
+  ownerStopped: owner => !isRemoteOwner(owner) && !runtime.turns.has(owner) && Boolean(interruptedOf(store.peek(owner)?.interrupted)),
   // 依頼元が完了通知を受け取れるか。受け取れない間、委譲の管理は通知の状態を書き換えない（保存を減らす）
   ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
   // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
@@ -9381,6 +9424,12 @@ function bindTurnContext(ctx) {
       ctx.interruptionTaken = true;
       store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
     }
+    if (ctx.heldNotice && !ctx.heldNoticeTaken) {
+      ctx.heldNoticeTaken = true;
+      const held = ctx.heldNotice;
+      store.recordTaskNoticeReceipt(ctx.sessionId, held.tasks, 'received').then(() => held.settle('ok'))
+        .catch(e => console.error('  止められている間の終了通知を渡した記録に失敗:', String(e?.message ?? e)));
+    }
     if (ctx.shellHandoff && !ctx.shellHanded) {
       ctx.shellHanded = true;
       shellRuns.delivered(ctx.sessionId, ctx.shellHandoff.ids, ctx.shellHandoff.skipped).catch(e => console.error('  shell: 渡した記録に失敗:', String(e?.message ?? e)));
@@ -9428,6 +9477,18 @@ async function beginTurn(ctx) {
     permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
     resolvedContext, shellHandoff } = ctx;
 
+  // 依頼元が止められている間に終わった子の終了通知（ADR 0352）は、ターンを始めずに貯めてある。このターンの始めに渡す。
+  // 止められていたか（中断の印）は、印を消す前に読む。圧縮のターンでは渡さない（次の普通のターンで渡す）
+  if (sessionId && !hooks.compact && agentTasks) {
+    const stopped = Boolean(interruptedOf(store.peek(sessionId)?.interrupted));
+    ctx.heldNotice = await agentTasks.takeHeld(sessionId, { stopped }).catch(err => {
+      console.error("  止められている間の終了通知を渡せませんでした:", String(err?.message ?? err)); return null;
+    });
+    if (ctx.heldNotice) {
+      ctx.heldNote = heldNoticeNote(agentLocale, completionNotice(agentLocale, ctx.heldNotice.tasks));
+      await store.recordTaskNoticeReceipt(sessionId, ctx.heldNotice.tasks, 'attempting').catch(() => {});
+    }
+  }
   // 次のターンが始まったので中断の印を消し、走っている印を付ける（新しい会話は id が決まったとき。makeEmit の session）
   // 圧縮のターンは印も置く（落ちたら、起動で中断として残してもう一度頼む。ADR 0270 段 4）
   if (sessionId) await store.setMeta(sessionId, { turnStartedAt: turn.startedAtMs, interrupted: null,
@@ -9446,6 +9507,7 @@ async function beginTurn(ctx) {
     ...(args.scheduledFor ? { scheduledFor: args.scheduledFor } : {}),
     ...(args.sentBy ? { sentBy: publicSender(args.sentBy) } : {}), ...senderMark(args) });
   if (ctx.interruption && !ctx.interruption.hidden) emit({ type: 'interruptionNote', text: ctx.interruption.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
+  if (ctx.heldNote) emit({ type: 'interruptionNote', text: ctx.heldNote.body, ...(args.messageId ? { messageId: args.messageId } : {}) });
   broadcastRunning();
   syncRunningPoll();
   if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'preparing' });
@@ -9480,7 +9542,7 @@ async function beginTurn(ctx) {
   }
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
-  const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...botExtras.notes];
+  const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...(ctx.heldNote ? [ctx.heldNote.text] : []), ...botExtras.notes];
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
@@ -9750,6 +9812,12 @@ async function closeTurn(ctx) {
   if (args.settings && !ctx.initialDelivered) recordSendPhase('sendAgentStartup', sessionId, ctx.dispatchStartedAt, 'error');
   // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
+  // 渡らずに終わった、止められている間の終了通知（ADR 0352）は pending に戻す（普通の配送か、次のターンの始めに渡る）
+  if (ctx.heldNotice && !ctx.heldNoticeTaken) {
+    ctx.heldNoticeTaken = true;
+    await store.recordTaskNoticeReceipt(sessionId, ctx.heldNotice.tasks, 'undelivered').catch(() => {});
+    await ctx.heldNotice.settle('undelivered').catch(e => console.error('  止められている間の終了通知を戻せませんでした:', String(e?.message ?? e)));
+  }
   // ターンは始まったが渡った合図（initialDelivered）の無いまま終わった発言は、送信済みのままだと本文がどこにも残らず消える。
   // 未達（failed）に戻し、再送か取り消しを選ばせる（requeue は送信待ちに戻るので触らない。catch で戻した分は undelivered がそのまま通る）。
   // 渡った合図を出せないバックエンド（性質 promptDelivery = false。antigravity）では、届いたまま無出力で終わることがあるので、
@@ -9833,7 +9901,7 @@ function restoreSteers(sessionId, steers, texts = new Map()) {
     const notice = entry.waiters.includes('liveNotices') ? entry.notice : null;
     if (notice && typeof notice.prompt === 'string' && Array.isArray(notice.items)) {
       const prompt = notice.promptChars > notice.prompt.length ? texts.get(notice.promptHash) ?? notice.prompt : notice.prompt;
-      liveNotices.set(id, noticeEntry(sessionId, prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0 })),
+      liveNotices.set(id, noticeEntry(sessionId, prompt, notice.items.map(x => ({ taskId: String(x?.taskId ?? ''), revision: x?.revision ?? 0, noticeId: typeof x?.noticeId === 'string' ? x.noticeId : null })),
         Array.isArray(notice.settingNotices) ? notice.settingNotices : null));
     }
     if (entry.waiters.includes('liveInstructions') && typeof entry.taskId === 'string' && Array.isArray(entry.instructionIds)) {
@@ -10801,15 +10869,18 @@ async function abortSessions({ sessionId = null, reason } = {}) {
   if (targets.length) broadcastRunning();
   let cancelled = [];
   try {
-    cancelled = await agentTasks.cancelOwner(sessionId || undefined);
+    // 1 つの会話を人が止めた: 子の終了通知は止めず、この会話の次のターンの始めに渡す（ADR 0352）。返るのはホストに任せた子だけ。
+    // すべて止める（終了）は今までどおり通知を止め、「止めたもの」に残す
+    cancelled = await agentTasks.cancelOwner(sessionId || undefined, sessionId ? { by: 'human' } : {});
   } finally {
     // 取り消しで止まった子は stopChild が読み終えている。残りは止まらなかった子（付けない）
     for (const id of children) if (taskStopReasons.get(id) === why) taskStopReasons.delete(id);
   }
   const ownTask = sessionId ? agentTasks.list().find(r => r.sessionId === sessionId) : null;
-  // 子の会話を直接止めたときは、その委譲タスクも取り消す（終わっていれば止めるものは無く、届いていない結果は依頼元へ届く）
-  const own = ownTask ? await agentTasks.cancel(ownTask.taskId) : null;
-  // 取り消した委譲タスクと、終わっていたのに完了通知が届いていなかったタスクを、依頼元の会話ごとに残す（次のターンで伝える）
+  // 子の会話を直接止めたときは、その委譲タスクも取り消す（終わっていれば止めるものは無く、届いていない結果は依頼元へ届く）。
+  // 人が止めた子の回は終了通知を 1 つ作り、依頼元が止められていなければすぐ届けて起こす（ADR 0352。返るのはホストに任せた子だけ）
+  const own = ownTask ? await agentTasks.cancel(ownTask.taskId, { by: 'human' }) : null;
+  // 決まりの外（ホストに任せた子・すべて止める）の取り消しと届いていなかった結果を、依頼元の会話ごとに残す（次のターンで伝える）
   await recordTaskStops([...cancelled, ...(own ? [own] : [])], why);
   for (const id of paused) await outbox.pause(id);
   return { aborted: targets.length, reason: why };

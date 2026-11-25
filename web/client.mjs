@@ -7324,6 +7324,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   const youNode = (text, at) => parentMsg(text, at, t('chat.message.you'));
   // 人が Chrome を戻した後の「続けてください」（ADR 0352）。人の発言とも依頼元の指示とも分ける
   const handoffNode = (text, at) => parentMsg(text, at, t('dialog.work.handoffContinue'));
+  const resumeNode = (text, at) => parentMsg(text, at, t('dialog.work.resumeContinue'));
   const pendingNode = (instruction) => {
     const m = followUp(instruction.text, instruction.at);
     m.dataset.instructionId = instruction.id;
@@ -7367,7 +7368,7 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, account: itemAccount(item), sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
-      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : m.sentByHandoff ? handoffNode : followUp)(m.text, m.at) });
+      user: (m) => (it.mi === 0 && !base ? requestNode : m.sentByHuman ? youNode : m.sentByHandoff ? handoffNode : m.sentByResume ? resumeNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
   }

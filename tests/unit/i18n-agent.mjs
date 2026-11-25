@@ -231,7 +231,7 @@ export default async function (t) {
     t.ok("会話を始めたときの画面の言語（en）を会話に保存する", (await rowOf(enId))?.agentLocale === "en");
     t.ok("委譲の子の会話は親の会話の言語を継ぐ", (await rowOf(enChild.sessionId))?.agentLocale === "en");
     const enNotice = (await c.cmd("loadSession", { sessionId: enId })).messages.find(m => m.internalTaskNotice);
-    t.ok("en の会話の完了通知は英語（人間の発言とは本文のハッシュで見分ける）", enNotice?.text.startsWith(`[Pleiad task completion notice / ${enChild.taskId}]\nBackend: fake\nStatus: completed\nTask: echo:EN_CHILD\n`)
+    t.ok("en の会話の完了通知は英語（人間の発言とは本文のハッシュで見分ける）", enNotice?.text.startsWith(`[Pleiad task completion notice / ${enChild.taskId}]\nWhat happened (in order):\n- the child's run ended: completed\nNow: the child is not running.\nBackend: fake\nStatus: completed\nTask: echo:EN_CHILD\n`)
       && enNotice.text.endsWith("Continue the work needed for the original request."), enNotice?.text);
     const enTitle = await c.cmd("suggestTitle", { sessionId: enId });
     t.ok("en の会話のタイトル生成に渡す見出しは英語", enTitle.title.startsWith("Request:"), enTitle.title);
@@ -252,7 +252,7 @@ export default async function (t) {
     await idle(jaId);
     t.ok("ja の画面で始めた会話は ja", (await rowOf(jaId))?.agentLocale === "ja" && (await rowOf(jaChild.sessionId))?.agentLocale === "ja");
     const jaNotice = (await c.cmd("loadSession", { sessionId: jaId })).messages.find(m => m.internalTaskNotice);
-    t.ok("ja の会話の完了通知は以前の日本語の文", jaNotice?.text.startsWith(`[Pleiad タスク完了通知 / ${jaChild.taskId}]\n実行先: fake\n状態: completed\n依頼: echo:JA_CHILD\n結果（子エージェントの報告）:\nJA_CHILD\n`)
+    t.ok("ja の会話の完了通知は以前の日本語の文", jaNotice?.text.startsWith(`[Pleiad タスク完了通知 / ${jaChild.taskId}]\nこれまでの出来事（起きた順）:\n- 子の回が終わりました：完了しました\n今の状態：子は動いていません。\n実行先: fake\n状態: completed\n依頼: echo:JA_CHILD\n結果（子エージェントの報告）:\nJA_CHILD\n`)
       && jaNotice.text.endsWith("元の依頼に必要な作業を続けてください。"), jaNotice?.text);
     t.ok("ja の会話のタイトル生成に渡す見出しは日本語", (await c.cmd("suggestTitle", { sessionId: jaId })).title.startsWith("依頼:"));
     const jaDenied = await c.runTurn({ sessionId: jaId, prompt: "ask" });

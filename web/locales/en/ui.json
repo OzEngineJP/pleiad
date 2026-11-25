@@ -3092,6 +3092,7 @@
       "instructionsWaiting_other": "{{count}} follow-up instructions waiting",
       "instruction": "Follow-up instruction",
       "handoffContinue": "Continued after Chrome was handed back",
+      "resumeContinue": "Resumed",
       "instructionQueued": "Waiting · delivered when the current work ends",
       "instructionDropped": "✕ Ended without being delivered",
       "instructionNextTurn": "Arrives in the next turn · can't be passed in mid-task",

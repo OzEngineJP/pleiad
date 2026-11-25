@@ -16,7 +16,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
 | `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort`, `account` | `backend` / `model` / `effort` / `account` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
-| `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
+| `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクに止める合図を送り、すぐ戻る（戻り値は合図を送ったことと今の状態）。止まったことは、ほかの終わり方と同じ終了通知（「依頼元が取り消しました」）で届く。もう終わっていて通知も届いていれば「もう終わっています」、届いていなければその通知を届ける（[ADR 0352](adr/0352-delegated-child-wake-notifies.md) §7） |
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
 | `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて。Claude の `accounts` の各行の `account` は `ply_delegate` / `ply_task_send` の `account` に書ける名前で、`inTiers` はそのアカウントが設定 › 委譲のどこかの段に入っているか（入っていないアカウントは、`account` を書いたときだけ使う。2026-10-24）。`held` は上限で今止まっている枠（`model`・`account`・`until`・`resetsAt`・`window`）で、日次・週次の枠が低くても使えない。`until` は自動の振り分けが外す時刻（`null` なら再試行の待ちで時刻が分からない）、`resetsAt` は告げられた解除の見込み（`null` なら分からず、`until` は Pleiad の見積もり）。`window` は 5 時間・週などアカウント全体の枠で止まったときの枠の名前で、そのときの `model` は `null`（どのモデルでも止まっている） |
 
@@ -320,12 +320,12 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 ### 受け取り済みの通知は送らない
 
-依頼元が `ply_task_status` / `ply_task_wait` で終了状態（`completed` / `failed`）と結果を受け取ったら、通知を `read` にして送らない。結果が長く `nextOffset` が残っていても、受け取った時点で配達済み。
+依頼元が `ply_task_status` / `ply_task_wait` で終了状態（`completed` / `failed`）と結果を受け取ったら、通知を `read` にして送らない（まだ届けていない出来事 `events` も戻り値に載せ、`read` で消す）。結果が長く `nextOffset` が残っていても、受け取った時点で配達済み。
 `ply_task_list` は結果を返さないので対象にしない。実行中の `status` も対象にしない。終わった直後で通知がまだ始まっていない（`none`）ときに受け取っても `read` にし、直後の `run.notice` が `pending` に戻さない。`delivering` 以降（送っている最中・送り終えた・不明・止めた）は変えない。`ply_task_send` は `none` に戻し、次に走る回の結果は通知する（走っている回に途中送信で渡した指示は、その回の結果が新しい指示も反映するので、通知はその回の完了で 1 回）。依頼元が `ply_task_wait` でそのタスクを待っている間は、終わっても通知を送らない（結果は待ちの戻り値で渡る。走っているターンへ同じ結果を重ねないため）。
 
 ### 状態と待つ条件
 
-通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めたタスクは `suppressed`。依頼元が結果を先に受け取ったものは `read`。
+通知の状態は `none` → `pending`（届ける結果がある）→ `delivering`（送っている）→ `sent` / `unknown`（受領が不明）。止めた側の分からない取り消しは `suppressed`。依頼元が結果を先に受け取ったものは `read`。
 
 | 状態 | いつ | 次 |
 |---|---|---|
@@ -334,7 +334,7 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 | `delivering` | 送っている（保存してから渡す） | 親の会話が受け取った時点で `sent`（保存する。ターンの終わりは待たない）。受け取られない（`requeue`）ならメモリだけ `pending` へ。例外や再起動の後は依頼元の受領記録と照合する |
 | `sent` | 親が受け取った | 走っているターンへ渡した分が、読まれないままターンが死んだら `pending`（`renotify`。同じ回のものだけ） |
 | `unknown` | 依頼元の記録と照合しても受領を確認できない | 自動では再送しない。依頼元の会話の次のターンに、`ply_task_status` で結果を読む入口を添える |
-| `suppressed` | 止めた。`ply_task_cancel`・人の取り消しでは走っている・待っているタスクだけ（終わって `pending` のものは止めるものが無いので、そのまま届ける）。依頼元の会話の中断では、終わって届いていない結果も止める（勝手に新しいターンを始めない）が、次のターンで一覧にして伝える（design.md「中断と再開」） | — |
+| `suppressed` | 止めた側の分からない取り消し（`by` の無い取り消し。ホストの便りの口など）とホストに任せた子だけ。`ply_task_cancel`・人の取り消し・依頼元の会話の中断で止まった子は `suppressed` にせず、終了通知を作る（[ADR 0352](adr/0352-delegated-child-wake-notifies.md) §7）。依頼元の会話の中断のときは `pending` のまま、依頼元の次のターンの始めに渡す（`ownerStop`・`takeHeld`） | — |
 | `read` | 依頼元が結果を受け取った | `ply_task_send` で `none` |
 
 親が受け取れない間は `pending` のまま何も書かない。「受け取れる」は、新しいターンを受けられる（`ready`。上の 2 つ目の条件）か、走っているターンへ渡せる（`steerable`。1 つ目）のどちらか。無音・コマンド・裏作業の通知は前者だけを使う（[ADR 0048](adr/0048-delegation-silence-notice.md)、[ADR 0170](adr/0170-delegation-background-notify-not-stop.md)）。
@@ -352,16 +352,17 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 子で実行前に拒否されたコマンドがあれば、通知の本文の最後（「元の依頼に必要な作業を続けてください。」の前）に 1 段落足す（`agent:delegation.noticeRejections`）。
 件数と、先頭 3 件の `command`（伏せて切ったもの）と `reason` だけを並べ、全件は `ply_task_status` の `rejections` で読むよう案内する。拒否が無ければ何も足さない。
 
-人が子の会話へ直接送った指示があれば、同じ位置（拒否の段落の後）に 1 行足す（`agent:delegation.noticeHuman`。「人からの指示 N 件」。[ADR 0317](adr/0317-modal-child-composer-stop-name-tags.md)）。
-子のダイアログの入力欄から送った発言が子に**渡った**時に、子の会話の sidecar の台帳（`deliveries`）に載せ、載った時だけタスクの行の `humanInstructions` を 1 つ増やす。受け付けただけで取り消した送信待ちと、同じ `messageId` の送り直しは数えない。親の AI の `ply_task_send` は数えない（台帳には `by: ai` で載り、名札の見分けに使う）。
-送るたびには知らせず、完了通知にだけ累計を載せる。送信待ちのまま取り消した指示は数えない。
+完了通知には、振り分けの行の後に「これまでの出来事（起きた順）」（`agent:delegation.noticeEvents`）と、届ける時点の子の状態の行を置く（[ADR 0352](adr/0352-delegated-child-wake-notifies.md) §7）。
+出来事はタスクの行の `events`（DB に保存。50 件まで、超えた数は `eventsDropped`）で、子の回が終わるたびに終わり方・止めた人（人／依頼元の取り消し／依頼元の会話の中断）・きっかけ・返答を 1 つ、人が子の会話へ直接送った指示が渡るたびに中身（伏せて 300 字まで）と添付の数を 1 つ積む。
+届けるときは、まだ届けていない出来事を全部載せて 1 通にし、届いた分だけ消す。依頼元を起こすのは回の終わりだけで、人の指示だけでは起こさない（次の回の終わりの通知に載る）。
+人の発言は、子に**渡った**時に子の会話の sidecar の台帳（`deliveries`）に載せ、載った時だけ出来事を積み、タスクの行の `humanInstructions`（累計。画面と試験が使い、知らせの文には載せない）を 1 つ増やす。受け付けただけで取り消した送信待ちと、同じ `messageId` の送り直しは積まない。親の AI の `ply_task_send`・「戻す」の続き・「再開」は人の指示ではない（台帳には `by: ai` / `handoff` で載り、名札の見分けに使う）。
 
 止まった子が外から起きたとき（[ADR 0352](adr/0352-delegated-child-wake-notifies.md)）は、誰が起こしたかに関係なく、タスクを running → completed と動かし、最新の返答を結果にして依頼元へ知らせる。
 入口は、人が子へ直接送る（`byHuman`）・Chrome を「戻す」の続き（`continueAfterHandoff`。`byHandoff`）・「再開」（`resumeWritableSession`。`byResume`）・別の会話からの送信（`sessions.send`）・送信予定。
 どれも送信待ち（outbox）の `start` から `agentTasks.external` に渡り、ターンが受け付けられた直後に行を `running` にする（片付いた作業場所はターンの前に作り直す）。
 タスクの回が走っていればその回に合流し、回は合流したターンと送信待ちの次のターンが終わるまで締めない（`closeRun`）。1 回止まったら 1 回知らせる。
-知らせには、振り分けの行の後にきっかけの 1 行を足す（`agent:delegation.noticeWake`。「再び動いたきっかけ: 依頼元の追加の指示／人の指示 N 件／Chrome を戻した続き／再開／別の会話からの送信」）。最初の回には付けない。
-Chrome を戻した続きは、子の会話の名札を「Chrome を戻した続き」（`sentByHandoff`）にし、人の指示には数えない。ホストに任せた子（根）は対象外。試験は `tests/unit/server-task-wake.mjs`・`tests/unit/server-chrome-handoff-wake.mjs`・`tests/unit/server-worktree.mjs`。
+きっかけは、出来事の一覧のその回の行に「（きっかけ：依頼元の追加の指示／人の指示／Chrome を戻した続き／再開／別の会話からの送信）」（`agent:delegation.eventCause`）として書く。最初の回には付けない。
+Chrome を戻した続きは、子の会話の名札を「Chrome を戻した続き」（`sentByHandoff`）にし、人の指示には数えない。ホストに任せた子（根）は対象外。試験は `tests/unit/server-task-wake.mjs`・`tests/unit/server-chrome-handoff-wake.mjs`・`tests/unit/server-worktree.mjs`・`tests/unit/agent-tasks-end-notice.mjs`。
 
 ## 追加指示の配送
 
