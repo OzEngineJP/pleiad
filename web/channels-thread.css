@@ -56,6 +56,9 @@
 .th-close{flex:none;margin-left:2px}
 /* 700px 以下の引き出しを開くハンバーガー（#openSidebar と同じ。広い画面の開閉は P の印 #sideMark が持つ） */
 .th-side{display:none}
+/* 狭い画面だけの ⋮（ToDo・通話・題の候補がこの中へ移る。下の @media） */
+.th-more{display:none}
+.menu-glyph{display:inline-grid;place-items:center;font-size:13px;line-height:1;stroke:none}
 
 /* ---- 投稿の列 */
 /* 頭の ✦（題の候補）。考えている間は弱い字 */
@@ -130,11 +133,13 @@
 .bg-bot{display:flex;align-items:center;gap:6px}
 .th-jump{bottom:calc(var(--ch-composer-h,96px) + 56px)}
 
-/* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は目次と ✕ だけ（ブラウザーは Chats と同じく狭い幅では出さない） */
+/* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は検索の虫眼鏡と ⋮ と ✕ だけ
+   （ToDo・通話・題の候補 ✦ は ⋮ のメニューへ。ブラウザーは Chats と同じく狭い幅では出さない。ADR 0358） */
 @media (max-width:700px){
   .th-top{padding-left:6px}
   .th-crumb{font-size:var(--fs)}
-  .th-browser{display:none}
+  .th-browser,.th-entries .th-todo,.th-entries .vc-call,.th-top .th-wand{display:none}
+  .th-more{display:inline-flex}
   .th-log,.th-frame > .th-log{padding:2px 22px 10px 6px}
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}

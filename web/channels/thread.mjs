@@ -22,6 +22,8 @@ import { penGlyph } from '../resend-band.mjs';
 import { paintUnsent } from '../outbox.mjs';
 import { createDeck } from './deck.mjs';
 import { createThreadHead } from './thread-head.mjs';
+import { conversationIcon } from '../conversation-usage.mjs';
+import { isComposingKey, isMac } from '../keyboard.mjs';
 import { createConversationNav } from '../conversation-nav-view.mjs';
 import { createConversationRail } from '../conversation-rail.mjs';
 import { createConversationToc } from '../conversation-toc.mjs';
@@ -206,6 +208,7 @@ export function createThread(host) {
     },
   });
   createConversationRail({ frame, log, thread: log, nav, narrow });
+  narrow.addEventListener('change', () => paintPlaceholder());
   const toc = createConversationToc({
     thread: log, log, nav, preview: host.filePreview, narrow, button: head.tocButton,
     // 項目: あなたの投稿 = 発言、bot・AI の投稿 = 返答、投稿の中のツールのカード = ツール
@@ -227,12 +230,55 @@ export function createThread(host) {
       return out;
     },
   });
-  // ToDo: Chats と同じ部品（web/session-todo.mjs）。スレッドの bot の会話（activeSession）のものを出す。client.mjs が host.todo で組み立てる
+  // ToDo: Chats と同じ部品（web/session-todo.mjs）。スレッドの bot の会話（activeSession）のものを出す。client.mjs が host.todo で組み立てる。
+  // 狭い画面は頭に ToDo の入口を置かず、⋮ のメニューの先頭に「ToDo · n/m 完了」を出す（未確認の変更は ⋮ の点で知らせる）
   const todo = host.todo?.({
-    host: root, header: head.el, entry: head.todoButton, narrow,
+    host: root, header: head.el, entry: head.todoButton, narrow, moreButton: head.moreButton, onChange: () => paintMore(),
     openTask: (taskId) => { todo.close(); host.background?.open(scope, `t:${taskId}`); },
   });
   const syncTodo = () => todo?.load(S.threadId && S.ready ? activeSession() : null);
+
+  // 狭い画面だけの ⋮（広い画面は CSS が隠す）。先頭が ToDo、次が通話（使えるとき）、その次が題の候補（✦ と同じ）
+  function paintMore() {
+    const button = head.moreButton;
+    const changed = Boolean(todo?.hasUnseen());
+    const dot = button.querySelector('.entry-dot');
+    if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
+    else if (!changed) dot?.remove();
+    button.setAttribute('aria-label', changed ? `${t('session.more')} · ${t('todo.unseen')}` : t('session.more'));
+  }
+  head.moreButton.onclick = () => {
+    const call = head.el.querySelector('.vc-call');
+    const items = [];
+    if (todo?.sessionId()) {
+      items.push({ label: todo.label(), icon: conversationIcon('todo'), hint: todo.hasUnseen() ? () => el('span', 'hint todo-menu-dot') : null, onClick: () => todo.open() });
+    }
+    if (call && !call.hidden) {
+      const icon = call.querySelector('.vc-ci svg')?.cloneNode(true);
+      icon?.setAttribute('class', 'conversation-menu-icon');
+      items.push({ label: call.getAttribute('aria-label') ?? '', icon, onClick: () => call.click() });
+    }
+    if (head.canSuggest()) {
+      const glyph = el('span', 'conversation-menu-icon menu-glyph', '✦');
+      glyph.setAttribute('aria-hidden', 'true');
+      items.push({ label: t('session.titleWand'), icon: glyph, onClick: () => head.suggest() });
+    }
+    const r = head.moreButton.getBoundingClientRect();
+    host.showMenu(r.right, r.bottom + 4, items, null, { alignRight: true });
+  };
+
+  // Ctrl+F（macOS は ⌘F）: スレッドを見ている間は、虫眼鏡と同じ面（目次と検索）を開いて検索欄へ。Chats の会話の Ctrl+F より先に受ける
+  document.addEventListener('keydown', (event) => {
+    const mac = isMac();
+    if (event.defaultPrevented || isComposingKey(event) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f'
+      || (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey)) return;
+    if (!watching() || !S.threadId || !S.ready || document.body.classList.contains('settings') || document.querySelector('dialog[open]')) return;
+    const field = event.target;
+    // 入力欄（このスレッドの返信欄）と目次の検索欄では奪う。ほかの入力要素の中では奪わない
+    if ((field.matches?.('input,textarea') || field.isContentEditable) && !(root.contains(field) && !field.closest?.('.th-title-input')) && !field.closest?.('.toc')) return;
+    event.preventDefault();
+    toc.focusSearch();
+  }, true);
 
   // 既読: スレッドを見ていて末尾にいる間は、返信までチャンネルの既読を進める（流れの既読は流れの投稿だけを見るので、スレッドの返信が未読のまま残らないように）
   let readTimer = null, readSent = 0;
@@ -302,6 +348,8 @@ export function createThread(host) {
   }
   function paintPlaceholder() {
     voiceView?.refresh();
+    // 狭い画面は短く「スレッドに返信」だけ（宛先は入力欄の下のチップが示す）
+    if (window.matchMedia?.('(max-width: 700px)').matches) { composer.setPlaceholder(t('channels:thread.composer.placeholder')); composer.refresh(); return; }
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;

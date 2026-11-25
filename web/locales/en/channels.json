@@ -174,7 +174,6 @@
     "replies_other": "{{count}} replies",
     "noReplies": "No replies yet",
     "entry": {
-      "toc": "Outline of this thread",
       "browser": "Browser"
     },
     "composer": {

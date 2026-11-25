@@ -3,6 +3,7 @@
 //   - スレッドの頭の ToDo の入口は、そのスレッドの bot の会話ができてから出る。件数は入口の名前に出て、押すとスレッドの上に Chats と同じ浮く面が開く。
 //   - 中身はスレッドごと（別のスレッドへ移ると替わる）。bot が（ここでは操作で）ToDo を足すと、開いていなくても入口の名前の件数が変わる。
 //   - DM の頭の入口は、DM の会話（bot の dmSessionId）ができてから出る。bot ページ・ほかの面へ集計は出さない。
+//   - 狭い画面（360px）のスレッドの頭は、検索の虫眼鏡と ⋮ と ✕ だけ。ToDo は ⋮ のメニューの先頭「ToDo · n/m 完了」から、下からのシートで開く。入力欄の案内は「スレッドに返信」だけ。
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7436, token thread-deck-test):
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-deck-test AGENT_HOST_PORT=7436 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // Never run against live data（新しい置き場で。bot・チャンネル・スレッドは本物の操作で作る）。
@@ -126,5 +127,38 @@ async page => {
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await until(async () => !(await dmEntry.isVisible()), 'the DM entry goes away on a channel');
   check(await page.locator('#chFeed > .top > .ch-todo').count() === 0, 'a channel head has no ToDo entry');
+
+  // ================================================================ 狭い画面（360px）のスレッドの頭
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.locator(`#chFeed .post[data-post-id="${A.id}"] .thread-summary`).click();
+  await page.locator('#chThread .post').first().waitFor();
+  await until(async () => /\d\/\d/.test(await entry.getAttribute('aria-label')), 'the thread ToDo is loaded at 360px');
+  const shown = await page.evaluate(() => [...document.querySelectorAll('#chThread .th-top button')]
+    .filter((b) => b.getClientRects().length && !b.closest('.th-crumb')).map((b) => b.className.split(' ').find((c) => /^th-/.test(c)) ?? '').join());
+  check(shown === 'th-side,th-toc,th-more,th-close', 'at 360px the head has only ☰, search, ⋮ and ✕', shown);
+  check(await page.locator('#thPrompt').getAttribute('placeholder') === 'スレッドに返信', 'at 360px the input hint is just 「スレッドに返信」', await page.locator('#thPrompt').getAttribute('placeholder'));
+  await page.locator('#chThread .th-more').click();
+  const menu = page.locator('.pop.menu:not([hidden]):not(.context-meter-pop)');
+  await until(() => menu.isVisible(), 'the ⋮ menu opens');
+  const labels = (await menu.locator('.li .lbl').allTextContents()).map((x) => x.trim());
+  check(/^ToDo · 0\/2 完了/.test(labels[0] ?? ''), 'the first item of the ⋮ menu is 「ToDo · n/m 完了」', labels);
+  check(labels.includes('AI にタイトルを考えてもらう'), 'the ⋮ menu has the title suggestion', labels);
+  await menu.locator('.li').first().click();
+  const sheet = page.locator('#chThread > .todo-pop');
+  await until(() => sheet.isVisible(), 'the ToDo opens from the ⋮ menu');
+  const box = await sheet.boundingBox();
+  check(box && box.y + box.height >= 740 - 2 && box.width >= 340, 'at 360px the ToDo is a bottom sheet', box);
+  await page.keyboard.press('Escape');
+  await until(async () => !(await sheet.isVisible()), 'Escape closes the sheet');
+  // 虫眼鏡: 下からのシートの検索欄にカーソルが入る
+  await page.locator('#chThread .th-toc').click();
+  await until(() => page.evaluate(() => document.activeElement?.classList.contains('toc-query')), 'the cursor is in the search box');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1280, height: 820 });
+  // Ctrl+F: スレッドを見ている間は、虫眼鏡と同じ面（目次と検索）が開き、検索欄にカーソルが入る（入力欄にカーソルがあっても）
+  await page.locator('#thPrompt').click();
+  await page.keyboard.press('Control+f');
+  await until(() => page.evaluate(() => document.activeElement?.classList.contains('toc-query')), 'Ctrl+F opens the thread search with the cursor in its box');
+  results.push('Ctrl+F opens the thread search with the cursor in its box');
   return results;
 }

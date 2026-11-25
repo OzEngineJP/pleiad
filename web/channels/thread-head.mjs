@@ -1,15 +1,17 @@
-// スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に入口（目次・右の欄）と閉じる ✕。
+// スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に入口（ToDo・会話内の検索・右の欄）と閉じる ✕。
+// 狭い画面（700px 以下）の右は、検索の虫眼鏡と ⋮ と ✕ だけ。ToDo・通話・題の候補（✦）は ⋮ のメニューへ移る（ADR 0358。Chats の狭い画面の ⋮ と同じ並び）。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
-// 入口は ToDo（Chats と同じ部品。web/session-todo.mjs）・目次と検索（web/conversation-toc.mjs）・右の欄（Chats の頭と同じ開け閉め。ADR 0294）。
+// 入口は ToDo（Chats と同じ部品。web/session-todo.mjs）・会話内の検索（虫眼鏡。開く面は目次と検索の面 web/conversation-toc.mjs で、検索欄に文字を打てる）・右の欄（Chats の頭と同じ開け閉め。ADR 0294）。
 // どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
-import { shortcutLabel } from '../keyboard.mjs';
-import { closeIcon } from '../icons.mjs';
+import { shortcutLabel, shortcutAria } from '../keyboard.mjs';
+import { closeIcon, moreIcon } from '../icons.mjs';
 import { browserIcon } from '../tab-strip.mjs';
 import { TODO_ICON } from '../session-todo.mjs';
 
-const TOC_PATH = 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1';
+// 虫眼鏡（Chats の #tocEntry と同じ絵）
+const SEARCH_PATHS = ['M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z', 'M20 20l-4.3-4.3'];
 const GLOBE_PATHS = ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z'];
 
 const svgButton = (cls, label, paths) => {
@@ -46,6 +48,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   side.append(sideSvg);
   side.onclick = () => host.openSidebar?.();
 
+  let suggest = null;   // ✦ を押したときと同じ働き（狭い画面は ⋮ のメニューから呼ぶ）
   const crumb = el('div', 'th-crumb');
   const chan = el('button', 'th-chan');
   chan.type = 'button';
@@ -92,7 +95,8 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
       wand.type = 'button';
       wand.title = t('session.titleWand');
       wand.setAttribute('aria-label', t('session.titleWand'));
-      wand.onclick = async () => {
+      wand.onclick = suggest = async () => {
+        if (wand.disabled) return;
         wand.disabled = true;
         wand.classList.add('busy');
         try { const next = await suggestTitle(); if (next) edit(next); }
@@ -111,9 +115,19 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   todo.append(el('span', 'entry-dot'));
   todo.querySelector('.entry-dot').hidden = true;
 
-  const toc = svgButton('th-toc', t('channels:thread.entry.toc'), [TOC_PATH]);
+  // 会話内の検索（Chats の #tocEntry と同じ名前・同じ近道の表記）。押すと目次と検索の面が開き、検索欄にカーソルが入る
+  const toc = svgButton('th-toc', t('nav.toc.entry', { key: shortcutLabel('F') }), SEARCH_PATHS);
   toc.setAttribute('aria-expanded', 'false');
+  toc.setAttribute('aria-keyshortcuts', shortcutAria('F'));
   toc.onclick = () => onToc(toc);
+
+  // 狭い画面だけの ⋮（広い画面は CSS が隠す）。メニューの中身は thread.mjs が組む
+  const more = el('button', 'btn btn-icon th-more');
+  more.type = 'button';
+  more.title = t('session.more');
+  more.setAttribute('aria-label', t('session.more'));
+  more.setAttribute('aria-haspopup', 'menu');
+  more.innerHTML = moreIcon;
 
   const browser = svgButton('th-browser', t('channels:thread.entry.browser'), GLOBE_PATHS);
   browser.setAttribute('aria-pressed', 'false');
@@ -141,7 +155,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   close.onclick = onClose;
 
   const entries = el('div', 'th-entries');
-  entries.append(todo, toc, browser);
+  entries.append(todo, toc, browser, more);
   head.append(side, crumb, entries, close);
 
   // 右パネルの開閉に合わせて、押されている印を合わせる
@@ -153,6 +167,10 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
     el: head,
     tocButton: toc,
     todoButton: todo,
+    moreButton: more,
+    /** ✦ と同じ（題の候補を欄に入れて選ばせる）。題を変えられない頭では null */
+    suggest: () => suggest?.(),
+    canSuggest: () => Boolean(suggest),
     setTitle({ channel, home = false, title: text }) {
       // 一時チャットの頭は # を付けない（チャンネルの名前ではなく置き場の名前）
       chan.replaceChildren(...(home ? [] : [el('span', 'th-hash', '#')]), document.createTextNode(channel ?? ''));

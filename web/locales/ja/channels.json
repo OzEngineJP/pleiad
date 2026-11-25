@@ -170,7 +170,6 @@
     "replies_other": "{{count}} 件の返信",
     "noReplies": "返信はまだありません",
     "entry": {
-      "toc": "このスレッドの目次",
       "browser": "ブラウザー"
     },
     "composer": {
