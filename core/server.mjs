@@ -91,7 +91,7 @@ import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
 import { probeClaudeConnectors } from './backends/claude.mjs';
-import { logoutClaudeOwnDir, macKeychainAuthFailure, sweepClaudeOwnDirArchives } from './claude-own-dir.mjs';
+import { claudeLoginPresent, logoutClaudeOwnDir, macKeychainAuthFailure, sweepClaudeOwnDirArchives } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { shouldMarkUsageExpired } from './backends/claude-usage.mjs';
 import { claudeSdkVersion } from './claude-sdk.mjs';
@@ -577,6 +577,9 @@ const claudeAccountConnectors = createClaudeConnectorsWiring({
     try { exe = claudeExecutable(); } catch { /* 入っていない。版は null になり、オンは止まる */ }
     return { cli: exe ? await cliVersion(exe) : null, sdk: claudeSdkVersion() };
   },
+  // 試験用: AGENT_HOST_FAKE_OWN_DIR_LOGIN=file は、macOS でもキーチェーンを見ず、専用フォルダの .credentials.json の有無でログインを見る
+  // （CI の Mac には本物のログインが無い。キーチェーンの扱いそのものは claude-own-dir・claude-connectors-auth の偽の security で確かめる）
+  ...(process.env.AGENT_HOST_FAKE_OWN_DIR_LOGIN === 'file' ? { loginPresent: dir => claudeLoginPresent(dir, { platform: 'linux' }) } : {}),
 });
 const claudeConnectorsCache = createClaudeConnectorsCache({ dataDir: store.dataDir });
 async function markConnectorsLoginExpired(accountId, reason) {

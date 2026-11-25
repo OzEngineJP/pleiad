@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { claudeAccountServerEnv, seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 const require = createRequire(import.meta.url);
@@ -24,6 +24,7 @@ try {
     AGENT_HOST_AGY_BIN: 'node "' + path.join(ROOT, 'tests/lib/fake-agy.mjs') + '"',
     AGENT_HOST_CODEX_BIN: 'node "' + path.join(ROOT, 'tests/lib/fake-codex.mjs') + '"',
     AGENT_HOST_LOCALE: 'ja',
+    ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')),
   } });
   client = await open({ port: server.port, token: server.token, autoAllow: true });
   await client.cmd('authLogin', { backend: 'fake' });

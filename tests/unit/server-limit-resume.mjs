@@ -4,7 +4,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, writeSessions } from '../lib/data-store.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { claudeAccountServerEnv, seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-limit-resume';
 export const title = '上限で中断しても先回りで止めない（ADR 0352）。止まった後に送った指示も人の「再開」も、解除時刻の前に普通に送られ、まだ上限なら実際に断られてまた止まる。古い自動再開の予定と印は読まない';
@@ -16,7 +16,8 @@ export default async function (t) {
   const dataDir = path.join(scratch, 'data');
   const codexState = path.join(scratch, 'codex');
   await fs.mkdir(codexState);
-  const launch = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake,codex', AGENT_HOST_FAKE_GATE_DIR: scratch,
+  const accountEnv = await claudeAccountServerEnv(path.join(scratch, 'fake-cli'));
+  const launch = () => startServer({ env: { AGENT_HOST_BACKENDS: 'fake,codex', AGENT_HOST_FAKE_GATE_DIR: scratch, ...accountEnv,
     AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_STATE_DIR: codexState }, dataDir });
   let server = await launch();
   t.ok('fake サーバーを起動', Number.isFinite(server.port), server.tail());

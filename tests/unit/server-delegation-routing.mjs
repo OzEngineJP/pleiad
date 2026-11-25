@@ -7,7 +7,7 @@ import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
-import { seedClaudeAccount } from '../lib/claude-account-seed.mjs';
+import { claudeAccountServerEnv, seedClaudeAccount } from '../lib/claude-account-seed.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -35,7 +35,7 @@ export default async function (t) {
   const server = await startServer({ dataDir: scratch, env: {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
     FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high', AGENT_HOST_ROUTING_USAGE: 'on',
-    AGENT_HOST_OPENROUTER_API: `http://127.0.0.1:${jev.address().port}/api` } });
+    AGENT_HOST_OPENROUTER_API: `http://127.0.0.1:${jev.address().port}/api`, ...await claudeAccountServerEnv(path.join(scratch, 'fake-cli')) } });
   // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
     if (ev.type === 'permission') await api.cmd('resolvePermission', { id: ev.id, allow: true }).catch(() => {});

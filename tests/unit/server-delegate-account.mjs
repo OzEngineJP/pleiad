@@ -30,7 +30,7 @@ export default async function (t) {
   await seedClaudeAccount(scratch, 'no-token@example.com', { id: NO_TOKEN, login: false });
   const work = await seedClaudeAccount(scratch, '仕事用 work@example.com');
   const fake = await installFakeClaude(path.join(scratch, 'cli'));
-  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', FAKE_ACCOUNTS: 'off', ...fake.env, FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, CLAUDE_CONFIG_DIR: cliDir } });
+  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', FAKE_ACCOUNTS: 'off', ...fake.env, FAKE_CLAUDE_VERSION: VERIFIED_VERSIONS[0].cli, AGENT_HOST_FAKE_OWN_DIR_LOGIN: 'file', CLAUDE_CONFIG_DIR: cliDir } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const tasks = async () => c.cmd('agentTasks');
   const task = async taskId => (await tasks()).find(r => r.taskId === taskId);

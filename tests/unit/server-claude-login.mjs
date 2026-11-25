@@ -106,10 +106,13 @@ export default async function (t) {
     t.ok('ログインし直してもログイン済みのまま', (await c.cmd('claudeAccounts')).accounts.find(x => x.id === work.id)?.usageLogin === true);
 
     // 偽の CLI は版の確かめ（--version）などでも呼ばれる。ここで見るのはログインだけ
+    // macOS は取り消した新しいアカウントを片付けるとき auth logout も回す（キーチェーンの項目を CLI に消させる。ADR 0351）
     const seen = (await fs.readFile(log, 'utf8')).trim().split('\n').map(l => JSON.parse(l)).filter(s => s.args[0] === 'auth');
-    t.ok('CLI に会話用のトークンを渡さない', seen.length >= 3 && seen.every(s => !s.hasOauthToken));
-    t.ok('どれも auth login を、アカウントの設定フォルダで回す', seen.every(s => s.args.join(' ') === 'auth login --claudeai' && path.resolve(s.configDir).startsWith(path.resolve(scratch, 'claude-usage')))
-      && path.resolve(seen.at(-1).configDir) === path.resolve(usageDir));
+    const loginRuns = seen.filter(s => s.args[1] === 'login');
+    t.ok('CLI に会話用のトークンを渡さない', loginRuns.length >= 3 && seen.every(s => !s.hasOauthToken));
+    t.ok('どれも auth login を、アカウントの設定フォルダで回す', seen.every(s => ['auth login --claudeai', 'auth logout'].includes(s.args.join(' ')))
+      && loginRuns.every(s => s.args.join(' ') === 'auth login --claudeai' && path.resolve(s.configDir).startsWith(path.resolve(scratch, 'claude-usage')))
+      && path.resolve(loginRuns.at(-1).configDir) === path.resolve(usageDir), JSON.stringify(seen.map(s => ({ args: s.args, configDir: s.configDir }))));
 
     // ---- 取り消し（登録済み）
     const m4 = c.mark();
