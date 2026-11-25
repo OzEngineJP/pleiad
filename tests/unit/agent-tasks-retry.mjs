@@ -4,20 +4,18 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createAgentTasks } from '../../core/agent-tasks.mjs';
-import { agentT } from '../../core/i18n.mjs';
-import { clockText } from '../../core/limit-resume.mjs';
 import { createUpdateGate } from '../../core/update-gate.mjs';
 
 const { claimQueuedResume } = createRequire(import.meta.url)('../../desktop/lifecycle.cjs');
 export const name = 'agent-tasks-retry';
-export const title = '子の再試行の待ち（ADR 0229）: 長い・上限の待ちは waiting と回ごとに 1 回の知らせ・ply_task_wait はすぐ戻る・上限で止まった子は limit を残し、指示は解除まで走らせない';
+export const title = '子の再試行の待ち（ADR 0229）: 長い・上限の待ちは waiting と回ごとに 1 回の知らせ・ply_task_wait はすぐ戻る・上限で止まった子は limit を残し、次の指示は解除時刻の前でもふつうに走らせる（ADR 0352）';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let i = 0; i < 200; i++) { if (fn()) return; await sleep(10); } throw new Error('timeout'); }
 
 export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-retry-'));
   const NOW = Date.parse('2026-10-18T11:00:00Z');
-  let clock = NOW, retry = null, hold = null, release, runs = 0;
+  let clock = NOW, retry = null, release, runs = 0;
   let outcome = { outcome: 'ok', text: 'done' };
   const notices = [];
   const gate = createUpdateGate(), prompts = [];
@@ -37,7 +35,6 @@ export default async function(t) {
     },
     deliver: async () => 'ok',
     retrying: () => retry, deliverRetry: async (task, rt) => { notices.push({ taskId: task.taskId, since: rt.since, limit: rt.limit }); return 'ok'; },
-    held: task => task.title === 'Retry work' ? hold : null,
     canStart: () => !gate.locked, resumeQueued,
   });
   let manager = await open();
@@ -102,43 +99,39 @@ export default async function(t) {
     s = await status(task.taskId);
     t.ok('上限で止まった子は failed で、limit（解除時刻）を残す', s.status === 'failed' && s.limit?.resetsAt === resetsAt && s.limit.window === null, JSON.stringify(s));
 
-    // 解除時刻までは、積まれた指示で次の回を始めない
-    hold = { resetsAt };
+    // 解除時刻の前でも、積まれた指示はふつうに次の回を始める（先回りして待たせない。ADR 0352）。まだ上限なら、その回がまた止まるだけ
+    outcome = { outcome: 'ok', text: 'done again' };
     const sent = await manager.call('parent', 'ply_task_send', { taskId: task.taskId, message: 'continue' });
-    await tick();
-    t.ok('解除の前の ply_task_send は積むだけで走らせず、警告と limitHeld を返す', runs === 1 && sent.status === 'queued'
-      && sent.warning === agentT(undefined, 'tasks.limitHeld', { time: clockText(resetsAt) }) && sent.limitHeld?.resetsAt === new Date(resetsAt).toISOString(),
-      JSON.stringify({ runs, sent }));
-    t.ok('使用枠の解除を待つ子は更新を妨げない', gate.acquire(manager.blocksRestart(new Set())));
+    await until(() => release);
+    t.ok('上限で止まった子への ply_task_send は、解除時刻の前でも待たせず次の回を走らせる（警告・limitHeld は付けない）',
+      runs === 2 && prompts.at(-1) === 'continue' && sent.status !== 'failed' && !('warning' in sent) && !('limitHeld' in sent)
+      && (await status(task.taskId)).status === 'running', JSON.stringify({ runs, prompts, sent }));
+    release();
+    await until(() => manager.get(task.taskId).status === 'completed');
+    t.ok('通った回の結果では limit を消す', !('limit' in manager.get(task.taskId)));
+
+    // 更新ロック中は積んだ子が待機のまま残り、再起動後も待機中の子と追加指示が残る
+    t.ok('止まった子や完了した子は更新を妨げない', gate.acquire(manager.blocksRestart(new Set())));
     const queued = await manager.call('parent', 'ply_delegate', { backend: 'opencode', task: 'new work', title: 'Queued work' });
     await manager.call('parent', 'ply_task_send', { taskId: queued.taskId, message: 'additional instruction' });
-    hold = null;
     await sleep(550);
-    t.ok('更新ロック中は、今積んだ子も使用枠の待ちが解けた子も待機のまま',
-      runs === 1 && [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1));
+    t.ok('更新ロック中は、今積んだ子は待機のまま',
+      runs === 2 && manager.get(queued.taskId).status === 'queued' && manager.get(queued.taskId).pendingMessages === 1);
     await manager.close();
-    hold = { resetsAt };
     await fs.mkdir(receiptDir);
     await fs.writeFile(receipt, JSON.stringify({ requestId, action: 'restart', targetVersion: version, state: 'accepted',
       previous: { main: 'old main', server: { pid: 11 } } }));
     manager = await open(await claim(requestId));
-    t.ok('再起動後も待機中の子と追加指示が残り、使用枠の解除時刻も変わらない',
-      [task, queued].every(row => manager.get(row.taskId).status === 'queued' && manager.get(row.taskId).pendingMessages === 1)
-      && manager.get(task.taskId).limitHeld?.resetsAt === new Date(resetsAt).toISOString() && manager.restored.length === 0);
-    outcome = { outcome: 'ok', text: 'done again' };
+    t.ok('再起動後も待機中の子と追加指示が残る',
+      manager.get(queued.taskId).status === 'queued' && manager.get(queued.taskId).pendingMessages === 1 && manager.restored.length === 0);
     gate.release();
     await until(() => release);
-    t.ok('再起動後は使用枠を待たない子から走る', prompts.join(',') === 'work,new work');
+    t.ok('更新ロックが外れたら待機中の子から走る', prompts.join(',') === 'work,continue,new work');
     release();
     await until(() => prompts.includes('additional instruction') && release);
     release();
     await until(() => manager.get(queued.taskId).status === 'completed');
-    hold = null;
-    await until(() => release);
-    t.ok('解除の後は積まれた指示で次の回が走る', runs === 4 && prompts.at(-1) === 'continue');
-    release();
-    await until(() => manager.get(task.taskId).status === 'completed');
-    t.ok('通った回の結果では limit を消す', !('limit' in manager.get(task.taskId)));
+    t.ok('積まれた追加指示で次の回が走る', runs === 4 && prompts.at(-1) === 'additional instruction');
 
     await fs.writeFile(receipt, '{');
     for (const [id, label] of [[undefined, '受付記録のない停止'], [requestId, '受付記録が壊れている停止']]) {

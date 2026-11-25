@@ -2,6 +2,7 @@
 
 - 状態: 承認（2026-10-08）
 - 置き換えた: [0132](0132-limit-resume-auto-only.md)（全体）
+- 改めた: [0352](0352-no-preemptive-limit-stop.md)（解除前の時計と人の再開の断り `LIMIT_WAITING`、上限中の指示を解除時刻まで送信待ちに置く部分）
 
 ## 状況
 

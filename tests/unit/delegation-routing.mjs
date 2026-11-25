@@ -114,8 +114,11 @@ export default async function (t) {
 
   // ---- 使用量の判定
   const policy = { now: NOW, avoidPercent: 80, paceLimit: 1.2 };
-  t.ok('5 時間は線を超えても後回しにせず、100% なら使えない', judgeWindows([h5(87), week(64, 70)], policy).ok
-    && judgeWindows([h5(100), week(10, 50)], policy).reason === 'quota_full');
+  // ADR 0352: 使用量が 100% でも、先回りで「使えない」とは扱わない（追加の使用量が有効なら Claude Code は走り続ける）。止まるのは実際に断られたときだけ
+  t.ok('5 時間は線を超えても 100% でも、後回しにも拒否にもしない', judgeWindows([h5(87), week(64, 70)], policy).ok
+    && judgeWindows([h5(100), week(10, 50)], policy).ok && judgeWindows([h5(100), week(10, 50)], policy).reason === undefined);
+  t.ok('週次などが 100% でも使えない扱い（quota_full）にはせず、線以上の後回し（quota_high）のまま', judgeWindows([h5(10), week(100, 70)], policy).reason === 'quota_high'
+    && judgeWindows([h5(100), week(100, 70)], policy).reason === 'quota_high');
   t.ok('週次・モデル系統の週次・追加枠は線以上で後回し', judgeWindows([h5(10), week(80, 80)], policy).reason === 'quota_high'
     && judgeWindows([h5(10), week(80, 80, { model: 'opus' })], policy).reason === 'quota_high'
     && judgeWindows([h5(10), week(80, 80, { limitId: 'codex-extra' })], policy).reason === 'quota_high');
@@ -221,7 +224,10 @@ export default async function (t) {
   t.ok('段の候補のアカウントを選ぶとき: 週次 83% の 2 アカウントより、週次 64%・5 時間 87% の OZ を余裕ありとして選ぶ', pickFrom(softUsage) === 'oz');
   const ozFull = { ...softUsage, claude: { ...softUsage.claude, accounts: softUsage.claude.accounts.map(a =>
     a.account === 'oz' ? { ...a, windows: [h5(100), week(64, 70)] } : a) } };
-  t.ok('OZ だけ 5 時間枠が満杯なら、余裕の少ない 2 つのうち 5 時間の低いログイン中', pickFrom(ozFull) === '');
+  t.ok('OZ の 5 時間枠が 100% でも、週次に余裕があれば断らず OZ を選ぶ（5 時間の満杯で先回りしない）', pickFrom(ozFull) === 'oz');
+  const ozWeekFull = { ...softUsage, claude: { ...softUsage.claude, accounts: softUsage.claude.accounts.map(a =>
+    a.account === 'oz' ? { ...a, windows: [h5(20), week(100, 70)] } : a) } };
+  t.ok('OZ の週次が 100% なら使えない扱いにはせず後回しにし、余裕の少ない 2 つのうち 5 時間の低いログイン中', pickFrom(ozWeekFull) === '');
   const knownFirst = { claude: { ...softUsage.claude, accounts: [
     { account: 'unknown', label: 'unknown', runnable: true, windows: [] },
     { account: 'known', label: 'known', runnable: true, windows: [h5(92), week(83, 70)] },
@@ -243,27 +249,37 @@ export default async function (t) {
   ] } };
   t.ok('余裕ありのアカウントも 5 時間以外の最大使用率をペースより先に比べる', pickFrom(readyPressure) === 'lower-week');
   t.ok('段に入っていないアカウントは、空いていても選ばない', pickFrom(softUsage, ['', 'second']) === '' && pickFrom(softUsage, ['second']) === 'second');
-  t.ok('どれも使えなければ並びの先頭。段にアカウントが無ければ null', pickFrom(ozFull, ['oz']) === 'oz' && pickFrom(softUsage, []) === null);
+  const allHeld = () => ({ reason: 'recently_limited', until: NOW + HOUR });
+  t.ok('どれも使えなければ並びの先頭（上限で止まった枠だけが使えない扱い）。段にアカウントが無ければ null',
+    pickAccount({ backend: 'claude', model: 'opus', accounts: ['second', 'oz'], usage: softUsage, settings: softSettings, now: NOW, blocked: allHeld }) === 'second'
+    && pickFrom(softUsage, []) === null);
   const candidatePressure = routeAt('investigate', 'mid', { ...S1,
     codex: { ...S1.codex, windows: [week(83, 80, { limitId: 'codex' }), h5(10, { limitId: 'codex' })] },
     claude: { ...S1.claude, accounts: [{ account: '', label: 'login', runnable: true, windows: [h5(95), week(75, 80)] }] },
   }, normalizeSettings({ avoidPercent: 70, tiers: { t3: ['codex:gpt-6-sol', 'claude:sonnet'], t4: [] } }));
   t.ok('余裕が少ない候補同士でも 5 時間を除く最大使用率を優先する', target(candidatePressure) === 'claude:sonnet@main');
-  const ozOnly = routeAt('design', 'mid', ozFull, normalizeSettings({ avoidPercent: 70, tiers: { t4: ['claude@oz:opus', 'codex:gpt-6-sol'], t3: [] } }));
-  t.ok('アカウントを書いた候補が満杯なら、ほかのアカウントへは落とさず、同じ段の次の候補へ', target(ozOnly) === 'codex:gpt-6-sol'
+  // 使えない扱いは、実際に上限で断られた枠（blocked。slot-limits）だけ。使用率が 100% でも先回りでは断らない（ADR 0352）
+  const routeBlocked = (kind, difficulty, usage, s, blocked) => route({ kind, judged: { judge: DEFAULT_JUDGE, signals: byDifficulty[difficulty], probabilities: null, fallback: null }, settings: s, usage, now: NOW, blocked });
+  const claudeHeld = backend => backend === 'claude' ? { reason: 'recently_limited', until: NOW + HOUR } : null;
+  const ozOnly = routeAt('design', 'mid', ozWeekFull, normalizeSettings({ avoidPercent: 70, tiers: { t4: ['claude@oz:opus', 'codex:gpt-6-sol'], t3: [] } }));
+  t.ok('アカウントを書いた候補の週次が 100% なら後回しにし、ほかのアカウントへは落とさず、同じ段の次の余裕ありの候補へ', target(ozOnly) === 'codex:gpt-6-sol'
     && ozOnly.routing.skipped.length === 1 && ozOnly.routing.skipped[0].candidate === 'claude@oz:opus' && ozOnly.routing.skipped[0].account === 'oz'
-    && ozOnly.routing.skipped[0].accountLabel === 'oz' && ozOnly.routing.skipped[0].reason === 'quota_full' && ozOnly.routing.skipped[0].window.minutes === 300,
+    && ozOnly.routing.skipped[0].accountLabel === 'oz' && ozOnly.routing.skipped[0].reason === 'quota_high' && ozOnly.routing.skipped[0].window.minutes === 10080,
     JSON.stringify(ozOnly.routing.skipped));
+  const ozFive = routeAt('design', 'mid', ozFull, normalizeSettings({ avoidPercent: 70, tiers: { t4: ['claude@oz:opus', 'codex:gpt-6-sol'], t3: [] } }));
+  t.ok('アカウントを書いた候補の 5 時間枠が 100% でも飛ばさない（実際に断られるまで使う）', target(ozFive) === 'claude:opus@oz' && ozFive.routing.skipped.length === 0, JSON.stringify(ozFive.routing.skipped));
   const fullUsage = { ...S1, claude: { ...S1.claude, accounts: S1.claude.accounts.map(a => ({ ...a, windows: [h5(100), week(83, 70)] })) } };
-  const lower = routeAt('design', 'mid', fullUsage, softSettings);
-  t.ok('基準から上が全員 100% なら下の段の余裕ありを選ぶ', target(lower) === 'codex:gpt-6-sol'
-    && lower.routing.baseTier === 't4' && lower.routing.tier === 't3' && lower.routing.skipped.every(s => s.reason === 'quota_full'));
-  const lowerSoft = routeAt('design', 'mid', { ...fullUsage, codex: { ...S1.codex, windows: [week(92, 80, { limitId: 'codex' })] } }, softSettings);
+  const fullSoft = routeAt('design', 'mid', fullUsage, softSettings);
+  t.ok('基準の段が全員 5 時間 100%・週次が後回しの線以上でも、使えない扱いにはせず、その段で余裕の少ない候補を選ぶ', target(fullSoft).startsWith('claude:')
+    && fullSoft.routing.tier === 't4' && fullSoft.routing.selectedWithLowHeadroom?.reason === 'quota_high', JSON.stringify(fullSoft.routing));
+  const lower = routeBlocked('design', 'mid', S1, softSettings, claudeHeld);
+  t.ok('基準から上が全員、上限で止まった枠なら下の段の余裕ありを選ぶ', target(lower) === 'codex:gpt-6-sol'
+    && lower.routing.baseTier === 't4' && lower.routing.tier === 't3' && lower.routing.skipped.every(s => s.reason === 'recently_limited'), JSON.stringify(lower.routing.skipped));
+  const lowerSoft = routeBlocked('design', 'mid', { ...S1, codex: { ...S1.codex, windows: [week(92, 80, { limitId: 'codex' })] } }, softSettings, claudeHeld);
   t.ok('下の段ではその段の余裕が少ない候補を、さらに下の余裕ありより先に選ぶ', target(lowerSoft) === 'codex:gpt-6-sol'
     && lowerSoft.routing.tier === 't3' && lowerSoft.routing.selectedWithLowHeadroom.reason === 'quota_high');
-  const exhausted = routeAt('design', 'mid', { ...fullUsage, codex: { ...S1.codex, windows: [week(100, 50, { limitId: 'codex' })] },
-    antigravity: { ...S1.antigravity, windows: [h5(100, { group: 'Gemini Models' }), h5(100, { group: 'Claude and GPT models' })] } }, softSettings);
-  t.ok('見た全部の段が使えないときだけ失敗し、アカウントを持つ候補の行にはアカウントを添える', !exhausted.ok
+  const exhausted = routeBlocked('design', 'mid', S1, softSettings, allHeld);
+  t.ok('見た全部の段が上限で止まった枠のときだけ失敗し、アカウントを持つ候補の行にはアカウントを添える', !exhausted.ok
     && exhausted.routing.skipped.filter(s => s.candidate === 'claude:opus').length === 1
     && exhausted.routing.skipped.find(s => s.candidate === 'claude:opus').account === ''
     && !Object.hasOwn(exhausted.routing.skipped.find(s => s.candidate === 'codex:gpt-6-sol'), 'account')
@@ -271,25 +287,31 @@ export default async function (t) {
   const mixedUsage = { claude: { ...S1.claude, accounts: [
     { account: 'week', label: 'week', runnable: true, windows: [h5(20), week(100, 70)] },
     { account: 'five', label: 'five', runnable: true, windows: [h5(100), week(20, 70)] },
+    { account: 'both', label: 'both', runnable: true, windows: [h5(100), week(90, 70)] },
   ] } };
-  const mixed = ['claude@week:opus', 'claude@five:opus'].map(c => ({ candidate: c, check: checkCandidate(c, { usage: mixedUsage, settings: softSettings, now: NOW }) }));
-  t.ok('アカウントの候補は、そのアカウントの枠の 100% を記録する', mixed.every(m => !m.check.ok && m.check.reason === 'quota_full')
-    && mixed[0].check.window.label === 'week' && mixed[1].check.window.label === '5h' && mixed[0].check.accountLabel === 'week');
-  const reasonLines = formatSkippedCandidates(mixed.map(({ candidate, check }) => ({ candidate, tier: 't4', account: check.account, accountLabel: check.accountLabel,
+  const mixed = ['claude@week:opus', 'claude@five:opus', 'claude@both:opus'].map(c => ({ candidate: c, check: checkCandidate(c, { usage: mixedUsage, settings: softSettings, now: NOW }) }));
+  t.ok('アカウントの候補は、5 時間の 100% では後回しにせず、週次などの高い使用率だけ後回し（quota_high）にして、その枠を記録する',
+    mixed[0].check.ok && mixed[0].check.deferred === true && mixed[0].check.reason === 'quota_high'
+    && mixed[0].check.window.label === 'week' && mixed[0].check.window.usedPercent === 100 && mixed[0].check.accountLabel === 'week'
+    && mixed[1].check.ok && !mixed[1].check.deferred && !mixed[1].check.reason
+    && mixed[2].check.deferred === true && mixed[2].check.window.label === 'week' && mixed[2].check.window.usedPercent === 90, JSON.stringify(mixed.map(m => m.check)));
+  const reasonLines = formatSkippedCandidates([mixed[0], mixed[2]].map(({ candidate, check }) => ({ candidate, tier: 't4', account: check.account, accountLabel: check.accountLabel,
     reason: check.reason, window: check.window })));
-  t.ok('エラー用の候補行はアカウントごとに異なる理由と枠を全部出す', reasonLines.includes('- claude@week:opus [week] (t4): quota_full week 100%')
-    && reasonLines.includes('- claude@five:opus [five] (t4): quota_full 5h 100%'), reasonLines);
+  t.ok('エラー用の候補行はアカウントごとに異なる理由と枠を全部出す', reasonLines.includes('- claude@week:opus [week] (t4): quota_high week 100%')
+    && reasonLines.includes('- claude@both:opus [both] (t4): quota_high week 90%'), reasonLines);
   const heldLine = formatSkippedCandidates([{ candidate: 'devin:swe-2-high', tier: 't3', reason: 'recently_limited', until: '2026-10-21T07:36:12.346Z' }]);
   t.ok('上限で止まった枠の候補行には、戻す時刻（until）を添える（Issue #111）', heldLine.includes('- devin:swe-2-high (t3): recently_limited until 2026-10-21T07:36:12.346Z'), heldLine);
   const perAccountStates = candidateStates({ settings: softSettings, usage: fullUsage, now: NOW }).find(s => s.candidate === 'claude:opus');
   t.ok('設定の状態: アカウントを登録したエージェントの書かない候補は、ログイン中のアカウントの使えるか・理由と枠だけ', perAccountStates.scoped === true
-    && perAccountStates.account === '' && perAccountStates.accountLabel === 'login' && !perAccountStates.usable && perAccountStates.reason === 'quota_full'
-    && perAccountStates.window.usedPercent === 100 && !Object.hasOwn(perAccountStates, 'accounts'), JSON.stringify(perAccountStates));
+    && perAccountStates.account === '' && perAccountStates.accountLabel === 'login' && perAccountStates.usable && perAccountStates.deferred === true && perAccountStates.reason === 'quota_high'
+    && perAccountStates.window.usedPercent === 83 && !Object.hasOwn(perAccountStates, 'accounts'), JSON.stringify(perAccountStates));
+  const heldStates = candidateStates({ settings: softSettings, usage: S1, now: NOW, blocked: allHeld }).find(s => s.candidate === 'claude:opus');
+  t.ok('設定の状態: 上限で止まった枠は使えないとして、戻す時刻（until）を添える', !heldStates.usable && heldStates.reason === 'recently_limited' && heldStates.until === new Date(NOW + HOUR).toISOString(), JSON.stringify(heldStates));
   const retryOz = checkCandidate('claude@acct-oz:opus', { usage: S1, settings: softSettings, now: NOW });
   t.ok('やり直しは候補の id でアカウントを選び、そのアカウントの判定で記録する', retryOz.ok && retryOz.account === 'acct-oz'
     && (r => r.target.backend === 'claude' && r.target.model === 'opus' && r.target.account === 'acct-oz' && r.target.accountLabel === 'acct-oz')(
       manualRouting({ kind: 'design', candidate: 'claude@acct-oz:opus', check: retryOz, of: 'old', from: null })));
-  t.ok('使えないアカウントや登録に無いアカウントの候補は選べない', !checkCandidate('claude:opus', { usage: fullUsage, settings: softSettings, now: NOW }).ok
+  t.ok('上限で止まったアカウントや登録に無いアカウントの候補は選べない', !checkCandidate('claude:opus', { usage: S1, settings: softSettings, now: NOW, blocked: allHeld }).ok
     && checkCandidate('claude@missing:opus', { usage: S1, settings: softSettings, now: NOW }).detail === 'no_account');
   const loginOnly = { claude: { ...S1.claude, accountable: true, accounts: undefined, windows: [h5(10), week(10, 70)] } };
   t.ok('アカウントの登録が無いエージェントは、書かない候補をログイン中で使い、アカウントを書いた候補は no_account', checkCandidate('claude:opus', { usage: loginOnly, settings: softSettings, now: NOW }).account === ''
@@ -320,8 +342,9 @@ export default async function (t) {
     && !sameIdentity(same, { org: 'org-2', email: 'me@example.com' }) && !sameIdentity(same, { org: 'org-1', email: 'x@example.com' }));
   t.ok('メールか組織が分からなければ同じ人とみなさない', !sameIdentity({ org: 'org-1', email: null }, { org: 'org-1', email: null })
     && !sameIdentity(null, same) && !sameIdentity({ org: null, email: 'me@example.com' }, same));
-  t.ok('同じ人でも別の候補として別々に判定する（まとめない）', check('claude@a:opus', [acc('', [h5(100)], same), acc('a', [h5(10), week(10, 50)], same)]).ok
-    && !check('claude:opus', [acc('', [h5(100)], same), acc('a', [h5(10), week(10, 50)], same)]).ok);
+  const sameAccounts = [acc('', [h5(10), week(100, 50)], same), acc('a', [h5(10), week(10, 50)], same)];
+  t.ok('同じ人でも別の候補として別々に判定する（まとめない）', (r => r.ok && !r.deferred)(check('claude@a:opus', sameAccounts))
+    && check('claude:opus', sameAccounts).deferred === true);
   t.ok('登録が無い（accounts が無い）ときはログイン中のアカウント（\'\'）', checkCandidate('claude:haiku', { usage: { claude: { available: true, accountable: true, checkedAt: NOW, windows: [h5(1), week(1, 50)], models: ALL_MODELS.claude } }, settings, now: NOW }).account === '');
 
   // ---- 固定・画面用の一覧

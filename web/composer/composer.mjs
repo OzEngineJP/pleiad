@@ -22,7 +22,7 @@ export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', '
   'contextStripStatus', 'contextStripText', 'workEntry', 'workEntryButton', 'outbox', 'nextSettings', 'nextSettingsText', 'nextSettingsBehind',
   'nextHandoff', 'applySettings', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'shellHead', 'prompt', 'composerBusy',
   'composerBusyText', 'slashHint', 'draftFail', 'draftFailText', 'draftFailRetry', 'attach', 'fileIn', 'cwdChip', 'draftSaved', 'armedChip', 'armedText',
-  'armedRemove', 'modelChip', 'abort', 'resume', 'resumeLabel', 'resumeShort', 'send', 'sendMore', 'resumeNote', 'armedNote', 'cwdPop',
+  'armedRemove', 'modelChip', 'abort', 'resume', 'resumeLabel', 'send', 'sendMore', 'resumeNote', 'armedNote', 'cwdPop',
   'modelPop', 'sendPop', 'sendVeil'];
 
 /** 役割 → id（頭が空なら今の Chats の id） */

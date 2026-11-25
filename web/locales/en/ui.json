@@ -3817,7 +3817,6 @@
     "waitReply": "Waiting to be sent — sends automatically when the current reply finishes",
     "waitOrder": "Waiting to be sent — sends after the previous message is sent",
     "preparing": "Preparing to send",
-    "waitLimit": "Waiting to be sent — sends after the limit resets at {{time}}",
     "unknownHint": "Check the conversation. Resending may deliver the same instruction twice.",
     "retry": "Resend",
     "cancel": "Cancel"
@@ -4693,9 +4692,6 @@
       "auth": "Stopped because the login expired"
     },
     "resume": "Resume",
-    "unknownTime": "unknown reset time",
-    "limitSendNote": "Sending will continue with this instruction after the limit resets at {{time}}",
-    "limitReleaseAt": "Resets at {{time}}",
     "limitResetAt": "Resets at {{time}}",
     "limitResetUnknown": "The reset time is unknown",
     "limitHead": "{{line}} ({{scope}})",
@@ -5310,8 +5306,7 @@
       "sent": "Handed to the AI",
       "pending": "Waiting to slip in · handed over at the next break",
       "queued": "Queued · sent when this work finishes",
-      "queuedOrder": "Queued · sent after the earlier message",
-      "queuedLimit": "Queued · sent when the limit lifts"
+      "queuedOrder": "Queued · sent after the earlier message"
     },
     "openSettings": "Open settings",
     "hint": {

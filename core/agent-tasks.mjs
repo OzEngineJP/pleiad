@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 import { t, agentT } from './i18n.mjs';
 import { observeCommand, pauseCommands, commandElapsed, commandView, isWaitingCommand, commandKey, outputMoving, OUTPUT_MOVING_MS } from './task-commands.mjs';
 import { taskTitle } from './task-title.mjs';
-import { clockText } from './limit-resume.mjs';
 import { openData } from './data-schema.mjs';
 import { taskTable } from './db.mjs';
 import { REMOTE_TASK_FIELDS } from './remote/agent-protocol.mjs';
@@ -141,8 +140,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 無ければ null。長い・上限による待ちは status: waiting にし（ply_task_wait を待たずに返す）、待ちの回ごとに 1 回 deliverRetry で依頼元へ知らせる
   retrying = () => null, deliverRetry = async () => 'ok',
   deliverLimitSwitch = async () => 'ok',
-  // 上限で止まった子の会話の、解除時刻までの待ち（{ resetsAt } か null）。待っている間は、積まれた指示（ply_task_send）で次の回を始めない
-  held = () => null,
   canStart = () => true, resumeQueued = false,
   now = Date.now, silenceMinutes = Number(process.env.AGENT_HOST_TASK_SILENCE_MINUTES ?? 5),
   commandMinutes = Number(process.env.AGENT_HOST_TASK_COMMAND_MINUTES ?? 5),
@@ -178,7 +175,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const retryOf = r => !r.host && r.status === 'running' && r.sessionId ? retrying(r.sessionId) ?? null : null;
   const longRetry = rt => Boolean(rt) && (rt.limit || !Number.isFinite(rt.next) || rt.next - (rt.seenAt ?? rt.since ?? now()) >= RETRY_WAIT_MS);
   const retryWaitOf = r => { const rt = retryOf(r); return longRetry(rt) ? rt : null; };
-  const heldOf = r => !r.host && r.sessionId && r.status === 'queued' ? held(structuredClone(r)) ?? null : null;
   // 再試行を待っている子（retryWaitOf）も待っているものに数える（人の承認ではないが、待つ相手が子の外にある。ADR 0229）
   const waitingOf = r => r.host ? r.hostWaiting === true || remoteWaiting(r) : waiting(r.sessionId) || Boolean(retryWaitOf(r));
   const lockWaitingOf = r => r.host ? r.hostLockWaiting === true : lockWaiting(r.sessionId);
@@ -355,12 +351,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // 子が返答を終えて裏の作業だけを待っている間は、待っているものと経過分数を見せる（ADR 0170）
     const bg = r.status === 'running' ? backgroundOf(r) : null;
     // 古いホストの便り（活動の写しが無い）では写しに null が入る。分割代入の既定値は null に効かないので ?? で受ける
-    // 再試行の待ち（ADR 0229）と、上限で止まった子の解除時刻までの待ち。依頼元が待つか、止めて別の委譲先に任せ直すかを決める材料
-    const rt = retryOf(r), hold = heldOf(r);
+    // 再試行の待ち（ADR 0229）。依頼元が待つか、止めて別の委譲先に任せ直すかを決める材料
+    const rt = retryOf(r);
     const iso = v => Number.isFinite(v) ? new Date(v).toISOString() : null;
     return { ...rest, activeCommands: (activeCommands ?? []).map(c => commandView(c, now())),
       ...(rt ? { retryWaiting: { attempt: rt.attempt ?? null, nextAt: iso(rt.next), reason: rt.reason ?? null, message: rt.message ?? '', limit: Boolean(rt.limit) } } : {}),
-      ...(hold ? { limitHeld: { resetsAt: iso(hold.resetsAt) } } : {}),
       ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaitingOf(r) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
       rejections, pendingMessages: r.host ? (r.hostPendingMessages ?? 0) : instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
@@ -960,8 +955,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           else spawn(notifyRetry(r, rt).catch(e => report({ event: 'unexpected', operation: 'retry', taskId: r.taskId, code: e?.code ?? null })));
         }
       } else { silenceWaiting.delete(r.taskId); if (!ACTIVE.has(r.status)) retryNoticed.delete(r.taskId); }
-      // 上限で止まった子へ積まれた指示は、解除時刻まで走らせない（走らせても同じ上限で止まる。ADR 0229）
-      if (r.status === 'queued' && !live.has(r.taskId) && !heldOf(r)) {
+      if (r.status === 'queued' && !live.has(r.taskId)) {
         const ac = new AbortController(); live.set(r.taskId, ac);
         spawn(run(r, ac).catch(e => { live.delete(r.taskId); report({ event: 'unexpected', operation: 'run', taskId: r.taskId, code: e?.code ?? null }); }));
       }
@@ -1398,9 +1392,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const out = { ...view(r), instruction: structuredClone(instruction) };
         // 渡ったか分からない指示は送り直さない。依頼元のエージェントには、確かめるよう一言添える
         if (steered?.has(instructionId)) return { ...out, warning: agentT(locale, 'tasks.steerUnknown') };
-        // 上限で止まった子は、解除時刻まで指示を走らせない。待つか、止めて別の委譲先に任せ直すかを選べるよう伝える
-        const hold = heldOf(r);
-        if (hold) return { ...out, warning: agentT(locale, 'tasks.limitHeld', { time: clockText(hold.resetsAt) }) };
         return out;
       }
       if (name === 'ply_task_cancel') {

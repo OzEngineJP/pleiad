@@ -74,9 +74,14 @@ export default async function (t) {
       && done.backend === 'fake' && done.model === 'fast' && done.sessionId === oldChild && done.result.includes('limit-no-reply'),
       JSON.stringify({ s: done?.status, b: done?.backend }));
     const attempts = done?.routing?.attempts ?? [];
-    t.ok('routing.attempts に、断られた回（委譲先・会話・limited）が残る', attempts.length === 1
+    // fake-agy の使用量は Claude 系の 5 時間枠が残り 0 だが、使用率だけでは先に断らない（ADR 0352）。上の段の Claude 系も一度試し、
+    // 実際に断られてから次の候補（fake:fast）へ移る。断られた回は順に残り、使用率を理由にした除外（quota_full）は残らない
+    t.ok('routing.attempts に、断られた回（委譲先・会話・limited）が順に残る', attempts.length === 2
       && attempts[0].target?.backend === 'antigravity' && attempts[0].target?.model === 'gemini-3.8-flash-high'
-      && attempts[0].sessionId === oldChild && attempts[0].outcome === 'limited' && attempts[0].continued, JSON.stringify(attempts));
+      && attempts[1].target?.backend === 'antigravity' && attempts[1].target?.model === 'claude-opus-4-6-thinking'
+      && attempts.every(a => a.sessionId === oldChild && a.outcome === 'limited' && a.continued), JSON.stringify(attempts));
+    t.ok('使用率が 100% の枠を、quota_full で先に除かない', !(done?.routing?.skipped ?? []).some(x => x.reason === 'quota_full'),
+      JSON.stringify(done?.routing?.skipped));
     t.ok('振り分けは、止まった候補を recently_limited で飛ばした記録を持つ',
       (done?.routing?.skipped ?? []).some(x => x.candidate === 'antigravity:gemini-3.8-flash-high' && x.reason === 'recently_limited'),
       JSON.stringify(done?.routing?.skipped));
