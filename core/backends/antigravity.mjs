@@ -31,7 +31,8 @@ import { undelivered } from "./undelivered.mjs";
 import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 // antigravity-suggest.mjs（使い捨てホームで候補を作る）は、内部呼出しを分離して呼べる保証が無いため使わない（Issue #180）
-import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
+import { commandLabel, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
+import { killTree, listProcesses } from "../process-tree.mjs";
 import { t, agentT } from "../i18n.mjs";
 import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
 import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
