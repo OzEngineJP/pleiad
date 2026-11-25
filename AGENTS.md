@@ -13,7 +13,7 @@
 - 始める前に `git status --short --branch` と `git worktree list` を見る。既存の未コミット変更・他のブランチと worktree には触れない（stash・破棄・上書きしない）。
 - 最新の `main` から作業ごとにブランチと worktree を作る: `git worktree add -b fix/<作業名> <メインの作業ディレクトリ>/temporary/worktrees/<作業名> main`。実装・試験・コミットは worktree の中で行い、依頼に要る変更だけを、対象を明示してステージする。
 - `node_modules` は、依存が `main` と同じなら PowerShell の `cmd /c mklink /J <worktree>\node_modules <メイン>\node_modules` で足りる。**`git worktree remove` の前に `cmd /c rmdir <worktree>\node_modules` で外す**（外さずに remove するとメイン側の中身まで消える）。electron-builder でパッケージを作るときだけ `npm ci`。
-- 検証が通ったらコミットし、メインの作業ディレクトリで `main` にマージする（都度の確認は要らない）。直前に `main` が進んでいれば worktree に取り込んで検証し直す。意図の分からない競合はユーザーに聞く。push はユーザーに頼まれたときだけ。
+- 検証が通ったらコミットする。worktree のブランチを `main` に取り込むのは push する直前にし、取り込んだまま push せずに置かない（別の会話が `main` から版を上げると、確認前の変更が一緒に公開される）。直前に `main` が進んでいれば worktree に取り込んで検証し直す。意図の分からない競合はユーザーに聞く。push はユーザーに頼まれたときだけ。
 - 終わったら worktree を `git worktree remove`、ブランチを `git branch -d` で消す（強制しない）。報告は、変更・検証結果・コミット・main への反映・サーバーの状態と、残った手順とその理由。
 
 ## 構成
@@ -50,7 +50,7 @@ core/（サーバー。backends/ はエージェント 1 種類 1 ファイル�
 
 - 書くのは ADR 0001「ADR が要るとき」に当たり、理由を残さないと同じ議論をやり直すものだけ。実装の修正・既存の決まりの範囲の手直し・調査の経過には書かない。
 - `承認` にするのはユーザーの承認を受けたときだけ。living doc は今の形だけを書き、理由は ADR を指す。
-- 長く並行するブランチの ADR は、main を取り込む前に、main の最大の次から番号を振り直し、`docs/adr/` に無いリンクを grep で確かめる。
+- 長く並行するブランチの ADR は、`main` を取り込む前に、`main` の最大の次から番号を振り直し、`docs/adr/` に無いリンクを grep で確かめる。番号は `main` に取り込む直前に `origin/main` の最新を見て決め直す（重なったら付け直す）。
 
 ## サーバーの起動と確認
 

@@ -478,4 +478,17 @@ export default async function (t) {
     const nodeOf = job => job.steps.find(s => String(s.uses).startsWith('actions/setup-node'))?.with?.['node-version'];
     t.ok('release の Node は test.yml の Windows の脚と同じ版', [windows, releaseTests].every(job => String(nodeOf(job)) === String(winNode)), `${nodeOf(windows)} / ${nodeOf(releaseTests)} / ${winNode}`);
   }
+
+  {
+    const entries = await fs.readdir(path.join(ROOT, 'docs', 'adr'), { withFileTypes: true });
+    const byNumber = new Map();
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const match = /^(\d{4})-/.exec(entry.name);
+      if (!match) continue;
+      byNumber.set(match[1], [...(byNumber.get(match[1]) ?? []), entry.name]);
+    }
+    const duplicated = [...byNumber].filter(([, files]) => files.length > 1);
+    t.ok('docs/adr に同じ 4 桁の番号のファイルは 2 つ以上無い', duplicated.length === 0, duplicated.map(([number, files]) => `${number}: ${files.join(', ')}`).join(' / '));
+  }
 }
