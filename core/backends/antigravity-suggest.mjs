@@ -130,6 +130,8 @@ async function once({ prompt, model = null, signal, dir, command = cliCommand('a
       });
       child.stderr.resume();
       child.on('error', (error) => { failed = String(error?.message ?? error); resolve(); });
+      // 子が先に終わったときの書き込みの失敗（EPIPE）は stdin の 'error' で来る。受け手が無いとサーバーごと落ちるので、失敗にして止める
+      child.stdin.on('error', (error) => { failed ??= String(error?.message ?? error); stop(); });
       child.on('close', () => resolve());
     });
     child.stdin.write(JSON.stringify({ event: 'user', message: { content: String(prompt ?? '') } }) + NL);

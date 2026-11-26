@@ -10,6 +10,7 @@
 //   test/release   { result }  保留していた thread/start に result で応答する
 //   test/terminals { pages }  thread/backgroundTerminals/list の応答を順に積む（尽きたら thread not found）
 //   test/oldCodex  { on }     backgroundTerminals を持たない古い版（0.147.0）のふりをする
+//   test/exit                 応答を書き終えてから終わる（親が exit を受ける前に書くと EPIPE になる）
 //
 // thread/start は test/release まで応答しない（応答待ちの隙間に frame を差し込むため）。
 // turn/start は turn id を即答する。ほかの method は {} を返す。
@@ -73,6 +74,9 @@ function handle(msg) {
       if (id !== undefined) reply(id, p.result);
       return reply(msg.id, { released: id !== undefined });
     }
+    // 応答を書き終えてから終わる（子が閉じる瞬間と親の書き込みが競る場面。親が exit を受ける前に書くと EPIPE になる）
+    case "test/exit":
+      return void process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + NL, () => process.exit(0));
     case "thread/start": return void pendingStarts.push(msg.id);
     case "turn/start": {
       const id = `tn_scripted_${turns.length + 1}`;

@@ -260,13 +260,14 @@ export class CodexRpc {
       this.buf = "";
       this.stderr = [];
 
-      const die = (why) => {
+      // error: 理由の誤り（省けば「落ちた」の誤りを作る）
+      const die = (why, error = null) => {
         if (this.proc !== proc) return;
         this.proc = null;
         this.ready = null;
         this.heldChannel?.dispose();
         this.heldChannel = null;
-        const err = new Error(t("codex.errors.appServerDied", { why }) + (this.stderr.length ? NL + this.stderr.join("") : ""));
+        const err = error ?? new Error(t("codex.errors.appServerDied", { why }) + (this.stderr.length ? NL + this.stderr.join("") : ""));
         // 待っている request を必ず片付ける。ここを握り潰すと runTurn が返らない
         for (const [, p] of [...this.pending]) p.reject(err);
         this.pending.clear();
@@ -299,6 +300,17 @@ export class CodexRpc {
         });
         proc.on("exit", (code, sig) => die(`exit=${code} signal=${sig}`));
         proc.on("error", (err) => die(String(err?.message ?? err)));
+        // パイプの失敗（子が終わる・入力を閉じる瞬間の書き込みの EPIPE など）は stream の 'error' で後から来る。受け手が無いと
+        // Node が例外として投げてサーバーごと落ちる。落ちたときと同じに片付け（待っている依頼は「つながっていない」で失敗にする）、
+        // 入力の壊れた子は止める（次の依頼で起こし直す）。ACP の子（acp-client.mjs）と同じ受け方
+        const broken = (error) => {
+          if (this.proc !== proc) return;
+          die(String(error?.message ?? error), new Error(t("codex.errors.notConnected"), { cause: error }));
+          try { proc.kill(); } catch {}
+        };
+        proc.stdin.on("error", broken);
+        proc.stdout.on("error", broken);
+        proc.stderr.on("error", broken);
       }
       for (const fn of [...this.starts]) { try { fn(held); } catch {} }
       // 付け直した子は initialize 済み（段階 0: 2 回目の initialize は Already initialized を返すだけ。送らない）

@@ -83,6 +83,8 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
       } else {
         const child=spawnCli(argv,args,{env:childEnv,stdio:['pipe','pipe','pipe']});
         proc=child;
+        // stdin は止めるときに閉じるだけ。子が先に終わっていたときの閉じの失敗（EPIPE）を未処理の例外にしない（終わりは exit で届く）
+        child.stdin.on('error',()=>{});
         // Provider stderr is private; report startup status without echoing it.
         child.stderr.on('data',()=>{});
         base=await new Promise((resolve,reject)=>{
