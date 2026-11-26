@@ -166,6 +166,8 @@ export function pipeSpawner() {
     let exited = false;
     const data = chunk => { for (const fn of dataFns) fn(String(chunk)); };
     child.stdout.on('data', data); child.stderr.on('data', data);
+    // 子が終わった後の書き込みの失敗（EPIPE）は stdin の 'error' で来る（try では拾えない）。終わりは exit で届くので、ここは捨てる
+    child.stdin.on('error', () => {});
     child.on('error', e => { if (exited) return; exited = true; for (const fn of exitFns) fn({ code: null, error: e }); });
     child.on('exit', (code, signal) => { if (exited) return; exited = true; for (const fn of exitFns) fn({ code, signal }); });
     return {

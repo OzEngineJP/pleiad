@@ -144,6 +144,18 @@ export class AgySession {
     // exit 時点では stdout の result がまだ届いていないことがある。パイプを読み切った close で判定する。
     proc.on("close", (code, sig) => die(`exit=${code} signal=${sig}`));
     proc.on("error", (err) => die(String(err?.message ?? err)));
+    if (!this.held) {
+      // 子が終わる・入力を閉じる瞬間の書き込みの失敗（EPIPE）は stdin の 'error' で後から来る。受け手が無いとサーバーごと落ちる。
+      // 落ちたときと同じに扱い、入力の壊れた子は止める（codex-rpc.mjs・devin-acp.mjs と同じ受け方）
+      const broken = (err) => {
+        if (this.proc !== proc) return;
+        die(String(err?.message ?? err));
+        try { proc.kill(); } catch {}
+      };
+      proc.stdin.on("error", broken);
+      proc.stdout.on("error", broken);
+      proc.stderr.on("error", broken);
+    }
     // 片付けはプロセスが本当に終わってから（kill() の後でも exit は来る。die は来ない）
     proc.once("exit", () => this.#gone());
     proc.once("error", () => { if (proc.exitCode === null && !proc.pid) this.#gone(); });
