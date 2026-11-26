@@ -735,10 +735,14 @@ async function runAcp() {
     }),
     authenticate: async (params) => {
       if (!ACP_AUTH_METHODS.some((m) => m.id === params.methodId)) throw acpError(-32602, `Unknown auth method: ${params.methodId}`);
-      // ブラウザーでのログインを待つ再現（本物は開けなかったとき stderr に URL を出す）。FAKE_AGY_AUTH_HOLD_MS ミリ秒止まる
-      if (process.env.FAKE_AGY_AUTH_HOLD_MS) {
+      // ブラウザーでのログインを待つ再現（本物は開けなかったとき stderr に URL を出す）。FAKE_AGY_AUTH_HOLD_MS ミリ秒止まる。
+      // FAKE_AGY_AUTH_RELEASE_FILE は、時間でなく「そのファイルができるまで」止まる（ブラウザーでのログインを済ませた、の合図。
+      // ［やめる］が先に届くかを時間の競争にしない試験向け）
+      const releaseFile = process.env.FAKE_AGY_AUTH_RELEASE_FILE;
+      if (process.env.FAKE_AGY_AUTH_HOLD_MS || releaseFile) {
         process.stderr.write('Could not open the browser. Please visit https://accounts.example.invalid/o/oauth2/auth?state=fake to sign in' + NL);
-        await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_AUTH_HOLD_MS)));
+        if (releaseFile) { while (!fs.existsSync(releaseFile)) await new Promise((r) => setTimeout(r, 50)); }
+        else await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_AUTH_HOLD_MS)));
       }
       // agy がログインを断る再現（実機 1.5.17: 会社のアカウントを oauth-business で入れると -32603 で Enterprise の契約が無いと返す）
       if (process.env.FAKE_AGY_AUTH_REFUSE) throw acpError(-32603, process.env.FAKE_AGY_AUTH_REFUSE);

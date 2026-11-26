@@ -419,12 +419,14 @@ export async function deleteRefs(root, refs, options = {}) {
  * この時間切れは場所の休みに数えない（counts: false）。全体の時間は CLEANUP_BUDGET_MS まで。
  * 読めなかった・消せなかった（場所が BUSY・REST のとき、時間切れ、git が断った、時間の上限）ときは null。そこまでに消した分は戻らないので、
  * 呼び出し側があとでもう 1 回呼べば、残りだけ（for-each-ref で数え直す）から続く。消した数（0 を含む）を返せたら全部済み。
- * 同じ ref が 1 本も無ければ、for-each-ref 1 回で済む
+ * 同じ ref が 1 本も無ければ、for-each-ref 1 回で済む。
+ * timeout は削除（update-ref）1 回ごとの上限、listTimeout は一覧の読み（for-each-ref）の上限（既定は timeout と同じ。
+ * 試験が「削除だけを時間切れにする」ときに、一覧の読みまで短い上限に巻き込まないため）
  */
-export async function dropTurnRefs(root, { chunk = CLEANUP_CHUNK, budgetMs = CLEANUP_BUDGET_MS, timeout = CLEANUP_TIMEOUT } = {}) {
+export async function dropTurnRefs(root, { chunk = CLEANUP_CHUNK, budgetMs = CLEANUP_BUDGET_MS, timeout = CLEANUP_TIMEOUT, listTimeout = timeout } = {}) {
   const cleanup = { timeout, counts: false };
   const startedAt = Date.now();
-  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX], cleanup);
+  const r = await readGit(root, ['for-each-ref', '--format=%(refname)', REF_PREFIX], { timeout: listTimeout, counts: false });
   if (!r.ok) return null;
   const refs = r.stdout.split('\n').map((s) => s.trim()).filter((ref) => ref.startsWith(REF_PREFIX));
   let removed = 0;

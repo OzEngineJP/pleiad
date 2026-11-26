@@ -288,6 +288,8 @@ const SUITES = [
   './unit/devin-usage.mjs',
   './unit/devin-grok-auth.mjs',
   './unit/server-devin.mjs',
+  './unit/server-devin-config.mjs',
+  './unit/server-devin-backend.mjs',
   './unit/server-grok.mjs',
   './unit/grok-backend.mjs',
   './unit/grok-usage.mjs',
