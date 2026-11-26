@@ -349,6 +349,7 @@
     "idPending": "会話IDはまだ確定していません",
     "parentEnded": "依頼元の会話は終了しています",
     "childDeleted": "委譲した子の会話は削除されています。続けるなら、新しく委譲してください",
+    "worktreeRenewFailed": "委譲した子の作業場所（worktree）を作り直せなかったので、元の場所では走らせずに止めました。元の場所と git の状態を確かめてください",
     "backendDisabled": "指定したバックエンドは有効ではありません",
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。model を直すか省いて、頼み直してください",
     "accountUnknown": "account_unknown: 接続先 {{account}} は登録にありません（選べるもの: {{accounts}}。ply_usage の account の値）。何も変えていません",
