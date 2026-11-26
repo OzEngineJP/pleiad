@@ -149,6 +149,6 @@ export function stubPickerGeometry() {
  * web/render.mjs を読み込む**前**に呼ぶこと（tests/run.mjs が入口で1回だけ呼ぶ）。
  */
 export function installDomStub() {
-  globalThis.document = { createElement: (t) => new N(t), createElementNS: (_ns, t) => new N(t) };
+  globalThis.document = { createElement: (t) => new N(t), createElementNS: (_ns, t) => new N(t), createTextNode: (s) => textNode(s) };
   globalThis.location = new URL("http://127.0.0.1:8787/index.html");
 }

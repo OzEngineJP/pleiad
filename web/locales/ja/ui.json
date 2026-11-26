@@ -488,6 +488,8 @@
         "removeYes": "削除する",
         "revoked": "取り消されました",
         "revokedHint": "もう一度つなぐには、相手の PC で新しいコードを作り、「PC を追加」に貼り付けます。",
+        "revokedPlusHint": "もう一度つなぐには「もう一度許可を依頼する」を押し、相手の PC に出る確認コードを見比べてから許可してもらいます。",
+        "requestApproval": "もう一度許可を依頼する",
         "agent": {
           "notAllowed": "{{host}} の Pleiad を更新すると使えます"
         },

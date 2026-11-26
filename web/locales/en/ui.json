@@ -490,6 +490,8 @@
         "removeYes": "Delete",
         "revoked": "Revoked",
         "revokedHint": "To connect again, create a new code on the other PC and paste it under \"Add PC\".",
+        "revokedPlusHint": "To connect again, press \"Ask for approval again\" and check the code shown on the other PC before it approves.",
+        "requestApproval": "Ask for approval again",
         "agent": {
           "notAllowed": "Works once {{host}}'s Pleiad is updated"
         },
