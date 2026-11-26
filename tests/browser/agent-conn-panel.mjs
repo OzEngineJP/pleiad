@@ -4,8 +4,10 @@
 //   カードの描き直し（［状態を再確認］など。renderAuth）を挟んでも、管理の面（アカウント・接続先）が枠から消えない。
 //   「開く → 閉じる → ［状態を再確認］ → 開く」と「開いたまま［状態を再確認］」の後に、枠に面の中身があり、「null」が出ず、ページの例外が無い。
 //   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode のそれぞれで確かめる。
+//   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
+//   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
-// 本物のサーバー（Claude・Codex・OpenCode の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
+// 本物のサーバー（Claude・Codex・OpenCode・Grok の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,12 +35,17 @@ fs.writeFileSync(path.join(dataDir, 'onboarding.json'), JSON.stringify({ seen: t
 fs.writeFileSync(path.join(dataDir, 'claude-accounts.json'), JSON.stringify({ version: 1, accounts: [{ id: 'acct-00000000c1a0', name: '仕事', createdAt: '2026-11-01T00:00:00.000Z' }] }));
 const home = path.join(dataDir, 'home');
 for (const d of ['.claude', '.codex']) fs.mkdirSync(path.join(home, d), { recursive: true });
+// Grok のログイン済み（偽の CLI は AGENT_HOST_GROK_HOME の auth.json があればログイン済みと答える）
+const grokHome = path.join(dataDir, 'grok-home');
+fs.mkdirSync(grokHome, { recursive: true });
+fs.writeFileSync(path.join(grokHome, 'auth.json'), '{"fixture":{"api_key":"fake"}}');
 let server, browser;
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode', AGENT_HOST_LOCALE: 'ja',
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,grok', AGENT_HOST_LOCALE: 'ja',
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
     AGENT_HOST_OPENCODE_BIN: fakeBin('fake-opencode.mjs'), AGENT_HOST_OPENCODE_DATA: ocData,
+    AGENT_HOST_GROK_BIN: fakeBin('fake-grok.mjs'), AGENT_HOST_GROK_HOME: grokHome, GROK_HOME: grokHome,
     USERPROFILE: home, HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), CODEX_HOME: path.join(home, '.codex') } });
   const url = `http://127.0.0.1:${server.port}/?token=${server.token}`;
   browser = await chromium.launch({ executablePath: chromiumPath() });
@@ -78,6 +85,17 @@ try {
       visible: !s.closest('.agent-conn').hidden };
   }), card(id));
   const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'] };
+  // Pleiad から外せるか（能力の印 logout）。外せないエージェントは［ログアウト］を出さず、端末のコマンドを案内する
+  const canLogout = { claude: true, codex: true, opencode: false, grok: true };
+  // CLI のログインのカードの操作と、外し方の案内（.conn-guide: 文・コマンド・［コピー］）
+  const cliCard = (page, id) => page.evaluate(sel => {
+    const cc = document.querySelector(`${sel} [data-conn="cli"]`);
+    const guide = cc.querySelector('.conn-guide');
+    return { actions: [...cc.querySelectorAll('.mp-card-actions button')].map(b => b.textContent.trim()),
+      logoutButtons: cc.querySelectorAll('[data-act="logout"]').length,
+      guide: guide ? { text: guide.textContent.trim(), code: guide.querySelector('code')?.textContent ?? null,
+        copy: [...guide.querySelectorAll('button')].map(b => b.textContent.trim()), mono: guide.querySelector('code') ? getComputedStyle(guide.querySelector('code')).fontFamily : null } : null };
+  }, card(id));
   const filled = (page, id, label) => slots(page, id).then(list => {
     check(list.length === expect[id].length && list.every((s, i) => s.sec === expect[id][i]), `${label}: 節が ${expect[id].join('・')}`, list);
     check(list.every(s => s.visible && s.panel), `${label}: どの枠にも面がある`, list);
@@ -144,7 +162,17 @@ try {
       check(/^(接続先 \d+|⚠ 対応が要る接続先 \d+)$/.test(s.head), `${id}: 頭の行は接続先の数`, s.head);
       check(s.headActs.join() === '状態を確認,接続先', `${id}: 頭の行のボタンは［状態を確認］［接続先］だけ`, s.headActs);
       check(s.defaults.join() === 'CLI のログイン', `${id}: 既定の印は CLI のログインの 1 か所`, s.defaults);
-      check(!s.cli.includes('既定にする') && s.cli.includes('ログアウト'), `${id}: CLI のログインのカードは［ログアウト］（既定なので［既定にする］なし）`, s.cli);
+      check(!s.cli.includes('既定にする'), `${id}: CLI のログインのカードに［既定にする］は無い（既定なので）`, s.cli);
+      const cli = await cliCard(page, id);
+      if (canLogout[id]) {
+        check(cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, `${id}: 外せるエージェントは［ログアウト］（案内は出さない）`, cli);
+      } else {
+        check(!cli.actions.includes('ログアウト') && cli.logoutButtons === 0, `${id}: 外せないエージェントは［ログアウト］を出さない（押しても失敗するだけ）`, cli);
+        // コマンドはログインの案内と同じ書き方（見つけた CLI の場所 + auth logout。偽の CLI なのでその場所が入る）
+        check(/(^|[\s"])auth logout$/.test(cli.guide?.code ?? '') && /fake-opencode\.mjs/.test(cli.guide.code) && cli.guide.text.startsWith('外すには、端末で') && cli.guide.copy.join() === 'コピー',
+          `${id}: 代わりに、外し方（端末で … auth logout）と［コピー］を案内する`, cli);
+        check(/mono|consolas|courier/i.test(cli.guide.mono ?? ''), `${id}: コマンドは等幅`, cli.guide.mono);
+      }
       // アカウントを 1 つ足して既定にする → 印が移り、CLI のログインに［既定にする］が出る
       // （Claude はログインが済んだアカウントだけが一覧に載るので、前から登録してある「仕事」を使う）
       if (id === 'claude') {
@@ -192,6 +220,13 @@ try {
       check(await page.locator(`${card(id)} .agent-conn`).isVisible(), `${id}: Esc は 1 層だけ閉じ、設定の画面や接続先の一覧は閉じない`);
     }]);
   }
+  // Grok も CLI のログインのカードを持つ。ここは外せる側（Claude・Codex と同じく［ログアウト］。案内は出さない）の確認
+  scenes.push(['grok: CLI のログインのカードは［ログアウト］（案内なし）', async page => {
+    await toggle(page, 'grok');
+    await page.waitForSelector(`${card('grok')} [data-conn="cli"]`, { timeout: 15000 });
+    const cli = await cliCard(page, 'grok');
+    check(canLogout.grok && cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, 'grok: 外せるエージェントは［ログアウト］（案内は出さない）', cli);
+  }]);
   const failed = [];
   for (const [name, run] of scenes) {
     const { ctx, page, errors } = await session();

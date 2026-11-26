@@ -198,6 +198,8 @@ export function describeBackends() {
       subagentState: typeof b.getSubagentState === "function",
       fork: Boolean(b.capabilities?.fork && typeof b.fork === "function"),
       login: Boolean(b.capabilities?.login && b.auth),
+      // Pleiad の画面から外せるか（「CLI のログイン」のカードの［ログアウト］。宣言だけで口が無いものは出さない）
+      logout: Boolean(b.capabilities?.logout && typeof b.auth?.logout === "function"),
       // 貼り戻し（authSubmit）を受けられるか。**受けられないのに入力欄を出さない**ため。
       // agy はブラウザの折り返しを端末でしか受け取れず、Pleiad から渡す口が無い
       submitCode: typeof b.auth?.submitCode === "function",
@@ -205,6 +207,8 @@ export function describeBackends() {
       title: Boolean(b.capabilities?.title && typeof b.setTitle === "function"),
       tag: Boolean(b.capabilities?.tag && typeof b.setTag === "function"),
     },
+    // 外せないエージェント（logout の印が無い）が、端末で外すためのコマンド。カードが［ログアウト］の代わりに案内する。外せるものと、案内を持たないものは null
+    logoutCommand: !(b.capabilities?.logout && typeof b.auth?.logout === "function") && typeof b.auth?.logoutCommand === "function" ? b.auth.logoutCommand() : null,
     toolHints: b.toolHints ?? {},
     // サブエージェントを呼ぶツールの名前の申告。画面は固定の一覧を持たず、これで委譲のカード・過去の一覧を見分ける
     subagentTools: [...new Set(b.subagentTools ?? [])],
