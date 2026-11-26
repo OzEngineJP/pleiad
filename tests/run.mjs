@@ -733,6 +733,10 @@ const SUITES = [
   './unit/server-read.mjs',
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
+  // スレッドの書きかけの流し（ADR 0367）: 3 つ目の窓口 thread。開いているスレッドの接続だけに届く・流し直し・伏せ・外せる・ほかの接続は増えない
+  './unit/server-thread-stream.mjs',
+  // スレッドの書きかけの組み立て（ADR 0367）: 写しの切り出し（core）と、画面の純粋な部品（出来事の取り込み・確定前の分の切り出し・黙る印の写し）
+  './unit/thread-stream-model.mjs',
   './unit/desktop-port.mjs',
   // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
   './unit/desktop-runtime.mjs',
@@ -1198,6 +1202,8 @@ const SUITES = [
   './unit/bot-dispatch.mjs',
   // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は DM では起こさない・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
   './unit/bot-reactions-silence.mjs',
+  // 人の途中送信で bot のターンの投稿を分ける細かい場合（今の投稿を本文のまま確定・続きは新しい投稿。bot・AI・聞こえた投稿・リアクションは分けない・止める・失敗・返事の @・呼んだ bot への返事。ADR 0117 の追記）と、実サーバーの並び・channelPost
+  './unit/bot-steer-split.mjs',
   // @ の無い投稿の宛先と、聞こえた投稿の手がかり（引用した bot が宛先・無ければ最後に話した bot。宛先の名前を包みの to に付ける。ADR 0128 の追記）
   './unit/bot-heard-addressee.mjs',
   // 流れの要約の「作業中の bot」の選び方（bot 専用の使用量の仕組みは ADR 0357 でやめた）

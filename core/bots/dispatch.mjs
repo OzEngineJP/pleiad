@@ -50,8 +50,11 @@
 // ターンの投稿: ターンが始まると、そのスレッドに bot の投稿を 1 つ作り（state: working）、本文を 1 秒に 1 回まで書き換える。
 //   終わりにターン中の assistant の文章を順番どおりまとめ、提示と state を決める。
 //   ターンの中で bot が channels.post で自分のスレッドへ書いたら、最初の 1 件はターンの投稿に入り、2 件目からは新しい投稿（ADR 0117）。
-//   assistant の文章は道具や Stop フックを挟んでも、順番どおりにターンの投稿へまとめる。途中送信でも投稿は分けない。
-//   生の流れ（text.delta）はチャンネルへ流さず、サーバーで投稿に畳む（ADR 0024 の 1 接続 1 購読）。
+//   assistant の文章は道具や Stop フックを挟んでも、順番どおりにターンの投稿へまとめる。
+//   途中送信のうち、人がスレッドへ投稿して（聞こえただけでない）走っているターンへ届くものは、そこまでの投稿を確定し、続きは人の投稿の下の新しい投稿に出す
+//   （見せる文ができてから作る。ADR 0117 の追記）。bot・ルーティンの途中送信・リアクション・聞こえた投稿では分けない。
+//   保存は今のまま（1 秒に 1 回・文の切れ目まで）。生の流れ（text.delta）は全接続へは流さず、そのスレッドを開いている接続（server.mjs の「スレッド」の枠）にだけ、
+//   開いているスレッドの画面の書きかけとして流す（ADR 0367。ADR 0109・0024 の改め）。
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
@@ -818,6 +821,13 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         liveSteers.set(message.id, { sessionId, ids, text: built.prompt, cursor: built.cursor, callers });
         turn.control?.touch?.();
       }
+      // 人がこのスレッドへ投稿した（聞こえただけでない）: 今の投稿をそこまでで確定し、続きは人の投稿の下の新しい投稿に出す（ADR 0117 の追記）。
+      // 読まれる前に書かれた文も新しい投稿に入るよう、渡す前に区切る。前の投稿の @ は、確定したそのときに解く（返事の終わりを待たない）
+      if (humanPostIn(group, built.triggers) && rec.threadId && rec.channelId === channel.id && (rec.threadId ?? null) === (group[0].threadId ?? null)) {
+        const woke = await splitPost(rec).catch((e) => { log('could not split the turn post:', errText(e)); return null; });
+        // 待たずに起こす（呼び合いが同時に起きても、この会話の配りが相手の配りを待って止まらない）
+        if (woke) Promise.resolve().then(() => route(woke, channel)).catch((e) => log('could not handle an @ in a reply:', errText(e)));
+      }
       let accepted = false;
       try { accepted = await target.control.steer(message); }
       catch (e) {
@@ -832,6 +842,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   /** この出来事を起こした bot（呼んだ側）。bot ごとに最初の 1 件 */
   const callersOf = (items) => [...new Map(items.filter((i) => i.caller).map((i) => [i.caller, { botId: i.caller, postId: i.postId }])).values()];
+  /** 渡す出来事の中に、人が書いた投稿（聞こえただけのもの・リアクション・自分の心拍の出来事を除く）があるか。途中送信で投稿を分けるかの判断 */
+  const humanPostIn = (items, posts) => posts.some((p) => p.author?.kind === 'human' && items.some((i) => i.postId === p.id && !i.heard && !i.reaction && !i.inner));
   const groupByThread = (items) => {
     const groups = new Map();
     for (const i of items) { const k = `${i.channelId}/${i.threadId ?? ''}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
@@ -993,6 +1005,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       cur: '', last: '', parts: [], sawText: false, presents: [],
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(),
+      // 途中送信で確定した前の投稿の返事（最後の投稿に返事が無いとき、呼んだ bot へ返す返事になる。ADR 0117 の追記）
+      priorReply: null,
       state: 'working', postedState: 'working', lastWritten: PLACEHOLDER, botControlled: false, error: null,
       committed: false, compactedDuring: false, ended: false, stopped: false, receivedSteer: false, abandoned: false,
       timer: null, lastFlush: 0, dirty: false, chain: Promise.resolve(),
@@ -1082,7 +1096,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (!channelId && !['pulse', 'learner'].includes(sb.kind)) return false;
     const threadId = sb.threadId ?? null;
     const page = channelId ? await channels.read({ channelId, ...(threadId ? { threadId } : {}), limit: 100 }).catch(() => ({ posts: [] })) : { posts: [] };
-    const post = (page.posts ?? []).find(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id) ?? null;
+    // 途中送信で投稿が分かれていれば、同じ会話の投稿が何件かある。書き続けているのは最後の投稿（ADR 0117 の追記）
+    const post = (page.posts ?? []).findLast(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id) ?? null;
     const rec = {
       sessionId, botId: bot.id, kind: sb.kind, routineId: sb.routineId, channelId, threadId, taint: sb.taint ?? undefined,
       postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
@@ -1090,7 +1105,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
       deferPost: !post && ['pulse', 'learner'].includes(sb.kind),
       cur: '', last: '', parts: [], sawText: false, presents: [],
-      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(card?.waits ?? []),
+      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(card?.waits ?? []), priorReply: null,
       state: card?.waits?.length ? 'waiting' : 'working', postedState: post?.state ?? 'working',
       lastWritten: post?.text ?? PLACEHOLDER, botControlled: false, error: null,
       committed: Boolean(card?.delivery?.initialDelivered), compactedDuring: false,
@@ -1276,6 +1291,20 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return [...(active.get(sessionId)?.callers.values() ?? [])];
   }
 
+  /**
+   * その会話がいま書いているスレッド（{ channelId, threadId }）。スレッドの bot のターンでなければ null。
+   * 開いているスレッドの画面にだけ書きかけを流す枠（server.mjs の「スレッド」の枠。ADR 0367）の突き合わせに使う。DM・チャンネルの直の投稿・内部のターンは対象にしない。
+   */
+  function threadOfSession(sessionId) {
+    const rec = sessionId ? active.get(sessionId) : null;
+    return rec && !rec.ended && rec.threadId && !rec.inner ? { channelId: rec.channelId, threadId: rec.threadId } : null;
+  }
+
+  /** そのスレッドに書いている途中の bot の会話（走っているターンの会話 id）。スレッドを開いた接続へ、書きかけを流し直すのに使う */
+  function sessionsOfThread(channelId, threadId) {
+    return [...active.values()].filter((rec) => !rec.ended && !rec.inner && rec.threadId === threadId && rec.channelId === channelId).map((rec) => rec.sessionId);
+  }
+
   /** 提示（可視化・添付）のうち、スレッドに畳む分。人の添付と、git・作業場所の行は入れない。大きすぎるものは中身を落とす */
   function collectPresent(rec, event) {
     if (event.by === 'human' || event.kind === 'git' || event.kind === 'worktree') return;
@@ -1339,6 +1368,43 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (patch.state !== undefined) rec.postedState = patch.state;
   }
 
+  /**
+   * 人の投稿が途中送信で届く: ターンの今の投稿を、そこまでの本文で確定し（書いている印を外す）、以降の出力は新しい投稿に出す（ADR 0117 の追記）。
+   * 新しい投稿は、見せる文ができてから作る（openDeferredPost と同じ。何も言わずに終われば作らない）。書き換え・投稿づくりと同じ順番待ち（rec.chain）に載せる。
+   * 返りは、確定した投稿の @（解くのは呼んだ側。無ければ null）
+   */
+  function splitPost(rec) {
+    const run = rec.chain.then(() => splitNow(rec));
+    rec.chain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  async function splitNow(rec) {
+    // まだ投稿が無い（見せる文ができる前）: 確定するものは無い。ここまでの文は、新しい投稿に入る（人の投稿より後に作る投稿になる）
+    if (rec.ended || rec.abandoned || !rec.postId) return null;
+    clearTimeout(rec.timer);
+    rec.timer = null;
+    // 区切りの写しを取り、区切りを新しく始める（以降の書き込みは新しい投稿へ行く）。確定は写しで行うので、続きの書き込みと重ならない
+    const old = { ...rec };
+    Object.assign(rec, {
+      postId: null, postReady: null, deferPost: true, cur: '', last: '', parts: [], presents: [],
+      lastWritten: PLACEHOLDER, postedState: 'working', botControlled: false, dirty: false,
+      spoke: false, filled: false, explicit: null,
+    });
+    let done = { woke: null, reply: null };
+    try { done = await finalizePost(old, 'done', true); }
+    catch (e) {
+      log('could not finalize the turn post:', errText(e));
+      await channels.edit({ channelId: old.channelId, postId: old.postId, state: 'done' }, botAuthor(old.botId)).catch(() => {});
+    }
+    // 呼んだ bot へ返す返事は最後の投稿。最後の投稿に返事が無ければ、この投稿のもの（onTurnEnd）。返事の @ で起きる bot は、返事を返す先から外す
+    if (done.reply) rec.priorReply = done.reply;
+    for (const m of done.woke?.mentions ?? []) rec.explicitMentions.add(m);
+    // 承認待ちのまま分けたなら、待ちの印は新しい投稿に付ける（見せるものが何も無く作業中のままなら、投稿は作らない）
+    progress(rec, { immediate: true });
+    return done.woke;
+  }
+
   function onPermission(card, phase) {
     const rec = card?.sessionId ? active.get(card.sessionId) : null;
     if (!rec || rec.ended) return;
@@ -1381,6 +1447,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         rec.postId = post?.id ?? null;
       }
       if (rec.postId) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
+      // 途中送信で前の投稿を確定していて、最後の投稿に返事が無いとき（何も言わずに終えた・まだ投稿が無い）は、前の投稿の返事を呼んだ bot へ返す（ADR 0117 の追記）
+      if (!reply && rec.priorReply && (ok || state === 'failed') && !rec.stopped && !limited) reply = rec.priorReply;
       const key = threadKeyOf(rec.channelId, rec.threadId);
       if (key) { if (state === 'failed') failedKeys.add(key); else failedKeys.delete(key); }
     } catch (e) { log('could not finalize the turn post:', errText(e)); }
@@ -1674,7 +1742,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (sb?.kind !== 'routine' || sb.routineId !== routineId || sb.threadId !== threadId) return null;
       return { sessionId: pending.sessionId, channelId: pending.channelId, started: false };
     },
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, threadOfSession, sessionsOfThread, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */
