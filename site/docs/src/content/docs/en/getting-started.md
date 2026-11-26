@@ -29,12 +29,12 @@ How sign-in proceeds differs per agent:
 | --- | --- | --- |
 | Claude | Open the sign-in page in a browser and authorize with your Anthropic account | "Sign out" on the "CLI login" card |
 | Codex | Open the sign-in page in a browser and authorize with your ChatGPT account | "Sign out" on the "CLI login" card |
-| Antigravity | Run the shown command (`agy`) in a terminal and sign in with Google | Done on the `agy` side (credentials live in the OS credential store; the Pleiad row has no "Sign out") |
+| Antigravity | Run the shown command (`agy`) in a terminal and sign in with Google | Done on the `agy` side (credentials live in the OS credential store; the "CLI login" card has no "Sign out" and shows how to sign out instead) |
 | OpenCode | Run `opencode auth login` in a terminal and pick a provider | Run `opencode auth logout` in a terminal |
 | Devin | Run `devin auth login` in a terminal and authorize in a browser | "Sign out" in Pleiad |
 | Grok | Run `grok login` in a terminal (`grok login --device-auth` when there is no browser) | "Sign out" on the "CLI login" card |
 
-- For Claude, Codex, OpenCode and Grok, "Connections" lists the CLI login, any accounts you added and compatible endpoints in one list. Add one with "+ Add connection" and pick the one new chats use with "Make default". Antigravity and Devin keep "Sign in" on the row. To sign out, Devin has "Sign out" on the row; Antigravity, which Pleiad cannot sign out, shows a line on how to sign out instead.
+- For Claude, Codex, OpenCode, Grok and Antigravity, "Connections" lists the CLI login, any accounts you added and compatible endpoints in one list. Add one with "+ Add connection" and pick the one new chats use with "Make default". Devin keeps "Sign in" / "Sign out" on the row.
 - Sign-in waits for about 10 minutes. Press "Cancel" to stop waiting.
 - Claude needs the Claude Agent SDK as well as the CLI. Press "Download" on the Claude row — you don't have to wait for the CLI install or sign-in to finish. If the download fails, press "Try again" on the row.
 - OpenCode's free models work without signing in; sign in when you want to connect other providers.

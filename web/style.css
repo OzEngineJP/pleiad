@@ -449,8 +449,6 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-meta .acct{overflow-wrap:anywhere}
 .agent-meta .sep{color:var(--ink-weak)}
 .agent-meta .path{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 外せないエージェント（Antigravity）の外し方の 1 行。CLI のパスの行の下に、名前の字下げにそろえて弱い字で */
-.agent-logout-guide{margin:3px 0 0 28px;font-size:var(--fs-s);color:var(--ink-weak);overflow-wrap:anywhere}
 /* 「アカウントと接続先」の節。管理の面（.mp-panel）を節ごとの枠に入れるので、面側の地と見出し・閉じる・冒頭の説明は脱ぐ */
 .agent-conn{margin:12px 0 2px;padding:4px 0 2px 28px}
 .conn-sec .mp-panel{margin-top:0;padding:0;background:transparent;border-radius:0}

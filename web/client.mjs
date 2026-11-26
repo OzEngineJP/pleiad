@@ -4102,8 +4102,8 @@ function cliLoginCard(b, st) {
   const warn = Boolean(st.supported && !st.pending && !st.unconfirmed && (!st.loggedIn || st.expired));
   // ログインを待っている間の［やめる］は頭の行（初回の案内の行と同じ部品）が持つ
   const canLogin = !remote && st.supported && !st.pending && (!st.loggedIn || st.expired);
-  // ログイン済みで外せる場面。Pleiad から外せるエージェント（能力の印 logout）は［ログアウト］、外せないもの（OpenCode）は押しても失敗するので
-  // ボタンを出さず、状態の行の下に端末で打つコマンドを案内する（ログインを待つ間のコマンドの案内と同じ部品）
+  // ログイン済みで外せる場面。Pleiad から外せるエージェント（能力の印 logout）は［ログアウト］、外せないもの（OpenCode・Antigravity）は押しても失敗するので
+  // ボタンを出さず、状態の行の下に外し方を案内する（コマンドがあればそれと［コピー］、無ければ説明の 1 行）
   const signedIn = !remote && st.supported && st.loggedIn && !st.pending;
   const canLogout = Boolean(b.capabilities?.logout);
   return connCard({
@@ -4114,14 +4114,16 @@ function cliLoginCard(b, st) {
       !isDef && { label: t('conn.makeDefault'), act: 'default', onClick: () => setConnDefault(b.id, { account: '' }) },
       signedIn && canLogout && { label: t('conn.logout'), act: 'logout', onClick: () => authLogout(b) },
     ],
-    extra: [signedIn && !canLogout && b.logoutCommand && logoutGuide(b.logoutCommand)],
+    extra: [signedIn && !canLogout && logoutGuide(b)],
   });
 }
 
-/** 外せないエージェントの「CLI のログイン」のカードに出す、端末で外すためのコマンドの案内（1 文 + コマンドと［コピー］） */
-function logoutGuide(command) {
+/** 外せないエージェントの「CLI のログイン」のカードに出す外し方の案内。外すコマンド（logoutCommand）があれば 1 文 + コマンドと［コピー］、
+ *  無いもの（agy にはログアウトのコマンドが無い）は、その CLI 側で外す説明の 1 行だけ（名前は埋め込み、エージェントで分けない） */
+function logoutGuide(b) {
+  if (!b.logoutCommand) return el('div', 'mp-note conn-guide', t('conn.logoutElsewhere', { agent: b.label }));
   const guide = el('div', 'mp-note conn-guide');
-  guide.append(el('span', null, t('conn.logoutGuide')), authLinks(command));
+  guide.append(el('span', null, t('conn.logoutGuide')), authLinks(b.logoutCommand));
   return guide;
 }
 
@@ -4383,8 +4385,6 @@ function renderAuth() {
     const accounts = b.capabilities?.accounts && st.installed !== false;
     const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
     const conns = Boolean(accounts || endpoints);
-    // 接続先を 1 つしか持たないエージェントのログイン済みの頭の行（［ログアウト］［状態を確認］）
-    const signedInHead = !conns && st.supported && st.loggedIn && !st.pending && !window.plyRemote;
     if (conns) {
       askConnLists(b);
       // 頭の行の状態は「● 接続先 N」か「⚠ 対応が要る接続先 N」。ログイン・ログアウトは CLI のログインのカードへ移す
@@ -4400,21 +4400,17 @@ function renderAuth() {
         check.onclick = (e) => { e.stopPropagation(); checkAuthNow(b); };
         actions.append(check);
       }
-    } else if (signedInHead) {
-      // ［ログアウト］は Pleiad から外せるエージェント（能力の印 logout）だけ。外せないもの（Antigravity）は押しても失敗するので出さず、下に外し方を案内する
-      if (b.capabilities?.logout) {
-        const out = el("button", "btn", t("settings.agents.signOut"));
-        out.type = "button";
-        out.dataset.act = "login";
-        out.onclick = (e) => { e.stopPropagation(); authLogout(b); };
-        actions.append(out);
-      }
+    } else if (st.supported && st.loggedIn && !st.pending && !window.plyRemote) {
+      const out = el("button", "btn", t("settings.agents.signOut"));
+      out.type = "button";
+      out.dataset.act = "login";
+      out.onclick = (e) => { e.stopPropagation(); authLogout(b); };
       // ログイン済みでも［状態を確認］を残す: 受動の確認では接続やモデルが空のまま残ることがあるため、人の明示操作で確かめ直せる入口にする
       const check = el("button", "btn", t("settings.agents.checkStatus"));
       check.type = "button";
       check.dataset.act = "check";
       check.onclick = (e) => { e.stopPropagation(); checkAuthNow(b); };
-      actions.append(check);
+      actions.append(out, check);
     }
     if (conns) {
       const connect = el("button", "btn connect");
@@ -4438,9 +4434,6 @@ function renderAuth() {
       meta.append(where);
     }
     if (meta.childNodes.length) card.append(meta);
-    // 外せないエージェント（Antigravity）の外し方を、CLI のパスの下に弱い字の 1 行で。agy には外すコマンドが無いので、
-    // CLI のログインのカード（OpenCode）のようなコマンドと［コピー］ではなく説明だけ（docs/design-system.md「接続先」）
-    if (signedInHead && !b.capabilities?.logout) card.append(el("div", "agent-logout-guide", t("settings.agents.logoutElsewhere", { agent: b.label })));
     // 接続先の一覧（開け閉めはカードの右上の［接続先］だけ。面に見出しと［閉じる］は置かない）
     if (conns) {
       const conn = el("div", "agent-conn");
@@ -4471,9 +4464,7 @@ function renderAuth() {
   // 押したボタンが消えたカードでは、入れ替わったボタンへ。描き直しで消えたボタンは同じ役のボタンへ戻す
   const lost = !document.activeElement || document.activeElement === document.body;
   if (authFocus && Boolean(state.auth.get(authFocus.agent)?.pending) === authFocus.pending) {
-    // 外せないエージェント（Antigravity）はログインが済むと［ログアウト］が無いので、［状態を確認］へ
-    const target = sec.querySelector(`[data-agent="${authFocus.agent}"] :is([data-act="login"],[data-act="cancel"])`)
-      ?? sec.querySelector(`[data-agent="${authFocus.agent}"] [data-act="check"]`);
+    const target = sec.querySelector(`[data-agent="${authFocus.agent}"] :is([data-act="login"],[data-act="cancel"])`);
     authFocus = null;
     if (lost) target?.focus();
   } else if (keepSel && keepAgent && lost) {

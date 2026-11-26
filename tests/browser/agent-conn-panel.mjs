@@ -6,7 +6,7 @@
 //   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode・Antigravity のそれぞれで確かめる。
 //   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
 //   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
-//   Antigravity も［ログアウト］を出さない（外し方のコマンドは持たないので案内も出さない）。
+//   Antigravity も［ログアウト］を出さない。外すコマンドを持たないので、コマンドと［コピー］ではなく「外すには、Antigravity の CLI 側で…」の説明の 1 行を出す。
 //   接続先の一覧を持たない Devin の頭の行も同じ印で決める: 外せる Devin は［ログアウト］［状態を確認］のまま。
 //   Antigravity だけ、追加の前に注意のモーダル（2 つ目の Google アカウント）が出る: やめる → 名前の欄は開かない、理解して追加する → 名前の欄。360px に収まる。
 //   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）を PNG で保存する。
@@ -108,6 +108,9 @@ try {
     const cc = document.querySelector(`${sel} [data-conn="cli"]`);
     const guide = cc.querySelector('.conn-guide');
     return { actions: [...cc.querySelectorAll('.mp-card-actions button')].map(b => b.textContent.trim()),
+      // 状態の行（.mp-ln）が「公式 · <アカウント>」で、警告（.warn: 未ログイン・期限切れ）でも待ち（ログインを待っています）でもない
+      status: cc.querySelector('.mp-head .mp-ln')?.textContent ?? null,
+      signedIn: (ln => Boolean(ln) && !ln.classList.contains('warn') && /^公式 · /.test(ln.textContent) && !/待っています/.test(ln.textContent))(cc.querySelector('.mp-head .mp-ln')),
       logoutButtons: cc.querySelectorAll('[data-act="logout"]').length,
       guide: guide ? { text: guide.textContent.trim(), code: guide.querySelector('code')?.textContent ?? null,
         copy: [...guide.querySelectorAll('button')].map(b => b.textContent.trim()), mono: guide.querySelector('code') ? getComputedStyle(guide.querySelector('code')).fontFamily : null } : null };
@@ -186,7 +189,12 @@ try {
       } else {
         check(!cli.actions.includes('ログアウト') && cli.logoutButtons === 0, `${id}: 外せないエージェントは［ログアウト］を出さない（押しても失敗するだけ）`, cli);
       }
-      if (id === 'antigravity') check(!cli.guide, `${id}: 外し方のコマンドを持たないので、案内も出さない`, cli);
+      if (id === 'antigravity') {
+        // 外すコマンドを持たない（agy に無い）ので、コマンドと［コピー］ではなく説明の 1 行だけ（ログイン中のカードに出す）
+        check(cli.signedIn, `${id}: CLI のログインのカードがログイン中（偽の agy は既定でログイン済み）`, cli);
+        check(cli.guide?.text === '外すには、Antigravity の CLI 側でログアウトします（Pleiad からは外せません）' && cli.guide.code === null && cli.guide.copy.length === 0,
+          `${id}: 代わりに、CLI 側で外す説明の 1 行（コマンドと［コピー］は無い）`, cli);
+      }
       if (id === 'opencode') {
         // コマンドはログインの案内と同じ書き方（見つけた CLI の場所 + auth logout。偽の CLI なのでその場所が入る）
         check(/(^|[\s"])auth logout$/.test(cli.guide?.code ?? '') && /fake-opencode\.mjs/.test(cli.guide.code) && cli.guide.text.startsWith('外すには、端末で') && cli.guide.copy.join() === 'コピー',
