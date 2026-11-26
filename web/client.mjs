@@ -5527,7 +5527,7 @@ function setThreadStatusOf({ channelId, threadId }, status) {
 /** スレッドの行のメニュー: 開く・流れを開く・作業フォルダーと ID のコピー・状態（会話と同じ状態のグループ） */
 function threadMenu(s, x, y) {
   const { channelId, threadId } = s.thread;
-  const known = [...new Set([...state.sessions.map((z) => z.status), ...(state.threadIndex?.threads ?? []).map((th) => th.status)].filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   const setStatus = (status) => setThreadStatusOf({ channelId, threadId }, status);
   showMenu(x, y, [
     { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
@@ -5649,7 +5649,7 @@ async function newHomeThread({ text, attachments = [] }) {
 /** 一時チャットの流れの投稿の ⋯ の「状態を変更」（会話の状態と同じ器） */
 function homeStatusItems(sessionId) {
   const s = state.sessions.find((x) => x.id === sessionId);
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   return [{ label: t('session.menu.changeStatus'), hint: s?.status || t('session.status.none'), sub: () => [
     { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatusOf(sessionId, v) } },
     ...known.map((k) => ({ label: k, checked: k === s?.status, onClick: () => setStatusOf(sessionId, k) })),
@@ -9361,7 +9361,7 @@ function groupItems(s) {
 
 /** グループの見出しの右クリック。解除と、まとまりごとの状態変更 */
 function familyMenu(root, members, x, y) {
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   showMenu(x, y, [
     { label: t("session.menu.ungroup"), hint: t("session.menu.count", { count: members.length }), onClick: () => ungroupFamily(root, members) },
     { sep: true },
@@ -9411,7 +9411,7 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
 function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, conns = null;
   let waitingVisible = false;
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   // 枝の行き来。親があるか子がある行だけ。家族は開いている間に取り寄せる（メニューは同期で組む）
   const hasKin = Boolean(s.parent?.sessionId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
   let kin = null;

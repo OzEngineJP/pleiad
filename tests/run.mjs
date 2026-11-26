@@ -857,6 +857,8 @@ const SUITES = [
   './unit/server-codex-rejections.mjs',
   // fake バックエンドでサーバを立てる。LLM は呼ばないので、ここに入れてよい
   './unit/server-fake.mjs',
+  // 状態のグループの名前替え・削除が、500 件より古い会話の会話の側の tag にも届く（fake に記録の無いネイティブの会話を 600 件置く）
+  './unit/server-status-rename-all.mjs',
   // 中断の順序（実際の中断が先、Pleiad タスクの後始末は後）と「中断している」の知らせ。fake バックエンドだけ
   './unit/server-abort.mjs',
   // テストの補助 runTurn（tests/lib/ws-client.mjs）が、裏で別の会話のターンが終わっても自分の会話の終わりまで待つ。fake バックエンドだけ
