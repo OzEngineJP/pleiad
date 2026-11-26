@@ -33,7 +33,7 @@ async page => {
     ws.onerror = () => reject(new Error('ws'));
   }), { op, args });
   const open = detail => page.evaluate(d => document.dispatchEvent(new CustomEvent('channels:show', { detail: d })), detail);
-  const botPage = async id => { await open({ kind: 'bot', id }); await page.waitForSelector('#botView:not([hidden]) #botName'); await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent && !document.querySelector('#botModelChip .v').textContent.includes('…')); };
+  const botPage = async id => { await open({ kind: 'bot', id }); await page.waitForSelector('#botView:not([hidden])'); await page.waitForSelector('#channelsView .top.bot-top #botName'); await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent && !document.querySelector('#botModelChip .v').textContent.includes('…')); };
   const pickChip = async (chip, key) => { await page.locator(chip).click(); if (key.startsWith('backend:')) await page.locator('#botModelPop [data-key="nav:agent"]').click(); await page.locator(`[data-key="${key}"]`).click(); };
   const botOf = async name => (await call('bots.list')).bots.find(b => b.name === name);
   // 作る 3 段を通して作る（名前 → 色 → 人格）。作ると DM が開いて入力欄に焦点がある
@@ -78,7 +78,9 @@ async page => {
   await shot('01b-dm');
   // 見出しの名前を押すと bot のページ（作った後の形）へ行く
   await page.locator('#channelsPageTitle .ch-nm').click();
-  await page.waitForSelector('#botView:not([hidden]):not(.is-new) #botName');
+  await page.waitForSelector('#botView:not([hidden]):not(.is-new)');
+  await page.waitForSelector('#channelsView .top.bot-top #botName');   // 名前の欄はメインの頭の行（題の場所）にある（承認済み（2026-11-26））
+  check(await page.locator('#channelsView .top.bot-top > .bp-more svg.i').count() === 1 && await page.locator('#botView .bp-head .bp-more').count() === 0, '⋮ は頭の行の右の svg（ページの頭には無い）');
   check(await page.locator('#botView .bp-av .bot-face-svg').count() === 1, '頭の顔は色の顔（64px）');
   check(await page.locator('#botView .bp-av .bp-av-edit[aria-hidden="true"]').count() === 1 && await page.locator('#botView .bp-av button').count() === 0, '鉛筆は常時表示する飾りで、アバターが単一のボタン');
   check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), 'DM の見出しから開く bot のページには、フォルダーと記憶がある');

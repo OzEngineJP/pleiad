@@ -593,7 +593,7 @@ try {
       ws.onerror = () => reject(new Error('ws'));
     }));
     await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })), botId);
-    await page.waitForSelector('#botView:not([hidden]) #botName', { timeout: 15_000 });
+    await page.waitForSelector('#botView:not([hidden]) .bp-head', { timeout: 15_000 });
     await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent, null, { timeout: 15_000 });
     const before = await page.locator('#botModelChip').getAttribute('data-backend');
     await page.locator('#botModelChip').click();

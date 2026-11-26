@@ -1,4 +1,6 @@
 // スレッドの見出し（.th-top）。左に「# チャンネル名 › スレッドの題」、右に入口（ToDo・会話内の検索・右の欄）と閉じる ✕。
+// 頭の行は Chats と同じ部品（.top。docs/design-system.md「会話の頭（狭い画面）」）で、≡・虫眼鏡・✦・⋮ の絵は web/icons.mjs から。
+// 狭い画面の題は 2 行（1 行目がスレッドの題、2 行目が弱い字の「# チャンネル名」で押すと流れに戻る。並べ替えは CSS。承認済み（2026-11-26））。
 // 狭い画面（700px 以下）の右は、検索の虫眼鏡と ⋮ と ✕ だけ。ToDo・通話・題の候補（✦）は ⋮ のメニューへ移る（ADR 0358。Chats の狭い画面の ⋮ と同じ並び）。
 // 左にチャンネルの流れが見えている間（split）はチャンネル名を出さず「› スレッドの題」だけ（CSS が .deck[data-deck] で出し分ける）。
 // 入口は ToDo（Chats と同じ部品。web/session-todo.mjs）・会話内の検索（虫眼鏡。開く面は目次と検索の面 web/conversation-toc.mjs で、検索欄に文字を打てる）・右の欄（Chats の頭と同じ開け閉め。ADR 0294）。
@@ -6,12 +8,11 @@
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { shortcutLabel, shortcutAria } from '../keyboard.mjs';
-import { closeIcon, moreIcon } from '../icons.mjs';
+import { closeIcon, moreIcon, menuIcon, searchIcon, wandIcon } from '../icons.mjs';
+import { adoptOpenSidebar } from '../open-sidebar-mark.mjs';
 import { browserIcon } from '../tab-strip.mjs';
 import { TODO_ICON } from '../session-todo.mjs';
 
-// 虫眼鏡（Chats の #tocEntry と同じ絵）
-const SEARCH_PATHS = ['M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z', 'M20 20l-4.3-4.3'];
 const GLOBE_PATHS = ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z'];
 
 const svgButton = (cls, label, paths) => {
@@ -19,6 +20,7 @@ const svgButton = (cls, label, paths) => {
   b.type = 'button';
   b.title = label;
   b.setAttribute('aria-label', label);
+  if (typeof paths === 'string') { b.innerHTML = paths; return b; }   // web/icons.mjs の絵
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
   for (const d of paths) svg.append(svgEl('path', { d }));
   b.append(svg);
@@ -35,17 +37,19 @@ const svgButton = (cls, label, paths) => {
  * @param {() => Promise<string|null>} [o.suggestTitle]  ✦ 題の候補（スレッドの bot の会話から。欄に入れて選ばせる）
  */
 export function createThreadHead({ host, onClose, onBack, onToc, onRename, suggestTitle = null }) {
-  const head = el('header', 'th-top');
+  const head = el('header', 'top th-top');
 
-  // 脇を閉じている間の入口（流れの見出しの #chOpenSidebar と同じ働き。スレッドだけが見えているときだけ出す。CSS）
-  const side = el('button', 'btn btn-icon side-toggle th-side');
+  // 脇を閉じている間の入口（Chats の #openSidebar・流れの見出しの #chOpenSidebar と同じ部品。スレッドだけが見えているときだけ出す。CSS）。
+  // 印（◆・未確認の点）・名前・aria-expanded は web/open-sidebar-mark.mjs が全部の ≡（.side-opener）に付ける
+  const side = el('button', 'btn btn-icon side-toggle side-opener th-side');
   side.type = 'button';
   side.id = 'chThreadOpenSidebar';
   side.title = t('app.openSidebarTitle', { key: shortcutLabel('B') });
-  side.setAttribute('aria-label', side.title);
-  const sideSvg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  sideSvg.append(svgEl('path', { d: 'M4 7h16M4 12h16M4 17h16' }));
-  side.append(sideSvg);
+  side.setAttribute('aria-label', t('app.openSidebar'));
+  side.setAttribute('aria-controls', 'sidebar');
+  side.setAttribute('aria-keyshortcuts', shortcutAria('B'));
+  side.innerHTML = menuIcon;
+  adoptOpenSidebar(side);
   side.onclick = () => host.openSidebar?.();
 
   let suggest = null;   // ✦ を押したときと同じ働き（狭い画面は ⋮ のメニューから呼ぶ）
@@ -91,8 +95,9 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
     title.onclick = () => edit();
     title.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } };
     if (suggestTitle) {
-      const wand = el('button', 'btn btn-icon th-wand', '✦');
+      const wand = el('button', 'btn btn-icon th-wand');
       wand.type = 'button';
+      wand.innerHTML = wandIcon;
       wand.title = t('session.titleWand');
       wand.setAttribute('aria-label', t('session.titleWand'));
       wand.onclick = suggest = async () => {
@@ -116,7 +121,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   todo.querySelector('.entry-dot').hidden = true;
 
   // 会話内の検索（Chats の #tocEntry と同じ名前・同じ近道の表記）。押すと目次と検索の面が開き、検索欄にカーソルが入る
-  const toc = svgButton('th-toc', t('nav.toc.entry', { key: shortcutLabel('F') }), SEARCH_PATHS);
+  const toc = svgButton('th-toc', t('nav.toc.entry', { key: shortcutLabel('F') }), searchIcon);
   toc.setAttribute('aria-expanded', 'false');
   toc.setAttribute('aria-keyshortcuts', shortcutAria('F'));
   toc.onclick = () => onToc(toc);

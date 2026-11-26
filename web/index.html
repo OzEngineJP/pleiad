@@ -209,12 +209,12 @@
     <header class="top">
       <!-- 700px 以下の引き出しを開くハンバーガー（広い画面の開閉は P の印 #sideMark が持つ）。名前（aria-label）は件数を入れて
            client.mjs が書く（web/open-sidebar-mark.mjs）。data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
-      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <button type="button" class="btn btn-icon side-toggle side-opener" id="openSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <!-- タイトルの列（docs/design-system.md「会話の頭（狭い画面）」）。題と、所属・出どころの行（#titleSub）。
            700px 以下は 2 行で、題の下に「⇄ ホスト名」（モバイル版の殻・リモートの窓の狭い幅。web/remote-badge.mjs）・
            「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
       <div class="title-col">
-        <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled><button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button></span>
+        <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled><button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button></span>
         <div class="title-sub" id="titleSub">
           <span class="remote-origin" id="remoteOriginLine" hidden></span>
         </div>
@@ -229,7 +229,7 @@
       <!-- 委譲された子の会話でだけ出す、依頼元の会話へ戻る口（子の会話は脇の一覧に出ない）。サブエージェント・タスク・裏のコマンドの一覧は会話末尾の「バックグラウンド N」 -->
       <!-- 端末の AI から任された会話の出どころ（⇄ 端末の AI から · 依頼元の会話の題）。依頼元の会話は端末にあるので、ここからは開かない -->
       <!-- この会話の操作（脇の行の右クリックと同じメニュー）。狭い画面・タッチのときだけ出す（脇が引き出しで隠れているため） -->
-      <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg></button>
+      <button type="button" class="btn btn-icon more-btn" id="sessionMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v.01M12 12v.01M12 19v.01" stroke-width="2.6"/></svg></button>
     </header>
     <!-- スマホのアプリで、最初の作業が終わったときの「離れていても知らせますか？」（web/mobile-notify.mjs）。ほかでは出ない -->
     <div class="notify-band" id="notifyBand" role="region" data-i18n-aria-label="settings.nav.notify" hidden></div>
@@ -468,7 +468,7 @@
     <!-- ==================== Channels（脇のタブが Channels の間だけ会話を覆う。web/channels/） ==================== -->
     <section class="channels-view" id="channelsView" aria-labelledby="channelsPageTitle" inert>
       <header class="top">
-        <button type="button" class="btn btn-icon side-toggle" id="chOpenSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <button type="button" class="btn btn-icon side-toggle side-opener" id="chOpenSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         <h2 id="channelsPageTitle" data-i18n="channels:side.tabs.channels"></h2>
       </header>
       <!-- チャンネルの流れ・スレッド・bot のページ・ルーティンの編集は、各パッケージがこの中に作る -->
@@ -509,7 +509,7 @@
     <div hidden id="workEntries">
       <button type="button" class="btn btn-icon" id="workTocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
       <button type="button" class="btn btn-icon" id="workBrowserEntry" hidden aria-controls="filePreview" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4ZM3 9.5h18M10.5 4v5.5"/></svg></button>
-      <button type="button" class="btn btn-icon more-btn" id="workMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg></button>
+      <button type="button" class="btn btn-icon more-btn" id="workMore" hidden aria-haspopup="menu" data-i18n-title="session.more" data-i18n-aria-label="session.more"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v.01M12 12v.01M12 19v.01" stroke-width="2.6"/></svg></button>
     </div>
     <div class="work-split" id="workSplit">
       <div class="work-side" id="workSide">
