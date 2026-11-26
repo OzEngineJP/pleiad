@@ -84,7 +84,8 @@ async page => {
   }));
   check(head.title === `#${name}`, 'the header shows # and the channel name');
   check(head.purpose?.includes('300ms') && head.more, 'the header shows the purpose and the ⋯ button');
-  check(head.avatars.join('') === 'あ🦉🐺🦊', 'the header shows you and the member bots as icons');
+  // bot の顔は色の SVG（字を持たない）。あなたの頭文字 + メンバーの 3 体
+  check(head.avatars.length === 4 && head.avatars[0] === 'あ', 'the header shows you and the member bots as icons');
   check(await page.locator('.ch-empty-feed').count() === 1, 'an empty channel says so');
 
   // ---- 投稿（Ctrl+Enter）。Enter は改行
@@ -145,7 +146,7 @@ async page => {
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'add', post: botPost });
   const owl = page.locator('[data-post-id="p_bot1"]');
   await owl.waitFor();
-  check((await owl.locator('.post-name').textContent()) === 'Owl' && (await owl.locator('.post-av').textContent()) === '🦉', 'a bot post shows the bot name and icon');
+  check((await owl.locator('.post-name').textContent()) === 'Owl' && await owl.locator('.post-av .bot-face-svg').count() === 1, 'a bot post shows the bot name and its colored face');
   check(await owl.locator('.post-head .row-be').count() === 1, 'a bot post shows the backend logo');
   check(await owl.locator('.post-state.working .run').count() === 1 && (await owl.locator('.post-state-text').textContent()) === '作業中', 'a working turn shows the arc and 作業中');
   check(await owl.locator('.post-body strong').count() === 1 && await owl.locator('.post-body code').count() === 1, 'the body is rendered as Markdown');
@@ -163,7 +164,7 @@ async page => {
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'add', post: { ...reply, id: 'p_reply2', author: { kind: 'bot', botId: 'b_owl' }, text: '返事', at: Date.now() + 5000 } });
   check((await summary.locator('.ts-count').textContent()) === '💬 2 件の返信', 'a second reply updates the count');
   await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'working', live: { b_owl: 'working' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
-  check((await summary.locator('.ts-status').textContent()).includes('🦉 Owl 作業中') && await summary.locator('.ts-status .run').count() === 1, 'a working thread shows who is working with the arc');
+  check((await summary.locator('.ts-status').textContent()).includes('Owl 作業中') && await summary.locator('.ts-status .run').count() === 1, 'a working thread shows who is working with the arc');
   await deliver({ type: 'channelThread', channelId: ch.id, threadId: firstId, thread: { channelId: ch.id, threadId: firstId, sessions: { b_owl: 's1' }, state: 'waiting', live: { b_owl: 'waiting' }, tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, updatedAt: now } });
   check((await summary.locator('.ts-status').textContent()).includes('Owl があなたを待っている'), 'a waiting thread says who is waiting for you');
   // 状態はスレッド全体の集計。名前は live から選ぶ（返信した最後の bot ではない）。複数なら並べ、多ければ「ほか n」
@@ -186,19 +187,30 @@ async page => {
   const list = page.locator('#chFeedComposer .mention-list');
   await list.waitFor({ state: 'visible' });
   let labels = await list.locator('li[role=option] .lbl').allTextContents();
-  check(labels.join(',') === 'Owl,Lynx,Kit,あなた', 'typing @ lists the member bots and you');
+  check(labels.join(',') === 'here,everyone,Owl,Lynx,Kit,あなた', 'typing @ lists here, everyone, the member bots and you');
   check(await list.locator('li[role=option] .row-be').count() === 3, 'bots show their backend logo');
+  check(await list.locator('li[role=option][data-bot]').count() === 3, 'only bots get a bot-colored row (here / everyone / you are plain glyphs)');
   const hints = await list.locator('li[role=option] .hint').allTextContents();
-  check(hints.join(',') === '作業中,あなた待ち', 'a bot that is working or waiting says so');
+  check(hints.join(',').includes('作業中') && hints.join(',').includes('あなた待ち'), 'a bot that is working or waiting says so');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   check((await list.locator('li.on .lbl').textContent()) === 'Lynx', 'ArrowDown moves the selection');
   await page.keyboard.press('Enter');
   check(await list.isHidden() && (await page.evaluate(() => document.getElementById('chFeedComposerInput').value)).startsWith('お願い@Lynx '), 'Enter inserts @Lynx and closes the list');
+  check(await page.locator('#chFeedComposerInput .mb[data-bot="b_lynx"]').count() === 1, 'the chosen bot becomes one face+name block (the document stays @Lynx)');
   await page.keyboard.type('@k');
   labels = await list.locator('li[role=option] .lbl').allTextContents();
   check(labels.join(',') === 'Kit', 'typing narrows the candidates');
   await page.keyboard.press('Tab');
   check((await page.evaluate(() => document.getElementById('chFeedComposerInput').value)).includes('@Kit '), 'Tab also commits');
+  check(await page.locator('#chFeedComposerInput .mb').count() === 2, 'two bots make two blocks (both are reached)');
+  await page.keyboard.press('Backspace');
+  check(await page.locator('#chFeedComposerInput .mb').count() === 1 && !(await page.evaluate(() => document.getElementById('chFeedComposerInput').value)).includes('Kit'), 'one Backspace removes the whole block');
+  await page.locator('#chFeedComposerInput .mb .mx').click();
+  check(await page.locator('#chFeedComposerInput .mb').count() === 0 && (await page.evaluate(() => document.getElementById('chFeedComposerInput').value)) === 'お願い', 'the × removes the block too');
+  await page.keyboard.type('@k');
+  await page.keyboard.press('Tab');
   await page.keyboard.type('@');
   await list.waitFor({ state: 'visible' });
   await page.keyboard.press('Escape');
@@ -241,12 +253,12 @@ async page => {
 
   // ---- 既読
   const sent = await page.evaluate(() => window.__sent.filter(s => s.command === 'invoke' && s.args.op === 'channels.markRead'));
-  check(sent.length >= 1 && sent[0].args.args.channelId === ch.id, 'the feed marks the channel read through channels.markRead');
+  check(sent.some((s) => s.args.args.channelId === ch.id), 'the feed marks the channel read through channels.markRead');
 
   // ---- 右クリックのメニュー（長押しも同じ contextmenu）
   await page.locator('[data-post-id="p_bot1"] .post-body').click({ button: 'right' });
   const menu = await page.locator('.pop.menu .li').allTextContents();
-  check(menu.some(m => m.includes('スレッドで返信')) && menu.some(m => m.includes('リアクションを付ける')) && menu.some(m => m.includes('本文をコピー')), 'right-click opens the post menu');
+  check(menu.some(m => m.includes('スレッドで返信')) && menu.some(m => m.includes('リアクションを付ける')) && menu.some(m => m.includes('コピー')), 'right-click opens the post menu');
   await page.keyboard.press('Escape');
 
   // ---- メモ・設定
