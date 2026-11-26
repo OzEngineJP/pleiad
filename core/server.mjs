@@ -2779,7 +2779,12 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
-  clients: () => runtime.sockets, watching: client => watching.get(client), watchingModal: client => watchingModal.get(client), access: fileAccessFor,
+  clients: () => runtime.sockets, watching: client => watching.get(client), watchingModal: client => watchingModal.get(client),
+  watchingThread: client => {
+    const slot = watchingThread.get(client);
+    return slot ? (botHost?.threadSessions?.(slot.channelId, slot.threadId) ?? []) : [];
+  },
+  access: fileAccessFor,
   // タブ情報の届け先を「見ている会話とその直接の子」へ広げる（inapp-browser.md。子の確かめ方は delegatedChromeTarget と同じ）
   descendants: id => (agentTasks?.rowsWhere(row => row.parentSessionId === id && row.sessionId && !row.host
     && store.peek(row.sessionId)?.delegation?.taskId === row.taskId
@@ -11870,6 +11875,7 @@ wss.on("connection", (ws, req) => {
           const { sessionId, slot, channelId, threadId } = msg.args ?? {};
           if (slot === "thread") {
             if (!setWatchThread(ws, channelId, threadId)) return reply(true, "ok");
+            for (const id of botHost?.threadSessions?.(channelId, threadId) ?? []) browserUnifyWs.snapshot(ws, id);
             return reply(true, { threadStream: threadStreamFor(channelId, threadId) });
           }
           setWatch(ws, slot, sessionId);

@@ -282,6 +282,17 @@ export default async function (t) {
     t.ok('古い版の running のまま残った記録は、続きがある（going）として見せる', crashed.status === 'going' && crashed.running === false && crashed.untiered === 1, JSON.stringify(crashed));
     await e2.learnNow();
     t.ok('次の晩に続きから振り分けて done（走りの id は変わらない）', (await e2.sortStatus()).status === 'done' && (await e2.sortStatus()).untiered === 0 && sortRunIds(e.memory).length === 1);
+    const doneUpdatedAt = (await e2.sortStatus()).updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    await e2.learnNow();
+    t.ok('段なしが 0 件のまま迎えた次の晩は memory.sort の行を書き直さない', (await e2.sortStatus()).updatedAt === doneUpdatedAt && (await e2.sortStatus()).status === 'done');
+
+    // 段なしが最初から 0 件の置き場では、夜の整理を走らせても memory.sort の行を作らない
+    const empty = await fixture('empty');
+    await add(empty.memory, 'すでに段がある記憶', { tier: 'always' });
+    await empty.learner.learnNow();
+    const emptyStatus = await empty.learner.sortStatus();
+    t.ok('段なしが最初から 0 件の晩は memory.sort を書かず none のまま', emptyStatus.status === 'none' && emptyStatus.updatedAt === null && empty.calls.length === 0, JSON.stringify(emptyStatus));
 
     // ---- 後片付け: 閉じたあとは DB の接続が残らない
     while (stack.length) await stack.pop()().catch(() => {});

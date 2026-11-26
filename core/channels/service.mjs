@@ -614,6 +614,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
 
     threads: {
       get: (channelId, threadId) => threadStore.get(channelId, threadId),
+      peek: (channelId, threadId) => threadStore.peek(channelId, threadId),
       list: (channelId) => threadStore.list(channelId),
       async update(channelId, threadId, patch) {
         const thread = await threadStore.update(channelId, threadId, patch);

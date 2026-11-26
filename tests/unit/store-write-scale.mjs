@@ -132,7 +132,8 @@ export default async function (t) {
       // 夜の整理: count 件の会話のカーソルを持ち、1 件だけ増えたとき
       let clock = 1000;
       const rows = Array.from({ length: count }, (_, i) => ({ id: `s${i}`, backend: 'fake', lastModified: 1 }));
-      const learner = createMemoryLearner({ dataDir: dir, channels: { dir: path.join(dir, 'channels') }, bots: { get: async () => null }, memory: {}, host: {}, clock: {},
+      const learner = createMemoryLearner({ dataDir: dir, channels: { dir: path.join(dir, 'channels') }, bots: { get: async () => null },
+        memory: { list: async () => [], archiveLegacyPromises: async () => [] }, host: {}, clock: {},
         readPrefs: async () => ({ memoryAutoLearn: true }), listSessions: async () => rows, readMessages: async () => [], now: () => (clock += 1000) });
       closers.push(() => learner.close());
       await learner.runNow();

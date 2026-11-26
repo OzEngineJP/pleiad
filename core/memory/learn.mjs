@@ -723,19 +723,24 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     if (last?.status === 'undone' && last.undone?.gen === gen) return 0;
     sortRunning = true;
     const mayContinue = async () => !stopRequested && await mayWrite(gen);
-    let record = !last || last.status === 'undone' ? newSortRecord() : { ...last, status: 'going' };
-    const persist = (patch = {}) => sortSave(record = { ...record, ...patch, updatedAt: now() });
-    const migration = `sort:${record.runId}`;
+    let record = null;
+    const ensureRecord = () => (record ??= !last || last.status === 'undone' ? newSortRecord() : { ...last, status: 'going' });
+    const persist = (patch = {}) => sortSave(record = { ...ensureRecord(), ...patch, updatedAt: now() });
     const attempted = new Set();      // この晩に問い合わせた id（答えが無かった・失敗した記憶を、同じ晩に何度も送らない）
     const workspaceFor = placeResolver().ofEntry;
     let streak = 0, placed = 0;
     try {
-      persist();
       await memory.archiveLegacyPromises();   // 約束は AI へ渡さず、先にコードで保存だけにする（何度行っても同じ）
       for (let bundle = 0; bundle < SORT_NIGHT_BATCHES; bundle++) {
         if (!(await mayContinue())) break;
         const chunk = (await memory.list()).filter((e) => !e.tier && !attempted.has(e.id)).sort(sortOrder).slice(0, SORT_BATCH_ITEMS);
-        if (!chunk.length) { persist({ status: 'done' }); break; }
+        if (!chunk.length) {
+          // 段なしが無い晩は DB を書かない（未完の前の走り going / failed 等を done に畳むときだけ書く）
+          if (record || (last && last.status !== 'done' && last.status !== 'undone')) persist({ status: 'done' });
+          break;
+        }
+        if (!record) persist();
+        const migration = `sort:${record.runId}`;
         const places = new Map();
         for (const entry of chunk) places.set(entry.id, await workspaceFor(entry));
         const batch = sortBatchOf(chunk.map((entry) => sortItemOf(entry, places.get(entry.id))));
@@ -777,7 +782,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       }
     } catch (e) {
       log('sort failed:', String(e?.message ?? e).slice(0, ERROR_MAX));
-      try { persist({ status: 'failed', failures: (record?.failures ?? 0) + 1 }); } catch (err) { log('could not save sort status:', err.message); }
+      try { persist({ status: 'failed', failures: (ensureRecord().failures ?? 0) + 1 }); } catch (err) { log('could not save sort status:', err.message); }
     } finally {
       sortRunning = false;
     }
