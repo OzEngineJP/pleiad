@@ -858,6 +858,8 @@ const SUITES = [
   // model/list のページ送り・覚える長さ・ログイン / ログアウトで捨てる・タイトル生成のモデル選び
   './unit/codex-models.mjs',
   './unit/codex-child-routing.mjs',
+  // app-server の子の入力が閉じた後の書き込み（EPIPE）でサーバーが落ちず、待っている依頼が失敗で返り、次の依頼で起こし直す
+  './unit/codex-epipe.mjs',
   // Codex の実行前の拒否: rollout の解析（code mode・直接・wait・プロセス作成の失敗・引用の除外）・読む範囲・伏せ方・Codex の子への指示
   './unit/codex-rejections.mjs',
   './unit/backend-shape-diagnostics.mjs',
