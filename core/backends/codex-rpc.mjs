@@ -302,7 +302,7 @@ export class CodexRpc {
         proc.on("error", (err) => die(String(err?.message ?? err)));
         // パイプの失敗（子が終わる・入力を閉じる瞬間の書き込みの EPIPE など）は stream の 'error' で後から来る。受け手が無いと
         // Node が例外として投げてサーバーごと落ちる。落ちたときと同じに片付け（待っている依頼は「つながっていない」で失敗にする）、
-        // 入力の壊れた子は止める（次の依頼で起こし直す）。Devin・Grok の ACP（devin-acp.mjs・grok-acp.mjs）と同じ受け方
+        // 入力の壊れた子は止める（次の依頼で起こし直す）。ACP の子（acp-client.mjs）と同じ受け方
         const broken = (error) => {
           if (this.proc !== proc) return;
           die(String(error?.message ?? error), new Error(t("codex.errors.notConnected"), { cause: error }));
