@@ -100,9 +100,9 @@
     },
     "composer": {
       "label": "Post text",
-      "placeholder": "Post to #{{name}} · @ to call a bot",
+      "placeholder": "Post to #{{name}} · @ to call a bot · / for skills",
       "shortPlaceholder": "Post to #{{name}}",
-      "dm": "Message {{name}}",
+      "dm": "Message {{name}} · / for skills",
       "send": "Post ({{sendKeys}})",
       "sendKeys": "{{sendKeys}} to send",
       "failed": "Couldn't post: {{error}}"
@@ -128,13 +128,25 @@
       "nobody": "Nobody is mentioned, so no bot will respond",
       "call": "Call @{{name}}"
     },
+    "skills": {
+      "one": "{{name}}'s skills",
+      "some": "Skills of {{names}}",
+      "members": "Members' skills"
+    },
     "settings": {
       "open": "Notes and settings",
       "title": "Notes and settings for {{name}}",
       "name": "Name",
       "purpose": "Purpose",
       "cwd": "Default working folder",
-      "cwdHint": "If empty, each bot uses its own working folder.",
+      "cwdHint": "A bot works here only when this folder is inside its own folders. If it's outside, or empty, each bot works in its own folder.",
+      "cwdNone": "Not set",
+      "cwdRecent": "Recent",
+      "cwdBrowse": "Open another folder…",
+      "cwdPicker": "Working folder choices",
+      "where": "Where each bot works",
+      "whereHome": "Home folder",
+      "whereOutside": "This folder is outside {{name}}'s working places, so {{name}} works in its own folder",
       "members": "Members",
       "membersHint": "Members are the bots listed here. To wake a bot, @ it in a post.",
       "noBots": "No bots yet.",

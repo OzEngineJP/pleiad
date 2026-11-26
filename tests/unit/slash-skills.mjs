@@ -16,7 +16,7 @@ const SKILLS = [
   { name: "daily-report", description: "進捗報告の下書きを作る。レビュー観点も添える", hint: "<日付>", from: "プロジェクト" },
 ];
 
-function mount({ cwd = "D:/work", load, now, canCompact = () => true, compactNote, idPrefix } = {}) {
+function mount({ cwd = "D:/work", load, now, canCompact = () => true, compactNote, idPrefix, compact, headLabel, badge } = {}) {
   const input = el("textarea");
   input.value = "";
   input.setSelectionRange = (start, end) => { input.selectionStart = start; input.selectionEnd = end; };
@@ -25,7 +25,7 @@ function mount({ cwd = "D:/work", load, now, canCompact = () => true, compactNot
   const hint = el("div", "slash-hint");
   const calls = [];
   const slash = setupSlashSkills({
-    input, list, hint, cwd: () => cwd, now, canCompact, compactNote, idPrefix,
+    input, list, hint, cwd: typeof cwd === "function" ? cwd : () => cwd, now, canCompact, compactNote, idPrefix, compact, headLabel, badge,
     load: async (key) => { calls.push(key); return load ? load(key) : SKILLS; },
   });
   const type = (value, caret = value.length) => { input.value = value; input.setSelectionRange(caret, caret); input.dispatchEvent({ type: "input" }); };
@@ -213,4 +213,48 @@ export default async function (t) {
     chat.options()[0].id === "slash-option-0" && thread.options()[0].id === "thSlash-0"
       && thread.input.getAttribute("aria-activedescendant") === "thSlash-0",
     `${chat.options()[0]?.id} ${thread.options()[0]?.id}`);
+
+  // ---- 会話を持たない入力欄（チャンネルの流れ）: /compact を出さず、見出しと行頭を差し替えられる
+  const feed = mount({ compact: false, headLabel: (key) => el("span", "sk-who", `見出し ${key}`), badge: (s) => (s.name === "visualize" ? el("span", "face", "顔") : null) });
+  feed.type("/");
+  await feed.settle();
+  t.ok("compact:false では /compact の行も「Pleiad のコマンド」の組も出さない",
+    feed.options().length === 3 && feed.options().every((o) => o.querySelector(".name").textContent !== "/compact")
+    && !feed.list.children.some((c) => c.textContent === "Pleiad のコマンド"));
+  t.ok("先頭の候補はスキル（Enter で /名前 を確定できる）", feed.options()[0].querySelector(".name").textContent.endsWith("/visualize"),
+    feed.options()[0].querySelector(".name").textContent);
+  t.ok("見出しは headLabel の部品（取れた候補の元の key を渡す）＋件数は右端に残る",
+    feed.list.querySelector(".sk-who").textContent === "見出し D:/work" && feed.list.querySelector(".n").textContent === "3");
+  t.ok("badge の部品を名前の前に足す（持たないスキルには足さない）", (() => {
+    const named = feed.options().find((o) => o.querySelector(".name").textContent.includes("visualize"));
+    const other = feed.options().find((o) => o.querySelector(".name").textContent.includes("code-review"));
+    const kids = named.querySelector(".name").children;
+    return kids[0].classList.contains("face") && kids[1].textContent === "/" && !other.querySelector(".face");
+  })());
+  feed.type("/visu");
+  await feed.settle();
+  t.ok("絞り込んでも見出しと顔は残り、件数は絞った数", feed.list.querySelector(".sk-who") && feed.options().length === 1 && feed.list.querySelector(".n").textContent === "1" && !!feed.options()[0].querySelector(".face"));
+  feed.key("Enter");
+  t.ok("確定は顔を含めず名前だけが入る", feed.input.value === "/visualize ", JSON.stringify(feed.input.value));
+  const plainHead = mount();
+  plainHead.type("/");
+  await plainHead.settle();
+  t.ok("headLabel を渡さなければ今までの「スキル」の見出し・顔も付かない", plainHead.list.querySelectorAll(".face").length === 0 && !plainHead.list.querySelector(".sk-who"));
+  const strHead = mount({ compact: false, headLabel: () => "Owl のスキル" });
+  strHead.type("/");
+  await strHead.settle();
+  t.ok("headLabel が文字列なら見出しの文字にする", strHead.list.querySelector(".lead").textContent === "Owl のスキル");
+  let keyNow = "a";
+  // 引き先の印（cwd の欄に入れる文字列）が変わったら取り直す（同じ印の間は使い回す）
+  const keyed = mount({ compact: false, cwd: () => keyNow, load: async (k) => [{ name: `skill-${k}`, description: "", hint: "", from: "" }] });
+  keyed.type("/");
+  await keyed.settle();
+  keyed.type("/s");
+  await keyed.settle();
+  t.ok("同じ印の間は取り直さない", keyed.calls.join() === "a", keyed.calls.join());
+  keyNow = "b";
+  keyed.type("/s");
+  await keyed.settle();
+  t.ok("印が変わると取り直し、新しい印の候補を出す", keyed.calls.join() === "a,b" && keyed.slash.isOpen() && keyed.options().some((o) => o.querySelector(".name").textContent.includes("skill-b")),
+    keyed.calls.join());
 }

@@ -194,19 +194,19 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* 左右端は入力欄の箱（.cbox）に揃える（箱の中に置くので left:0 / right:0）。
    .clist の min-width:100%（親の幅）と max-width は外す（ADR 0256） */
 :is(#skillList,#thSkillList,#wkSkillList){left:0;right:0;width:auto;min-width:0;max-width:none;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の箱（.cbox）のすぐ上に浮かせる。高さは slash-skills.mjs が上に残っている分までにする */
-:is(#skillList,#thSkillList,#wkSkillList) .head{display:flex;gap:8px}
-:is(#skillList,#thSkillList,#wkSkillList) .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
-:is(#skillList,#thSkillList,#wkSkillList) li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
-:is(#skillList,#thSkillList,#wkSkillList) .name{display:flex;align-items:baseline;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-:is(#skillList,#thSkillList,#wkSkillList) .name b{color:var(--ink-blue)}   /* 打った文字と一致した部分。太くせず色だけ */
-:is(#skillList,#thSkillList,#wkSkillList) .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-meta);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
-:is(#skillList,#thSkillList,#wkSkillList) .from{font-size:var(--fs-meta);color:var(--ink-weak);white-space:nowrap}
-:is(#skillList,#thSkillList,#wkSkillList) .desc{grid-column:1/-1;font-size:var(--fs-meta);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .head{display:flex;gap:8px}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .name{display:flex;align-items:baseline;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .name b{color:var(--ink-blue)}   /* 打った文字と一致した部分。太くせず色だけ */
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-meta);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .from{font-size:var(--fs-meta);color:var(--ink-weak);white-space:nowrap}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .desc{grid-column:1/-1;font-size:var(--fs-meta);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 今は使えない候補（Antigravity の会話の /compact）。名前を弱い字にし、説明の欄に理由を全文で出す */
-:is(#skillList,#thSkillList,#wkSkillList) li.it[aria-disabled=true]{cursor:default}
-:is(#skillList,#thSkillList,#wkSkillList) li.it[aria-disabled=true] .name{color:var(--ink-weak)}
-:is(#skillList,#thSkillList,#wkSkillList) li.it[aria-disabled=true] .desc{white-space:normal}
-:is(#skillList,#thSkillList,#wkSkillList) .none{padding:6px 10px;font-size:var(--fs-meta);color:var(--ink-weak);cursor:default}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) li.it[aria-disabled=true]{cursor:default}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) li.it[aria-disabled=true] .name{color:var(--ink-weak)}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) li.it[aria-disabled=true] .desc{white-space:normal}
+:is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) .none{padding:6px 10px;font-size:var(--fs-meta);color:var(--ink-weak);cursor:default}
 /* 選んだ直後だけ、引数の書き方を入力欄の足元に薄く。打ち始めると消える */
 .slash-hint{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 16px 0;min-height:22px;font-family:var(--font-mono)}
 .slash-hint:empty{padding:0;min-height:0}
@@ -2551,7 +2551,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .pop .li{min-height:var(--hit)}
   .pop .li :is(svg.i,.conversation-menu-icon){width:var(--icon);height:var(--icon)}
   .clist li{min-height:var(--hit);align-items:center}
-  :is(#skillList,#thSkillList,#wkSkillList) li.it{align-content:center;min-height:var(--hit)}
+  :is(#skillList,#thSkillList,#wkSkillList,.ch-skill-list) li.it{align-content:center;min-height:var(--hit)}
   /* 脇の行 */
   .row{min-height:var(--hit)}
 }

@@ -8769,6 +8769,7 @@ const channelsUi = setupChannels({
   quota: (backend) => usageSource.load(backend),
   usageOf: (backend) => usageSource.get(backend),
   agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
+  recentCwds: () => cwdOptions(),   // チャンネルの設定の作業フォルダーの「最近」（入力欄の作業フォルダーと同じ一覧）
   onUsage: (fn) => usageSource.onResult(fn),
   openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
   // bot の記憶欄の「自動整理: …」から、全 bot 共通の 設定 › 記憶 へ
