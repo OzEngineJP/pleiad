@@ -100,6 +100,27 @@ export default async function run(t) {
     assert.ok(turnMethods.indexOf('session/prompt') > turnMethods.indexOf('session/new'), 'prompt follows session/new');
     assert.equal(await fs.stat(keychain).catch(() => null), null, 'the keychain stand-in is still untouched after a turn');
     await bound.accountDispose();
+    // ---- 使用量とモデル一覧もアカウントごと: トークン（ファイル）の残りで 1 つ目と別の値になり、一覧の写しはアカウントの名前のファイル
+    await fs.writeFile(path.join(account.dir, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'), JSON.stringify({ fake: true, remaining: 0.25 }));
+    const usage = await bound.usage();
+    assert.equal(usage.attempted, true);
+    assert.ok(usage.windows.some(w => w.usedPercent === 75), JSON.stringify(usage.windows));
+    const list = await bound.models(work, { refresh: true });
+    assert.ok(Object.keys(list).length > 1, 'the account model list was fetched');
+    const cacheDir = path.join(data, 'antigravity');
+    assert.ok((await fs.readdir(cacheDir)).includes('models-' + id + '.json'), 'a per-account models cache');
+    assert.ok(!(await fs.readdir(cacheDir)).includes('models.json'), 'the first account cache is not written');
+    assert.equal(await bound.validModel(Object.keys(list).find(k => k)), true);
+    // 印が出ない版の使用量は採らない（鍵束＝1 つ目の値かもしれない）
+    process.env.FAKE_AGY_NO_FILE_MARKER = '1';
+    await assert.rejects(bound.usage(), e => e.code === 'AGY_FILE_STORAGE_UNSUPPORTED');
+    delete process.env.FAKE_AGY_NO_FILE_MARKER;
+    // トークンが無いアカウントは起こさず「ログインが要る」
+    const ghost = { id: 'acct-cccccccccccc', name: 'G', dir: path.join(data, 'accounts', 'antigravity', 'acct-cccccccccccc') };
+    await fs.mkdir(ghost.dir, { recursive: true });
+    assert.equal((await backend.usage({ account: ghost })).reason, 'no-login');
+    t.ok('Usage and the model list are read per account with the file-storage env and the marker check', true);
+
     // 印が出ない版: 会話も prompt を送らずに止まる（鍵束へ黙って戻さない）
     process.env.FAKE_AGY_NO_FILE_MARKER = '1';
     await fs.rm(process.env.FAKE_AGY_ACP_LOG, { force: true });
