@@ -51,11 +51,15 @@ const agyAuth = path.join(dataDir, 'agy-signed-in');
 fs.writeFileSync(agyAuth, 'ok');
 // これがある間だけ agy がログアウトを断る（失敗の場面）
 const agyLogoutFail = path.join(dataDir, 'agy-logout-fail');
+// Devin のログイン済み（偽の CLI は FAKE_DEVIN_AUTH_FILE が in ならログイン済み）
+const devinAuth = path.join(dataDir, 'devin-auth.txt');
+fs.writeFileSync(devinAuth, 'in');
 let server, browser;
 try {
   server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity,grok,devin', AGENT_HOST_LOCALE: 'ja',
     AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'), FAKE_AGY_NEEDS_AUTH: '1', FAKE_AGY_AUTH_FILE: agyAuth,
     FAKE_AGY_LOGOUT_FAIL_FILE: agyLogoutFail, FAKE_AGY_AUTH_HOLD_MS: '2500',
+    AGENT_HOST_DEVIN_BIN: fakeBin('fake-devin.mjs'), FAKE_DEVIN_AUTH_FILE: devinAuth, DEVIN_CONFIG_HOME: path.join(dataDir, 'devin-config'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
     AGENT_HOST_OPENCODE_BIN: fakeBin('fake-opencode.mjs'), AGENT_HOST_OPENCODE_DATA: ocData,
