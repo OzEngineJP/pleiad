@@ -506,6 +506,36 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       return (await read()).endpoints.some(e => e.id === id && (!agent || e.agent === agent));
     },
     /**
+     * 委譲の振り分けが見る接続先の状態（ADR 0361）。[{ id, agent, name, state: 'ready' | 'check_failed' | 'key_unreadable' }]。
+     * ids を渡せば、その接続先だけキーを読めるか確かめる（ほかは確認の結果だけ）。キーの値は返さない
+     */
+    async routingStates(ids = null) {
+      const data = await read().catch(() => null);
+      if (!data) return [];
+      const want = ids ? new Set(ids) : null;
+      const out = [];
+      for (const e of data.endpoints) {
+        let state = e.lastCheck?.ok === false ? 'check_failed' : 'ready';
+        if (state === 'ready' && want?.has(e.id)) {
+          try { await this.resolve(e.id, e.agent); } catch (err) { state = err?.code === 'failed' ? 'check_failed' : 'key_unreadable'; }
+        }
+        out.push({ id: e.id, agent: e.agent, name: e.name, state });
+      }
+      return out;
+    },
+    /**
+     * ply_delegate の endpoint（接続先の id か名前。ADR 0361）に当たる接続先。id が当たればそれ 1 つ、
+     * 無ければ名前が同じもの（大文字小文字を区別しない）を全部返す。キーの値は持たない
+     */
+    async lookup(ref) {
+      const s = String(ref ?? '').trim();
+      if (!s) return [];
+      const data = await read();
+      const byId = data.endpoints.filter(e => e.id === s);
+      const hits = byId.length ? byId : data.endpoints.filter(e => String(e.name ?? '').toLowerCase() === s.toLowerCase());
+      return hits.map(e => ({ id: e.id, agent: e.agent, name: e.name, ready: e.lastCheck?.ok !== false }));
+    },
+    /**
      * 接続を確かめる（保存前）。返り値の receipt を save に渡す。
      * input: { agent, baseUrl, authMode, key, keepKey?, probeModel? }、id: 編集中の接続先
      */

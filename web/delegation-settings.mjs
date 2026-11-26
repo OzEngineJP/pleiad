@@ -25,6 +25,7 @@ import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delega
 import { effortSelect } from './effort-select.mjs';
 import { paintWhoChip, renderModel, panel } from './composer-controls.mjs';
 import { createReorder, moveItem } from './reorder.mjs';
+import { CLAUDE_ROLES, KIND, KIND_LABEL } from './compat-presets.mjs';
 
 const SERVICE = 'openrouter';
 /** 判定に使うキーの割り当て（API キーの uses の judge:routing） */
@@ -79,8 +80,9 @@ const newId = prefix => `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
  * @param openPage   設定のほかのページへ移る（API キー）
  * @param openAccount エージェント設定のそのエージェントのアカウントを開き、その行へフォーカスを置く（backend, account -> void）
  * @param agents     候補に足せるエージェント（有効なエージェントの id。() -> string[]）
+ * @param openConns  エージェント設定のそのエージェントの接続先の一覧を開く（候補の面の「接続先を管理…」。backend -> void）
  */
-export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf, modelName, openPage = () => {}, openAccount = () => {}, agents = () => [] }) {
+export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf, modelName, openPage = () => {}, openAccount = () => {}, agents = () => [], openConns = null }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
   let data = null, committed = null, message = '', registering = false, keyList = null, confirmingReset = false, refreshing = false;
@@ -89,7 +91,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
   // レベルと作業の種類の編集の状態。描き直しても続く（selLv: 候補を出しているレベル）
   const ui = { selLv: null, renLv: false, delLv: null, delTo: null, openKind: null, delKind: null };
   // 自動選択の面で押した部品（描き直したときにフォーカスを戻す）
-  let judgeFocus = '', levelMenu = null, activePicker = null;
+  let judgeFocus = '', levelMenu = null, activePicker = null, rechecking = '';
   const names = { backend: id => labelOf(id), model: (backend, model, account = '') => modelName(backend, model, account) || model };
 
   // ---- 設定の中のレベル・作業の種類 ----
@@ -437,9 +439,21 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     if (!account) return row?.sameAs ? t('routing.settings.accountLoginSame', { name: row.sameAs }) : t('routing.settings.accountLogin');
     return row?.name ?? account;
   }
-  /** 候補のモデルとアカウントの表示名（「Sonnet · personal」） */
+  // ---- 互換の接続先（ADR 0361）。候補は `backend@<接続先>:model`（モデルは接続先の ID をそのまま）。
+  // 一覧と状態はサーバーの data.endpoints（エージェントごと。state は ready / check_failed / key_unreadable）
+  const endpointsOf = backend => data.endpoints?.[backend] ?? [];
+  const endpointInfo = id => Object.values(data.endpoints ?? {}).flat().find(e => e.id === id) ?? null;
+  const endpointCandidate = (backend, model, endpoint) => `${backend}@${endpoint}:${model}`;
+  const endpointLabelOf = candidate => {
+    const { endpoint } = splitCandidate(candidate);
+    return endpointInfo(endpoint)?.name ?? stateOf(candidate)?.endpointLabel ?? t('chat.endpoint.deleted');
+  };
+  /** 接続先の状態の言葉（使えるなら null） */
+  const endpointProblem = e => !e ? t('routing.unavailable.no_endpoint') : e.state && e.state !== 'ready' ? t(`routing.unavailable.${e.state}`) : null;
+  /** 候補のモデルとアカウントの表示名（「Sonnet · personal」。互換の接続先は「z-ai/glm-4.6 · OpenRouter」） */
   function candidateName(candidate) {
     const parsed = splitCandidate(candidate);
+    if (parsed.endpoint) return [parsed.model, endpointLabelOf(candidate)].join(t('routing.line.join'));
     const model = names.model(parsed.backend, parsed.model, parsed.account ?? '');
     return scopedOf(parsed) ? [model, accountText(parsed.backend, parsed.account)].join(t('routing.line.join')) : model;
   }
@@ -450,8 +464,13 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
   function candidateUsage(candidate) {
     const st = stateOf(candidate);
     const parsed = splitCandidate(candidate);
-    const scoped = scopedOf(parsed);
     const join = t('routing.line.join');
+    // 互換の接続先は「エージェント · 使用量は読めない」。使えなければ理由と、確認に失敗なら「確認し直す」
+    if (parsed.endpoint) {
+      const sub = [labelOf(parsed.backend), st && !st.usable ? skipText(st.reason, st.detail) : t('routing.settings.endpointNoUsage')];
+      return { st, lines: [{ text: sub.join(join), recheck: st?.detail === 'check_failed' ? parsed.endpoint : '' }] };
+    }
+    const scoped = scopedOf(parsed);
     const sub = scoped ? [] : [labelOf(parsed.backend)];
     if (st?.usable) {
       if (st.deferred) sub.push(t('routing.settings.lowHeadroom', { reason: skipText(st.reason) }));
@@ -472,8 +491,31 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
       go.setAttribute('aria-label', t('routing.settings.reloginLabel', { account: accountText(backend, line.relogin) }));
       small.append(t('routing.line.join'), go);
     }
+    if (line.recheck) {
+      const name = endpointInfo(line.recheck)?.name ?? line.recheck;
+      const go = button(rechecking === line.recheck ? t('compat.checking') : t('routing.settings.recheck'), () => recheckEndpoint(line.recheck, name), 'btn link rt-relogin rt-recheck');
+      // 確かめている間も押したリンクにフォーカスを残す（disabled にするとフォーカスが外れる）
+      if (rechecking === line.recheck) go.setAttribute('aria-disabled', 'true');
+      go.setAttribute('aria-label', t('routing.settings.recheckLabel', { name }));
+      small.append(t('routing.line.join'), go);
+    }
     return small;
   });
+  /** 確認に失敗した接続先を確かめ直す（エージェント設定の接続先の［接続を確認］と同じ操作）。結果は読み上げ、状態は届く通知で描き直す */
+  async function recheckEndpoint(id, name) {
+    if (rechecking) return;
+    rechecking = id; paintUsage();
+    try {
+      const r = await cmd('compatEndpointRecheck', { id });
+      announceOrder(r?.ok ? t('compat.list.recheckOk', { name }) : t('compat.list.recheckFailed', { name, error: r?.error ?? '' }));
+    } catch (e) { announceOrder(e.message); }
+    rechecking = '';
+    try {
+      const latest = await cmd('delegationRouting');
+      if (data) { data.candidates = latest.candidates; data.endpoints = latest.endpoints; data.warnings = latest.warnings; }
+    } catch {}
+    paintUsage();
+  }
   function paintUsage() {
     paintEffective();
     const at = data.candidates.map(c => c.checkedAt).filter(Boolean).sort()[0];
@@ -488,7 +530,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
       const had = info.contains(document.activeElement) && document.activeElement.matches('.rt-relogin');
       for (const small of info.querySelectorAll('small')) small.remove();
       info.append(...usageLines(row.dataset.candidate, lines));
-      if (had) info.querySelector('.rt-relogin')?.focus({ preventScroll: true });
+      // 確かめ直して使えるようになり「確認し直す」が消えたら、フォーカスは候補のチップへ
+      if (had) (info.querySelector('.rt-relogin') ?? row.querySelector('.rt-picker-chip'))?.focus({ preventScroll: true });
     }
   }
 
@@ -673,11 +716,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     return sel.element;
   }
   function paintCandidateChip(chip, tier, candidate, position, { animate = false, capability = stateOf(candidate)?.effort, conversation } = {}) {
-    const { backend } = splitCandidate(candidate);
+    const { backend, endpoint } = splitCandidate(candidate);
     const model = candidateName(candidate);
     const effort = candidateEffort({ settings: data.settings, tier, candidate,
       capability, conversation: conversation ?? conversationOf(backend) }).value ?? '';
-    paintWhoChip(chip, { backend, model, effort });
+    // 互換の接続先の候補は ◇（入力欄のチップと同じ印。ADR 0361）
+    paintWhoChip(chip, { backend, model, effort, endpoint: Boolean(endpoint) });
     const label = t('routing.settings.candidateChange', { tier: levelName(tier), position: position + 1,
       candidate: [labelOf(backend), model, effort].filter(Boolean).join(t('routing.line.join')) });
     chip.title = label;
@@ -727,10 +771,20 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
       }).filter(id => !duplicate(id));
     }
     const usage = (backend, account, model) => {
-      const states = data.candidates.filter(c => c.backend === backend && (account === undefined || (c.account ?? '') === account));
+      // 互換の接続先の候補は使用量を持たない（公式の枠の棒に混ぜない）
+      const states = data.candidates.filter(c => c.backend === backend && !c.endpoint && (account === undefined || (c.account ?? '') === account));
       const state = states.find(c => c.model === model) ?? states[0];
       const week = state?.windows?.find(w => w.minutes === 7 * 24 * 60);
       return Number.isFinite(week?.usedPercent) ? { used: week.usedPercent, high: week.usedPercent >= data.settings.avoidPercent } : null;
+    };
+    // 互換の接続先のモデル（メイン → 一覧の順。同じレベルにある候補は飛ばす）と、公式へ戻すときのモデル
+    const endpointModels = row => [...new Set([row?.roles?.main, ...(row?.models ?? [])].filter(Boolean))];
+    const endpointFirst = (backend, endpoint) => endpointModels(endpointsOf(backend).find(e => e.id === endpoint))
+      .map(m => endpointCandidate(backend, m, endpoint)).find(id => !duplicate(id)) ?? null;
+    const officialFirst = (backend, account) => {
+      const models = modelsFor(backend, account);
+      return [...new Set([models['']?.resolvesTo, ...modelIds(models)].filter(Boolean))]
+        .map(m => candidateOf(backend, m, account)).find(id => !duplicate(id)) ?? null;
     };
     async function loadCatalog() {
       const serial = ++request;
@@ -780,15 +834,16 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     }
     async function change(id) {
       if (!id) return;
-      const { backend, account, model } = splitCandidate(id);
+      const { backend, account, model, endpoint } = splitCandidate(id);
       if (loading || !model || duplicate(id)) return;
       const serial = ++request;
-      const entry = modelsFor(backend, account ?? '')[model];
+      const entry = endpoint ? null : modelsFor(backend, account ?? '')[model];
       // 段違いがモデル ID で分かれているときは、選んだ ID の段を使う。
       const fixed = entry?.family ? entry.level ?? null : null;
       const known = capabilityOf(id);
+      // 互換の接続先の段は接続先が決める（efforts に endpoint を渡す）
       const options = known || fixed ? null
-        : await cmd('efforts', { backend, model, account: account ?? '' }).catch(() => null);
+        : await cmd('efforts', endpoint ? { backend, model, endpoint } : { backend, model, account: account ?? '' }).catch(() => null);
       if (serial !== request || duplicate(id)) return;
       const capability = known ?? { levels: Object.keys(options ?? {}).filter(Boolean), fixed };
       const previous = adding ? draftEffort : data.settings.efforts?.[tier]?.[picker.candidate];
@@ -800,7 +855,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     function render() {
       pop.setAttribute('aria-label', chip.getAttribute('aria-label') ?? t('routing.settings.addCandidate'));
       const id = adding ? draft : picker.candidate;
-      const { backend, account: rawAccount, model } = splitCandidate(id || '');
+      const { backend, account: rawAccount, model, endpoint = null } = splitCandidate(id || '');
       const account = rawAccount ?? '';
       const models = modelsFor(backend, account);
       const current = Object.fromEntries(Object.entries(models).map(([modelId, entry]) => [
@@ -808,7 +863,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
           ? { ...entry, label: [entry.label ?? modelId, entry.level].join(t('routing.line.join')) } : entry,
       ]));
       for (const saved of [...list(), id].filter(Boolean).map(splitCandidate)) {
-        if (saved.backend === backend && (saved.account ?? '') === account && saved.model && !Object.hasOwn(current, saved.model)) {
+        if (saved.backend === backend && !saved.endpoint && (saved.account ?? '') === account && saved.model && !Object.hasOwn(current, saved.model)) {
           current[saved.model] = { label: names.model(backend, saved.model, account) };
         }
       }
@@ -825,16 +880,48 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
           return accountRows(value).some(a => Object.keys(modelsFor(value, a.account)).some(Boolean))
             ? duplicateText() : t('routing.settings.noModels');
         }
-        const next = kind === 'model' ? candidateOf(backend, value, account) : candidateOf(backend, model, value);
+        // 互換の接続先: 確認に失敗・キーを読めない接続先は選べない（理由を添える）。モデルが全部このレベルにあれば同じ候補
+        if (kind === 'endpoint') {
+          const row = endpointsOf(backend).find(e => e.id === value);
+          return endpointProblem(row) ?? (endpointFirst(backend, value) ? null
+            : endpointModels(row).length ? duplicateText() : t('routing.settings.noModels'));
+        }
+        // 互換から公式のアカウントへ戻す: そのアカウントのモデルが無い・全部このレベルにある
+        if (kind === 'account' && endpoint) {
+          if (!modelIds(modelsFor(backend, value)).length) return t('routing.settings.noModels');
+          return officialFirst(backend, value) ? null : duplicateText();
+        }
+        const next = kind === 'model' ? (endpoint ? endpointCandidate(backend, value, endpoint) : candidateOf(backend, value, account)) : candidateOf(backend, model, value);
         return duplicate(next) ? duplicateText() : null;
+      };
+      // 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先 → 接続先を管理…。入力欄と同じ並び。ADR 0359・0361）
+      const epRows = endpointsOf(backend);
+      const epRow = endpoint ? epRows.find(e => e.id === endpoint) ?? null : null;
+      const where = e => `${KIND_LABEL[e.kind ?? KIND[e.agent ?? backend]] ?? ''} · ${String(e.baseUrl ?? '').replace(/^https?:\/\//, '')}`;
+      const endpointView = epRows.length || endpoint ? {
+        selected: endpoint ?? '', row: epRow, lost: null,
+        roleNames: backend === 'claude' ? CLAUDE_ROLES.map(r => [r.key, r.short]) : [],   // backend-allow: 役割（メイン・速い・賢い）は Claude の互換の接続先だけ
+        options: [
+          { value: '', label: accountText(backend, ''), usage: usage(backend, '', model) },
+          // 使えない接続先の理由は、選べない行では選べない理由（blocked）として 1 回だけ出す。選んでいる行（1 段目の注記にも使う）だけ下の行に添える
+          ...epRows.map(e => ({ value: e.id, label: e.name, title: `${e.name}（${e.baseUrl ?? ''}）`, warn: Boolean(endpointProblem(e)),
+            sub: e.id === endpoint && endpointProblem(e) ? [endpointProblem(e), where(e)].join(t('routing.line.join')) : where(e) })),
+          ...(endpoint && !epRow ? [{ value: endpoint, label: t('chat.endpoint.deleted'), sub: t('chat.account.chooseAgain'), gone: true }] : []),
+        ],
+        manage: openConns ? () => openConns(backend) : null,
+      } : null;
+      const officialAccount = a => {
+        if (endpoint) { const next = officialFirst(backend, a); if (next) change(next); return; }
+        if (!model && adding && !loading) { draft = candidateOf(backend, '', a); update(); }
+        else change(candidateOf(backend, model, a));
       };
       renderModel({ pop, explicitModels: true, blocked,
         target: { backend, backendSwitchable: true, backends: backendIds().map(b => ({ id: b, label: labelOf(b) })),
           backendUsage: b => usage(b, undefined, model), backendHasAccounts: b => Boolean(accountsOf(b)),
-          account, model, models: current, modelsPending: loading,
+          account, model, models: current, modelsPending: loading, endpoint: endpointView,
           accounts: scopedOf({ backend, account: rawAccount }) ? [...new Set([...accountRows(backend).map(a => a.account), account])].filter(value => {
             const available = modelsFor(backend, value);
-            return value === account || duplicate(candidateOf(backend, model, value))
+            return endpoint || value === account || duplicate(candidateOf(backend, model, value))
               || !modelIds(available).length || Object.hasOwn(available, model)
               || !accountRows(backend).some(a => Object.hasOwn(modelsFor(backend, a.account), model));
           }).map(value => {
@@ -854,11 +941,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
           if (b.disabled) b.setAttribute('aria-disabled', 'true');
           return b;
         } : null,
-        on: { backend: b => change(alternatives(b)[0]), account: a => {
-          if (!model && adding && !loading) { draft = candidateOf(backend, '', a); update(); }
-          else change(candidateOf(backend, model, a));
-        },
-          model: m => change(candidateOf(backend, m, account)), effort: e => selectEffort(e || undefined) },
+        on: { backend: b => change(alternatives(b)[0]), account: officialAccount,
+          conn: ({ account: a }) => officialAccount(a ?? ''),
+          // 互換の接続先を選ぶと、そのメインのモデル（このレベルに無いもの）で候補を作る。モデルは接続先の ID をそのまま持つ
+          endpoint: ep => { const next = endpointFirst(backend, ep); if (next) change(next); },
+          model: m => change(endpoint ? endpointCandidate(backend, m || epRow?.roles?.main || model, endpoint) : candidateOf(backend, m, account)),
+          effort: e => selectEffort(e || undefined) },
         hide: focus => picker.panel.hide(focus), afterRender: () => picker.panel.place() });
       if (focusKey) [...pop.querySelectorAll('[data-key]')].find(node => node.dataset.key === focusKey)?.focus({ preventScroll: true });
     }
@@ -1034,16 +1122,22 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
   paint();
   return {
     refresh,
-    /** 使用量だけの通知では、開いたメニューと入力欄を作り直さない。種類のない旧サーバーの通知は全体を取り直す */
+    /**
+     * 使用量だけの通知と、互換の接続先が変わった通知（endpoints。ADR 0361）では、開いたメニューと入力欄を作り直さない。
+     * 種類のない旧サーバーの通知は全体を取り直す
+     */
     async event(ev) {
       if (root.hidden) return;
-      if (ev?.change !== 'usage') return refresh();
+      if (ev?.change !== 'usage' && ev?.change !== 'endpoints') return refresh();
       const serial = ++refreshSerial;
       try {
         const latest = await cmd('delegationRouting');
         if (serial !== refreshSerial || !data) return;
         data.candidates = latest.candidates;
         data.warnings = latest.warnings;
+        data.endpoints = latest.endpoints;
+        // 消した接続先の候補はサーバーが段から外す（段の並びが変わるので全体を描き直す）
+        if (ev.change === 'endpoints' && JSON.stringify(latest.settings?.tiers) !== JSON.stringify(data.settings?.tiers)) return refresh();
         paintUsage();
       } catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); stateLine.textContent = message; stateLine.hidden = false; }
     },

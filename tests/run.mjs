@@ -977,6 +977,7 @@ const SUITES = [
   './unit/server-compat-endpoints.mjs',
   // bot の互換の接続先（ADR 0359）。会話・ルーティン・委譲が接続先で走り、消したら止まる
   './unit/server-bot-compat.mjs',
+  './unit/server-delegation-compat.mjs',
   './unit/server-setup-endpoint-only.mjs',
   './unit/server-setup-check-failed.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）

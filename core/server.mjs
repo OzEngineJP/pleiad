@@ -27,7 +27,7 @@ import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
 import { gzip as gzipCallback } from 'node:zlib';
 import { promisify } from 'node:util';
-import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
+import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, tierEndpoints, targetCandidate, endpointSlot, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
@@ -1321,13 +1321,15 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng,
-    accounts: async b => accountRows(b), held: b => heldSlots(b.id), inTiers: b => tierAccounts(routingSettingsCache, b.id) });
+    accounts: async b => accountRows(b), held: b => heldSlots(b.id), inTiers: b => tierAccounts(routingSettingsCache, b.id), endpoints: usageEndpoints });
   const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
   // リモートのホストへ任せる（ply_delegate の host と、写しの行があるタスクへの ply_task_*。docs/agent-delegation.md「リモートのホストへ任せる」）
   // account はこの PC に登録した Claude のアカウント（ply_usage の名前）なので、ホストへは渡さない（ホストのアカウントは別。ADR 0205）
   if (name === 'ply_delegate' && args.host !== undefined) {
     if (args.account !== undefined) throw new Error(agentT(lng, 'delegation.remote.accountUnsupported'));
+    // 互換の接続先もこの PC に登録したもの（ホストの接続先は別）
+    if (args.endpoint !== undefined) throw new Error(agentT(lng, 'delegation.remote.endpointUnsupported'));
     return callRemoteDelegate(owner, turn, args, lng);
   }
   if (name.startsWith('ply_task_') && name !== 'ply_task_list' && agentTasks.get(String(args.taskId ?? ''))?.host) {
@@ -1420,6 +1422,53 @@ async function requestedAccount(name, lng, backend = getBackend('claude')) {
   if (id && !row) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: name, accounts: names() }));
   if (row && !row.ready) throw new Error(agentT(lng, 'delegation.accountNoToken', { account: name, accounts: names() }));
   return { account: id, label: await accountLabelOf(id, accounts) };
+}
+/**
+ * 依頼元の AI が書いた互換の接続先（ply_delegate の endpoint。接続先の id か名前。ADR 0361）を確かめる。
+ * backendId（書いた backend）があれば、そのエージェントの接続先から先に引く。断るのは、登録に無い・名前が 2 つ以上に当たる・
+ * 別のエージェントの接続先・確認に失敗している・キーを読めないとき。黙って公式に落とさない。
+ * 返すのは { endpoint（id）, label（名前）, agent }
+ */
+async function requestedEndpoint(ref, lng, backendId) {
+  const name = typeof ref === 'string' ? ref.trim() : '';
+  if (!name || name.length > 200) throw new Error(agentT(lng, 'delegation.endpointUnknown', { name: String(ref ?? '').slice(0, 200) }));
+  const hits = await compatEndpoints.lookup(name);
+  const own = backendId ? hits.filter(h => h.agent === backendId) : hits;
+  const pool = own.length ? own : hits;
+  if (!pool.length) throw new Error(agentT(lng, 'delegation.endpointUnknown', { name }));
+  if (pool.length > 1) throw new Error(agentT(lng, 'delegation.endpointAmbiguous', { name, n: pool.length }));
+  const hit = pool[0];
+  const agentLabel = getBackend(hit.agent)?.label ?? hit.agent;
+  if (backendId && hit.agent !== backendId) throw new Error(agentT(lng, 'delegation.endpointOtherAgent', { name: hit.name, agent: agentLabel, backend: hit.agent }));
+  if (!hit.ready) throw new Error(agentT(lng, 'delegation.endpointCheckFailed', { name: hit.name }));
+  // キーを読めるか（値はここで捨てる。文は依頼元の言語で返す）
+  try { await compatEndpoints.resolve(hit.id, hit.agent); }
+  catch (e) {
+    if (e?.code === 'failed') throw new Error(agentT(lng, 'delegation.endpointCheckFailed', { name: hit.name }));
+    if (e?.code === 'deleted') throw new Error(agentT(lng, 'delegation.endpointUnknown', { name }));
+    throw new Error(agentT(lng, 'delegation.endpointKeyUnreadable', { name: hit.name }));
+  }
+  return { endpoint: hit.id, label: hit.name, agent: hit.agent };
+}
+/** 段に入っている互換の接続先の状態（振り分けの checkCandidate の endpoints。ADR 0361）。extra はほかに確かめる id */
+async function routingEndpoints(extra = []) {
+  return compatEndpoints.routingStates([...tierEndpoints(routingSettingsCache), ...extra]).catch(() => []);
+}
+/** ply_usage の endpoints の上限（OpenRouter のように数百のモデルを持つ接続先で、返り値を膨らませない） */
+const USAGE_ENDPOINT_MODELS = 20;
+/** ply_usage のエージェントの互換の接続先（ADR 0361）。キーの値は持たない。models はメインのモデルを先頭に USAGE_ENDPOINT_MODELS 件まで */
+async function usageEndpoints(b) {
+  if (!endpointCapable(b)) return [];
+  const { endpoints = [] } = await compatEndpoints.list(b.id);
+  const placed = tierEndpoints(routingSettingsCache, b.id);
+  return endpoints.map(e => {
+    const main = e.roles?.main ?? '';
+    const models = [...new Set([main, ...(e.models ?? [])].filter(Boolean))];
+    const held = endpointHeld(b.id, e.id);
+    return { id: e.id, name: e.name, kind: e.kind, ...(main ? { mainModel: main } : {}), models: models.slice(0, USAGE_ENDPOINT_MODELS),
+      ...(models.length > USAGE_ENDPOINT_MODELS ? { modelCount: models.length } : {}), ready: e.ready !== false, inTiers: placed.has(e.id),
+      ...(held.length ? { held } : {}) };
+  });
 }
 /** 委譲カードに出すアカウントの見出し（人が付けた名前。メールアドレスは伏せる）。'' はログイン中のアカウント */
 async function accountLabelOf(id, accounts) {
@@ -1929,6 +1978,16 @@ const ROUTING_USAGE_AUTO = process.env.AGENT_HOST_ROUTING_USAGE !== 'off';
 async function routeDelegation(args, lng, cwd) {
   const settings = routingSettingsCache;
   if (!kindOrder(settings).includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng, settings.kinds) }));
+  // 依頼元が名指しした互換の接続先（ADR 0361）。account とは一緒に書けない。backend を省けば接続先のエージェント。
+  // 段に無い接続先も通す（明示したものは通す。ADR 0264 の 5 と同じ）。自動の選択が無効でも頼める
+  if (args.endpoint !== undefined) {
+    if (args.account !== undefined) throw new Error(agentT(lng, 'delegation.endpointWithAccount'));
+    if (args.backend !== undefined && typeof args.backend !== 'string') throw new Error(agentT(lng, 'delegation.backendDisabled'));
+    const chosen = await requestedEndpoint(args.endpoint, lng, args.backend);
+    if (!getBackend(chosen.agent)) throw new Error(agentT(lng, 'delegation.backendDisabled'));
+    return { ...args, backend: chosen.agent, endpoint: chosen.endpoint,
+      routing: pinnedRouting({ kind: args.kind, backend: chosen.agent, model: args.model, endpoint: chosen.endpoint, endpointLabel: chosen.label }) };
+  }
   if (args.backend !== undefined) {
     if (args.account === undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
     // 依頼元が選んだアカウント（ADR 0205・0222）。使用枠が満杯でも先回りして断らない（ADR 0352）
@@ -1956,23 +2015,24 @@ async function routeDelegation(args, lng, cwd) {
   ]);
   // 選んだ候補を確かめ直す。一覧では裁かず、有効なエージェントとモデル名の形だけを見る。
   const rejected = {};
+  const endpoints = await routingEndpoints();
   let ok, routing;
   for (;;) {
-    ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
+    ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked, endpoints }));
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
     // モデルが一覧にあるかは見ない（使えるかは CLI/API が決め、断られたら次の候補で作り直す。ADR 0311）。
-    // 見るのは、エージェントが有効か・モデル名の形だけ
-    if (picked && isModelId(routing.target.model)) break;
-    rejected[candidateId(routing.target.backend, routing.target.model, routing.target.account || null)] = picked ? 'model_unknown' : 'unavailable';
+    // 見るのは、エージェントが有効か・モデル名の形だけ（互換の接続先の候補は、接続先を持てるエージェントか）
+    if (picked && isModelId(routing.target.model) && (!routing.target.endpoint || endpointCapable(picked))) break;
+    rejected[targetCandidate(routing.target)] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
     // 候補の行は言語によらない形（画面の委譲カードがこの行を読んで理由ごとにまとめる。web/delegation-routing-view.mjs の parseRoutingFailure）
     const skipped = formatSkippedCandidates(routing.skipped);
     throw new Error(agentT(lng, 'routing.exhausted', { kind: args.kind, difficulty: routing.difficulty, avoidPercent: settings.avoidPercent, skipped }));
   }
-  const { backend, model, account } = routing.target;
-  return { ...args, backend, model, account: account ?? '', routing };
+  const { backend, model, account, endpoint } = routing.target;
+  return { ...args, backend, model, account: account ?? '', ...(endpoint ? { endpoint } : {}), routing };
 }
 
 /**
@@ -2021,8 +2081,14 @@ async function delegationRoutingState() {
     const list = modelLists.get(key);
     return { ...backend, models: () => list };
   };
-  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked }).map(async c => {
+  const endpointStates = await routingEndpoints();
+  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked, endpoints: endpointStates }).map(async c => {
     const raw = c.backend ? getBackend(c.backend) : null;
+    // 互換の接続先の候補は接続先の段（ADR 0361。消えた接続先は段を持たない）
+    if (raw && c.endpoint) {
+      const row = await endpointRow(c.endpoint).catch(() => null);
+      return { ...c, effort: row ? await effortCapability(raw, c.model, process.cwd(), row) : { levels: [], fixed: null } };
+    }
     const backend = raw ? sharedBackend(raw, c.account ?? '') : null;
     return backend ? { ...c, effort: await effortCapability(backend, c.model, process.cwd()) } : c;
   }));
@@ -2035,7 +2101,21 @@ async function delegationRoutingState() {
     // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
     limit: credit,
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
-    warnings: settingsWarnings({ settings, usage }), candidates, accounts: await routingAccounts(usage) };
+    warnings: settingsWarnings({ settings, usage }), candidates, accounts: await routingAccounts(usage), endpoints: await routingEndpointRows(endpointStates) };
+}
+/**
+ * 互換の接続先（設定 › 委譲の候補の面の接続先の 2 段目。ADR 0361）。{ [agent]: [行] }。行は入力欄と同じ一覧の行（キーの値は持たない）に、
+ * 振り分けの状態（state: ready・check_failed・key_unreadable）を足したもの
+ */
+async function routingEndpointRows(states) {
+  const { endpoints = [] } = await compatEndpoints.list().catch(() => ({}));
+  const stateOf = new Map(states.map(s => [s.id, s.state]));
+  const out = {};
+  for (const e of endpoints) {
+    const { keyRef: _ref, ...row } = e;
+    (out[e.agent] ??= []).push({ ...row, state: stateOf.get(e.id) ?? (e.ready ? 'ready' : 'check_failed') });
+  }
+  return out;
 }
 /**
  * アカウントを登録したエージェントのアカウント（設定 › 委譲の追加メニューの 3 段目と、段の上の「使う / 使わない」。ADR 0264）。
@@ -2079,11 +2159,13 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
     if (!parsed) throw new Error(t('routing.retry.badCandidate'));
   }
   const from = original.routing?.target ?? { backend: original.backend, model: original.model, account: null };
-  const check = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now(), blocked: slotBlocked });
-  if (parsed.backend === from.backend && parsed.model === from.model && (check.account ?? null) === (from.account ?? null))
+  // 互換の接続先の候補（ADR 0361）は、接続先の状態（確認に失敗・キーを読めない・消した）を見て確かめる
+  const endpoints = parsed.endpoint ? await routingEndpoints([parsed.endpoint]) : [];
+  const check = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now(), blocked: slotBlocked, endpoints });
+  if (parsed.backend === from.backend && parsed.model === from.model && (check.account ?? null) === (from.account ?? null) && (check.endpoint ?? null) === (from.endpoint ?? null))
     throw new Error(t('routing.retry.same'));
   const child = getBackend(parsed.backend);
-  if (!check.ok || !child) throw new Error(t('routing.retry.unusable', { candidate, reason: check.ok ? 'unavailable' : check.reason }));
+  if (!check.ok || !child || (parsed.endpoint && !endpointCapable(child))) throw new Error(t('routing.retry.unusable', { candidate, reason: check.ok ? 'unavailable' : check.reason }));
   const owner = original.parentSessionId;
   const parentBackend = await resolveBackendForSession(owner);
   const parentMode = await resolveMode(owner, undefined, parentBackend);
@@ -4061,12 +4143,16 @@ function makeEmit(turn) {
       // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
       // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
       // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない。アカウント全体の枠（scope: 'account'。Claude の 5 時間・週）は、モデルを問わず 1 つに記録する
-      if (!replay && !turn.info.endpoint) {
-        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: limitAccount(turn.backend, turn.info.account),
-          resetsAt: turn.limit?.resetsAt, window: turn.limit?.window, scope: event.scope ?? null });
+      // 互換の接続先の会話（429 など）は、接続先の枠（endpoint:<id>）として記録する（自動の選択がその候補を飛ばす。ADR 0361）
+      if (!replay) {
+        const slot = turn.info.endpoint ? endpointSlot(turn.info.endpoint) : limitAccount(turn.backend, turn.info.account);
+        // 接続先の枠のモデルは、実際に送ったモデル（空なら接続先のメインのモデル。段の候補 backend@ep-…:model と合わせる）
+        const slotModel = turn.info.endpoint ? turn.slotModel || turn.info.model : turn.info.model;
+        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: slotModel, account: slot,
+          resetsAt: turn.limit?.resetsAt, window: turn.limit?.window, scope: turn.info.endpoint ? null : event.scope ?? null });
         else if (event.outcome === 'ok') {
-          limitedSlots.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
-          modelRejects.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
+          limitedSlots.clear(turn.backend.id, slotModel, slot);
+          modelRejects.clear(turn.backend.id, slotModel, slot);
         }
       }
       turn.retry = null;
@@ -4395,11 +4481,18 @@ async function applyRoutingSettings(patch) {
 
 /** 登録を消したアカウントの候補を段から外す（ADR 0264）。外した候補の強さの上書きは applyRoutingSettings が一緒に外す */
 async function dropAccountCandidates(id) {
+  return dropScopedCandidates(id, 'account');
+}
+/** 消した互換の接続先の候補を段から外す（ADR 0361。アカウントと同じ扱い） */
+async function dropEndpointCandidates(id) {
+  return dropScopedCandidates(id, 'endpoint');
+}
+async function dropScopedCandidates(id, field) {
   if (!id) return;
   const tiers = routingSettingsCache.tiers;
   const changed = Object.fromEntries(levelOrder(routingSettingsCache).flatMap(tier => {
     const list = tiers[tier] ?? [];
-    const kept = list.filter(c => parseCandidate(c)?.account !== id);
+    const kept = list.filter(c => parseCandidate(c)?.[field] !== id);
     return kept.length === list.length ? [] : [[tier, kept]];
   }));
   if (!Object.keys(changed).length) return;
@@ -5651,6 +5744,8 @@ const opsCompat = {
   remove: async (id) => {
     if (!(await compatEndpoints.has(String(id ?? '')))) throw new OpError('ENDPOINT_NOT_FOUND', t('compat.store.notRegistered'));
     await compatEndpoints.remove(String(id));
+    // 段に入れていた候補も外す（ADR 0361 の決定 3。外さないと、段に「登録の無い接続先」の候補が残る）
+    await dropEndpointCandidates(String(id));
     emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
     return { id: String(id), deleted: true };
   },
@@ -7893,8 +7988,10 @@ function limitAccount(backend, account) {
 function slotBlocked(backend, model, account) {
   const key = slotKey(backend, model, account);
   for (const turn of runtime.turns.values()) {
-    if (turn.ended || !turn.retry || turn.info.endpoint) continue;
-    if (slotKey(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account)) === key)
+    if (turn.ended || !turn.retry) continue;
+    // 互換の接続先の会話は接続先の枠（ADR 0361）
+    const slot = turn.info.endpoint ? endpointSlot(turn.info.endpoint) : limitAccount(turn.backend, turn.info.account);
+    if (slotKey(turn.backend.id, turn.info.endpoint ? turn.slotModel || turn.info.model : turn.info.model, slot) === key)
       return { reason: 'retry_waiting', ...(Number.isFinite(turn.retry.next) ? { until: turn.retry.next } : {}) };
   }
   const limited = limitedSlots.get(backend, model, account);
@@ -7920,11 +8017,17 @@ function heldSlots(backend) {
     out.push({ model: turn.info.model ?? null, account: account || null, reason: 'retry_waiting', until, resetsAt: until, window: null });
   }
   for (const s of limitedSlots.list(backend)) {
-    if (seen.has(slotKey(backend, s.model, s.account))) continue;
+    // 互換の接続先の枠は、ply_usage の endpoints の行に出す（endpointHeld。ADR 0361）
+    if (seen.has(slotKey(backend, s.model, s.account)) || String(s.account ?? '').startsWith(endpointSlot(''))) continue;
     out.push({ model: s.model, account: s.account || null, reason: 'recently_limited', until: new Date(s.until).toISOString(),
       resetsAt: s.resetsAt != null ? new Date(s.resetsAt).toISOString() : null, window: s.window ?? null });
   }
   return out;
+}
+/** 互換の接続先の今止まっている枠（ply_usage の endpoints[].held。429 の後。ADR 0361） */
+function endpointHeld(backend, id) {
+  return limitedSlots.list(backend).filter(s => s.account === endpointSlot(id))
+    .map(s => ({ model: s.model ?? null, reason: 'recently_limited', until: new Date(s.until).toISOString(), resetsAt: s.resetsAt != null ? new Date(s.resetsAt).toISOString() : null }));
 }
 const outbox = createMessageQueue({
   store,
@@ -8488,18 +8591,20 @@ agentTasks = await createAgentTasks({
     let cwd = path.resolve(parent?.info.cwd ?? (remoteReq ? os.homedir() : (await store.get(owner)).cwd) ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
-    // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
-    // （docs/agent-delegation.md「委譲先の自動選択」）
+    // 公式の候補は使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う。
+    // 互換の接続先の候補を選んだときは、その接続先で走らせる（ADR 0361。docs/agent-delegation.md「委譲先の自動選択」）
     const auto = args.routing?.mode === 'auto' || manual;
+    // 振り分け・依頼元の名指し（ply_delegate の endpoint）で決めた互換の接続先（ADR 0361）
+    const routedEndpoint = endpointCapable(backend) ? String(args.routing?.target?.endpoint ?? args.endpoint ?? '') : '';
     // 依頼元が固定の委譲で選んだアカウント（routeDelegation の requestedAccount が確かめた内部の値。ADR 0205・0222）。
     // 互換の接続先はアカウントを使わないので、自動と同じく接続先は継がず公式で走らせる
-    const chosen = !auto && Boolean(accountKind(backend)) && typeof args.account === 'string';
+    const chosen = !auto && !routedEndpoint && Boolean(accountKind(backend)) && typeof args.account === 'string';
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
-    const inherited = endpointCapable(backend) && !auto && !chosen ? delegatedEndpoint(parent?.backend?.id, backend.id, parentEndpoint) : '';
-    // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
-    if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
-    const endpoint = inherited;
+    const inherited = endpointCapable(backend) && !auto && !chosen && !routedEndpoint ? delegatedEndpoint(parent?.backend?.id, backend.id, parentEndpoint) : '';
+    // 継ぐべき接続先・選んだ接続先が消えていたら委譲を断る（黙って公式で走らせない）
+    const endpoint = routedEndpoint || inherited;
+    if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const inheritedAccount = (auto || chosen) && accountKind(backend) ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
     const sourceBackend = parent?.backend?.id ?? (await store.get(owner)).backend;
     const carried = !inheritedAccount ? '' : auto || chosen || sourceBackend === backend.id ? inheritedAccount
@@ -8507,7 +8612,7 @@ agentTasks = await createAgentTasks({
     // アカウントを書かない固定の委譲は、段ごとの候補に入っているアカウントだけを使う（継ぐアカウントが入っていなければ段の中から選ぶ。ADR 0264）。
     // 互換の接続先はアカウントを使わないので見ない
     const tierRule = !auto && !chosen && !endpoint && Boolean(accountKind(backend)) && (await accountRows(backend)).length > 0;
-    const account = tierRule ? await tierAccountFor(backend, carried, typeof args.model === 'string' ? args.model : null, lng) : carried;
+    const account = routedEndpoint ? '' : tierRule ? await tierAccountFor(backend, carried, typeof args.model === 'string' ? args.model : null, lng) : carried;
     if (!endpoint) backend = await backendForAccount(backend, await accountResolve(backend, account));
     // 明示したモデルは全 backend でその文字列を送る。正式な ID は正確に一致する行だけ読み替え、未掲載による拒否はしない。
     const asked = auto ? args.model : await canonicalModel(backend, args.model, cwd, endpoint);
@@ -8521,7 +8626,7 @@ agentTasks = await createAgentTasks({
     // 自動の振り分け・人が選び直した委譲の子の強さは、上書き → 段の既定 → そのモデルに合わせる（ADR 0164）。
     // 振り分けでは断らず、モデルが持たない強さは合わせて記録に残す。固定の委譲は依頼元が書いた値のまま（検証する）
     const decided = auto ? decideEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
-      candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) }) : null;
+      candidate: candidateId(backend.id, model, accountKind(backend) && !endpoint ? account || null : null, endpoint || null), capability: await effortCapability(backend, model, cwd, await endpointRow(endpoint)) }) : null;
     const effort = !auto && args.effort !== undefined
       ? await validateEffort(backend, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true })
       : await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
@@ -8537,7 +8642,10 @@ agentTasks = await createAgentTasks({
     const { effortTier: _tier, ...routed } = args.routing ?? {};
     const label = accountKind(backend) && args.routing?.target?.accountLabel && (args.routing.target.account ?? null) === account ? { accountLabel: args.routing.target.accountLabel }
       : tierRule ? { accountLabel: await accountLabelOf(account) } : {};
-    const routing = args.routing ? { ...routed, target: { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
+    // 互換の接続先で走らせるときは、アカウントではなく接続先を書く（見出しは接続先の名前。カード・一覧の「モデル · 接続先」）
+    const where = endpoint ? { account: null, endpoint, endpointLabel: (routedEndpoint && args.routing?.target?.endpointLabel) || (await compatEndpoints.get(endpoint))?.name || endpoint }
+      : { account: accountKind(backend) ? account : null, ...label };
+    const routing = args.routing ? { ...routed, target: { backend: backend.id, model, ...where, effort:(decided?.source === 'model' ? decided.effort : effort) || null },
       ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}) } : null;
     // worktree（ADR 0089）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
     let worktree = null;
@@ -8588,10 +8696,11 @@ agentTasks = await createAgentTasks({
     const excluded = continuing ? failed.triedLimits.map(target => ({ target, reason: target?.auth ? 'login_expired' : 'recently_limited' }))
       : [...(prev.attempts ?? []), { target: prev.target, reason: failed?.modelRejected ? 'model_rejected' : null }];
     for (const a of excluded)
-      if (a?.target?.backend && a.target.model) rejected[candidateId(a.target.backend, a.target.model, a.target.account || null)] = a.reason ?? 'rejected_before_work';
+      if (a?.target?.backend && a.target.model) rejected[targetCandidate(a.target)] = a.reason ?? 'rejected_before_work';
     // CLI/API がモデルを断った（最初のターン。ADR 0311）: その枠をしばらく振り分けから外し、続く委譲も選ばない
     if (failed?.modelRejected && prev.target?.backend && prev.target.model)
-      modelRejects.record({ backend: prev.target.backend, model: prev.target.model, account: limitAccount(prev.target.backend, prev.target.account), message: failed.error });
+      modelRejects.record({ backend: prev.target.backend, model: prev.target.model,
+        account: prev.target.endpoint ? endpointSlot(prev.target.endpoint) : limitAccount(prev.target.backend, prev.target.account), message: failed.error });
     const judged = { judge: prev.judge ?? 'none', signals: prev.signals ?? null, probabilities: prev.probabilities ?? null, fallback: prev.fallback ?? null };
     // タスクの worktree が生きていればその中で、無ければ（先の完了で片付けられた）元の場所で走らせる
     const wt = task.worktree ? await worktreeHost.worktrees.get(task.worktree.id).catch(() => null) : null;
@@ -8600,15 +8709,18 @@ agentTasks = await createAgentTasks({
     const child = continuing ? await store.get(oldSessionId) : null;
     const source = continuing ? getBackend(child?.backend ?? task.backend) : null;
     if (continuing && (!source || child.nextSettings)) return null;
-    let ok, next, backend = null, account = '', model = null, switchMode = null;
+    let ok, next, backend = null, account = '', endpoint = '', model = null, switchMode = null;
     // ログインが切れた委譲先（Issue #232）。同じエージェント・アカウントなら、ほかのモデルでも同じログインで断られる
     const loggedOut = continuing ? failed.triedLimits.filter(x => x?.auth && x.backend) : [];
     const loginBlocked = (b, a) => loggedOut.some(x => x.backend === b && (x.account || '') === (a || '')) ? { reason: 'login_expired' } : null;
+    // 枠の口（a）は、互換の接続先の候補では endpoint:<id>（endpointSlot）。候補の id へ戻して試した枠を引く
+    const slotCandidate = (b, m, a) => String(a ?? '').startsWith('endpoint:') ? candidateId(b, m, null, a.slice('endpoint:'.length)) : candidateId(b, m, a || null);
+    const endpoints = await routingEndpoints();
     for (;;) {
       const blocked = continuing ? (b, m, a) => loginBlocked(b, a) ?? slotBlocked(b, m, a)
-        ?? (rejected[candidateId(b, m, a || null)] ? { reason: rejected[candidateId(b, m, a || null)] } : null) : slotBlocked;
+        ?? (rejected[slotCandidate(b, m, a)] ? { reason: rejected[slotCandidate(b, m, a)] } : null) : slotBlocked;
       ({ ok, routing: next } = route({ kind: prev.kind, judged, settings: routingSettingsCache, usage: routingUsage.snapshot(), now: Date.now(),
-        rejected: continuing ? {} : rejected, blocked }));
+        rejected: continuing ? {} : rejected, blocked, endpoints }));
       if (!ok) {
         // モデルを断られた後に候補が尽きた: 振り分けの失敗と同じ集計の文面で失敗にする（今の routing.exhausted と同じ見せ方）
         if (!failed?.modelRejected) return null;
@@ -8616,32 +8728,37 @@ agentTasks = await createAgentTasks({
         return { exhausted: agentT(lng, 'routing.exhausted', { kind: prev.kind, difficulty: next.difficulty, avoidPercent: routingSettingsCache.avoidPercent, skipped }) };
       }
       const picked = getBackend(next.target.backend);
-      if (!picked) { rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable'; continue; }
-      const acct = accountKind(picked) ? next.target.account ?? '' : '';
-      const scoped = await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
+      if (!picked) { rejected[targetCandidate(next.target)] = 'unavailable'; continue; }
+      // 互換の接続先の候補はアカウントを使わない（接続先を持てるエージェントか、だけを見る。ADR 0361）
+      const ep = next.target.endpoint ? String(next.target.endpoint) : '';
+      const acct = !ep && accountKind(picked) ? next.target.account ?? '' : '';
+      const scoped = ep ? (endpointCapable(picked) ? picked : null) : await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
       if (scoped && isModelId(next.target.model)) {
         if (continuing) {
           const decision = source.id === scoped.id ? { mode: child.mode, escalation: false }
             : resolveDelegatedMode({ parentMode: child.mode, parentModes: source.modes(), childModes: scoped.modes() });
           if (!decision.mode || decision.escalation) {
-            rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'unavailable';
+            rejected[targetCandidate(next.target)] = 'unavailable';
             continue;
           }
           switchMode = decision.mode;
         }
-        backend = scoped; account = acct; model = next.target.model; break;
+        backend = scoped; account = acct; endpoint = ep; model = next.target.model; break;
       }
-      rejected[candidateId(next.target.backend, next.target.model, next.target.account || null)] = 'model_unknown';
+      rejected[targetCandidate(next.target)] = 'model_unknown';
     }
     const decided = decideEffort({ settings: routingSettingsCache, tier: next.tier ?? null,
-      candidate: candidateId(backend.id, model, accountKind(backend) ? account || null : null), capability: await effortCapability(backend, model, cwd) });
-    const effort = await resolveEffort(null, decided.send, backend, model, cwd, null);
+      candidate: candidateId(backend.id, model, accountKind(backend) && !endpoint ? account || null : null, endpoint || null), capability: await effortCapability(backend, model, cwd, await endpointRow(endpoint)) });
+    const effort = await resolveEffort(null, decided.send, backend, model, cwd, await endpointRow(endpoint));
     const modes = backend.modes();
     const mode = continuing ? switchMode : modes[task.mode] ? task.mode : firstMode(modes);
     const label = accountKind(backend) && next.target.accountLabel && (next.target.account ?? null) === account ? { accountLabel: next.target.accountLabel } : {};
     // 失敗した回の記録（error は完了通知に載せるのと同じ、伏せ済みの文言）。新しい子の会話の routing にも同じ attempts を書く
-    const target = { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null };
-    const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null },
+    const where = endpoint ? { account: null, endpoint, endpointLabel: next.target.endpointLabel || (await compatEndpoints.get(endpoint))?.name || endpoint }
+      : { account: accountKind(backend) ? account : null, ...label };
+    const target = { backend: backend.id, model, ...where, effort: (decided?.source === 'model' ? decided.effort : effort) || null };
+    const attempt = { target: { backend: prev.target?.backend ?? null, model: prev.target?.model ?? null, account: prev.target?.account ?? null,
+      ...(prev.target?.endpoint ? { endpoint: prev.target.endpoint, ...(prev.target.endpointLabel ? { endpointLabel: prev.target.endpointLabel } : {}) } : {}) },
       sessionId: oldSessionId, outcome: failed?.outcome ?? null, error: continuing ? null : failed?.error ?? null,
       ...(continuing ? { continued: true, continuedTo: target } : {}), ...(failed?.modelRejected ? { reason: 'model_rejected' } : {}),
       ...(failed?.authFailed ? { reason: 'login_expired' } : {}) };
@@ -8651,7 +8768,7 @@ agentTasks = await createAgentTasks({
     if (continuing) {
       if (failed.signal.aborted || sessionBusy(oldSessionId)) return null;
       const reserved = await reserveTurnSettings({ sessionId: oldSessionId, backend: backend.id, model, effort, mode,
-        ...(accountKind(backend) ? { account } : {}), endpoint: '', keepPrefs: true }, { delegated: true, limitSwitch: true });
+        ...(accountKind(backend) ? { account } : {}), endpoint: endpoint || '', keepPrefs: true }, { delegated: true, limitSwitch: true });
       if (!reserved) return null;
       const rollback = async () => {
         const current = await store.get(oldSessionId);
@@ -8673,6 +8790,7 @@ agentTasks = await createAgentTasks({
         ...(previous?.delegation?.remote ? { remote: previous.delegation.remote } : {}) }, { durable: true });
       await store.setSessionData(sessionId, 'agentLocale', lng);
       if (account) await store.setSessionData(sessionId, 'claudeAccount', account);
+      if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
       await store.setSessionData(sessionId, 'routing', routing);
       // 失敗した子の会話は残す。任せ直しで役目を終えたことが分かるよう、delegation に次の会話の id を添える
       if (previous?.delegation) await store.setSessionData(oldSessionId, 'delegation', { ...previous.delegation, superseded: sessionId }, { durable: true });
@@ -8823,7 +8941,7 @@ agentTasks = await createAgentTasks({
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
     const lng = await ensureAgentLocale(owner);
-    const name = [getBackend(target.backend)?.label ?? target.backend, target.model, target.accountLabel].filter(Boolean).join(' · ');
+    const name = [getBackend(target.backend)?.label ?? target.backend, target.model, target.endpointLabel ?? target.accountLabel].filter(Boolean).join(' · ');
     // i18n-dynamic: agent:delegation.notice
     const prompt = agentT(lng, target.reason === 'auth' ? 'delegation.noticeAuthSwitched' : 'delegation.noticeLimitSwitched', { target: name });
     const live = await noticeTarget(owner);
@@ -9307,6 +9425,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
     ended: false,
     // このターンが使う Claude のアカウント（Pleiad で発行したトークン）の id と名前。401 の失敗の行に名前を出す（makeEmit。ADR 0212）
     authAccount: account ? { id: account.id, name: account.name } : null,
+    // 互換の接続先の会話で実際に送るモデル（モデルを選んでいなければ接続先のメインのモデル）。429 を委譲の候補の枠に記録する鍵（ADR 0361）
+    slotModel: endpointId ? model || endpointInfo?.roles?.main || '' : null,
     info: {
       sessionId,
       backend: backend.id,
