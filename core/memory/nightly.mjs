@@ -1,4 +1,4 @@
-// 夜の整理（ADR 0359 段階 2 の単位 5）の、AI にもファイルにも触れない部分。走らせる側は core/memory/learn.mjs（process・applyTierChanges）。
+// 夜の整理（ADR 0363 段階 2 の単位 5）の、AI にもファイルにも触れない部分。走らせる側は core/memory/learn.mjs（process・applyTierChanges）。
 //
 // 役目を「全件を渡して増やす」から「上限内で選び直す」へ変える。
 //   ・AI へ渡す既存の記憶は選んだ分だけ。保存だけ（archive）・約束は渡さない。「いつも」を配る枠（CORE_ALWAYS_TOKENS）の中で先に入れ、

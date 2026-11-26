@@ -130,7 +130,7 @@ const callCtx = async (ctx, who) => ({
 });
 
 /**
- * AI が約束を記憶に書こうとして断られた（MEMORY_REJECTED の promiseTodo / promiseLoop）とき、その約束を実際に置く（ADR 0359）。
+ * AI が約束を記憶に書こうとして断られた（MEMORY_REJECTED の promiseTodo / promiseLoop）とき、その約束を実際に置く（ADR 0363）。
  * 会話に ToDo があれば ToDo へ、無ければ bot の気がかりへ（気がかりを持たない bot でない会話は、ToDo を作って足す）。
  * 同じ文が開いたまま既にあれば足さない（言い直しで増やさない）。置けたら理由を promiseTodoAdded / promiseLoopAdded に付け替えた MemoryError を返す。
  * 道具が無い・一覧が満杯・失敗のときは、元の断り（自分で置く案内）のまま返す。記憶には書かない。memory.edit と夜の整理は置かない（断るだけ）。
@@ -330,7 +330,7 @@ export const memoryOps = [
     handler: async (ctx) => ctx.memoryLearner.learnNow(),
   }),
 
-  // 一度きりの振り分け（ADR 0359 段階 2 の単位 4）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
+  // 一度きりの振り分け（ADR 0363 段階 2 の単位 4）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
   // 始める・止める・取り消すは画面だけに出す（設定 › 記憶 › 振り分け。surfaces が ui だけなので AI・CLI からは見つからない。自動では始まらない）。
   // human-only は ADR 0094 の 5 つだけなので使わず、たくさんの記憶を書き換える開始と取り消しは guarded、止めるは write にする。様子は AI・CLI も読める。自動整理が OFF でも始められる
   defineOp({

@@ -11,12 +11,12 @@
 // runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
 //   予定の分の実行には数えず、lastRunAt を進めない）。省くと全部（予定の分の実行）。
 //
-// 夜の整理は「増やす」から「選び直す」へ（ADR 0359 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、保存だけ・約束を除いた
+// 夜の整理は「増やす」から「選び直す」へ（ADR 0363 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、保存だけ・約束を除いた
 //   「いつも」と、読む会話の作業場所の記憶・段の無い記憶だけを（記憶の分 12,000 トークン・1 回の入力は約 40,000 トークンまで）AI へ渡す。重みは選ぶにも段にも使わない。
 //   AI は新しい記憶に加えて、渡した記憶の段の付け直し候補（tiers）を返せる。段・作業場所を決めて付けるのはコード（1 回の実行で 20 件まで。人が書いた記憶・約束・人が選んだ段は付け直さない）。
 //   同じ文・忘れた記憶かどうかは、渡した分ではなく全件（保存だけ・忘れた記憶を含む）を見る memory.write がコードで調べる。付け直しは変更記録に migration（nightly:<日付>）と理由が残る。
 //
-// 一度きりの振り分け（ADR 0359 段階 2 の単位 4。部品は core/memory/sort.mjs）: 人が設定 › 記憶の［振り分けを始める］（memory.sortStart）を押したときだけ走る。
+// 一度きりの振り分け（ADR 0363 段階 2 の単位 4。部品は core/memory/sort.mjs）: 人が設定 › 記憶の［振り分けを始める］（memory.sortStart）を押したときだけ走る。
 //   自動整理が OFF でも始められ、アプリの起動・夜の整理からは始まらない。夜の整理の停止（halted）・失敗の数とは別に数える。
 //   最初に既存の約束を保存だけにする移行（memory.archiveLegacyPromises。何度でも同じ）を行い、段の無い記憶を 50 件・約 8000 トークンずつ内部呼出し（kind = sort）へ渡す。
 //   1 束ごとに memory.place で段（と作業場所）だけを付け、memory_state の 'memory.sort'/'run' の 1 行へ数だけを残す。本文は書き換えず、形の合わない答えの記憶は段なしのまま。
@@ -361,7 +361,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     let changed = 0;
     for (const candidate of candidates.slice(0, CANDIDATES_PER_CALL)) {
       if (!candidate || !['add', 'edit', 'replace'].includes(candidate.action)) continue;
-      if (candidate.kind === 'promise') continue;   // 約束は記憶に書かない（気がかりにも写さない。ADR 0359）
+      if (candidate.kind === 'promise') continue;   // 約束は記憶に書かない（気がかりにも写さない。ADR 0363）
       const refs = [...new Set(Array.isArray(candidate.sourceIndexes) ? candidate.sourceIndexes : [])].filter((n) => Number.isInteger(n) && items[n]).slice(0, 8);
       if (!refs.length || typeof candidate.text !== 'string') continue;
       const sources = [...refs.map((n) => sourceOf(items[n])), ...refs.flatMap((n) => items[n].aiContext ? [sourceOf(items[n].aiContext)] : [])].slice(0, 8);
@@ -427,7 +427,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
   }
 
   /**
-   * 夜の整理の 1 束（ADR 0359 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、選んだ分だけを AI へ渡す
+   * 夜の整理の 1 束（ADR 0363 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、選んだ分だけを AI へ渡す
    * （保存だけ・約束は渡さない。「いつも」と、読む会話の作業場所の記憶・段の無い記憶。1 回の入力が約 40,000 トークンに収まる分）。
    * 返りの memories は新しい記憶・書き換え（従来どおり）、tiers は渡した記憶の段の付け直し。同じ文・忘れた記憶かどうかは全件を見る memory.write が調べる。
    * 返りは { changed（書いた記憶の数）, retiered（段を付け直した数） }

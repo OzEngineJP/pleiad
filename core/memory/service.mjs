@@ -88,7 +88,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const announce = (layer) => emit({ type: 'memoryChanged', layer, rev: store.rev() });
 
   /**
-   * 段の無い既存の約束（kind = promise）を、AI を使わずコードで保存だけ（archive）にする（ADR 0359）。起動の最初の読み込みで 1 度行い、何度走っても同じ。
+   * 段の無い既存の約束（kind = promise）を、AI を使わずコードで保存だけ（archive）にする（ADR 0363）。起動の最初の読み込みで 1 度行い、何度走っても同じ。
    * updatedAt は進めず、変更記録に「システムが段を付けた（migration）」と前後を残す。段を外せば元に戻り、外した後の起動でもやり直さない（記録にある id は飛ばす）。
    * ToDo・気がかりへは写さない。返りは変えた層
    */

@@ -113,7 +113,7 @@ try {
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
-  // ADR 0359: 夜の整理は約束（kind=promise）の候補を黙って捨てる。保存だけ（archive）の記憶は材料（Existing memories）に入れない
+  // ADR 0363: 夜の整理は約束（kind=promise）の候補を黙って捨てる。保存だけ（archive）の記憶は材料（Existing memories）に入れない
   await memory.write({ layer: 'user', text: '保存だけに置いた古い記憶 ZZARCHIVEDZZ', tier: 'archive' }, { kind: 'human' }, {});
   await channels.post({ channelId: channel.id, text: '見積もりは来週の月曜までに出します。見出しに飾りは付けないでほしい。' }, { kind: 'human' });
   const prompts = [];

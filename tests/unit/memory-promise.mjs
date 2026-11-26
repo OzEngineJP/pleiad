@@ -1,4 +1,4 @@
-// 約束を記憶に書かない・既存の約束を保存だけへ・保存だけ（archive）を AI の配送・検索・夜の整理から外す（記憶の段 2 の実装単位 2。ADR 0359）:
+// 約束を記憶に書かない・既存の約束を保存だけへ・保存だけ（archive）を AI の配送・検索・夜の整理から外す（記憶の段 2 の実装単位 2。ADR 0363）:
 // AI・夜の整理が kind=promise を書く・直すのは MEMORY_REJECTED（ToDo のある会話は promiseTodo・無ければ promiseLoop。保存しない）・人は書ける・
 // 段の無い既存の約束は起動で AI なしに archive へ（updatedAt 据え置き・記録に migration と前後・何度起動しても同じ・段を外せば戻り、外した後は再度行わない）・
 // archive は turnContext（核の写し・差分・関係する記憶）・search・夜の整理の材料に出ず、list・get には出る。段の無い記憶はこれまでどおり。
