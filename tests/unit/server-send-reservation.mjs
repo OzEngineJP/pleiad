@@ -96,6 +96,8 @@ export default async function (t) {
     const from = await sendSlow(c, id, matched);
     const running = await session(c, id);
     t.ok('スナップショットが予約と一致する送信は、走っている間に予約を消す', !running?.nextSettings, JSON.stringify(running?.nextSettings));
+    const consumedEvs = c.since(from).filter((e) => e.type === 'nextSettings' && e.sessionId === id);
+    t.ok('送って消えた予約の知らせは applied: true を付ける（画面はこれで「効いた値」と判る）', consumedEvs.some((e) => e.nextSettings === null && e.applied === true), JSON.stringify(consumedEvs));
     await stop(c, id, from);
 
     // 直前の送信が fast / high を会話の値にした。同じ値は予約にならないので、別のモデルと段にする。
@@ -107,7 +109,10 @@ export default async function (t) {
     const kept = await session(c, id);
     t.ok('スナップショットのモデルが予約と違うときは、予約を残す', kept?.nextSettings?.model === 'smart', JSON.stringify(kept?.nextSettings));
     await stop(c, id, fromMismatch);
+    const fromCancel = c.mark();
     await c.cmd('setTurnSettings', { sessionId: id, cancel: true });
+    const cancelEvs = c.since(fromCancel).filter((e) => e.type === 'nextSettings' && e.sessionId === id);
+    t.ok('取り消しの知らせには applied を付けない', cancelEvs.length > 0 && cancelEvs.every((e) => e.applied === undefined), JSON.stringify(cancelEvs));
 
     const sample = again.nextSettings;
     let stayed = 0;

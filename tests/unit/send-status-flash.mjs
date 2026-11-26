@@ -141,7 +141,7 @@ ${rest.slice(0, nextCase)}
   begin(row('s1'));
   t.ok('止まっている間は、予約があっても帯を出さない', notice.hidden === true && !seen.includes(false));
   run('refreshVersion = 4');
-  run('onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: null })');
+  run('onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: null, applied: true })');
   const clearedNow = state.sessions[0].nextSettings == null;
   state.runningIds.add('s1');
   state.work = { turns: [{ sessionId: 's1', phase: 'running' }] };
@@ -153,7 +153,7 @@ ${rest.slice(0, nextCase)}
   // 新しい会話を作っている間に選んで、最初に送る（sendDraftSettings の予約が同じ知らせで消える）
   begin(row('s-new'));
   run('refreshVersion = 4');
-  run('onNextSettings({ type: "nextSettings", sessionId: "s-new", nextSettings: null })');
+  run('onNextSettings({ type: "nextSettings", sessionId: "s-new", nextSettings: null, applied: true })');
   state.runningIds.add('s-new');
   state.work = { turns: [{ sessionId: 's-new', phase: 'running' }] };
   run('paintSettingsNotice()');
@@ -162,7 +162,7 @@ ${rest.slice(0, nextCase)}
   // ---------------------------------------------------------------- チップ変更の取り直しが、送信より前に始まって後から届く
   begin(row('s1'));
   run('refreshVersion = 4');
-  run('onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: null })');
+  run('onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: null, applied: true })');
   const stale = row('s1');
   state.sessions = [stale];
   state.runningIds = new Set(['s1']);
@@ -200,6 +200,22 @@ ${rest.slice(0, nextCase)}
     notice.hidden === true && !seen.includes(false) && cancelled.nextSettings == null
     && cancelled.model === 'old-model' && cancelled.backend === 'claude' && cancelled.claudeAccount === 'acc-1' && cancelled.compatEndpoint === 'ep-1',
     JSON.stringify({ model: cancelled.model, next: cancelled.nextSettings, account: cancelled.claudeAccount }));
+
+  // ---------------------------------------------------------------- Opus → Sonnet → Opus と選び直す（読み直しが重なっても Sonnet に戻らない）
+  // Sonnet の予約を書いたあと Opus を選び直すと、サーバーは今の値に戻した予約を消す。これは効いて消えたのではないので applied は付かない。
+  // そのあと書く前に始まった読み直しが Sonnet の予約のまま届いても、チップと行のモデルを Sonnet にしない。
+  const sonnet = { backend: 'claude', model: 'sonnet' };
+  begin(row('s1', { model: 'opus', nextSettings: null }));
+  run('refreshVersion = 4');
+  run(`onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: ${JSON.stringify(sonnet)} })`);
+  run('onNextSettings({ type: "nextSettings", sessionId: "s1", nextSettings: null })');
+  const rereads = [row('s1', { model: 'opus', nextSettings: sonnet }), row('s1', { model: 'opus', nextSettings: sonnet })];
+  for (const stale of rereads) {
+    state.sessions = [stale];
+    run('settleNext(refreshVersion)');
+  }
+  t.ok('Opus → Sonnet → Opus と選び、読み直しを重ねても、チップと行のモデルは一度も Sonnet に戻らない',
+    rereads.every((r) => r.model === 'opus' && r.nextSettings == null), JSON.stringify(rereads.map((r) => ({ model: r.model, next: r.nextSettings }))));
 
   // ---------------------------------------------------------------- 走っている間の予約・worktree・裏の作業待ちは残す
   begin(row('s1', { nextSettings: null }), { running: true, phase: 'running' });

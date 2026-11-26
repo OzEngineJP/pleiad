@@ -3642,12 +3642,12 @@ function onEvent(ev, replay = false) {
       const row = ev.sessionId ? state.sessions.find((s) => s.id === ev.sessionId) : null;
       if (row && Object.hasOwn(ev, "nextSettings")) {
         const previous = row.nextSettings;
-        const cancelling = (inflightNext.get(ev.sessionId) ?? []).some((e) => e.patch?.cancel);
         row.nextSettings = ev.nextSettings;
         settledNext.set(ev.sessionId, {
           value: ev.nextSettings,
-          // 送って消えた予約だけ、古い取り直しがチップを予約の前へ戻さないように行へ写す。取り消しは写さない
-          applied: ev.nextSettings == null && !cancelling ? previous : null,
+          // サーバーが効かせて消した予約（applied: true）だけ、古い取り直しがチップを予約の前へ戻さないように行へ写す。
+          // 今の値に戻した・取り消しは applied を持たないので写さない（推測しない）
+          applied: ev.applied === true && ev.nextSettings == null ? previous : null,
           worktreePending: typeof ev.worktreePending === "boolean" ? ev.worktreePending : row.worktreePending,
           version: refreshVersion,
         });
