@@ -887,17 +887,17 @@
       "notice": "Notice from Pleiad: {{body}}"
     },
     "auth": {
-      "notLoggedInTurn": "You are not signed in to Antigravity. Run this command in a terminal to sign in.",
+      "notLoggedInTurn": "You are not signed in to Antigravity. Sign in with Sign in under Settings › Agents.",
       "account": "Google account",
       "detail": "Antigravity (uses your subscription)",
-      "notLoggedIn": "Not signed in to agy (run agy in a terminal to sign in).",
+      "notLoggedIn": "Not signed in to Antigravity (use Sign in).",
       "unconfirmed": "Connection not confirmed (choose \"Check connection\" to verify).",
       "loginRunning": "Sign-in is already in progress.",
-      "alreadyLoggedIn": "Already signed in.",
-      "runCommand": "Run this command in a terminal and follow the prompts to sign in to Google. (Antigravity sign-in only works from a terminal. This updates automatically when you finish.)",
       "loggedIn": "Signed in.",
-      "loginTimeout": "Sign-in in the terminal did not finish. Please try again.",
-      "logoutInAgy": "Sign out of Antigravity from agy (the credentials are in the OS credential store)."
+      "loginTimeout": "Sign-in in the browser did not finish. Please try again.",
+      "logoutInAgy": "This version of agy can't sign out from Pleiad (run agy update to update it).",
+      "logoutStartFailed": "Couldn't start Antigravity",
+      "logoutRefused": "agy didn't accept the sign-out"
     },
     "models": {
       "levels": "Effort: {{levels}}",

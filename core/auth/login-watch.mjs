@@ -1,4 +1,4 @@
-// 端末のコマンドで入るログイン（OpenCode・Antigravity・Devin・Grok）の見張りを、やめられるようにする（authCancel。ADR 0243）。
+// 端末のコマンドで入るログイン（OpenCode・Devin・Grok）の見張りを、やめられるようにする（authCancel。ADR 0243）。
 // 見張りは「少し待って、ログインが済んだか確かめる」の繰り返し。begin() で 1 回分を始め、pause(ms) で次の確かめまで待つ。
 // cancel() は待ちをすぐ起こし、見張りは CANCELLED の失敗で返る（確かめている最中なら、確かめ終えたところで返る）
 import { t } from '../i18n.mjs';

@@ -127,7 +127,25 @@ export function agyAcpArgs({ cwd, home, extraDirs = [], restricted = false, skip
     ...(profile?.args ?? [])];
 }
 
+/**
+ * このプロセスで起こした agy が initialize でログアウトの口（agentCapabilities.auth.logout）を返したか（null は未確認）。
+ * 口は agy の版で決まり、アカウントを問わない。返す版でだけ［ログアウト］を出すために、起こすたびに控える（ADR 0365）
+ */
+let logoutOffer = null;
+export const agyLogoutOffer = () => logoutOffer;
+/** 控えを消す（試験と、agy を入れ替えたかもしれないとき） */
+export const forgetAgyLogoutOffer = () => { logoutOffer = null; };
+/** initialize の答えから、ログアウトの口があるかを読む */
+export const offersLogout = init => Boolean(init?.agentCapabilities?.auth?.logout);
+
 export class AgyAcp extends AcpClient {
+  start() {
+    return super.start().then(init => {
+      if (init) logoutOffer = offersLogout(init);
+      return init;
+    });
+  }
+
   constructor({ command = cliCommand('antigravity'), cwd, home, env, extraDirs = [], restricted = false, skipPermissions = false, profile = agyLaunchProfile(),
     onUpdate = () => {}, onResponse = () => {}, onRequest, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  agy: dropped an oversize ACP line (${bytes} bytes)`),
     timeoutMs = 30_000, held = null, adopt = null } = {}) {

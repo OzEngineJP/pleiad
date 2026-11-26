@@ -15,9 +15,10 @@ export function defaultBadgeHtml(esc) { return `<span class="def"> ${esc(t('conn
 /**
  * @param {{ name: string, isDefault?: boolean, status?: string, warn?: boolean,
  *   actions?: Array<{ label: string, onClick: () => void, act?: string, primary?: boolean, quiet?: boolean, aria?: string, disabled?: boolean } | null | false>,
- *   extra?: Node[], dataset?: Record<string,string>, confirming?: boolean }} o
+ *   extra?: Node[], dataset?: Record<string,string>, confirming?: boolean, note?: string }} o
+ *   note: 押した操作の失敗の一文（ログアウトの失敗など）。状態の行の下、カードの中に赤で出す（.mp-state[role=alert]）
  */
-export function connCard({ name, isDefault = false, status = '', warn = false, actions = [], extra = [], dataset = {}, confirming = false }) {
+export function connCard({ name, isDefault = false, status = '', warn = false, actions = [], extra = [], dataset = {}, confirming = false, note = '' }) {
   const card = el('div', 'mp-card mp-acct cc');
   for (const [k, v] of Object.entries(dataset)) card.dataset[k] = v;
   const head = el('div', 'mp-row mp-head'), info = el('div', 'mp-card-info'), nm = el('div', 'mp-name');
@@ -38,18 +39,24 @@ export function connCard({ name, isDefault = false, status = '', warn = false, a
     acts.append(b);
   }
   head.append(info, acts);
-  card.append(head, ...extra.filter(Boolean));
+  const failed = note ? el('p', 'mp-state', note) : null;
+  failed?.setAttribute('role', 'alert');
+  card.append(head, ...[...extra, failed].filter(Boolean));
   return card;
 }
 
-/** 削除の確認（カードの下に出す）。compat は「保存したキーも消えます。」を足す */
-export function connConfirm({ name, withKey = false, onNo, onYes, yesLabel = t('conn.delete') }) {
+/**
+ * 外す前の確かめ（カードの下に出す）。既定は削除の文（compat は「保存したキーも消えます。」を足す）。
+ * text を渡すとその文で確かめる（Antigravity のログアウトなど）。Esc は［やめる］と同じ
+ */
+export function connConfirm({ name, text = null, withKey = false, onNo, onYes, yesLabel = t('conn.delete') }) {
   const box = el('div', 'mp-confirm');
   box.setAttribute('role', 'group');
-  box.append(el('p', null, `${t('conn.confirmDelete', { name })}${withKey ? t('conn.keyAlsoDeleted') : ''}`));
+  box.append(el('p', null, text ?? `${t('conn.confirmDelete', { name })}${withKey ? t('conn.keyAlsoDeleted') : ''}`));
   const row = el('div', 'mp-card-actions');
   const no = el('button', 'btn', t('conn.cancel')); no.type = 'button'; no.dataset.confirm = 'no'; no.onclick = onNo;
   const yes = el('button', 'btn danger', yesLabel); yes.type = 'button'; yes.dataset.confirm = 'yes'; yes.onclick = onYes;
   row.append(no, yes); box.append(row);
+  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onNo(); } });
   return box;
 }

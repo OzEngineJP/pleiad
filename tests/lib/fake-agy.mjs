@@ -727,7 +727,8 @@ async function runAcp() {
         loadSession: true, load_session: true,
         promptCapabilities: { image: true, embeddedContext: true },
         sessionCapabilities: { resume: {}, close: {}, load: {}, list: {}, additionalDirectories: {} },
-        auth: { logout: {} },
+        // ログアウトの口。FAKE_AGY_NO_LOGOUT=1 で返さない古い版を再現する（画面は［ログアウト］を出さない）
+        ...(process.env.FAKE_AGY_NO_LOGOUT === "1" ? {} : { auth: { logout: {} } }),
         _meta: { antigravity: { tier: true, systemPrompt: { append: true } } },
       },
       authMethods: ACP_AUTH_METHODS,
@@ -750,6 +751,12 @@ async function runAcp() {
       return {};
     },
     logout: async () => {
+      if (process.env.FAKE_AGY_NO_LOGOUT === "1") throw acpError(-32601, "Method not found: logout");
+      // agy がログアウトに失敗する再現（資格情報ストアに触れない、など）。FAKE_AGY_LOGOUT_FAIL の文で -32603 を返す。
+      // FAKE_AGY_LOGOUT_FAIL_FILE はそのファイルがある間だけ失敗する（サーバーを立てたまま失敗と成功を続けて試すブラウザーの試験向け）
+      const failFile = process.env.FAKE_AGY_LOGOUT_FAIL_FILE;
+      const failText = process.env.FAKE_AGY_LOGOUT_FAIL || (failFile && fs.existsSync(failFile) ? fs.readFileSync(failFile, 'utf8') || 'logout failed' : '');
+      if (failText) throw acpError(-32603, failText);
       if (tokenFile) fs.rmSync(tokenFile, { force: true });
       if (authFile) fs.rmSync(authFile, { force: true });
       authorized = false;
