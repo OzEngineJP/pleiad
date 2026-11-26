@@ -49,6 +49,8 @@ export default async function (t) {
       LOCALAPPDATA: localAppData,
       FAKE_AGY_NEEDS_AUTH: "1",
       FAKE_AGY_AUTH_FILE: authFile,
+      // ブラウザーでのログインを 3 秒待つ（その間に［やめる］を押せる）
+      FAKE_AGY_AUTH_HOLD_MS: "3000",
       ...(win ? {} : { HOME: home }),
     },
     dataDir: path.join(scratch, "data"),
@@ -82,34 +84,35 @@ export default async function (t) {
     // 見つけられないままログインを見張ると、ログインの時間切れ（10 分）まで帰ってこない
     if (!installed.installed) return;
 
-    // ---- 4. ログイン。**Pleiad からは回せない**ので、端末で叩くコマンドを案内して見張る
+    // ---- 4. ログイン。ACP の authenticate（oauth-personal）でブラウザーを開く（ADR 0365 の追記）
     //
-    // agy は認可コードを端末からしか読まない（パイプした stdin は無視され 60 秒で時間切れ。
-    // 実機で確認）。公式も「Authenticate once with an interactive agy session first」と書いている
-    // 先に 1 度［やめる］: 見張りを止めて CANCELLED で返り、ほかの窓には cancelled が届く（ADR 0243）
+    // 1 つ目のアカウントは OS の資格情報ストアに置く既定の場所のまま（ファイル保存の env は付けない）。
+    // 身代わりは FAKE_AGY_AUTH_HOLD_MS の間ブラウザーを待ち、済むと印のファイル（authFile）を書く
+    // 先に 1 度［やめる］: authenticate を待つ agy を止めて CANCELLED で返り、ほかの窓には cancelled が届く（ADR 0243）
     const first = c.mark();
     const abandoned = c.cmd("authLogin", { backend: "antigravity" }).then(() => null, (e) => e);
-    await c.waitFor((e) => e.type === "auth" && e.phase === "url", { ms: 30_000, from: first });
+    const waiting = await c.waitFor((e) => e.type === "auth" && e.phase === "url", { ms: 30_000, from: first });
+    t.ok("ブラウザーでのログインを案内する（端末のコマンドは出さない）",
+      String(waiting.message).includes("ブラウザー") && !String(waiting.message).includes("端末") && !waiting.url,
+      JSON.stringify(waiting));
     const cancel = await c.cmd("authCancel", { backend: "antigravity" });
     const stopped = await abandoned;
     t.ok("待っているログインをやめられる", cancel.cancelled === true && stopped?.code === "CANCELLED",
       `${JSON.stringify(cancel)} ${stopped?.code} ${stopped?.message}`);
     const told = await c.waitFor((e) => e.type === "auth" && e.phase === "cancelled", { ms: 5000, from: first }).catch(() => null);
     t.ok("やめたことは cancelled のイベントで届く", told?.backend === "antigravity", JSON.stringify(told));
+    t.ok("やめたら資格情報は残らない", !(await fs.access(authFile).then(() => true, () => false)));
 
     const mark = c.mark();
     const login = c.cmd("authLogin", { backend: "antigravity" });
-    const card = await c.waitFor((e) => e.type === "auth" && e.phase === "url", { ms: 30_000, from: mark });
-    t.ok("端末で叩くコマンドを案内する", String(card.url).includes("agy"), String(card.url));
-    t.ok("端末でしかログインできないと伝える",
-      String(card.message).includes("端末"), String(card.message));
-
-    // 利用者が端末でログインを済ませた、に相当する（本物は OS の資格情報ストアに残る）
-    await fs.writeFile(authFile, "ok");
+    // ブラウザーを開けなかったとき agy が stderr に出す URL は、開くリンクとして届く
+    const link = await c.waitFor((e) => e.type === "auth" && e.phase === "url" && e.url, { ms: 30_000, from: mark });
+    t.ok("agy が出したログインの URL を届ける", String(link.url).startsWith("https://"), String(link.url));
 
     const done = await login;
-    t.ok("端末でのログインを見張って自動で終わる", done.supported === true, JSON.stringify(done));
+    t.ok("ブラウザーでのログインが済むと自動で終わる", done.supported === true, JSON.stringify(done));
     t.ok("ログイン済みになる", done.loggedIn === true, JSON.stringify(done));
+    t.ok("資格情報は既定の場所（OS の資格情報ストアに相当）に残る", await fs.access(authFile).then(() => true, () => false));
 
     // 受け取れない貼り付け欄を出さないため、capabilities で申告する
     const b = (await c.cmd("backends")).find((x) => x.id === "antigravity");

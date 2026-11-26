@@ -29,6 +29,7 @@ import path from 'node:path';
  * contextAt   エージェントが自分で読む指示・Skills・MCP の設定を読み込む時点。'turn' は始まっている会話にも次のターンから届く、
  *             'conversation' は会話を始めるときだけ読む（始まっている会話には届かない）。画面の保存の知らせ（ADR 0337 §7）が引く
  * accountAddNotice  2 つ目以降のアカウントを足す前に画面が出す注意のモーダルの文言の鍵（web の ui の辞書。<鍵>.title・.body・.ok）。null なら出さない
+ * logoutConfirm     CLI のログインの［ログアウト］を押したとき、画面が外す前にカードの中で確かめる文の鍵（web の ui の辞書）。null なら確かめずに外す
  * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0227 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
  *             （能力の印 nativeShellOff が無いエージェントは 'native' のまま）
  * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
@@ -62,6 +63,7 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'turn',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
   codex: {
     module: './codex.mjs',
@@ -77,6 +79,7 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'turn',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -99,6 +102,7 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'conversation',
     accountAddNotice: 'agentAccounts.addNotice.antigravity',
+    logoutConfirm: 'conn.logoutConfirm.antigravity',
   },
   opencode: {
     module: './opencode.mjs',
@@ -122,6 +126,7 @@ export const AGENTS = {
     shellDefault: 'ply',
     contextAt: 'turn',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
   devin: {
     module: './devin.mjs',
@@ -144,6 +149,7 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'turn',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
   grok: {
     module: './grok.mjs',
@@ -167,6 +173,7 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'conversation',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
   fake: {
     module: './fake.mjs',
@@ -182,10 +189,11 @@ export const AGENTS = {
     shellDefault: 'native',
     contextAt: 'turn',
     accountAddNotice: null,
+    logoutConfirm: null,
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice', 'logoutConfirm']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
@@ -237,5 +245,5 @@ export const agentShortNames = (ids) => Object.fromEntries([...ids].map((id) => 
 /** 画面に渡す記述（describeBackends に載せる分） */
 export function agentPresentation(id) {
   const a = agentOf(id);
-  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id), contextAt: a?.contextAt ?? null, accountAddNotice: a?.accountAddNotice ?? null };
+  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id), contextAt: a?.contextAt ?? null, accountAddNotice: a?.accountAddNotice ?? null, logoutConfirm: a?.logoutConfirm ?? null };
 }

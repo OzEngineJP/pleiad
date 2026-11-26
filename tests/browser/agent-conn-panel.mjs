@@ -6,12 +6,15 @@
 //   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode・Antigravity のそれぞれで確かめる。
 //   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
 //   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
-//   Antigravity も［ログアウト］を出さない。外すコマンドを持たないので、コマンドと［コピー］ではなく「外すには、Antigravity の CLI 側で…」の説明の 1 行を出す。
+//   Antigravity は agy が ACP の logout を申告するので［ログアウト］を出す。押すとカードの中で確かめ（アプリと端末の agy も外れる）、
+//   Esc・［やめる］で閉じ、失敗はカードの中に赤で出し、外れたら「⚠ ログインしていません」と［ログインする］（ブラウザーでのログイン。端末の案内は出さない）。
+//   Claude・Codex・Grok の［ログアウト］は確かめ無しのまま（docs/design-system.md「接続先の一覧」承認済み 2026-11-26）。
 //   接続先の一覧を持たない Devin の頭の行も同じ印で決める: 外せる Devin は［ログアウト］［状態を確認］のまま。
 //   Antigravity だけ、追加の前に注意のモーダル（2 つ目の Google アカウント）が出る: やめる → 名前の欄は開かない、理解して追加する → 名前の欄。360px に収まる。
-//   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）を PNG で保存する。
+//   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）と、Antigravity のログアウトの各場面（1280・360・ダーク）を PNG で保存する。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
 // 本物のサーバー（Claude・Codex・OpenCode・Grok・Antigravity・Devin の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
+// 🔴 Antigravity は身代わり（fake-agy.mjs）だけ。本物の agy でログアウトすると、この PC の Antigravity のアプリまでログアウトされる。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,13 +46,19 @@ for (const d of ['.claude', '.codex']) fs.mkdirSync(path.join(home, d), { recurs
 const grokHome = path.join(dataDir, 'grok-home');
 fs.mkdirSync(grokHome, { recursive: true });
 fs.writeFileSync(path.join(grokHome, 'auth.json'), '{"fixture":{"api_key":"fake"}}');
-// Devin のログイン済み（偽の CLI は FAKE_DEVIN_AUTH_FILE が in ならログイン済み）。Antigravity の偽の CLI は既定でログイン済み（agy models が通る）
+// Antigravity の 1 つ目のログイン（身代わりの「OS の資格情報ストア」）。ログアウトで消え、ブラウザーでのログインで書かれる
+const agyAuth = path.join(dataDir, 'agy-signed-in');
+fs.writeFileSync(agyAuth, 'ok');
+// これがある間だけ agy がログアウトを断る（失敗の場面）
+const agyLogoutFail = path.join(dataDir, 'agy-logout-fail');
+// Devin のログイン済み（偽の CLI は FAKE_DEVIN_AUTH_FILE が in ならログイン済み）
 const devinAuth = path.join(dataDir, 'devin-auth.txt');
 fs.writeFileSync(devinAuth, 'in');
 let server, browser;
 try {
   server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity,grok,devin', AGENT_HOST_LOCALE: 'ja',
-    AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'),
+    AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'), FAKE_AGY_NEEDS_AUTH: '1', FAKE_AGY_AUTH_FILE: agyAuth,
+    FAKE_AGY_LOGOUT_FAIL_FILE: agyLogoutFail, FAKE_AGY_AUTH_HOLD_MS: '2500',
     AGENT_HOST_DEVIN_BIN: fakeBin('fake-devin.mjs'), FAKE_DEVIN_AUTH_FILE: devinAuth, DEVIN_CONFIG_HOME: path.join(dataDir, 'devin-config'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
@@ -102,7 +111,7 @@ try {
     await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
   };
   // Pleiad から外せるか（能力の印 logout）。外せないエージェントは［ログアウト］を出さず、端末のコマンドを案内する
-  const canLogout = { claude: true, codex: true, opencode: false, antigravity: false, grok: true, devin: true };
+  const canLogout = { claude: true, codex: true, opencode: false, antigravity: true, grok: true, devin: true };
   // CLI のログインのカードの操作と、外し方の案内（.conn-guide: 文・コマンド・［コピー］）
   const cliCard = (page, id) => page.evaluate(sel => {
     const cc = document.querySelector(`${sel} [data-conn="cli"]`);
@@ -183,18 +192,15 @@ try {
       check(s.headActs.join() === '状態を確認,接続先', `${id}: 頭の行のボタンは［状態を確認］［接続先］だけ`, s.headActs);
       check(s.defaults.join() === 'CLI のログイン', `${id}: 既定の印は CLI のログインの 1 か所`, s.defaults);
       check(!s.cli.includes('既定にする'), `${id}: CLI のログインのカードに［既定にする］は無い（既定なので）`, s.cli);
+      // Antigravity は明示の確認（［状態を再確認］）でログイン済みと分かってから［ログアウト］を出す（受け身の確認は agy を起こさない）
+      if (id === 'antigravity') await recheck(page);
       const cli = await cliCard(page, id);
       if (canLogout[id]) {
         check(cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, `${id}: 外せるエージェントは［ログアウト］（案内は出さない）`, cli);
       } else {
         check(!cli.actions.includes('ログアウト') && cli.logoutButtons === 0, `${id}: 外せないエージェントは［ログアウト］を出さない（押しても失敗するだけ）`, cli);
       }
-      if (id === 'antigravity') {
-        // 外すコマンドを持たない（agy に無い）ので、コマンドと［コピー］ではなく説明の 1 行だけ（ログイン中のカードに出す）
-        check(cli.signedIn, `${id}: CLI のログインのカードがログイン中（偽の agy は既定でログイン済み）`, cli);
-        check(cli.guide?.text === '外すには、Antigravity の CLI 側でログアウトします（Pleiad からは外せません）' && cli.guide.code === null && cli.guide.copy.length === 0,
-          `${id}: 代わりに、CLI 側で外す説明の 1 行（コマンドと［コピー］は無い）`, cli);
-      }
+      if (id === 'antigravity') check(!cli.guide, `${id}: 端末で外す案内は出さない`, cli);
       if (id === 'opencode') {
         // コマンドはログインの案内と同じ書き方（見つけた CLI の場所 + auth logout。偽の CLI なのでその場所が入る）
         check(/(^|[\s"])auth logout$/.test(cli.guide?.code ?? '') && /fake-opencode\.mjs/.test(cli.guide.code) && cli.guide.text.startsWith('外すには、端末で') && cli.guide.copy.join() === 'コピー',
@@ -293,6 +299,121 @@ try {
     const cli = await cliCard(page, 'grok');
     check(canLogout.grok && cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, 'grok: 外せるエージェントは［ログアウト］（案内は出さない）', cli);
   }]);
+  // Antigravity の 1 つ目のログインの［ログアウト］（確かめ・やめる・失敗・外した後・ブラウザーでの入り直し・360px・ダーク）。
+  // 外す・入り直すのは身代わりの印のファイル（agyAuth）だけ。最後に入り直して、ほかの場面と同じログイン済みへ戻す
+  if (AGENTS.includes('antigravity')) {
+    scenes.push(['antigravity: ［ログアウト］の確かめ・失敗・外した後・ブラウザーでの入り直し', async page => {
+      const id = 'antigravity';
+      const cli = `${card(id)} [data-conn="cli"]`;
+      const shots = process.env.SHOT_DIR;
+      const on = sel => page.evaluate(s => document.activeElement === document.querySelector(s), sel);
+      // 1280・360 のライトとダークで、Antigravity のカードを撮る（360 ではカードの中で横にあふれないことも確かめる）
+      const shoot = async (scene) => {
+        for (const [theme, width] of [['light', 1280], ['light', 360], ['dark', 1280], ['dark', 360]]) {
+          await page.setViewportSize({ width, height: 1000 });
+          await page.evaluate(t => { if (t === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme; }, theme);
+          await page.waitForTimeout(250);
+          if (width === 360) {
+            const fit = await page.evaluate(sel => { const c = document.querySelector(sel); const r = c.getBoundingClientRect(); return { right: r.right, scroll: c.scrollWidth - c.clientWidth, doc: document.documentElement.scrollWidth }; }, cli);
+            check(fit.right <= 360 && fit.scroll <= 1 && fit.doc <= 360, `${id}: ${scene} は 360px でカードの中に収まる（${theme}）`, fit);
+          }
+          if (shots) {
+            fs.mkdirSync(shots, { recursive: true });
+            const loc = page.locator(card(id));
+            await loc.scrollIntoViewIfNeeded();
+            await loc.screenshot({ path: path.join(shots, `impl-${theme}-${width}-${scene}.png`), animations: 'disabled' });
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 1000 });
+        await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+        await page.waitForTimeout(200);
+      };
+      const cliState = () => page.evaluate(sel => {
+        const c = document.querySelector(sel);
+        return { status: c.querySelector('.mp-ln')?.textContent.trim() ?? '', warn: Boolean(c.querySelector('.mp-ln.warn')),
+          acts: [...c.querySelectorAll('.mp-head .mp-card-actions button')].map(b => b.textContent.trim()),
+          away: c.querySelector('.mp-head .mp-card-actions')?.classList.contains('away') ?? false,
+          confirm: c.querySelector('.mp-confirm')?.querySelector('p')?.textContent.trim() ?? null,
+          confirmActs: [...(c.querySelector('.mp-confirm')?.querySelectorAll('button') ?? [])].map(b => `${b.textContent.trim()}${b.classList.contains('danger') ? '!' : ''}`),
+          alert: c.querySelector('[role="alert"]')?.textContent.trim() ?? null,
+          text: c.textContent, code: c.querySelectorAll('code').length };
+      }, cli);
+      const setupError = () => page.evaluate(() => { const e = document.getElementById('setupError'); return e && !e.hidden ? e.textContent.trim() : ''; });
+
+      await toggle(page, id);
+      await recheck(page);
+      await page.waitForSelector(`${cli} [data-act="logout"]`, { timeout: 15000 });
+      let st = await cliState();
+      check(st.acts.includes('ログアウト') && !st.warn && st.status.startsWith('公式'), `${id}: ログイン済みの CLI のログインに［ログアウト］が出る（Codex と同じ位置・名前）`, st);
+      const accountCards = await page.evaluate(sel => [...document.querySelectorAll(`${sel} .conn-sec[data-sec="accounts"] .cc`)].map(c => [...c.querySelectorAll('.mp-card-actions button')].map(b => b.textContent.trim())), card(id));
+      check(accountCards.every(a => !a.includes('ログアウト')), `${id}: 2 つ目以降のアカウントに［ログアウト］は足さない（［削除］のまま）`, accountCards);
+      await shoot('s01');
+
+      // ---- 確かめ: カードの中・文・［やめる］へ焦点・Esc で閉じる
+      await page.locator(`${cli} [data-act="logout"]`).click();
+      await page.waitForSelector(`${cli} .mp-confirm`, { timeout: 5000 });
+      st = await cliState();
+      check(st.confirm === 'Antigravity からログアウトしますか？この PC の Antigravity のアプリと、端末の agy もログアウトします。', `${id}: 押すとカードの中で確かめる（アプリと端末の agy も外れる）`, st.confirm);
+      check(st.confirmActs.join() === 'やめる,ログアウト!', `${id}: 確かめのボタンは［やめる］と［ログアウト］（危ない操作の色）`, st.confirmActs);
+      check(st.away, `${id}: 確かめている間はカードの操作を下げる（削除の確かめと同じ）`, st);
+      check(await on(`${cli} .mp-confirm [data-confirm="no"]`), `${id}: 確かめを開くと［やめる］へ焦点が行く`);
+      check(fs.existsSync(agyAuth), `${id}: 確かめの間はまだ外さない`);
+      await shoot('s02');
+      check(await on(`${cli} .mp-confirm [data-confirm="no"]`), `${id}: 描き直し（幅・テーマの切り替え）の後も確かめの中に焦点が残る`);
+      await page.keyboard.press('Escape');
+      await page.waitForSelector(`${cli} .mp-confirm`, { state: 'detached', timeout: 5000 });
+      check(await on(`${cli} [data-act="logout"]`), `${id}: Esc で閉じると［ログアウト］へ焦点が戻る`);
+      check(await page.locator(`${card(id)} .agent-conn`).isVisible(), `${id}: Esc は確かめだけを閉じる（接続先の一覧・設定は閉じない）`);
+      await page.locator(`${cli} [data-act="logout"]`).click();
+      await page.locator(`${cli} .mp-confirm [data-confirm="no"]`).click();
+      await page.waitForSelector(`${cli} .mp-confirm`, { state: 'detached', timeout: 5000 });
+      check(fs.existsSync(agyAuth) && (await cliState()).acts.includes('ログアウト'), `${id}: ［やめる］では外さない`);
+
+      // ---- 2 つ目以降の［削除］の確かめ: 見えない操作の組が、折り返した高さの空白を残さない（状態の行と確かめの間は 24px 以内）
+      const acct = `${card(id)} .conn-sec[data-sec="accounts"] .cc`;
+      await page.locator(`${acct} button`, { hasText: '削除' }).first().click();
+      await page.waitForSelector(`${acct} .mp-confirm`, { timeout: 5000 });
+      const gap = await page.evaluate(sel => { const c = document.querySelector(sel); return Math.round(c.querySelector('.mp-confirm').getBoundingClientRect().top - c.querySelector('.mp-ln').getBoundingClientRect().bottom); }, acct);
+      check(gap >= 0 && gap <= 24, `${id}: ［削除］の確かめの上に空白が出ない（${gap}px）`, gap);
+      await shoot('s03');
+      await page.locator(`${acct} .mp-confirm [data-confirm="no"]`).click();
+      await page.waitForSelector(`${acct} .mp-confirm`, { state: 'detached', timeout: 5000 });
+
+      // ---- 失敗: 押したカードの中に赤の一文（#setupError には出さない）
+      fs.writeFileSync(agyLogoutFail, 'keyring unavailable');
+      await page.locator(`${cli} [data-act="logout"]`).click();
+      await page.locator(`${cli} .mp-confirm [data-confirm="yes"]`).click();
+      await page.waitForSelector(`${cli} [role="alert"]`, { timeout: 15000 });
+      st = await cliState();
+      check(st.alert === 'Antigravity からログアウトできませんでした。agy が受け付けませんでした。もう一度お試しください', `${id}: 失敗は押したカードの中に出る（wire の生の文は出さない）`, st.alert);
+      check(!(await setupError()), `${id}: 失敗を設定の上の欄（#setupError）には出さない`, await setupError());
+      check(fs.existsSync(agyAuth) && st.acts.includes('ログアウト'), `${id}: 失敗したらログイン済みのまま`, st);
+      check(await on(`${cli} [data-act="logout"]`), `${id}: 失敗したら［ログアウト］へ焦点が戻る`);
+      await shoot('s05');
+      fs.rmSync(agyLogoutFail, { force: true });
+
+      // ---- 外す: 「⚠ ログインしていません」と［ログインする］
+      await page.locator(`${cli} [data-act="logout"]`).click();
+      await page.locator(`${cli} .mp-confirm [data-confirm="yes"]`).click();
+      await page.waitForSelector(`${cli} [data-act="login"]`, { timeout: 15000 });
+      st = await cliState();
+      check(!fs.existsSync(agyAuth), `${id}: ［ログアウト］で agy の資格情報が消える（身代わり）`);
+      check(st.status.includes('⚠ ログインしていません') && st.warn && st.acts.includes('ログインする') && !st.acts.includes('ログアウト'), `${id}: 外した後は「⚠ ログインしていません」と［ログインする］`, st);
+      check(st.alert === null, `${id}: 前の失敗の一文は消える`, st.alert);
+      check(await on(`${cli} [data-act="login"]`), `${id}: 外したら［ログインする］へ焦点が行く`);
+      await shoot('s04');
+
+      // ---- 入り直す: ブラウザーでのログイン（端末のコマンド・［コピー］は出さない）→ 済むとログイン済み
+      await page.locator(`${cli} [data-act="login"]`).click();
+      await page.waitForFunction(sel => document.querySelector(sel)?.textContent.includes('ブラウザーで Google にログインしてください'), card(id), { timeout: 10000 });
+      const pending = await page.evaluate(sel => { const c = document.querySelector(sel); return { text: c.textContent, code: c.querySelectorAll('code').length, copy: [...c.querySelectorAll('button')].filter(b => b.textContent.trim() === 'コピー').length }; }, card(id));
+      check(!/端末からしか|端末で実行/.test(pending.text) && pending.code === 0 && pending.copy === 0, `${id}: ログインを待つ間はブラウザーの案内だけ（端末のコマンド・［コピー］は出さない）`, pending);
+      await shoot('s04-pending');
+      await page.waitForSelector(`${cli} [data-act="logout"]`, { timeout: 30000 });
+      st = await cliState();
+      check(fs.existsSync(agyAuth) && !st.warn && st.acts.includes('ログアウト'), `${id}: ブラウザーでのログインが済むとログイン済みに戻る`, st);
+    }]);
+  }
   // 接続先の一覧を持たない Devin の頭の行。ログイン済みにしてから見る（受動の確認では未確認のことがあるので［状態を確認］を押す）
   scenes.push(['devin: 頭の行は今までどおり［ログアウト］［状態を確認］', async page => {
     const id = 'devin';
@@ -310,6 +431,23 @@ try {
     }, sel);
     check(head.connect === 0, `${id}: 接続先の一覧は持たない（頭の行のカード）`, head);
     check(canLogout[id] && head.acts.join() === 'ログアウト,状態を確認' && head.guide === 0, `${id}: 外せるエージェントの頭の行は今までどおり［ログアウト］［状態を確認］（案内は出さない）`, head);
+  }]);
+  // Claude・Codex・Grok の［ログアウト］は確かめ無しのまま（すぐ外れる）。外した後は戻さないので、場面の最後に置く
+  scenes.push(['claude・codex・grok: ［ログアウト］は確かめ無しのまま', async page => {
+    for (const id of ['codex', 'grok', 'claude']) {
+      await toggle(page, id);
+      const cli = `${card(id)} [data-conn="cli"]`;
+      await page.waitForSelector(`${cli} [data-act="logout"]`, { timeout: 15000 });
+      await page.locator(`${cli} [data-act="logout"]`).click();
+      await page.waitForTimeout(400);
+      check(await page.locator(`${cli} .mp-confirm`).count() === 0, `${id}: 押しても確かめは出ない`);
+      if (id !== 'claude') await page.waitForFunction(sel => !document.querySelector(`${sel} [data-act="logout"]`), cli, { timeout: 15000 }).catch(() => {});
+      else await page.waitForTimeout(1500);
+      const left = await page.evaluate(sel => ({ logout: document.querySelectorAll(`${sel} [data-act="logout"]`).length, alert: document.querySelector(`${sel} [role="alert"]`)?.textContent ?? null, status: document.querySelector(`${sel} .mp-ln`)?.textContent ?? '' }), cli);
+      // 偽の Claude の CLI はログアウトしても状態を変えないので、Claude は失敗が出ないことだけを見る
+      check(left.alert === null && (id === 'claude' || left.logout === 0), `${id}: すぐ外す（失敗は出ない${id === 'claude' ? '' : '・［ログアウト］が消える'}）`, left);
+      await closeConn(page, id);
+    }
   }]);
   const failed = [];
   for (const [name, run] of scenes) {

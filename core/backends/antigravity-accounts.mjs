@@ -71,6 +71,31 @@ export function visitUrl(text) {
 }
 
 /**
+ * 起こした `agy acp` に authenticate を送り、agy にブラウザーを開かせて待つ（1 つ目も 2 つ目以降も同じ口。ADR 0365）。
+ * 待つ間は「ブラウザーでログインしてください」の文だけを出し、agy が stderr に "visit https://…" を出したら、その URL も渡す
+ * （ブラウザーが開かなかったときに、利用者が自分で開けるように）。check はやめられていたら CANCELLED で投げる。
+ * 時間切れ（-32001）は TIMEOUT、agy が断ったときは理由を 1 行にして AGY_LOGIN_REFUSED で投げる
+ */
+export async function authenticateInBrowser({ client, method = DEFAULT_LOGIN_METHOD, timeoutMs = LOGIN_TIMEOUT_MS, emit, check = () => {} }) {
+  const message = t('antigravity.accounts.loginInBrowser');
+  emit?.({ type: 'auth', phase: 'url', message });
+  let sentUrl = null;
+  const watcher = setInterval(() => {
+    const url = visitUrl(client.stderrTail);
+    if (url && url !== sentUrl) { sentUrl = url; emit?.({ type: 'auth', phase: 'url', url, message }); }
+  }, 500);
+  watcher.unref?.();
+  try { await client.call('authenticate', { methodId: method }, { timeoutMs }); }
+  catch (error) {
+    check();
+    if (error?.code === -32001) throw loginTimeoutError(t('antigravity.auth.loginTimeout'));
+    // agy が断った理由（会社のアカウントを oauth-business で入れたときの Enterprise の契約が無い、など）をログインの段に出す
+    if (typeof error?.authRefused === 'string') throw Object.assign(new Error(t('antigravity.accounts.loginRefused', { reason: error.authRefused })), { code: 'AGY_LOGIN_REFUSED' });
+    throw error;
+  } finally { clearInterval(watcher); }
+}
+
+/**
  * 2 つ目以降のアカウントのログイン。`agy acp` を、このアカウントの置き場とファイル保存の env で起こし、
  *   initialize → 試しの session/new（未ログインなら -32000）→ ファイル保存の印を確かめる → authenticate（ブラウザー）
  * の順に進める。**印が出なければ authenticate を送らない**（古い版は鍵束に書き、1 つ目のログインを上書きするため）。
@@ -87,7 +112,6 @@ export async function loginAgyAccount({ account, dataDir, signal, emit, method =
   const onAbort = () => { cancelled = true; client.close().catch(() => {}); };
   signal?.addEventListener('abort', onAbort, { once: true });
   const check = () => { if (cancelled || signal?.aborted) throw loginCancelledError(AGENT); };
-  let watcher = null;
   try {
     check();
     const init = await client.start();
@@ -99,23 +123,7 @@ export async function loginAgyAccount({ account, dataDir, signal, emit, method =
     try { await client.call('session/new', { cwd: dir, mcpServers: [] }); authorized = true; } catch { /* 未ログイン（想定）。印の確認で判定する */ }
     check();
     await assertFileStorage(profile, markerMs ? { timeoutMs: markerMs } : undefined);
-    if (!authorized) {
-      emit?.({ type: 'auth', phase: 'url', message: t('antigravity.accounts.loginInBrowser') });
-      let sentUrl = null;
-      watcher = setInterval(() => {
-        const url = visitUrl(client.stderrTail);
-        if (url && url !== sentUrl) { sentUrl = url; emit?.({ type: 'auth', phase: 'url', url, message: t('antigravity.accounts.loginInBrowser') }); }
-      }, 500);
-      watcher.unref?.();
-      try { await client.call('authenticate', { methodId: method }, { timeoutMs }); }
-      catch (error) {
-        check();
-        if (error?.code === -32001) throw loginTimeoutError(t('antigravity.auth.loginTimeout'));
-        // agy が断った理由（会社のアカウントを oauth-business で入れたときの Enterprise の契約が無い、など）をログインの段に出す
-        if (typeof error?.authRefused === 'string') throw Object.assign(new Error(t('antigravity.accounts.loginRefused', { reason: error.authRefused })), { code: 'AGY_LOGIN_REFUSED' });
-        throw error;
-      }
-    }
+    if (!authorized) await authenticateInBrowser({ client, method, timeoutMs, emit, check });
     check();
     const until = Date.now() + TOKEN_WAIT_MS;
     while (!(await hasAgyToken(account, dataDir))) {
@@ -127,7 +135,6 @@ export async function loginAgyAccount({ account, dataDir, signal, emit, method =
     emit?.({ type: 'auth', phase: 'done', message: t('antigravity.auth.loggedIn') });
     return { credential: { kind: 'agy-file-token', method, at: new Date().toISOString() }, label: account.name || t('antigravity.auth.account') };
   } finally {
-    if (watcher) clearInterval(watcher);
     signal?.removeEventListener('abort', onAbort);
     await client.close().catch(() => {});
   }

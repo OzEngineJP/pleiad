@@ -1,5 +1,6 @@
 // 設定 › エージェント設定の「CLI のログイン」のカードの［ログアウト］を出すかは、能力の印 logout で決める（エージェント名では決めない）。
-// 外せないエージェント（OpenCode・Antigravity）は印が impossible で、画面には logout: false だけが届く。OpenCode は代わりに、端末で打つコマンドを案内する。
+// 外せないエージェント（OpenCode）は印が impossible で、画面には logout: false だけが届く。OpenCode は代わりに、端末で打つコマンドを案内する。
+// Antigravity は agy が initialize で auth.logout を申告するので外せる（ADR 0365 の追記）。
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -14,8 +15,8 @@ export const name = 'agent-logout-mark';
 export const title = '［ログアウト］の出し分け: 能力の印 logout・外せないエージェントの案内コマンド';
 
 // Pleiad から外せる（auth.logout() が本当に外す）エージェント / 端末で外すエージェント
-const CAN = ['claude', 'codex', 'devin', 'grok'];
-const CANNOT = { antigravity: null, opencode: 'opencode auth logout' };
+const CAN = ['antigravity', 'claude', 'codex', 'devin', 'grok'];
+const CANNOT = { opencode: 'opencode auth logout' };
 
 export default async function (t) {
   t.ok('logout は能力の印の一覧にある', 'logout' in CAPABILITIES);

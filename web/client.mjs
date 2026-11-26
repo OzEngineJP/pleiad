@@ -56,7 +56,7 @@ import { setupMobileNotify } from './mobile-notify.mjs';
 import { createPresenceReporter } from './presence.mjs';
 import { compatModelText } from './compat-models.mjs';
 import { KIND, KIND_LABEL, PRESETS, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
-import { connCard } from './conn-card.mjs';
+import { connCard, connConfirm } from './conn-card.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
@@ -540,6 +540,7 @@ const state = {
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending?, unconfirmed? }。unconfirmed は受動では分からない = 未ログインと断定しない）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
+  logoutNote: new Map(),   // backendId -> 直前のログアウトの失敗の一文（押したカードの中に出す。次のログアウト・ログインで消える）
   busy: false,             // 枝の動きの最中。重ねて動かさない
   compactions: [],
   rebuilds: [],            // 記録からの組み立て直しの区切り（contextRebuild イベント・loadSession の rebuilds。ADR 0287）
@@ -4105,21 +4106,48 @@ function cliLoginCard(b, st) {
   // ログイン済みで外せる場面。Pleiad から外せるエージェント（能力の印 logout）は［ログアウト］、外せないもの（OpenCode・Antigravity）は押しても失敗するので
   // ボタンを出さず、状態の行の下に外し方を案内する（コマンドがあればそれと［コピー］、無ければ説明の 1 行）
   const signedIn = !remote && st.supported && st.loggedIn && !st.pending;
-  const canLogout = Boolean(b.capabilities?.logout);
+  // 状態が口の無いことを知らせたとき（logout: false。ACP の logout を返さない古い agy）は出さない
+  const canLogout = Boolean(b.capabilities?.logout) && st.logout !== false;
+  // i18n-dynamic: conn.logoutConfirm.
+  // 外す前に確かめるエージェント（記述の logoutConfirm。1 つ目のログインをほかのアプリと共用する Antigravity）は、削除と同じ確かめをカードの中に出す
+  const asking = signedIn && canLogout && Boolean(b.logoutConfirm) && logoutAsking === b.id;
+  const busy = loggingOut.has(b.id);
   return connCard({
-    name: t('conn.cliLogin'), isDefault: isDef, status, warn, dataset: { conn: 'cli' },
+    name: t('conn.cliLogin'), isDefault: isDef, status, warn, dataset: { conn: 'cli' }, confirming: asking,
+    note: state.logoutNote.get(b.id) ?? '',
     actions: [
       canLogin && { label: st.expired ? t('conn.relogin') : t('conn.login'), act: 'login', quiet: true,
         onClick: () => { authFocus = { agent: b.id, pending: true }; authLogin(b); } },
       !isDef && { label: t('conn.makeDefault'), act: 'default', onClick: () => setConnDefault(b.id, { account: '' }) },
-      signedIn && canLogout && { label: t('conn.logout'), act: 'logout', onClick: () => authLogout(b) },
+      signedIn && canLogout && { label: t('conn.logout'), act: 'logout', disabled: busy, onClick: () => askLogout(b) },
     ],
-    extra: [signedIn && !canLogout && logoutGuide(b)],
+    extra: [
+      asking && connConfirm({ text: t(b.logoutConfirm), yesLabel: t('conn.logout'),
+        onNo: () => { logoutAsking = ''; logoutFocus = { agent: b.id, sel: '[data-act="logout"]' }; renderAuth(); },
+        onYes: () => { logoutAsking = ''; authLogout(b); } }),
+      signedIn && !canLogout && logoutGuide(b),
+    ],
   });
 }
 
+/** 確かめを開いている CLI のログインのカード（エージェントの id。'' は閉じ。一度に 1 枚） */
+let logoutAsking = '';
+/** ログアウトを頼んで、答えを待っているエージェント（［ログアウト］を二度押させない） */
+const loggingOut = new Set();
+/** 描き直しの後に焦点を置く所（{ agent, sel }。確かめを開いた・閉じた・ログアウトが済んだ） */
+let logoutFocus = null;
+
+/** ［ログアウト］: 記述に確かめ（logoutConfirm）があれば、カードの中で確かめてから外す。無ければ今までどおりすぐ外す */
+function askLogout(b) {
+  if (loggingOut.has(b.id)) return;
+  if (!b.logoutConfirm) { authLogout(b); return; }
+  logoutAsking = b.id;
+  logoutFocus = { agent: b.id, sel: '.mp-confirm [data-confirm="no"]' };
+  renderAuth();
+}
+
 /** 外せないエージェントの「CLI のログイン」のカードに出す外し方の案内。外すコマンド（logoutCommand）があれば 1 文 + コマンドと［コピー］、
- *  無いもの（agy にはログアウトのコマンドが無い）は、その CLI 側で外す説明の 1 行だけ（名前は埋め込み、エージェントで分けない） */
+ *  無いもの（agy の口が無い古い版）は、その CLI 側で外す説明の 1 行だけ（名前は埋め込み、エージェントで分けない） */
 function logoutGuide(b) {
   if (!b.logoutCommand) return el('div', 'mp-note conn-guide', t('conn.logoutElsewhere', { agent: b.label }));
   const guide = el('div', 'mp-note conn-guide');
@@ -4350,6 +4378,8 @@ function authKeepSel(a) {
   if (a.matches(".connect")) return ".connect";
   if (a.matches("[data-add]")) return "[data-add]";
   if (a.matches(".conn-kinds .mp-preset")) return `.conn-kinds .mp-preset[data-kind="${CSS.escape(a.dataset.kind ?? "")}"]`;
+  // CLI のログインのカードの中の確かめ（ログアウトの［やめる］［ログアウト］）。描き直しても確かめの中に居させる（Esc が確かめに届くように）
+  if (a.matches(".mp-confirm [data-confirm]")) return `[data-conn="cli"] .mp-confirm [data-confirm="${CSS.escape(a.dataset.confirm ?? "")}"]`;
   const act = a.closest("[data-act]");
   return act ? `[data-act="${act.dataset.act}"]` : null;
 }
@@ -4388,7 +4418,9 @@ function renderAuth() {
     if (conns) {
       askConnLists(b);
       // 頭の行の状態は「● 接続先 N」か「⚠ 対応が要る接続先 N」。ログイン・ログアウトは CLI のログインのカードへ移す
-      if (["ok", "nologin", "expired"].includes(agentRows.bodyOf(rowAgent(b)))) {
+      const body = agentRows.bodyOf(rowAgent(b));
+      // 登録したアカウントが使えるだけで CLI のログインが無い（accountReady）行も、数で見せる（CLI のカードに「ログインしていません」が出る）
+      if (["ok", "nologin", "expired"].includes(body) || (body === "unconfirmed" && st.accountReady && !st.loggedIn && !st.unconfirmed)) {
         const { n, fix } = connCounts(b, st);
         rowEl.querySelector(".ar2-h .arow-s")?.replaceChildren(el("span", fix ? "st fail" : "st", fix ? t("conn.needFix", { n: fix }) : t("conn.count", { n })));
       }
@@ -4404,7 +4436,7 @@ function renderAuth() {
       const out = el("button", "btn", t("settings.agents.signOut"));
       out.type = "button";
       out.dataset.act = "login";
-      out.onclick = (e) => { e.stopPropagation(); authLogout(b); };
+      out.onclick = (e) => { e.stopPropagation(); askLogout(b); };
       // ログイン済みでも［状態を確認］を残す: 受動の確認では接続やモデルが空のまま残ることがあるため、人の明示操作で確かめ直せる入口にする
       const check = el("button", "btn", t("settings.agents.checkStatus"));
       check.type = "button";
@@ -4444,6 +4476,9 @@ function renderAuth() {
     // 直前のログインの時間切れ・失敗（やめたものは出さない）
     const failed = !st.pending && state.authNote.get(b.id);
     if (failed) card.append(el("div", "auth-note", failed));
+    // 接続先の一覧を持たないエージェントのログアウトの失敗は、頭の行の［ログアウト］を押したこのカードに出す（持つものは CLI のログインのカード）
+    const outFailed = !conns && state.logoutNote.get(b.id);
+    if (outFailed) { const note = el("div", "auth-note", outFailed); note.setAttribute("role", "alert"); card.append(note); }
     // 待っている間の、ログインの画面を開く・リンクを写す入口（URL はホストの窓にだけ届く）
     const pend = st.pending && state.authUrl.get(b.id);
     const links = pend && authLinks(pend.url);
@@ -4469,6 +4504,11 @@ function renderAuth() {
     if (lost) target?.focus();
   } else if (keepSel && keepAgent && lost) {
     sec.querySelector(`[data-agent="${keepAgent}"] ${keepSel}`)?.focus({ preventScroll: true });
+  }
+  // ログアウトの確かめを開いた（［やめる］へ）・閉じた（［ログアウト］へ）・済んだ（［ログインする］へ）
+  if (logoutFocus) {
+    sec.querySelector(`[data-agent="${logoutFocus.agent}"] ${logoutFocus.sel}`)?.focus({ preventScroll: true });
+    logoutFocus = null;
   }
   const line = $("authNeed");
   // 使えるものが 1 つも無いと分かっているときは、その一言（押すと設定）。一部にだけログインが要るときは従来どおり
@@ -4558,6 +4598,7 @@ function authLogin(b, { fromRow = false } = {}) {
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
   loginActive.set(b.id, Date.now());
   state.authNote.delete(b.id);
+  state.logoutNote.delete(b.id);
   renderAuth();
   onboarding.paint();
   if (fromRow) rowLogins.add(b.id);
@@ -4601,7 +4642,10 @@ async function checkAuthNow(b) {
 
 /** カードに出す時間切れ・失敗の一文 */
 function authFailureNote(e) {
-  return e?.code === 'TIMEOUT' ? t("settings.agents.loginTimedOut") : t("settings.agents.loginFailed", { error: e?.message ?? "" });
+  if (e?.code === 'TIMEOUT') return t("settings.agents.loginTimedOut");
+  // agy が断った理由（「Antigravity がログインを断りました: …」）はそれだけで 1 行。前置きを重ねない
+  if (e?.code === 'AGY_LOGIN_REFUSED') return String(e.message ?? "");
+  return t("settings.agents.loginFailed", { error: e?.message ?? "" });
 }
 
 /**
@@ -4701,14 +4745,23 @@ function placeResentNote(auth, agent) {
   relayoutBranches();
 }
 
+/** ログアウト。失敗は押したカードの中（CLI のログインのカード、接続先の一覧を持たないエージェントはそのカード）に出す */
 async function authLogout(b) {
+  if (loggingOut.has(b.id)) return;
+  loggingOut.add(b.id);
+  state.logoutNote.delete(b.id);
+  renderAuth();
+  let failed = false;
   try {
     await cmd("authLogout", { backend: b.id });
   } catch (e) {
-    $("setupError").textContent = t("settings.agents.logoutFailed", { agent: b.label, error: e.message });
-  }
+    failed = true;
+    state.logoutNote.set(b.id, t("settings.agents.logoutFailed", { agent: b.label, error: e.message }));
+  } finally { loggingOut.delete(b.id); }
   forgetVocab(b.id);
-  await refreshAuth().catch(() => {});
+  // 済んだら［ログインする］へ、失敗したら［ログアウト］へ焦点を戻す（描き直しでボタンが入れ替わるため）
+  logoutFocus = { agent: b.id, sel: failed ? '[data-act="logout"]' : '[data-act="login"]' };
+  await refreshAuth().catch(() => renderAuth());
 }
 
 function onAuthEvent(ev) {
