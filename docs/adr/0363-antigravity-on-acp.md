@@ -1,4 +1,4 @@
-# 0362 Antigravity の口を stream-json から ACP（`agy acp`）に替える
+# 0363 Antigravity の口を stream-json から ACP（`agy acp`）に替える
 
 - 状態: 承認（2026-11-26）。実装済み（Ph2 の C1〜C5）
 - 関係: [0281](0281-antigravity-cli-capability-coverage.md)（口の部分を置換）・[0308](0308-antigravity-catalog-fetch-places.md)（ログインの証拠と呼び出しの読み替え）・[0270](0270-server-may-die-anytime.md)（無停止の更新。保持役）・[0223](0223-devin-acp-backend.md)（Devin の ACP。共通の口 `AcpClient` の元）・[0356](0356-devin-models-from-acp-options.md)・[0362](0362-consolidate-backend-leak-guards.md)（実装漏れ対策。印の宣言）・[0222](0222-agent-accounts-and-provider-quota.md)（アカウントの分離。Ph3 の前提）

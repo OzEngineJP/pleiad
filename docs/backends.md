@@ -40,7 +40,7 @@ Google のサブスクリプション枠（AI Pro / Ultra）を使える唯一�
 
 `agy` は ACP（`agy acp`。1.5.15 以上。[ADR 0363](adr/0363-antigravity-on-acp.md)）で動かす。ツールの確認は Pleiad の承認カードで答え、選べる承認モードは「都度確認」「編集は自動」「自動判断」「計画のみ」「全部自動」の 5 つ。新しい会話の既定は今までどおり「全部自動」（`--dangerously-skip-permissions` の起動の旗。全部自動とそれ以外の行き来だけは agy を起こし直す）。組織の管理者が確認を求める設定のときは、旗を付けても確認の要るツールが拒否されるので、その旨を会話に知らせる。本文とツールは逐次流れ、走っているターンへの途中送信も使える。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
 
-Antigravity 1.4.2 の複数アカウント切替は未対応。CLI とアプリが OS の認証を共有するため、Pleiad だけで認証を安全に分離できない。別のアカウントを同時に使う場合は、別の OS ユーザーや仮想マシンで環境を分ける（[認証の公式説明](https://www.antigravity.google/docs/install?tab=cli)、[ADR 0222](adr/0222-agent-accounts-and-provider-quota.md)）。
+Antigravity は、1 つ目（今ログインしているアカウント）を OS の鍵束のまま使い、2 つ目以降の登録アカウントだけをトークンのファイル保存で分ける（`AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1`・`agy acp --app-data-dir`。[ADR 0364](adr/0364-antigravity-multiple-accounts.md)）。Claude・Codex と同じ［接続先］の面で足し、会話ごとの選択・bot・委譲・使用量の振り分けも同じに使える。足すときは「使用量の上限を避けるための自動の切り替えは Google の FAQ でサポート対象外」という注意のモーダルが出る（Pleiad は制限を入れない）。起動のたびにログの印でファイル保存が効いているかを確かめ、出なければ鍵束へ戻さず止まる（`AGY_FILE_STORAGE_UNSUPPORTED`）。データの置き場がユーザーフォルダーと別のドライブのときは断る（`AGY_APP_DATA_UNREACHABLE`）。ログインが要るときは `AGY_NOT_LOGGED_IN`（［ログインする］）。
 
 ## OpenCode
 

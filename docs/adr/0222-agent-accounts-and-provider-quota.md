@@ -31,6 +31,8 @@ Codex はアカウントごとの `CODEX_HOME` と app-server を使う。OpenCo
 
 Antigravity 1.4.2 は OS の共有キーリングを使い、アプリ・外部 CLI と認証を共有する。Pleiad 内のロックでは外部の参照や更新を止められないため、資格情報の差替えは実装せず `accounts: false` を維持する。別の OS ユーザーや仮想マシンで認証を分けるか、CLI が認証プロファイルを提供した時点で対応する。[公式の認証の説明](https://www.antigravity.google/docs/install?tab=cli)を参照。
 
+> **追記（ADR 0364）。** agy 1.5.17 は、環境変数 `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1` と `agy acp --app-data-dir <相対パス>` で、トークンをアカウントごとのファイルに置ける。1 つ目（今ログインしているアカウント）は今の鍵束のまま、2 つ目以降の登録アカウントだけをこの方式で分け、能力の印は `accounts: 'agent'` にした。上の `accounts: false` の判断は、この ADR 0364 で置き換えた。
+
 ## 影響と検証
 
 使用量のアカウント行は `accountId`・`label`・`ready`・`windows`・`checkedAt` を持つ。取得できない行は空の枠と `checkedAt: null`。他のアカウントの成功を、その行の成功とみなさない。接続先ごとの枠は `provider` を持ち、モデルIDの接続先と一致する枠だけを振り分けに使う。無料モデルや未対応の接続先に、別の接続先の使用率を割り当てない。
