@@ -37,7 +37,6 @@
     "newInChannel": "New thread in {{name}}",
     "openThread": "Open thread",
     "openFeed": "Open channel feed",
-    "openHome": "Open the Quick chats feed",
     "searchPlaceholder": "Search chats and channels",
     "search": { "count_one": "{{count}} result", "count_other": "{{count}} results", "none": "No matching chats or channels" }
   },
@@ -63,7 +62,6 @@
     "deleted": "This post was deleted",
     "archived": "This channel is archived.",
     "members": "Members: {{names}}",
-    "emptyHome": "No conversations yet. Write one below.",
     "emptyChannel": "No posts yet. @ a bot to ask it to do something here.",
     "emptyDm": "Write what you'd like {{name}} to do.",
     "tools": "Post actions",
@@ -76,7 +74,6 @@
     "quick": "Add {{emoji}}",
     "reply": "Reply in thread",
     "more": "More",
-    "copyText": "Copy text",
     "replies_one": "{{count}} reply",
     "replies_other": "{{count}} replies",
     "openThread": "Open thread ({{count}} replies)",
@@ -107,7 +104,6 @@
       "placeholder": "Post to #{{name}} · @ to call a bot",
       "shortPlaceholder": "Post to #{{name}}",
       "dm": "Message {{name}}",
-      "home": "Write a new conversation",
       "send": "Post ({{sendKeys}})",
       "sendKeys": "{{sendKeys}} to send",
       "failed": "Couldn't post: {{error}}"

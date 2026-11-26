@@ -211,14 +211,11 @@
            client.mjs が書く（web/open-sidebar-mark.mjs）。data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
       <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <!-- タイトルの列（docs/design-system.md「会話の頭（狭い画面）」）。題と、所属・出どころの行（#titleSub）。
-           701px 以上は 1 行で、#titleSub（パンくず「# 一時チャット ›」）を題の左に置く。700px 以下は 2 行で、題の下に
-           「# 一時チャット · ⇄ ホスト名」（モバイル版の殻・リモートの窓の狭い幅。web/remote-badge.mjs）・「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
+           700px 以下は 2 行で、題の下に「⇄ ホスト名」（モバイル版の殻・リモートの窓の狭い幅。web/remote-badge.mjs）・
+           「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
       <div class="title-col">
         <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled><button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button></span>
         <div class="title-sub" id="titleSub">
-          <!-- パンくず（一時チャットの会話のとき。押すと一時チャットの流れ。流れの右に並べているときは出さない） -->
-          <button type="button" class="btn crumb-home" id="crumbHome" hidden data-i18n-title="channels:side.openHome"><span class="crumb-hash" aria-hidden="true">#</span><span data-i18n="channels:side.home"></span></button>
-          <span class="crumb-sep" id="crumbSep" hidden aria-hidden="true">›</span>
           <span class="remote-origin" id="remoteOriginLine" hidden></span>
         </div>
       </div>

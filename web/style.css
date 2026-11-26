@@ -2469,14 +2469,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
   /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
-  .title-sub > :is(#crumbHome,.host-sub){flex-shrink:0;max-width:50%}
+  .title-sub > .host-sub{flex-shrink:0;max-width:50%}
   .title-sub > #remoteOriginLine{flex-shrink:10}
   .title-sub .host-sub{height:24px}
   /* 語の間は「 · 」 */
-  .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}
-  .title-sub #crumbSep{display:none}
-  .title-sub .crumb-home{padding:0;color:var(--ink-weak);font-size:inherit}
-  .title-sub .crumb-hash{margin-right:3px}
+  .title-sub > :not([hidden]) ~ :not([hidden])::before{content:"·";margin-right:4px;color:var(--ink-weak)}
   .title-sub .host-sub{padding:0;font-size:inherit;align-self:center}
   .title-sub .remote-origin{font-size:inherit;flex-basis:auto;order:0;white-space:nowrap}
 }

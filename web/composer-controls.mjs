@@ -600,14 +600,6 @@ function topView(ctx) {
   }
   if (dest?.chooseOnly) return [plist(rows)];
   const labelOf = (id) => d.backends?.find((b) => b.id === id)?.label ?? dest?.backendLabel?.(id) ?? id;
-  // bot を選んだ未送信の会話: その bot の既定で動く（ここでは変えない。送った後、スレッドの中で変える）
-  if (dest?.readOnlyBot) {
-    const bot = dest.readOnlyBot;
-    rows.push(navRow({ ic: logo(bot.backend), label: t("composer.agent"), value: dest.backendLabel?.(bot.backend) ?? labelOf(bot.backend) }));
-    const out = [plist(rows), pnote(t("composer.destination.botRuns", { name: bot.name, setup: dest.botSetup }))];
-    if (dest.openBot) out.push(plist([linkRow({ key: "destination:openBot", ic: botMark(bot), text: t("composer.destination.openBot"), onClick: () => { hide(false); dest.openBot(bot.id); } })]));
-    return out;
-  }
   if (d.backend) {
     rows.push(navRow({ key: "nav:agent", ic: logo(d.backend), label: t("composer.agent"), value: labelOf(d.backend),
       meta: weekMeta(agentRowUsage(d, d.backend)), onClick: d.backendSwitchable ? () => go("agent") : null }));

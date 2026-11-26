@@ -36,7 +36,6 @@
     "newInChannel": "{{name}} に新しいスレッド",
     "openThread": "スレッドを開く",
     "openFeed": "チャンネルの流れを開く",
-    "openHome": "一時チャットの流れを開く",
     "searchPlaceholder": "会話とチャンネルを検索",
     "search": { "count_other": "{{count}} 件", "none": "一致する会話・チャンネルがありません" }
   },
@@ -62,7 +61,6 @@
     "deleted": "削除された投稿",
     "archived": "このチャンネルはアーカイブされています。",
     "members": "メンバー: {{names}}",
-    "emptyHome": "まだ会話はありません。下に書くと新しい会話になります。",
     "emptyChannel": "まだ投稿がありません。@ で bot を呼ぶと、ここから仕事を頼めます。",
     "emptyDm": "{{name}} に頼みたいことを書いてください。",
     "tools": "投稿の操作",
@@ -75,7 +73,6 @@
     "quick": "{{emoji}} を付ける",
     "reply": "スレッドで返信",
     "more": "その他",
-    "copyText": "本文をコピー",
     "replies_other": "{{count}} 件の返信",
     "openThread": "スレッドを開く（{{count}} 件の返信）",
     "threadWorking": "作業中",
@@ -105,7 +102,6 @@
       "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ",
       "shortPlaceholder": "#{{name}} へ投稿",
       "dm": "{{name}} にメッセージ",
-      "home": "新しい会話を書く",
       "send": "投稿（{{sendKeys}}）",
       "sendKeys": "{{sendKeys}} で送信",
       "failed": "投稿できませんでした: {{error}}"

@@ -3369,9 +3369,6 @@
       "botAria": "Bot and model: {{name}} ({{backend}} · {{model}}{{effort}})",
       "plainAria": "Bot and model: none · {{backend}} · {{model}}{{effort}}",
       "optionAria": "{{name}} ({{backend}}{{state}})",
-      "botRuns": "{{name}} runs with its defaults: {{setup}}. You can change them in the thread after sending.",
-      "openBot": "Change the defaults on the bot page",
-      "locked": "Runs with {{name}}'s defaults (you can change it in the thread after sending)",
       "changedAria": "changed for this thread only",
       "resetBot": "Reset to bot defaults"
     },

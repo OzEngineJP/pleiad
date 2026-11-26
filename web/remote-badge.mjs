@@ -67,7 +67,7 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
   const label = el('span', 'lbl'), host = el('span', 'host'), suffix = el('span', 'state');
   badge.append(icon(ARROWS), label, host, suffix);
 
-  // 畳んだレールの ⇄（設定の上に置く）と、700px 以下のタイトルの下の添え字（.host-sub。crumbSep の次）
+  // 畳んだレールの ⇄（設定の上に置く）と、700px 以下のタイトルの下の添え字（.host-sub。行の先頭）
   const rail = el('button', 'btn btn-icon remote-rail');
   rail.type = 'button';
   rail.id = 'remoteRail';
@@ -89,8 +89,7 @@ export function setupRemoteBadge({ remote = globalThis.window?.plyRemote, doc = 
     arrows.setAttribute('aria-hidden', 'true');
     sub.append(arrows, subHost, subState);
     const line = col.querySelector('.title-sub');
-    const after = line?.querySelector('#crumbSep');
-    if (after) after.after(sub); else (line ?? col).append(sub);
+    if (line) line.insertBefore(sub, line.children[0] ?? null); else col.append(sub);
   }
 
   const pop = el('div', 'pop remote-pop');
@@ -215,10 +214,9 @@ function setupHostBar({ info, remote, doc, back }) {
     const arrows = icon(ARROWS);
     arrows.setAttribute('aria-hidden', 'true');
     sub.append(arrows, subHost, subState);
-    // 題の下の 2 行目では「# 一時チャット」の次（依頼元・端末の AI からの前）に置く
+    // 題の下の 2 行目の先頭（依頼元・端末の AI からの前）に置く
     const line = col.querySelector('.title-sub');
-    const after = line?.querySelector('#crumbSep');
-    if (after) after.after(sub); else (line ?? col).append(sub);
+    if (line) line.insertBefore(sub, line.children[0] ?? null); else col.append(sub);
   }
 
   let view = badgeView(info, null);

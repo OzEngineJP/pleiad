@@ -92,8 +92,8 @@ export function createWorkControls(h) {
       endpoint: s.backend ? h.endpointView(s.backend, s.endpoint) : null,
       modes, modesPending: !vocab, mode: s.mode || (Object.keys(modes)[0] ?? ''),
       // 子のエージェントは決まっている。面の頭にはロゴと名前だけを出す（Channels のスレッドの面と同じ）
-      destination: { sent: true, bot: null, selected: null, readOnlyBot: null, fixedAfterSend: true, threadPlain: true,
-        botSetup: '', backendLabel: h.labelOf, groups: [] },
+      destination: { sent: true, bot: null, selected: null, fixedAfterSend: true, threadPlain: true,
+        backendLabel: h.labelOf, groups: [] },
       git: null, worktree: split ? { current: split, canSplit: false } : null, worktreePending: false, worktreeBusy: null, worktreeCheck: 'confirmed',
     };
   }

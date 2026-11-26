@@ -3282,9 +3282,6 @@
       "botAria": "Bot とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
       "plainAria": "Bot とモデル: なし · {{backend}} · {{model}}{{effort}}",
       "optionAria": "{{name}}（{{backend}}{{state}}）",
-      "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
-      "openBot": "bot のページで既定を変える",
-      "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
       "changedAria": "このスレッドだけ変更あり",
       "resetBot": "bot の既定に戻す"
     },

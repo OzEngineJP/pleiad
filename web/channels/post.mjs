@@ -405,10 +405,8 @@ export function fillPost(root, post, ctx) {
     const more = iconButton('more', t('channels:feed.more'), moreIcon());
     more.setAttribute('aria-haspopup', 'menu');
     more.onclick = (e) => { e.stopPropagation(); const r = more.getBoundingClientRect(); ctx.actions.menu(post, r.right, r.bottom + 4, more); };
-    // 一時チャットの合成の投稿（会話の最初の発言）には、会話に記録の無いリアクションを出さない
-    if (post.home) tools.append(reply, copy, more); else tools.append(quick, add, copy, reply, more);
+    tools.append(quick, add, copy, reply, more);
     root.append(tools);
-    if (post.home) root.classList.add('home-root');
   }
   return root;
 }

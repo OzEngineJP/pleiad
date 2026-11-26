@@ -21,8 +21,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     root.classList.remove('side-channels');
     document.body.classList.toggle('channels', on);
     if (side) side.hidden = true;
-    // 一時チャットの 2 枚並び（body.home-split）の間は、流れの右に会話の面が見えている（覆わない）
-    for (const node of covered()) node.inert = on && !document.body.classList.contains('home-split');
+    for (const node of covered()) node.inert = on;
     if (view) view.inert = !on;
     for (const b of faceButtons) b.setAttribute('aria-pressed', String(b.dataset.face === tab));
     for (const [name, mark] of Object.entries(marks)) {
@@ -52,8 +51,6 @@ export function createSideTabs({ onChange = () => {} } = {}) {
   return {
     get tab() { return tab; },
     set,
-    /** 塗り直す（一時チャットの 2 枚並びの出入りで、覆う範囲が替わったとき） */
-    paint,
     /** 見ていない面の印（kind: 'mark' = あなた待ち、'working' = 作業中、'unread' は今は区別しない） */
     setDot(name, kind) { if (name in dotState) { dotState[name] = kind === 'mark' ? 'mark' : kind ? 'working' : null; paint(); } },
   };

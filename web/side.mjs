@@ -640,7 +640,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (face !== "channels") {
       const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
         ...[...last.sessions.filter((s) => !s.bot && matchesFilter(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && !ownerOf(s) && matchesFilter(s))].sort(newest)];
-      wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
+      wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows,
         onAdd: newChat, addLabel: t("channels:side.newChat") }));
       return;
     }

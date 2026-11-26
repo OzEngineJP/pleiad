@@ -89,11 +89,12 @@ export function setupChannels(host) {
       each('onEvent', ev, replay);
       return CHANNEL_EVENTS.has(ev?.type);
     },
-    show(view) { showing = true; try { tabs.set('channels'); } finally { showing = false; } each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
+    show(view) {
+      // 一時チャットの流れは無い（ADR 0359）。前の回のアドレス・古いリンクの 'home' はチャットの面へ
+      if (view?.kind === 'channel' && view.id === 'home' && !view.threadId) { tabs.set('chats'); return; }
+      showing = true; try { tabs.set('channels'); } finally { showing = false; } each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },
     sideTabChanged(tab) { each('sideTabChanged', tab); },
-    /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */
-    homeChanged() { each('homeChanged'); },
     /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
     schedulesChanged() { each('schedulesChanged'); },
     /** WS が戻った（スレッド・DM の ToDo を読み直す。web/channels/thread.mjs・feed.mjs） */
