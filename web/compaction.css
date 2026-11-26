@@ -42,9 +42,7 @@
 .compaction-boundary .boundary-rows dt::after { content:"："; }
 .compaction-boundary .boundary-rows dd { margin:0; overflow:hidden; }
 .compaction-boundary .rebuild-open { display:block; margin-top:4px; }
-/* 自動圧縮のページで「記録から組み立て直す」のために止まっている面（ADR 0287）。触れないので薄くして指も通さない */
-.auto-compaction-off { margin-bottom:8px; }
-.auto-compaction-off .mp-note { margin:0 0 6px; }
+/* 自動圧縮のページで「記録から組み立て直す」のために止まっている面（ADR 0287）と、設定 › bot で毎晩の整理が切れている間の行。触れないので薄くして指も通さない */
 .off-part { opacity:.5; }
 .off-part * { pointer-events:none; }
 #autoCompactionRules.off-part { user-select:none; }

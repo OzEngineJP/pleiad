@@ -286,11 +286,11 @@
   },
   "memory": {
     "route": {
-      "open": "Auto-organize ›",
-      "off": "Auto-organize: off ›",
-      "running": "Auto-organize: running ›",
-      "failed": "Auto-organize: failed ›",
-      "next": "Auto-organize: next {{at}} ›"
+      "open": "Nightly organizing ›",
+      "off": "Nightly organizing: off ›",
+      "running": "Nightly organizing: running ›",
+      "failed": "Nightly organizing: failed ›",
+      "next": "Nightly organizing: next {{at}} ›"
     },
     "new": "Newly learned",
     "faded": "Faded",
@@ -305,10 +305,10 @@
       "note": "Note"
     },
     "tier": {
-      "none": "Unsorted",
-      "always": "Always",
-      "workspace": "In this workspace",
-      "archive": "Stored only"
+      "none": "Not decided yet",
+      "always": "Every time",
+      "workspace": "Only in this folder",
+      "archive": "Not given"
     },
     "tierLabel": "Given when",
     "workspaceLabel": "Workspace",
@@ -316,16 +316,16 @@
     "learn": {
       "label": "Nightly organizing",
       "running": "organizing now",
-      "ran": "learned {{n}} at {{when}}",
-      "ranNone": "ran at {{when}} (nothing new)",
-      "retiered": "changed the tier of {{n}}",
-      "never": "has not run yet",
-      "more": "the rest is left for the next run",
-      "deferred": "{{n}} busy conversations left for the next run",
+      "ran": "Last: {{when}} · added {{n}}",
+      "ranNone": "Last: {{when}} · nothing new added",
+      "retiered": "re-decided when to give {{n}}",
+      "never": "Hasn't run yet",
+      "more": "Messages it couldn't finish reading are left for the next run",
+      "deferred": "{{n}} busy conversations are left for the next run",
       "failed": "failed ({{error}})",
       "skipped": "skipped {{n}} scheduled runs ({{reason}})",
       "reason": {
-        "off": "organization off",
+        "off": "nightly organizing off",
         "halted": "stopped after failures",
         "paused": "paused",
         "failed": "waiting after a failure"

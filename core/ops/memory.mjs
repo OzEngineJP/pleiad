@@ -48,23 +48,24 @@ const changesTags = (entry, args) => TAG_KEYS.some((key) => args[key] !== undefi
 
 const learnStatusOut = z.object({
   at: z.string(), enabled: z.boolean(), summaryEnabled: z.boolean(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
-  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
+  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), retiered: z.number().optional(), sorted: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
   skip: z.object({ reason: z.string(), count: z.number(), at: z.number() }).nullable(),
   failure: z.object({ message: z.string(), count: z.number(), at: z.number(), retryAt: z.number() }).nullable(),
   halted: z.object({ message: z.string(), at: z.number() }).nullable(),
 });
 
-// 一度きりの振り分けの様子（数・内訳・失敗の数だけ。記憶の本文は返さない）
+// 渡す場面の振り分け（夜の整理の最後に 1 回 500 件まで）の様子（数・内訳・失敗の数だけ。記憶の本文は返さない）。
+// status は none（まだ）・running（いま振り分け中）・going（残りがあり、次の晩に続ける）・done・failed（その晩は打ち切った。次の晩に続ける）・undone（取り消した）。nights は残りを終えるまでの晩の数
 const sortStatusOut = z.object({
-  status: z.enum(['none', 'running', 'stopped', 'done', 'failed', 'undone']),
-  running: z.boolean(), stopping: z.boolean(), untiered: z.number().int(),
+  status: z.enum(['none', 'running', 'going', 'done', 'failed', 'undone']),
+  running: z.boolean(), untiered: z.number().int(), nights: z.number().int(), perNight: z.number().int(),
   processed: z.number().int(), left: z.number().int(), failures: z.number().int(), changed: z.number().int(), unknown: z.number().int(),
   tiers: z.object({ always: z.number().int(), workspace: z.number().int(), archive: z.number().int() }),
   startedAt: z.number().nullable(), updatedAt: z.number().nullable(),
   undone: z.object({ restored: z.number().int(), kept: z.number().int() }).nullable(),
 });
 
-// 会話の始まりに入りきらない記憶の件数（段ごと。設定 › 記憶が出す）
+// 会話の始まりに入りきらない記憶の件数（段ごと。MCP・CLI 用。設定画面は出さない）
 const coreFitOut = z.object({
   layer: z.string(), workspace: z.string().nullable(),
   omitted: z.object({ untiered: z.number().int(), always: z.number().int(), workspace: z.number().int() }),
@@ -198,7 +199,7 @@ export const memoryOps = [
     },
   }),
 
-  // 会話の始まりに入りきらない記憶の件数（段なし・いつも・この作業場所で）。設定 › 記憶が出す。bot は自分の層と user だけ
+  // 会話の始まりに入りきらない記憶の件数（段なし・いつも・この作業場所で）。設定画面は出さない。bot は自分の層と user だけ
   defineOp({
     id: 'memory.coreFit',
     summary: 'agent:ops.memory.coreFit.summary',
@@ -318,21 +319,21 @@ export const memoryOps = [
     handler: async (ctx) => ctx.memoryLearner.status(),
   }),
 
-  // 「今すぐ整理」/「もう一度」。停止（halted）を明示操作で解除してから 1 回走る。自動整理が OFF のままでは動かない（skipped: 'off'）
+  // 「今すぐ整理」/「もう一度」。停止（halted）を明示操作で解除してから 1 回走る。毎晩の整理が OFF のままでは動かない（skipped: 'off'）
   defineOp({
     id: 'memory.learnNow',
     summary: 'agent:ops.memory.learnNow.summary',
     risk: 'write',
     riskReason: 'Starts one memory-organization turn on the chosen backend right now and clears a stopped state. It is explicit: the automatic switch off still skips it',
     input: z.object({}),
-    output: z.object({ read: z.number().optional(), changed: z.number().optional(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
+    output: z.object({ read: z.number().optional(), changed: z.number().optional(), retiered: z.number().optional(), sorted: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-now'] } },
     handler: async (ctx) => ctx.memoryLearner.learnNow(),
   }),
 
-  // 一度きりの振り分け（ADR 0363 段階 2 の単位 4）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
-  // 始める・止める・取り消すは画面だけに出す（設定 › 記憶 › 振り分け。surfaces が ui だけなので AI・CLI からは見つからない。自動では始まらない）。
-  // human-only は ADR 0094 の 5 つだけなので使わず、たくさんの記憶を書き換える開始と取り消しは guarded、止めるは write にする。様子は AI・CLI も読める。自動整理が OFF でも始められる
+  // 渡す場面の振り分け（ADR 0363 段階 2 の単位 4。2026-11-26 の改訂で、夜の整理の最後に 1 回 500 件までに入れた）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
+  // 始める・止める口は無い（止め方は夜の整理のスイッチ 1 つ）。取り消しは画面だけに出す（設定 › bot。surfaces が ui だけなので AI・CLI からは見つからない）。
+  // human-only は ADR 0094 の 5 つだけなので使わず、たくさんの記憶を書き換える取り消しは guarded にする。様子は AI・CLI も読める
   defineOp({
     id: 'memory.sortStatus',
     summary: 'agent:ops.memory.sortStatus.summary',
@@ -341,28 +342,6 @@ export const memoryOps = [
     output: sortStatusOut,
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'sort-status'] } },
     handler: async (ctx) => ctx.memoryLearner.sortStatus(),
-  }),
-
-  defineOp({
-    id: 'memory.sortStart',
-    summary: 'agent:ops.memory.sortStart.summary',
-    risk: 'guarded',
-    input: z.object({}),
-    output: z.object({ started: z.boolean().optional(), skipped: z.string().optional() }),
-    confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortStart.confirm'), before: null, loosens: false }),
-    surfaces: { ui: true, mcp: false, cli: false },
-    handler: async (ctx) => ctx.memoryLearner.sortStart(),
-  }),
-
-  defineOp({
-    id: 'memory.sortStop',
-    summary: 'agent:ops.memory.sortStop.summary',
-    risk: 'write',
-    riskReason: 'Stops a running one-time sort after the batch in flight is saved. It only stops work that a person started and changes no memory itself; it is on the settings screen only (not on MCP or the CLI)',
-    input: z.object({}),
-    output: z.object({ stopping: z.boolean().optional(), skipped: z.string().optional() }),
-    surfaces: { ui: true, mcp: false, cli: false },
-    handler: async (ctx) => ctx.memoryLearner.sortStop(),
   }),
 
   defineOp({

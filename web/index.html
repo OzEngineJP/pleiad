@@ -326,30 +326,20 @@
         </section>
         <!-- 委譲先の自動選択。中身は web/delegation-settings.mjs が作る -->
         <section id="delegationPanel" data-i18n-aria-label="settings.nav.delegation" hidden></section>
-        <!-- 記憶（docs/design-system.md「設定 › 記憶」。全般 = 「試験的な機能」から移した設定、bot = 記憶の自動整理。中身の状態・操作は web/memory-settings.mjs） -->
+        <!-- bot（docs/design-system.md「設定 › bot」。記憶の毎晩の整理。ページの内部名は memory のまま。中身の状態・操作は web/memory-settings.mjs。
+             「会話の区切りで、記録から組み立て直す」は記憶と関係なく全会話の設定なので、自動圧縮のページにある） -->
         <section id="memoryPanel" data-i18n-aria-label="settings.nav.memory" hidden>
-          <h3 data-i18n="settings.memory.general"></h3>
-          <div class="mp-feature">
-            <div class="rm-switch"><label class="rm-switch-label" for="contextRebuildEnabled" data-i18n="contextRebuild.name"></label><button type="button" class="cx-sw" id="contextRebuildEnabled" role="switch" data-i18n-aria-label="contextRebuild.name"></button></div>
-            <p class="mp-note" data-i18n="contextRebuild.description"></p>
-            <p class="mp-note" id="contextRebuildSaved" role="status" aria-live="polite"></p>
-          </div>
-          <h3 data-i18n="settings.memory.bot"></h3>
+          <h3 data-i18n="settings.memory.title"></h3>
           <div class="mp-feature">
             <div class="rm-switch"><label class="rm-switch-label" for="memoryAutoLearn" data-i18n="settings.memory.autoLearn"></label><button type="button" class="cx-sw" id="memoryAutoLearn" role="switch" data-i18n-aria-label="settings.memory.autoLearn"></button></div>
-            <div class="memory-learn-dependent" id="memoryLearnDependent">
-              <div class="rm-switch"><label class="rm-switch-label" for="memoryLearnAt" data-i18n="settings.memory.learnAt"></label><input type="time" class="mem-time" id="memoryLearnAt" data-i18n-aria-label="settings.memory.learnAt"></div>
-              <div class="rm-switch"><label class="rm-switch-label" for="memoryEpisodeSummary" data-i18n="settings.memory.episodeSummary"></label><button type="button" class="cx-sw" id="memoryEpisodeSummary" role="switch" data-i18n-aria-label="settings.memory.episodeSummary"></button></div>
-              <p class="mp-note" data-i18n="settings.memory.episodeSummaryNote"></p>
-            </div>
-            <div class="mem-status" id="memoryLearnStatus" role="status" aria-live="polite"><strong id="memoryLearnStatusText"></strong><span class="mp-note" id="memoryLearnStatusSub"></span></div><div class="mem-actions" id="memoryLearnActions"></div>
+            <div class="rm-switch learn-dep"><label class="rm-switch-label" for="memoryLearnAt" data-i18n="settings.memory.learnAt"></label><input type="time" class="mem-time" id="memoryLearnAt" data-i18n-aria-label="settings.memory.learnAt"></div>
+            <p class="mp-note" data-i18n="settings.memory.autoLearnNote"></p>
+            <div class="rm-switch learn-dep"><label class="rm-switch-label" for="memoryEpisodeSummary" data-i18n="settings.memory.episodeSummary"></label><button type="button" class="cx-sw" id="memoryEpisodeSummary" role="switch" data-i18n-aria-label="settings.memory.episodeSummary"></button></div>
+            <p class="mp-note learn-dep" data-i18n="settings.memory.episodeSummaryNote"></p>
+            <div class="mem-status" id="memoryLearnStatus" role="status" aria-live="polite"></div><div class="mem-actions" id="memoryLearnActions"></div>
             <p class="mp-note" id="memoryLearnSaved" role="status" aria-live="polite"></p>
-          </div>
-          <h3 data-i18n="settings.memory.sort.title"></h3>
-          <div class="mp-feature">
-            <p class="mp-note" data-i18n="settings.memory.sort.note"></p>
-            <div class="mem-status" id="memorySortStatus" role="status" aria-live="polite"><strong id="memorySortStatusText"></strong><span class="mp-note" id="memorySortStatusSub"></span></div><div class="mem-actions" id="memorySortActions"></div>
-            <p class="mp-note" id="memorySortSaved" role="status" aria-live="polite"></p>
+            <!-- 記憶を持つ bot ごとの入口（押すと、その bot のページの記憶の欄へ）。bot が無ければ出さない -->
+            <div class="mem-bots" id="memoryBots" hidden><span data-i18n="settings.memory.bots"></span><span class="mem-bot-list" id="memoryBotsList"></span></div>
           </div>
         </section>
         <section id="apiKeysPanel" data-i18n-aria-label="settings.nav.apiKeys" hidden></section>
@@ -422,12 +412,11 @@
         </section>
         <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
           <div class="auto-compaction-settings">
+            <!-- 会話の区切りで、要約せず記録から組み立て直す（ADR 0287。「試験的な機能」から移設。記憶ではなく全会話の設定）。入っている間は、下の放置後の自動の圧縮が止まる -->
+            <div class="rm-switch"><label class="rm-switch-label" for="contextRebuildEnabled" data-i18n="contextRebuild.name"></label><button type="button" class="cx-sw" id="contextRebuildEnabled" role="switch" data-i18n-aria-label="contextRebuild.name"></button></div>
+            <p class="mp-note" id="contextRebuildNote" data-i18n="contextRebuild.description"></p>
+            <p class="mp-note" id="contextRebuildSaved" role="status" aria-live="polite"></p>
             <div class="rm-switch"><label class="rm-switch-label" for="autoCompactionEnabled" data-i18n="compaction.autoEnabled"></label><button type="button" class="cx-sw" id="autoCompactionEnabled" role="switch" data-i18n-aria-label="compaction.autoEnabled"></button></div>
-            <!-- 「記録から組み立て直す」が入っている間だけ出す、自動圧縮が止まる理由（ADR 0287） -->
-            <div class="mp-note auto-compaction-off" id="autoCompactionOffNote" hidden>
-              <span data-i18n="contextRebuild.autoCompactionOff"></span>
-              <button type="button" id="autoCompactionOpenMemory" data-i18n="contextRebuild.openMemory"></button>
-            </div>
             <section class="mp-panel auto-compaction-minimum">
               <label for="autoCompactionMin" data-i18n="compaction.minSize"></label>
               <span class="rt-number-row"><input type="number" id="autoCompactionMin" min="1" max="10000" data-i18n-aria-label="compaction.minSize"> <span class="rt-unit" data-i18n="compaction.kTokens"></span></span>
