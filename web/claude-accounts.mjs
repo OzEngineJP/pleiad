@@ -13,6 +13,7 @@
 // 開閉の動きが続く。
 import { t } from './i18n.mjs';
 import { patch, flash, ms } from './dom-patch.mjs';
+import { defaultBadgeHtml } from './conn-card.mjs';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // パスワード管理の拡張・ブラウザーに保存や補完を促されないための印（コード・表示名の欄）
@@ -29,16 +30,18 @@ const sel = {
 };
 const KINDS = { lg: 'usage-login' };
 const MAX_NAME = 60;
+const AGENT = 'claude';   // backend-allow: この面は Claude のアカウント専用。id の置き場はここ 1 つ（web/client.mjs は claudeAccounts.agent で引く）
 
-export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) {
+// isDefault(id) / makeDefault(id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0359）。
+// onAddEnd: 追加のカードを閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す）
+export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {}, isDefault = () => false, makeDefault = null, onAddEnd = () => {} }) {
   const panel = document.createElement('section');
   // 面の中の要素は面の中で探す。面はカードの枠へ移り、カードの描き直しで文書から外れることがある（そのときも例外で止めない）
   const $ = s => panel.querySelector(s);
   panel.className = 'mp-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
-  panel.setAttribute('aria-labelledby', 'caTitle');
   document.getElementById('agentControls').append(panel);
 
-  let accounts = [], loaded = null;
+  let accounts = [], loaded = null, envKey = false;
   let openId = '';                 // 開いているカード（追加のカードは draftId）
   let confirmId = '';              // 削除の確認を出しているカード
   let removing = '';               // 畳んで消えていくカード
@@ -60,7 +63,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
 
   /** 一覧を取り直す。force でなければ前回の結果を使い回す */
   async function load(force = false) {
-    if (!loaded || force) loaded = cmd('claudeAccounts').then(r => { accounts = r.accounts ?? []; return accounts; })
+    if (!loaded || force) loaded = cmd('claudeAccounts').then(r => { accounts = r.accounts ?? []; envKey = Boolean(r.envApiKey); return accounts; })
       .catch(e => { loaded = null; throw e; });
     return loaded;
   }
@@ -112,7 +115,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     // edit = 名前を書き換えている（［完了］を出す）。open = 中身が開いている（書き換え中か、流れが走っている）
     const open = edit || Boolean(f);
     // 閉じたカードの直すボタン（ログインがまだ・切れている）。操作の組 [直す][編集][削除] の先頭に置く
-    const want = dr ? null : !hasLogin ? { kind: 'lg', label: t('accounts.authorizeUsage') } : expired ? { kind: 'lg', label: t('accounts.redoUsage') } : null;
+    const want = dr ? null : !hasLogin ? { kind: 'lg', label: t('conn.login') } : expired ? { kind: 'lg', label: t('conn.relogin') } : null;
     const fix = open ? null : want;
     if (want) lastFix.set(id, want);
     const fx = fix ?? lastFix.get(id);
@@ -121,17 +124,20 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const pri = k => main === k ? ' btn-primary' : '';
     const tgl = dr ? [t('accounts.cancel'), t('accounts.label.cancelAdd')] : edit ? [t('accounts.done'), t('accounts.label.done', { name: a.name })] : [t('accounts.edit'), t('accounts.label.edit', { name: a.name })];
     const lgWord = expired ? t('accounts.status.expired') : hasLogin ? t('accounts.status.done') : t('accounts.status.none');
+    const sumWord = expired ? t('conn.expired') : hasLogin ? t('conn.signedIn') : t('conn.signedOut');
+    const isDef = !dr && isDefault(id);
     const key = alias.get(id) ?? id;
     // 状態の行。直すボタンがあるカードでは名前の下（名前と同じ列）に入れ、操作の組が名前の横に収まらなければ組ごと状態の行の下へ回る
-    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t>${esc(t('accounts.summary', { login: lgWord }))}</small></div></div>`;
+    const sum = `<div class="mp-fold${open || dr ? '' : ' open'}" data-k="sum"><div class="mp-fold-in mp-sum"><small data-t${want ? ' class="warn"' : ''}>${esc(sumWord)}</small></div></div>`;
 
     const head = `<div class="mp-row mp-head"><div class="mp-card-info"><div class="mp-name">`
-      + `<strong data-k="nm"${edit ? ' aria-hidden="true"' : ''}${a.name.length > 20 ? ` title="${n}"` : ''}>${n}</strong>`
+      + `<strong data-k="nm"${edit ? ' aria-hidden="true"' : ''}${a.name.length > 20 ? ` title="${n}"` : ''}>${n}${isDef ? defaultBadgeHtml(esc) : ''}</strong>`
       + `<input class="mp-name-in" data-k="in" data-name="${esc(id)}" value="${esc(nd[id] ?? a.name)}"${edit ? '' : ' tabindex="-1"'} aria-label="${esc(t('accounts.name.label'))}" maxlength="${MAX_NAME}" placeholder="${esc(t('accounts.name.placeholder'))}" ${NOPM} spellcheck="false"${e ? ` aria-invalid="true" aria-describedby="mpe-${esc(key)}"` : ''}>`
       + `</div><div data-slot="err:${esc(key)}">${e ? `<p class="mp-state" id="mpe-${esc(key)}" role="alert">${esc(e)}</p>` : ''}</div>`
-      + (want ? sum : '') + `</div>`
+      + sum + `</div>`
       + `<div class="mp-card-actions${confirm ? ' away' : ''}" data-k="acts">`
       + `<span class="mp-hfold${fix ? ' open' : ''}" data-k="fixf"><span>${fx ? `<button class="btn btn-quiet" type="button" data-fix="${esc(id)}:${fx.kind}"${fix ? '' : ' tabindex="-1"'}>${esc(fx.label)}</button>` : ''}</span></span>`
+      + `<span class="mp-hfold${!dr && !isDef && makeDefault && !open ? ' open' : ''}" data-k="deff"><span>${dr || !makeDefault ? '' : `<button class="btn" type="button" data-mkdef="${esc(id)}"${!isDef && !open ? '' : ' tabindex="-1"'}>${esc(t('conn.makeDefault'))}</button>`}</span></span>`
       + `<button class="btn${edit && !dr ? pri('done') : ''}" type="button" data-toggle="${esc(id)}"${dr && f ? ' hidden' : ''} aria-expanded="${open}" aria-controls="mpb-${esc(key)}" aria-label="${esc(tgl[1])}"><span data-t>${esc(tgl[0])}</span></button>`
       + `<span class="mp-hfold${dr ? '' : ' open'}" data-k="delf"><span><button class="btn" type="button" data-del="${esc(id)}" aria-label="${esc(a.name ? t('accounts.label.delete', { name: a.name }) : t('accounts.label.newAccount'))}">${esc(t('accounts.delete'))}</button></span></span></div></div>`;
 
@@ -139,20 +145,15 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     const cred = (kind, label, status, acts) => `<div class="mp-cred" data-k="cred:${kind}" role="group" aria-label="${esc(label)}"><div class="mp-cred-info"><span>${esc(label)}</span><small data-t aria-live="polite">${esc(status)}</small></div>`
       + `<div class="mp-fold${f?.kind === kind ? '' : ' open'}" data-k="acts"><div class="mp-fold-in mp-card-actions">${acts}</div></div><div class="mp-flow" data-slot="flow:${esc(key)}:${kind}" tabindex="-1">${step(kind)}</div></div>`;
     const lg = cred('lg', t('accounts.login'), fresh[id + ':lg'] ? t('accounts.status.loginFresh') : lgWord,
-      `<button class="btn${pri('lg')}" type="button" data-fix="${esc(id)}:lg">${esc(hasLogin ? t('accounts.redoUsage') : t('accounts.authorizeUsage'))}</button>`);
+      `<button class="btn${pri('lg')}" type="button" data-fix="${esc(id)}:lg">${esc(dr ? t('agentAccounts.form.addAndLogin') : hasLogin ? t('conn.relogin') : t('conn.login'))}</button>`);
     const body = `<div class="mp-fold${open ? ' open' : ''}" data-k="body" id="mpb-${esc(key)}"><div class="mp-fold-in mp-wide mp-body" role="group" aria-label="${esc(dr ? t('accounts.label.newAccount') : t('accounts.label.settings', { name: a.name }))}" tabindex="-1">${lg}</div></div>`;
-    const conf = `<div data-slot="confirm:${esc(key)}">${confirm ? `<div class="mp-confirm" role="group" aria-label="${esc(t('accounts.label.confirm', { name: a.name }))}"><p>${esc(t('accounts.confirmDelete', { name: a.name }))}</p><div class="mp-card-actions"><button class="btn" type="button" data-confirm="no">${esc(t('accounts.cancel'))}</button><button class="btn danger" type="button" data-confirm="yes">${esc(t('accounts.confirmDeleteButton'))}</button></div></div>` : ''}</div>`;
-    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct${open ? ' is-open' : ''}${edit ? ' is-edit' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${want ? '' : sum}${body}${conf}</div></div></div>`;
+    const conf = `<div data-slot="confirm:${esc(key)}">${confirm ? `<div class="mp-confirm" role="group" aria-label="${esc(t('accounts.label.confirm', { name: a.name }))}"><p>${esc(t('conn.confirmDelete', { name: a.name }))}</p><div class="mp-card-actions"><button class="btn" type="button" data-confirm="no">${esc(t('accounts.cancel'))}</button><button class="btn danger" type="button" data-confirm="yes">${esc(t('accounts.confirmDeleteButton'))}</button></div></div>` : ''}</div>`;
+    return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct cc${open ? ' is-open' : ''}${edit ? ' is-edit' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${body}${conf}</div></div></div>`;
   }
 
+  // 見出し・説明・［＋ 追加］は持たない（接続先の一覧の面が持つ。web/client.mjs の connPanel。ADR 0359）
   function html() {
-    const list = entries(), adding = openId === draftId || flow?.id === draftId;
-    return `<div class="mp-row"><h3 id="caTitle">${esc(t('accounts.title'))}</h3><button type="button" class="btn" id="caClose">${esc(t('accounts.close'))}</button></div>`
-      + `<p class="mp-note mp-intro">${esc(t('accounts.intro'))}</p>`
-      + `<div class="mp-list">${list.map(cardHtml).join('')}</div>`
-      + `<div data-slot="empty">${accounts.length || adding ? '' : `<p class="mp-note">${esc(t('accounts.empty'))}</p>`}</div>`
-      + `<div class="mp-fold${adding ? '' : ' open'}" data-k="addf"><div class="mp-fold-in"><button type="button" class="btn" data-add>${esc(t('accounts.add'))}</button></div></div>`
-      + `<p class="mp-note">${esc(t('accounts.usageNote'))}</p>`
+    return `<div class="mp-list">${entries().map(cardHtml).join('')}</div>`
       + `<p class="mp-state" data-k="state" role="status">${esc(message)}</p>`;
   }
 
@@ -325,6 +326,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     stopFlow(f.id);
     focusAfter = openId === f.id ? sel.fix(f.id, f.kind) : sel.toggle(f.id); draw();
   }
+  /** 追加のカードを閉じた後のフォーカスの行き先（一覧の［＋ 接続先を追加］。持ち主が置く） */
+  const addEnd = () => { onAddEnd(); return null; };
   const inCard = id => { const c = $(sel.card(id)), ae = document.activeElement; return Boolean(c && ae && c.contains(ae)); };
 
   // ---------------------------------------------------------------- 削除
@@ -337,7 +340,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     confirmId = '';
     if (flow?.id === id) stopFlow(id);   // 流れのあるアカウントの削除は、その流れに取り消しを送る
     if (openId === id) { delete nd[id]; delete err[id]; openId = ''; }
-    removing = id; focusAfter = next ? sel.toggle(next) : '[data-add]'; draw();
+    removing = id; focusAfter = next ? sel.toggle(next) : addEnd; draw();
     // 畳み終わってから一覧から外す（下のカードが跳ばない）
     setTimeout(async () => { try { await load(true); } catch {} removing = ''; draw(); onChange(); }, ms('--dur'));
   }
@@ -346,15 +349,14 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   panel.addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b || !panel.contains(b) || b.disabled) return;
     const d = b.dataset;
-    if (b.id === 'caClose') { close(); return; }
     if (saving) return;
     if (d.toggle) {
       const id = d.toggle;
       if (openId !== id) { if (!(await openCard(id))) { draw(); return; } }
-      else if (byId(id)?.draft) { await closeCard('esc'); if (flow?.id !== id) focusAfter = '[data-add]'; }
+      else if (byId(id)?.draft) { await closeCard('esc'); if (flow?.id !== id) focusAfter = addEnd; }
       else if (await closeCard('done')) focusAfter = sel.toggle(id);
       else return;
-    } else if (d.add != null) { if (!(await openCard(draftId))) { draw(); return; } }
+    } else if (d.mkdef) { makeDefault?.(d.mkdef); return; }
     else if (d.del) { confirmId = d.del; focusAfter = '[data-confirm="no"]'; }
     else if (d.confirm) {
       const id = confirmId;
@@ -394,7 +396,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       if (!confirmId && !o) return;
       e.preventDefault(); e.stopPropagation();
       if (confirmId) { const c = confirmId; confirmId = ''; focusAfter = sel.del(c); }
-      else { const dr = byId(o)?.draft, running = flow?.id === o; await closeCard('esc'); focusAfter = running ? sel.slot(keyOf(o), flow.kind) : dr ? '[data-add]' : sel.toggle(o); }
+      else { const dr = byId(o)?.draft, running = flow?.id === o; await closeCard('esc'); focusAfter = running ? sel.slot(keyOf(o), flow.kind) : dr ? addEnd : sel.toggle(o); }
       draw();
     }
   });
@@ -413,7 +415,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   // focus: そのアカウントのカードの［編集］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   let onOpen = () => {};
   async function open({ usageLogin, focus } = {}) {
-    openSettings(); panel.hidden = false; onOpen('claude');   // backend-allow: この面は Claude のアカウント専用
+    openSettings(); panel.hidden = false; onOpen(AGENT);
     message = t('accounts.loading'); draw();
     try {
       await load(true);
@@ -428,12 +430,22 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   draw();
   return {
     open, load, list: () => accounts, loginEvent,
+    /** 追加のカードを開く（一覧の［＋ 接続先を追加］→ 公式） */
+    add: async () => { if (await openCard(draftId)) draw(); },
+    /** 追加のカードが開いている・認可が走っている */
+    get adding() { return openId === draftId || flow?.id === draftId; },
+    /** 既定の印・［既定にする］を描き直す */
+    repaint: () => draw(),
+    /** 環境変数 ANTHROPIC_API_KEY がある（どの接続先でもそのキーが使われる） */
+    envApiKey: () => envKey,
     /** 管理の面（web/client.mjs がカードの枠へ移し、描き直しの前に元の置き場へ戻す） */
     panel,
     /** 面を閉じる（エージェントのカードの「接続」を畳むとき。［閉じる］と同じ） */
     close,
     /** 開いている面のエージェント（閉じていれば ''。設定のカードの aria-expanded と再描画で使う） */
-    get openAgent() { return panel.hidden ? '' : 'claude'; },   // backend-allow: この面は Claude のアカウント専用
+    get openAgent() { return panel.hidden ? '' : AGENT; },
+    /** この面のエージェントの id（Claude のアカウントの面は 1 つのエージェント専用） */
+    agent: AGENT,
     /** open() が呼ばれた（カードの「接続」の面を開く合図。web/client.mjs が受ける） */
     onOpen(fn) { onOpen = fn; },
     invalidate: () => { loaded = null; if (!panel.hidden) load(true).then(() => draw()).catch(() => {}); },

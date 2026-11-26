@@ -121,15 +121,11 @@
       "unconfirmed": "未確認",
       "checkStatus": "状態を確認",
       "checkFailed": "確かめられませんでした",
-      "loggedIn": "ログイン済み",
       "loggedOut": "未ログイン",
       "stateOn": "ログイン中",
       "install": "インストール",
       "signOut": "ログアウト",
       "signIn": "ログイン",
-      "accounts": "アカウント",
-      "endpoints": "接続先",
-      "accountsEndpoints": "アカウントと接続先",
       "pasteCode": "リダイレクト先の URL か code を貼る",
       "submitCode": "送る",
       "cancelLogin": "やめる",
@@ -709,6 +705,7 @@
     "bgSpoken": "バックグラウンド: {{items}}。一覧を開く",
     "bgEndedSpoken": "バックグラウンド: 完了 {{n}}。一覧を開く"
   },
+  "conn": {"toggle": "接続先", "count": "接続先 {{n}}", "needFix": "⚠ 対応が要る接続先 {{n}}", "cliLogin": "CLI のログイン", "isDefault": "· 新しい会話の既定", "makeDefault": "既定にする", "login": "ログインする", "relogin": "ログインし直す", "logout": "ログアウト", "check": "接続を確認", "edit": "編集", "delete": "削除", "cancel": "やめる", "official": "公式", "officialAs": "公式 · {{email}}", "signedIn": "公式 · ログイン済み", "signedOut": "公式 · ⚠ ログインしていません", "expired": "公式 · ⚠ ログインの期限が切れています", "pending": "公式 · ログインを待っています", "compatLine": "{{kind}} · {{host}} · {{check}}", "add": "＋ 接続先を追加", "kindTitle": "接続先の種類", "kindOfficial": "公式", "kindCompat": "互換（{{kind}}）", "officialPreset": "公式のアカウント", "officialHint": "{{agent}} にログインして足す", "envKey": "⚠ 環境変数 ANTHROPIC_API_KEY があるため、どの接続先でもそのキーが使われます。", "confirmDelete": "「{{name}}」を削除しますか？この接続先を選んでいる会話は、選び直すまで送れません。", "keyAlsoDeleted": "保存したキーも消えます。", "loggedInNote": "ログインしました。入力欄でこの接続先を選べます。", "defaultFailed": "既定にできませんでした: {{error}}", "subSignedOut": "⚠ ログインしていません", "subFailed": "{{kind}} · ⚠ 確認に失敗", "endpointDefault": "接続先の既定"},
   "compat": {
     "kind": {
       "anthropic": "Anthropic 互換",
@@ -763,7 +760,6 @@
       "model": "モデル",
       "save": "保存"
     },
-    "notSet": "（未設定）",
     "checking": "確認しています…",
     "loading": "読み込んでいます…",
     "check": {
@@ -772,22 +768,9 @@
       "failed": "⚠ 確認に失敗: {{error}}（{{when}}）"
     },
     "action": {
-      "close": "閉じる",
-      "makeDefault": "既定にする",
-      "edit": "編集",
-      "delete": "削除",
-      "cancel": "やめる",
-      "confirmDelete": "削除する"
+      "cancel": "やめる"
     },
     "list": {
-      "title": "{{agent}} の接続先",
-      "official": "公式（ログイン中のアカウント）",
-      "isDefault": "新しい会話の既定",
-      "mainLabel": "メイン: ",
-      "modelLabel": "モデル: ",
-      "confirmDelete": "「{{name}}」を削除しますか。選んでいる会話は選び直しが必要になります。",
-      "add": "＋ 接続先を追加",
-      "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
       "recheckOk": "「{{name}}」につながりました。",
       "recheckFailed": "「{{name}}」の確認に失敗: {{error}}",
       "deleteFailed": "削除できませんでした: {{error}}"
@@ -795,14 +778,7 @@
     "form": {
       "modelId": "モデル ID",
       "modelNotListed": "一覧にありません。Enter でこの ID をそのまま使います。",
-      "editTitle": "「{{name}}」を編集",
-      "endpoint": "接続先",
-      "addTitle": "{{agent}} の接続先を追加",
       "saved": "✓ 「{{name}}」を保存しました",
-      "savedHint": "入力欄のモデルの面で選べます。",
-      "addAnother": "もう 1 件追加する",
-      "backToList": "一覧に戻る",
-      "kind": "接続先の種類",
       "name": "名前",
       "namePlaceholder": "例: 仕事用の LiteLLM",
       "urlPlaceholder": "https://example.com（/v1 は付けない）",
@@ -816,7 +792,6 @@
       "stale": "接続情報が変わりました。もう一度確認してください。",
       "connected": "✓ つながりました",
       "connectedModels_other": "✓ つながりました · モデル {{count}} 件",
-      "roles": "モデルの割り当て",
       "context": "コンテキスト長",
       "contextTokens": "コンテキスト長（tokens）",
       "contextEmptyClaude": "空なら 200,000 として扱います",
@@ -833,27 +808,12 @@
     }
   },
   "agentAccounts": {
-    "title": "{{agent}} のアカウント",
-    "intro": "会話ごとに {{agent}} のアカウントを選べます。アカウントを足すと、そのアカウントでログインします。選んでいない会話は、今 {{agent}} にログインしているアカウントで動きます。",
     "close": "閉じる",
-    "add": "アカウントを足す",
     "cancel": "やめる",
-    "login": "ログインする",
-    "relogin": "ログインし直す",
-    "edit": "名前を変える",
-    "delete": "削除",
-    "confirmDelete": "「{{name}}」を削除しますか？このアカウントを選んでいた会話は、次の送信で止まります。",
-    "confirmDeleteButton": "削除する",
     "deleteFailed": "削除できませんでした：{{error}}",
-    "empty": "まだアカウントがありません。",
     "loading": "読み込んでいます…",
-    "status": {
-      "signedIn": "ログイン済み",
-      "signedInAs": "ログイン済み（{{label}}）",
-      "signedOut": "まだログインしていません"
-    },
     "form": {
-      "addTitle": "{{agent}} のアカウントを足す",
+      "addTitle": "{{agent}} の接続先を追加",
       "editTitle": "「{{name}}」の名前を変える",
       "name": "名前",
       "namePlaceholder": "仕事用 など",
@@ -868,29 +828,21 @@
       "openLink": "ログインの画面を開く",
       "runCommand": "端末で次のコマンドを打って、ログインしてください。終わると自動で進みます。",
       "copy": "コピー",
-      "done": "ログインしました。入力欄でこのアカウントを選べます。",
-      "doneAs": "{{label}} でログインしました。入力欄でこのアカウントを選べます。",
       "failed": "ログインできませんでした。",
       "retry": "もう一度"
     }
   },
   "accounts": {
-    "title": "Claude のアカウント",
-    "close": "閉じる",
-    "intro": "登録したアカウントは、会話の入力欄のモデルの隣で選べます。選ばない会話はログイン中のアカウントで動きます。",
-    "add": "＋ アカウントを追加",
-    "usageNote": "会話・使用量の表示・claude.ai のコネクターは、どれもアカウントごとの claude.ai のログインで動きます。環境変数 ANTHROPIC_API_KEY があるときは、そちらが優先されます。",
     "login": "claude.ai のログイン",
-    "summary": "claude.ai のログイン: {{login}}",
     "status": {
       "expired": "切れています",
       "done": "済み",
       "none": "まだ",
       "loginFresh": "✓ 済み"
     },
-    "loginMissing": "そのアカウントは見つかりません。一覧から選んで claude.ai にログインし直してください。",
-    "redoUsage": "claude.ai にログインし直す",
-    "authorizeUsage": "claude.ai にログイン",
+    "loginMissing": "その接続先は見つかりません。一覧から選んでログインし直してください。",
+    "redoUsage": "ログインし直す",
+    "authorizeUsage": "ログインする",
     "edit": "編集",
     "done": "完了",
     "delete": "削除",
@@ -901,25 +853,23 @@
       "delete": "「{{name}}」を削除",
       "settings": "「{{name}}」の設定",
       "confirm": "「{{name}}」の削除の確認",
-      "newAccount": "新しいアカウント",
-      "cancelAdd": "アカウントの追加をやめる"
+      "newAccount": "新しい接続先",
+      "cancelAdd": "接続先の追加をやめる"
     },
-    "confirmDelete": "「{{name}}」を削除しますか？ このアカウントを選んでいる会話は、選び直すまで送信できません。claude.ai のログインも消えます。",
     "confirmDeleteButton": "削除する",
-    "empty": "まだ登録していません。",
     "deleteFailed": "削除できませんでした: {{error}}",
     "loading": "読み込んでいます…",
     "name": {
       "label": "表示名",
       "placeholder": "仕事用、個人用など",
-      "required": "アカウントの表示名を入力してください",
-      "duplicate": "同じ名前のアカウントがあります"
+      "required": "接続先の表示名を入力してください",
+      "duplicate": "同じ名前の接続先があります"
     },
     "flow": {
       "openLink": "ブラウザーが開かないときはこちら",
       "starting": "Claude Code を起動しています…",
-      "step1Usage": "1. ブラウザーで、このアカウントの Claude にログインして「承認」を押してください。",
-      "step1New": "1. ブラウザーで、追加したいアカウントの Claude にログインして「承認」を押してください。",
+      "step1Usage": "1. ブラウザーで、この接続先の Claude にログインして「承認」を押してください。",
+      "step1New": "1. ブラウザーで、追加したい接続先の Claude にログインして「承認」を押してください。",
       "step2": "2. ブラウザーに表示されたコードを貼ってください。",
       "codePlaceholder": "コードを貼り付け",
       "codeLabel": "ブラウザーに表示されたコード",
@@ -1196,7 +1146,7 @@
       "unread": "コネクターの一覧をまだ読めていません",
       "none": "claude.ai にコネクターがありません",
       "needsAuth": "再認可が必要",
-      "footLead": "アカウントごとの切り替えは ",
+      "footLead": "接続先ごとの切り替えは ",
       "footLink": "外部 MCP で変える →"
     },
     "state": {
@@ -1682,9 +1632,9 @@
   },
   "mcp": {
     "accounts": {
-      "group": "claude.ai のコネクター（アカウントごと）",
+      "group": "claude.ai のコネクター（接続先ごと）",
       "status": {
-        "nologin": "未ログイン · Claude のアカウントで「claude.ai にログイン」が必要です",
+        "nologin": "未ログイン · 接続先で「ログインする」が必要です",
         "off": "オフ · claude.ai のログイン済み",
         "stopped": "オン · 止めています · {{why}}",
         "unusable": "使用不可 · {{why}}",
@@ -1712,7 +1662,7 @@
         "nologin": "「{{name}}」の claude.ai のログインが済んでいません",
         "login": "「{{name}}」の claude.ai のログインを読めません。ログインし直すとオンにできます",
         "version": "お使いの Claude Code の版はコネクター対応の確認前のため、オンにできません",
-        "platform": "この OS では、登録したアカウントの claude.ai のコネクターはまだ使えません",
+        "platform": "この OS では、登録した接続先の claude.ai のコネクターはまだ使えません",
         "env": "環境変数（ANTHROPIC_API_KEY など）の認証が優先されるため、オンにできません",
         "settings": "settings.json に別の認証の指定があるか読み取れないため、オンにできません",
         "history": "会話の履歴の置き場を動かす指定があるため、オンにできません",
@@ -1749,7 +1699,7 @@
       "originPly": "{{agents}} の設定にもあります",
       "originAgent": "{{agents}} の設定にあります",
       "originPlugin": "{{agents}} のプラグインにあります",
-      "originConnector": "{{agents}} のアカウントにあります",
+      "originConnector": "{{agents}} の接続先にあります",
       "agentsAria": "{{name}} を使うエージェント",
       "agentAria": "{{agent}} で {{name}} を使う",
       "askAria": "{{name}} を {{to}} にもつなぐ確認",
@@ -1918,7 +1868,7 @@
       "model": "モデル",
       "backend": "エージェント",
       "effort": "思考の強さ",
-      "account": "アカウント"
+      "account": "接続先"
     },
     "by": {
       "human": "あなた",
@@ -1960,36 +1910,36 @@
   "chat": {
     "connectorsFail": {
       "why": {
-        "ownDirLogin": "「{{name}}」は claude.ai にログインしていないか、ログインが切れています。ログインすると送れます。",
+        "ownDirLogin": "接続先「{{name}}」は claude.ai にログインしていないか、ログインが切れています。ログインすると送れます。",
         "keychain": "「{{name}}」のログインが入っている Mac のキーチェーンを開けません。画面でロックを解除してから送り直してください。",
         "keychainAuth": "「{{name}}」のログインで断られました。Mac のキーチェーンのロックを解除して送り直してください。解除しても続くときはログインし直してください。",
-        "ssh": "ssh などの画面の無いログインからは、登録した Claude アカウントで送れません。Mac の画面から Pleiad を起動してください。",
+        "ssh": "ssh などの画面の無いログインからは、登録した接続先では送れません。Mac の画面から Pleiad を起動してください。",
         "ownDirLinks": "「{{name}}」の専用フォルダーから共有の設定フォルダーへのリンクを準備できませんでした。フォルダーの内容とアクセス権を確認してください。",
         "ownDirLinksWindows": "「{{name}}」の専用フォルダーにリンクを作成できませんでした。Windows の開発者モード、またはシンボリックリンクの作成権限と対象フォルダーのアクセス権を確認してください。",
         "ownDirProfile": "「{{name}}」の専用フォルダーにコネクターの設定を反映できませんでした。",
-        "login": "「{{name}}」で送るには、まず claude.ai にログインしてください。",
-        "version": "お使いの Claude Code（CLI {{cli}} / SDK {{sdk}}）は、登録したアカウントでの動作を確かめる前の版のため停止しました（確認済み: {{verified}}）。Claude Code を更新してください。",
-        "platform": "登録した Claude アカウントは、この OS ではまだ使えません。",
-        "env": "環境変数（ANTHROPIC_API_KEY など）が設定されているため、登録したアカウントのログインへ切り替えられません。環境変数を外してください。",
-        "settings": "settings.json（共有・作業場所・ローカル・管理者）に別の認証の指定（apiKeyHelper や env）があるか読み取れないため、登録したアカウントで開始できません。設定を外してください。",
-        "history": "会話の履歴の置き場を動かす指定（環境変数か settings.json）があるため、登録したアカウントで開始できません。指定を外してください。",
+        "login": "接続先「{{name}}」で送るには、まずログインしてください。",
+        "version": "お使いの Claude Code（CLI {{cli}} / SDK {{sdk}}）は、登録した接続先での動作を確かめる前の版のため停止しました（確認済み: {{verified}}）。Claude Code を更新してください。",
+        "platform": "登録した接続先は、この OS ではまだ使えません。",
+        "env": "環境変数（ANTHROPIC_API_KEY など）が設定されているため、登録した接続先を使えません。環境変数を外してください。",
+        "settings": "settings.json（共有・作業場所・ローカル・管理者）に別の認証の指定（apiKeyHelper や env）があるか読み取れないため、登録した接続先で開始できません。設定を外してください。",
+        "history": "会話の履歴の置き場を動かす指定（環境変数か settings.json）があるため、登録した接続先で開始できません。指定を外してください。",
         "profile": "「{{name}}」のコネクターの設定を共有の設定フォルダーへ反映できなかったため停止しました。もう一度送ってください。"
       },
       "fix": {
-        "relogin": "claude.ai にログインし直す",
-        "login": "claude.ai にログイン",
+        "relogin": "ログインし直す",
+        "login": "ログインする",
         "resend": "再送する"
       },
       "cancel": "取り消す",
       "waiting": "claude.ai のログインを待っています…",
       "sending": "もう一度送っています…",
       "done": {
-        "relogin": "✓ claude.ai にログインし直して、もう一度送りました",
-        "login": "✓ claude.ai にログインして、もう一度送りました",
+        "relogin": "✓ ログインし直して、もう一度送りました",
+        "login": "✓ ログインして、もう一度送りました",
         "resend": "✓ もう一度送りました"
       },
       "resendFailed": "もう一度送れませんでした: {{error}}",
-      "loginFailed": "claude.ai にログインできませんでした。もう一度お試しください"
+      "loginFailed": "ログインできませんでした。もう一度お試しください"
     },
     "secretRequest": {
       "headingMark": "秘密情報の入力",
@@ -2378,10 +2328,10 @@
     "authExpired": {
       "login": "{{agent}} のログイン（{{email}}）の有効期限が切れています。",
       "loginNoEmail": "{{agent}} のログインの有効期限が切れています。",
-      "token": "Claude のアカウント「{{name}}」の claude.ai のログインが切れています。",
-      "account": "アカウント「{{name}}」（{{agent}}）のログインが切れました",
-      "openAccounts": "アカウント設定を開く",
-      "tokenUnnamed": "Claude のアカウントの claude.ai のログインが切れています。",
+      "token": "接続先「{{name}}」の claude.ai のログインが切れています。",
+      "account": "接続先「{{name}}」（{{agent}}）のログインが切れました",
+      "openAccounts": "接続先の設定を開く",
+      "tokenUnnamed": "この接続先の claude.ai のログインが切れています。",
       "signInAgain": "ログインし直す",
       "waiting": "ブラウザーでログインしてください…",
       "cancel": "やめる",
@@ -2597,7 +2547,7 @@
         "mode": "承認モード",
         "cwd": "作業ディレクトリ",
         "endpoint": "接続先",
-        "account": "アカウント"
+        "account": "接続先"
       },
       "cancel": "取り消す",
       "endpointMain": "接続先のメイン",
@@ -2667,22 +2617,13 @@
       "historyRetry": "もう一度読む"
     },
     "account": {
-      "signedIn": "ログイン中",
-      "signedInAccount": "ログイン中のアカウント",
-      "noToken": "認証情報なし",
-      "deleted": "削除されたアカウント",
       "chooseAgain": "選び直してください",
-      "deletedWarning": "選択中のアカウントは削除されています。アカウントを選び直してください",
-      "noTokenWarning": "アカウント「{{name}}」の認証情報がありません。設定のアカウントからログインしてください"
+      "noTokenWarning": "接続先「{{name}}」はログインしていません。設定 › エージェント設定の接続先からログインしてください"
     },
     "endpoint": {
-      "official": "公式",
       "deleted": "削除された接続先",
       "deletedWarning": "選択中の接続先は削除されています。モデルのチップの面で接続先を選び直してください",
       "failedWarning": "接続先「{{name}}」は前回の確認に失敗しています。設定 › エージェント設定の「接続先」で確認し直してください",
-      "officialClaude": "Anthropic · ログイン中のアカウントで使う",
-      "officialCodex": "OpenAI · ChatGPT のログインで使う",
-      "failedSuffix": " · ⚠ 確認に失敗しています",
       "noWebSearch": "この接続先（{{name}}）では Web 検索を使えません。",
       "details": "接続先の詳細",
       "failedNote": "⚠ 確認に失敗"
@@ -2801,8 +2742,6 @@
       "deleteStatus": "この状態を削除",
       "deleteStatusHint_other": "{{count}} 件は状態なしへ",
       "empty": "空",
-      "account": "アカウント（次のターン）",
-      "accountFailed": "アカウントの変更に失敗: {{error}}",
       "endpoint": "接続先（次のターン）",
       "endpointFailed": "接続先の変更に失敗: {{error}}"
     },
@@ -3332,8 +3271,6 @@
           "ownDirProfile": "専用フォルダーに設定を反映できない"
         }
       },
-      "title": "アカウント",
-      "compatOff": "互換の接続先ではアカウントを使いません",
       "week": "週 {{percent}}"
     },
     "endpoint": {
@@ -3726,7 +3663,7 @@
         }
       },
       "failed": {
-        "named": "{{name}} のターンが失敗しました",
+        "named": "{{name}} の返事が失敗しました",
         "titled": "{{title}} が失敗しました",
         "plain": "会話が失敗しました"
       },
@@ -4257,7 +4194,7 @@
       "disabled": "無効",
       "not_installed": "未インストール",
       "no_token": "認証情報なし",
-      "no_account": "アカウントが登録に無い"
+      "no_account": "接続先が登録に無い"
     },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",
@@ -4292,8 +4229,8 @@
       "skipped": "飛ばした · {{reason}}",
       "pace": "ペース {{pace}} 倍",
       "until": "{{time}} まで",
-      "loginAccount": "ログイン中のアカウント",
-      "account": "アカウント: {{name}}",
+      "loginAccount": "CLI のログイン",
+      "account": "接続先: {{name}}",
       "retried": "やり直し",
       "target": "委譲先",
       "targetPinned": "{{target}}（依頼元が指定）",
@@ -4421,8 +4358,8 @@
       "candidateAdded": "{{tier}}の末尾に{{candidate}}を追加しました",
       "candidateChanged": "{{tier}}の候補{{position}}を{{candidate}}に変更しました",
       "noModels": "モデルの一覧を読めません",
-      "accountLogin": "ログイン中のアカウント",
-      "accountLoginSame": "ログイン中のアカウント（{{name}}）",
+      "accountLogin": "CLI のログイン",
+      "accountLoginSame": "CLI のログイン（{{name}}）",
       "relogin": "ログインし直す",
       "reloginLabel": "{{account}} にログインし直す（設定 › エージェント設定）",
       "empty": "候補がありません",

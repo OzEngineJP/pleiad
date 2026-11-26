@@ -2,6 +2,7 @@
 
 - 状態: 提案
 - [ADR 0117](0117-thread-replies-and-implicit-wake.md) の「bot どうしの呼び合いは人が書かないまま 6 回で止め、『あなたが書けば続けます』を出す」（D6）を置き換える
+- 改めた: [0357](0357-remove-bot-usage-mechanism.md)（予算の部分すべて。休憩中・`limited` にそろえる・黙る自由は残る）
 
 ## 状況
 

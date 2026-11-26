@@ -970,6 +970,8 @@ const SUITES = [
   './unit/server-codex-compaction.mjs',
   // 互換の接続先の配線。codex の身代わりと偽の互換 API だけと話す
   './unit/server-compat-endpoints.mjs',
+  // bot の互換の接続先（ADR 0359）。会話・ルーティン・委譲が接続先で走り、消したら止まる
+  './unit/server-bot-compat.mjs',
   './unit/server-setup-endpoint-only.mjs',
   './unit/server-setup-check-failed.mjs',
   // 同じことを本物の Claude Code・Codex の CLI で（送り先は偽の互換 API。入っていなければとばす）
@@ -1173,19 +1175,19 @@ const SUITES = [
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',
-  // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は予算の内・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
+  // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は DM では起こさない・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
   './unit/bot-reactions-silence.mjs',
   // @ の無い投稿の宛先と、聞こえた投稿の手がかり（引用した bot が宛先・無ければ最後に話した bot。宛先の名前を包みの to に付ける。ADR 0128 の追記）
   './unit/bot-heard-addressee.mjs',
-  './unit/bot-budget.mjs',
-  './unit/thread-budget-ui.mjs',
+  // 流れの要約の「作業中の bot」の選び方（bot 専用の使用量の仕組みは ADR 0357 でやめた）
+  './unit/post-live-bots.mjs',
   // bot の頭の中（ADR 0126）: 欲求・ふるい・返事の読み取り・思考の流れの束・独り言の写り・思考の流れと気がかりの保存
   './unit/brain-core.mjs',
-  // 心拍（ふるい → 安いモデル → 引き継ぎ・予算・失敗・止める・下限）と、予算の心拍の分
+  // 心拍（ふるい → 安いモデル → 引き継ぎ・失敗・止める・下限）
   './unit/brain-pulse.mjs',
-  // サーバー越し: 心拍を入れた bot（呼ばれたターンの末尾・引き継ぎ・結果の行・予算・漏れ・隠れた会話の書き込みの拒否）
+  // サーバー越し: 心拍を入れた bot（呼ばれたターンの末尾・引き継ぎ・結果の行・漏れ・隠れた会話の書き込みの拒否）
   './unit/brain-server.mjs',
-  // bot の予約（ADR 0140）: 時刻に 1 回起こす・止まっていた間に重なった予約は 1 回・再起動で残る・予算なし／休憩中は待つ・止めたスレッドは起こさない・取り消し
+  // bot の予約（ADR 0140）: 時刻に 1 回起こす・止まっていた間に重なった予約は 1 回・再起動で残る・休憩中は待つ・止めたスレッドは起こさない・取り消し
   './unit/brain-wakes.mjs',
   './unit/brain-wakes-server.mjs',
   // bot の会話は Chats の一覧に出さず、あなた待ちのときだけ出す（一覧の行の bot・承認待ち・検索の除外・スマホ通知）

@@ -1,6 +1,6 @@
 {
   "_comment": "エージェントの id の直書きの件数（tests/lint-agents.mjs の規則 1 id-literal）と backend-allow の印の総数（allowMarks）。増やせない。減らしたら node tests/lint-agents.mjs --update-baseline で下げる。Hooks・MCP・指示ファイルの形式名（claude・codex を形式の名として使うもの）の分は #91 で SOURCES 定数へ寄せて減らす（Ph1 では減らさない）",
-  "allowMarks": 68,
+  "allowMarks": 66,
   "files": {
     "core/api-keys.mjs": 1,
     "core/auth/claude-cli.mjs": 1,
@@ -29,8 +29,8 @@
     "site/main.js": 3,
     "site/tools/check-i18n.mjs": 2,
     "web/cli-setup.mjs": 1,
-    "web/client.mjs": 6,
-    "web/compat-endpoints.mjs": 4,
+    "web/client.mjs": 5,
+    "web/compat-endpoints.mjs": 3,
     "web/compat-presets.mjs": 2,
     "web/composer-controls.mjs": 1,
     "web/delegation-routing-view.mjs": 1,

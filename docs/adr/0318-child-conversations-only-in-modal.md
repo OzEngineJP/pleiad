@@ -20,7 +20,7 @@
 2. **入口はすべて `openConversation` を通す**: 通知（OS・一覧・スマホ）・脇の検索と右クリックの「開く」・行のメニュー（「元の会話を開く」「分岐の木の行」）・ロックの待ち・Chrome の窓（⋮・委譲カード）・「ほかの会話から送られた」・Channels の bot のページ・起動と再接続での復元・電話の通知の `?open=`・デスクトップの「会話を開く」。
 3. **無くすもの**: モーダルの「会話として開く ↗」（Channels のスレッドの `scope.openSession` も）、メインの頭の「↖ 依頼元: 題」（`#parentChatEntry`）、その翻訳キー（`session.parentLine`・`session.parentLineAria`・`dialog.work.openChat`）。
 4. **残すもの（例外）**:
-   - 依頼元の会話を消した子（[0147](0147-delete-sent-sessions.md)）と、端末の AI から任された子（`delegation.remote`）は、脇の一覧に行として出る根。メインで開く。頭の「⇄ 端末 の AI から」（`#remoteOriginLine`）は残す。
+   - 依頼元の会話を消した子（[0147](0147-delete-sent-conversations.md)）と、端末の AI から任された子（`delegation.remote`）は、脇の一覧に行として出る根。メインで開く。頭の「⇄ 端末 の AI から」（`#remoteOriginLine`）は残す。
    - ホストに任せた子の「ホストで開く ↗」（手元の窓にホストのリモートの窓を出す。[0317](0317-modal-child-composer-stop-name-tags.md) の中断はそのまま）。
    - 親の右の欄で子のタブに切り替える動き（[0303](0303-browser-chrome-unify.md)）。
 5. **検索から子を開いたとき**は、モーダルの筋の中で一致した発言へ送る。主の `revealMessage` と同じ輪を使い、目次はモーダルの目次（段 3）に渡す。

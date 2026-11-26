@@ -29,7 +29,7 @@ export default async function (tt) {
     tt.ok('決着したあなた待ちは過去形・◇・「承認済み」（弱く出す）', d.line === 'Owl が承認を待っていました' && d.icon === 'closed' && d.outcome === '承認済み' && d.open === false);
     tt.ok('決着の言葉: 回答済み・却下・取り消し', ['answered', 'denied', 'cancelled'].map((o) => describeNotification({ ...wait, resolvedAt: 5, outcome: o }, t).outcome).join() === '回答済み,却下,取り消し');
     d = describeNotification({ id: 'n2', kind: 'failed', actor: { kind: 'bot', name: 'Kit' }, at: 1, unread: true, target: { channelId: 'c1', threadId: 't1' }, channelName: 'design', threadTitle: 'ヘッダーの余白を揃える' }, t);
-    tt.ok('bot の失敗は「Kit のターンが失敗しました」・✕・場所は #チャンネル › スレッドの題', d.line === 'Kit のターンが失敗しました' && d.icon === 'failed' && d.place === '#design › ヘッダーの余白を揃える');
+    tt.ok('bot の失敗は「Kit の返事が失敗しました」（「ターン」は使う人の言葉でない）・✕・場所は #チャンネル › スレッドの題', d.line === 'Kit の返事が失敗しました' && d.icon === 'failed' && d.place === '#design › ヘッダーの余白を揃える');
     d = describeNotification({ id: 'n3', kind: 'done', at: 1, unread: false, target: { sessionId: 's2' }, title: '控えの題' }, t, (id) => (id === 's2' ? 'いまの題' : ''));
     tt.ok('完了は「<会話の題> が完了しました」。題は今の会話の題を先に使い（改名に追従）、無ければ控えの題', d.line === 'いまの題 が完了しました' && d.icon === 'done' && d.place === '一時チャット › いまの題'
       && describeNotification({ id: 'n3', kind: 'done', at: 1, unread: false, target: { sessionId: 's2' }, title: '控えの題' }, t).line === '控えの題 が完了しました');
@@ -64,6 +64,15 @@ export default async function (tt) {
       && notificationTarget({ kind: 'done', target: { sessionId: 's1' } }).sessionId === 's1'
       && Object.keys(notificationTarget({})).length === 0);
 
+    // bot の返事の失敗は、中の会話（sessionId）でなく、失敗した返事のあるスレッド・DM を開く（postId で返事の位置へ）
+    const failed = notificationTarget({ kind: 'failed', target: { sessionId: 's9', channelId: 'c1', threadId: 't1', postId: 'p9' } });
+    const failedDm = notificationTarget({ kind: 'failed', target: { sessionId: 's9', channelId: 'c_dm', postId: 'p9' } });
+    tt.ok('bot の失敗の通知は、元のスレッドへ戻る（会話の sessionId・uuid は渡さない）。DM は DM の流れへ',
+      JSON.stringify(failed) === JSON.stringify({ channelId: 'c1', threadId: 't1', postId: 'p9' })
+      && JSON.stringify(failedDm) === JSON.stringify({ channelId: 'c_dm', postId: 'p9' })
+      && notificationTarget({ kind: 'failed', target: { sessionId: 's1', uuid: 'u1' } }).sessionId === 's1'
+      && notificationTarget({ kind: 'failed', target: { sessionId: 's1', channelId: 'home' } }).sessionId === 's1', JSON.stringify([failed, failedDm]));
+
     let b = badgeState({ unread: 0, waiting: 0 }, t);
     tt.ok('未読が無ければ印なし・名前は「通知」', b.show === false && b.label === '通知' && b.text === '');
     b = badgeState({ unread: 0, waiting: 1 }, t);
@@ -78,7 +87,7 @@ export default async function (tt) {
     d = describeNotification(wait, t);
     tt.ok('英語: あなた待ち・決着・ベルの名前', d.line === 'Owl is waiting for your approval' && describeNotification({ ...wait, resolvedAt: 5, outcome: 'allowed' }, t).outcome === 'Approved'
       && badgeState({ unread: 2, waiting: 1 }, t).label === 'Notifications (2 unread, waiting for you)');
-    tt.ok('英語: 失敗・完了・@you', describeNotification({ id: 'x', kind: 'failed', actor: { name: 'Kit' }, at: 1, unread: true, target: {} }, t).line === "Kit's turn failed"
+    tt.ok('英語: 失敗・完了・@you', describeNotification({ id: 'x', kind: 'failed', actor: { name: 'Kit' }, at: 1, unread: true, target: {} }, t).line === "Kit's reply failed"
       && describeNotification({ id: 'x', kind: 'done', at: 1, unread: true, target: { sessionId: 's' }, title: 'Fix login' }, t).line === 'Fix login finished'
       && describeNotification({ id: 'x', kind: 'mention', actor: { name: 'Lynx' }, at: 1, unread: true, target: { channelId: 'c' } }, t).line === 'Lynx wrote @you');
   } finally { await setLanguage(before); }

@@ -114,9 +114,9 @@ export default async function (t) {
     threadStores.push(threads);
     t.ok('無いスレッドは null・一覧は空', (await threads.get('c_a', 'p_1')) === null && (await threads.list()).length === 0);
     const th1 = await threads.update('c_a', 'p_1', { sessions: { b_owl: 's_1' }, state: 'working', calls: 1 });
-    t.ok('update は空の状態から作り、欄を重ねる（sessions は bot ごと）', th1.state === 'working' && th1.sessions.b_owl === 's_1' && th1.calls === 1 && th1.updatedAt === 777 && th1.stopped === null && th1.tokens.input === 0);
-    const th2 = await threads.update('c_a', 'p_1', (cur) => ({ sessions: { b_lynx: 's_2' }, tokens: { input: cur.tokens.input + 10, output: 5 }, calls: cur.calls + 1 }));
-    t.ok('関数で渡すと今の値から計算できる（トークンの足し算）。sessions は足される', th2.sessions.b_owl === 's_1' && th2.sessions.b_lynx === 's_2' && th2.tokens.input === 10 && th2.tokens.output === 5 && th2.calls === 2);
+    t.ok('update は空の状態から作り、欄を重ねる（sessions は bot ごと）', th1.state === 'working' && th1.sessions.b_owl === 's_1' && th1.calls === 1 && th1.updatedAt === 777 && th1.stopped === null);
+    const th2 = await threads.update('c_a', 'p_1', (cur) => ({ sessions: { b_lynx: 's_2' }, calls: cur.calls + 1 }));
+    t.ok('関数で渡すと今の値から計算できる（起こした回数の足し算）。sessions は足される', th2.sessions.b_owl === 's_1' && th2.sessions.b_lynx === 's_2' && th2.calls === 2);
     t.ok('sessions の null はその bot の会話を外す', !('b_owl' in (await threads.update('c_a', 'p_1', { sessions: { b_owl: null } })).sessions));
     t.ok('不正な state・stopped は投げる（保存しない）', (await threads.update('c_a', 'p_1', { state: 'zzz' }).then(() => 'ok', () => 'rejected')) === 'rejected'
       && (await threads.update('c_a', 'p_1', { stopped: { by: { kind: 'bot' }, at: 1 } }).then(() => 'ok', () => 'rejected')) === 'rejected' && (await threads.get('c_a', 'p_1')).state === 'working');
@@ -225,6 +225,13 @@ export default async function (t) {
       const softened = await claimSvc.edit({ channelId: ch.id, postId: cturn.id, state: 'failed', failedWithBody: true }, BOT);
       t.ok('本文のある failed の印は編集後も保存され、画面が区別できる', softened.failedWithBody === true
         && (await claimSvc.getPost({ channelId: ch.id, postId: cturn.id })).failedWithBody === true);
+      // ADR 0358: 返事の無い失敗の理由（failure）は、ターンの投稿にだけ付き、編集後も保存され、人の投稿には付かない。上限（300 字）で切る
+      const lost = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '失敗しました: x', state: 'failed', turn: { botId: 'b_owl', sessionId: 's_o' }, failure: 'a'.repeat(400), new: true }, BOT);
+      const editedFail = await claimSvc.edit({ channelId: ch.id, postId: lost.id, failure: '理由を直した' }, BOT);
+      const humanFail = await claimSvc.post({ channelId: ch.id, threadId: croot.id, text: '人の投稿', failure: '付かない' }, HUMAN);
+      t.ok('ADR 0358: 失敗の理由（failure）はターンの投稿に付き、上限で切れ、編集で直せる。ターンでない投稿には付かない',
+        lost.failure.length === 300 && editedFail.failure === '理由を直した'
+        && (await claimSvc.getPost({ channelId: ch.id, postId: lost.id })).failure === '理由を直した' && humanFail.failure === undefined);
     }
 
     // 作業中の更新は 1 秒に 1 回まで配る

@@ -5,7 +5,7 @@
 
 作成 2026-09-11。`design.md` §3「やらない: マルチプロバイダ」を**改訂する**（[ADR 0004](adr/0004-multiple-agent-backends.md)）。
 Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-server）をバックエンドとして駆動できるようにする。
-2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。2026-11 に口を stream-json から ACP（`agy acp`）へ替えた（[ADR 0358](adr/0358-antigravity-on-acp.md)）。
+2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。2026-11 に口を stream-json から ACP（`agy acp`）へ替えた（[ADR 0362](adr/0362-antigravity-on-acp.md)）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
 ## 外部エージェントと操作ツールの版
@@ -18,7 +18,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.160.0 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）、`thread/shellCommand` の `userShell` の item の `command` の包み方と止めたときの `exitCode: -1`・`command aborted by user`、`!` のターンの間の `turn/start` の扱い（[ADR 0054](adr/0054-shell-from-composer.md)） |
 | Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.288、CLI 2.1.303（2026-10-22、承認待ちの A → B 付け直し・履歴・使用量） | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
-| Antigravity | `agy acp`（ACP） | CLI 1.5.17（Windows x64。`initialize`・`session/new`・`session/prompt` の `stopReason`・stdin を閉じたときの終了。2026-11-26。[ADR 0358](adr/0358-antigravity-on-acp.md)）。旧い口（stream-json）では CLI 1.4.5・1.4.2・1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.5.15（未満は更新を促す） | ACP の `_meta.antigravity`（`systemPrompt`・`permissionMode`・`deniedActions`・`usage`）と、モデルの一覧を取る `agy models`・`agy --print /usage` の出力 |
+| Antigravity | `agy acp`（ACP） | CLI 1.5.17（Windows x64。`initialize`・`session/new`・`session/prompt` の `stopReason`・stdin を閉じたときの終了。2026-11-26。[ADR 0362](adr/0362-antigravity-on-acp.md)）。旧い口（stream-json）では CLI 1.4.5・1.4.2・1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.5.15（未満は更新を促す） | ACP の `_meta.antigravity`（`systemPrompt`・`permissionMode`・`deniedActions`・`usage`）と、モデルの一覧を取る `agy models`・`agy --print /usage` の出力 |
 | OpenCode | `opencode serve`（v2 HTTP/SSE・plugin） | CLI 2.0.32（v2 の接続・MCP・承認・Hooks・指示分離。[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)） | 2.0.32（v2） | v2 のイベント形と plugin の hook、停止中の履歴・v1 移行の確認に読む `opencode.db` の `session_message`・旧 `message` / `part` 等 |
 | Grok Build | `grok`（ACP） | CLI 1.0.62（ACP・途中送信・画像ファイルの読み取り。機能の範囲は [backends.md](backends.md#grok-build)） | なし | ACP のイベント・`_x.ai/session/usage` の応答の形。ネイティブの会話ファイルは直接読まない |
 | Devin | `devin`（ACP） | CLI 3000.11.92（Pleiad 指示・委譲・ACP 接続の実機検証。[ADR 0223](adr/0223-devin-acp-backend.md)） | なし | ACP のイベント形と、圧縮区切りの取得における `devin/sessions/cli/sessions.db`（`sessions` 表の `main_chain_id`、`message_nodes` 表のノード鎖・継続ノードと `metadata.summarized_from` 等） |
@@ -28,7 +28,7 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 
 Antigravity 1.4.5（旧い stream-json の口）は、2026-10-23 に Windows x64 で Gemini 3.8 Flash Low（`gemini-3.8-flash-low`）の会話・履歴と、サーバー再起動後に同じ会話 ID で続けられることを確認した。モデル一覧の取得後に ID を指定し、再起動の前後とも同じモデルが CLI へ渡ることを確かめた。
 
-Antigravity 1.5.17 は、2026-11-26 に Windows x64 で `agy acp` の `initialize`・`session/new`・`session/prompt` の応答の形と、stdin を閉じたときの終了（21 ms・終了コード 0）を測った（[ADR 0358](adr/0358-antigravity-on-acp.md)）。実物のモデルでの会話・途中送信・承認・使用量の再測定は、ログインの済んだ環境で別に流す（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りまで確かめた）。
+Antigravity 1.5.17 は、2026-11-26 に Windows x64 で `agy acp` の `initialize`・`session/new`・`session/prompt` の応答の形と、stdin を閉じたときの終了（21 ms・終了コード 0）を測った（[ADR 0362](adr/0362-antigravity-on-acp.md)）。実物のモデルでの会話・途中送信・承認・使用量の再測定は、ログインの済んだ環境で別に流す（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りまで確かめた）。
 
 非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity は診断の対象にしていない（ACP の標準の呼び出しで、Pleiad が頼る非公開の行の形を持たない。`core/backend-shape-diagnostics.mjs`）。
 
@@ -125,7 +125,7 @@ Grok のように次の回として回る分は、runTurn が drain で決着ま
 書いた直後に積み（受理の判定を待つ間に今の回が終わり、次の回の出力が始まることがある）、`turn_completed` の後に次の回の出力が始まる直前に送った順で置く。早期のプロトコル拒否（次のターンで送り直す）だけは取り消し、回られずに残った分は記録の末尾に置く。
 Devin は折り込んだ途中送信をライブの `user_message_chunk` で流さない（2026-11-09 実機。折り込みの位置は transcript に交互で残るが、ライブでは応答の行が分かれず、途中送信は回の末尾にまとめて立つ）。
 mapper は自分で行を置かず、再生（`session/load`）との併合で直す（`core/conversations.mjs` の `alignPositional` が、連結されたライブの行を再生の並びに分解して重ねる）。
-Antigravity も走っているターンへ `session/prompt` を重ねて途中送信にする（2026-11。[ADR 0358](adr/0358-antigravity-on-acp.md)）。受理は書き込みが断られなかったことで、`steerConfirms` の約束どおり呼び出しの決着で合図を出す。折り込みか待ち行列かは、実物の agy では測っていない。
+Antigravity も走っているターンへ `session/prompt` を重ねて途中送信にする（2026-11。[ADR 0362](adr/0362-antigravity-on-acp.md)）。受理は書き込みが断られなかったことで、`steerConfirms` の約束どおり呼び出しの決着で合図を出す。折り込みか待ち行列かは、実物の agy では測っていない。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
 届かない送信を切り分けるときは、`~/.agent-host/pleiad.db` の会話の `outbox`（受理の `at`。`session_fields` の行。`tests/lib/data-store.mjs` の `readSessions` で組み直して読める）と、Claude の transcript の
@@ -281,7 +281,7 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 全部 `impossible` の雛形）を使えない。エージェントごとの表（id → 値）は `definePerAgentMap`（`core/backends/agents.mjs`）で作り、
 エージェントを足して表へ書き忘れたら読み込みで落とす（黙って `?? {}` に落とさない）。server・画面へは、レジストリ（`core/backends/index.mjs`）が状態を今までの値に引いて渡す
 （`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。エージェントごとの対応は公開文書のエージェントのページ（下の「公開文書の
-エージェントのページ」）に宣言から作る（文書の写しも端末の一覧も持たない。[ADR 0357](adr/0357-consolidate-backend-leak-guards.md)）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
+エージェントのページ」）に宣言から作る（文書の写しも端末の一覧も持たない。[ADR 0361](adr/0361-consolidate-backend-leak-guards.md)）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
 **性質（`traits`）は能力ではない**（[ADR 0274](adr/0274-capability-traits-and-public-marks.md)）。`effortInModelId`・
 `instructionsAtStart`・`failureDiagnostics`・`promptDelivery` の 4 つで、`true` / `false` だけを書く。状態（`covered`・
@@ -423,7 +423,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 - ツール: `run`（少し待つ。待ちは既定 30 秒・`timeoutMs` で最大 4 分。終わらなければ止めずに裏のジョブへ移し、ジョブの id・ここまでの出力・「まだ走っています」を返す。`timeoutMs` は止める上限ではなく、移すまでの待ち。ADR 0227 の 2026-11-25 の追記）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む。任意の `waitMs`（最大 4 分）を付けると、走っているジョブが終わるか `waitMs` が過ぎるまで待ってから返す。新しい出力だけでは戻らない。人が止めたらすぐ戻って「人が止めた」と返し、ターンが止まった・呼び出した側が切れたら待つのをやめるだけでジョブは止めない。省けばすぐ戻る）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す（`canAlways: true`）。「常に許可」を選んだ会話には `shellAlwaysAllow: true` を保存し（再起動・無停止の更新をまたいで残り、委譲の子・分岐には引き継がない）、以後はカードを出さずに通す（読み取りだけのモードへ変わったら印があっても断る）。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
 - ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。`start` のジョブ・裏へ移った `run`・3 秒以上待っている `run` は会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブ（裏へ移った `run` を含む）は、その会話へ知らせる（`shell.jobDone`）。待っている `run` を人が止めたときは、知らせではなく `run` の戻り（`shell.stoppedByHuman`）でエージェントへ返す（ターンは続く）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
-- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity と Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control・ply_context は ACP の `session/new` の `mcpServers` で渡す。Antigravity は `mcpServers` で MCP を渡せるようになったので、ply_shell を中継の束ねに足せるかは [ADR 0358](adr/0358-antigravity-on-acp.md) の残る課題）
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity と Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control・ply_context は ACP の `session/new` の `mcpServers` で渡す。Antigravity は `mcpServers` で MCP を渡せるようになったので、ply_shell を中継の束ねに足せるかは [ADR 0362](adr/0362-antigravity-on-acp.md) の残る課題）
 - **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足し、Claude は ply_shell の MCP の設定に `alwaysLoad: true` を付けて、ツール検索の後ろに回さず最初から読み込む（2026-11-25）
 - シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
@@ -706,7 +706,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   （[antigravity-sdk-python#20] が OAuth 対応の要望として open）
 - そこで一度入れた gemini-cli（ACP）バックエンドは**廃止した**
 
-**接続口**は `agy acp`（ACP。JSON-RPC 2.0 を stdio で、1 行 1 JSON。2026-11 に stream-json から替えた。[ADR 0358](adr/0358-antigravity-on-acp.md)）。
+**接続口**は `agy acp`（ACP。JSON-RPC 2.0 を stdio で、1 行 1 JSON。2026-11 に stream-json から替えた。[ADR 0362](adr/0362-antigravity-on-acp.md)）。
 共通の口 `AcpClient`（`core/backends/acp-client.mjs`）に agy 固有の差（`core/backends/antigravity-acp.mjs`）を載せ、保持役は `core/backends/acp-held.mjs`（会話の寿命 `lifetime: 'conversation'`）。
 最低の版は 1.5.15（`MIN_ACP_VERSION`）。それ未満は古い口へ落とさず、「`agy update` で更新してください」と返す（送信・圧縮・ログイン状態の確認のどれでも同じ文）。
 旧い口 `agy --print= --input-format stream-json --output-format stream-json` は廃止した。`agy --print` は `/usage`（`antigravity-usage.mjs`）と、使っていない提案（`antigravity-suggest.mjs`）にだけ残る。
@@ -749,7 +749,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   失敗したら前の一覧を残し、TTL まで試さない。写しから戻しただけ（'unknown'）では起こさない。モデルは走らせたままでも替わる（`session/set_config_option`。今のモデルと違うときだけ呼ぶ）ので、agy は起こし直さない
 - 1.2.8 では `agy -p "/model"` などの slash コマンドは**通常のプロンプトとして LLM に送られる**（changelog 1.1.11 の「quota を使わずに答える」は当てはまらなかった。実測）。調べるのに使わない（ACP の `/compact` は、`available_commands_update` に載っているときだけ `session/prompt` で送る。下の「圧縮と文脈の量」）
 - サブコマンドは `agent(s)` / `models` / `mcp` / `plugin` / `remote-control` / `update` /
-  `changelog` / `install` / `help`。**会話を列挙するサブコマンドが無い**（ACP の `session/list` で取り込むかは決めていない。ADR 0358）
+  `changelog` / `install` / `help`。**会話を列挙するサブコマンドが無い**（ACP の `session/list` で取り込むかは決めていない。ADR 0362）
 - **`session/prompt` には時間切れを付けない**（`timeoutMs: 0`）。旧い口の `--print-timeout`（既定 5m0s。5 分を超えたターンを
   `status:"SUCCESS"` / `response:""` / `usage` 全 0 の `result` で打ち切り、agy 本体は裏で走り続けた。2026-09-16 に実測）は ACP には無い
   （`AGENT_HOST_AGY_PRINT_TIMEOUT` も無くなった）。ターンの終わりは `stopReason`（`end_turn`・`cancelled`・`max_tokens`・`max_turn_requests`）で決まる。
@@ -776,7 +776,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 中断 | `session/cancel`（通知）。`CANCEL_GRACE_MS`（5 秒）待って終わらなければ agy を止める。会話は agy 側に残るので、次の発言は同じ会話の続き |
 | 途中送信 | **あり**。走っているターンへ `session/prompt` を重ねる（`acp-steer.mjs`。`steer`・`steerConfirms`） |
 | 完了 | `session/prompt` の応答の `stopReason`（`end_turn` → ok、`cancelled` → 中断、`max_tokens`・`max_turn_requests` → limited、ほかは失敗）。拒否された操作は応答の `_meta.antigravity.deniedActions` |
-| 使用量 | `usage_update` の `_meta.antigravity.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`input_tokens` はキャッシュ読みを含まず、`total_tokens` = input + output + thinking。形と累計の性質は agy 1.5.2 の stream-json の `result.usage` で実測したもの。ACP の `usage_update` が同じ累計かは、実物ではまだ確かめていない）。**値は agy の会話の始まりからの累計**と見て、`session/resume` で起こし直した別のプロセスでも続きから数える。Pleiad はそのターンの生の累計を控えのターンの記録（`turnResults` の `usage`。`core/backends/antigravity-store.mjs`）に残し、次のターンは控えにある前のターン（送信の時刻が前で最も新しいもの）の累計との差をそのターンの使用量にする。控えから読むので、サーバーの再起動・保持役の付け直し・プロセスの入れ替えを挟んでも基準が残り、同じターンを読み直しても差は変わらない。新しい agy の会話は 0 を基準にする。基準の無い再開（控えに累計を残す前から続く会話の、最初の 1 ターン）は多めに数えないよう使用量を出さず、累計だけを控えて次のターンの基準にする。どれかの値が前のターンの累計より減っていたら、agy が数え直したとみなし、その累計をそのままそのターンの分にする。全部 0 の累計（打ち切りなど）は使用量を出さず、再開では基準にもしない（`core/backends/antigravity.mjs` の `usageDelta`・`usageBaseOf`）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超えるので、読む側は `inputWithCache`（`core/usage.mjs`）で足して読み、キャッシュの割合が 100% に張り付かないようにする |
+| 使用量 | `usage_update` の `_meta.antigravity.usage`（`input_tokens` / `output_tokens` / `cache_read_tokens` / `thinking_tokens`。`input_tokens` はキャッシュ読みを含まず、`total_tokens` = input + output + thinking。形と累計の性質は agy 1.5.2 の stream-json の `result.usage` で実測したもの。ACP の `usage_update` が同じ累計かは、実物ではまだ確かめていない）。**値は agy の会話の始まりからの累計**と見て、`session/resume` で起こし直した別のプロセスでも続きから数える。Pleiad はそのターンの生の累計を控えのターンの記録（`turnResults` の `usage`。`core/backends/antigravity-store.mjs`）に残し、次のターンは控えにある前のターン（送信の時刻が前で最も新しいもの）の累計との差をそのターンの使用量にする。控えから読むので、サーバーの再起動・保持役の付け直し・プロセスの入れ替えを挟んでも基準が残り、同じターンを読み直しても差は変わらない。新しい agy の会話は 0 を基準にする。基準の無い再開（控えに累計を残す前から続く会話の、最初の 1 ターン）は多めに数えないよう使用量を出さず、累計だけを控えて次のターンの基準にする。どれかの値が前のターンの累計より減っていたら、agy が数え直したとみなし、その累計をそのままそのターンの分にする。全部 0 の累計（打ち切りなど）は使用量を出さず、再開では基準にもしない（`core/backends/antigravity.mjs` の `usageDelta`・`usageBaseOf`）。usage の出来事には Claude・Codex と同じ形にそろえて渡す: `inputTokens` = input + cache_read（入力はキャッシュ読みを含み、`cachedTokens` = cache_read はその内訳）、`outputTokens` = output + thinking。そろえる前（〜2026-10-04）の記録は `cachedTokens` が `inputTokens` を超える |
 | 文脈の量 | `usage_update` の `used` / `size`（`contextWindow`） |
 | 一覧・履歴 | **無し**（agy 側の会話の一覧は取り込まない）→ Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界)） |
@@ -817,7 +817,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
   | `yolo`（確認しない） | full | never | 起動の旗 `--dangerously-skip-permissions` |
 
 - **`yolo` は起動の時にしか決まらない**。`yolo` とそれ以外の行き来は agy を起こし直す（`session/resume` で会話は続く。`setModeLive` が false）。それ以外どうしは走らせたままで替わる
-- **新しい会話の既定は今までどおり `yolo`**（確認しない利用を黙って変えない。既定を `default` にするかは [ADR 0358](adr/0358-antigravity-on-acp.md) の残る課題）
+- **新しい会話の既定は今までどおり `yolo`**（確認しない利用を黙って変えない。既定を `default` にするかは [ADR 0362](adr/0362-antigravity-on-acp.md) の残る課題）
 - `session/set_config_option` は、返ってきた `configOptions` の `currentValue` が頼んだ値と違えば断られたと見なして失敗にする（`configRejected`）
 - 範囲（`scope`）は宣言で、機械的には強制できない（`enforced: false`）
 
@@ -919,7 +919,7 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   findExecutable はこの置き場を直接見る。見ないと「入れたのに未インストールのまま」になり、
   Pleiad の再起動が要る。Unix 版（`install.sh`）は `$HOME/.local/bin` なので元から見ている
 
-**孤児の `agy` を残さない**（2026-11 に ACP へ替えて、pid の控え `antigravity-pids.mjs` は廃止した。[ADR 0358](adr/0358-antigravity-on-acp.md)）:
+**孤児の `agy` を残さない**（2026-11 に ACP へ替えて、pid の控え `antigravity-pids.mjs` は廃止した。[ADR 0362](adr/0362-antigravity-on-acp.md)）:
 1 プロセス = 1 会話なので、Pleiad が落ちると agy が裏に取り残される（旧い口では前の起動のものが走り続けていた実例あり）。
 
 - **`agy acp` は stdin を閉じると自分で終わる**（1.5.17・Windows x64 の実測。`initialize` に答えたあと stdin を閉じて 21 ms 後に終了コード 0）。
@@ -975,7 +975,7 @@ DONE はコマンドが本当に終わったときにしか来なかった。裏
 
 実行ファイルは `AGENT_HOST_AGY_BIN`（既定 `agy`）。起動の待ちは `AGENT_HOST_AGY_START_MS`（既定 120 秒）、中断の猶予は `AGENT_HOST_AGY_CANCEL_MS`（既定 5 秒）。
 
-**まだ確かめていないこと**（ACP の口。[ADR 0358](adr/0358-antigravity-on-acp.md)）: 実物の agy・実際のモデルでの、`usage_update` の累計の性質、途中送信が折り込みか待ち行列か、
+**まだ確かめていないこと**（ACP の口。[ADR 0362](adr/0362-antigravity-on-acp.md)）: 実物の agy・実際のモデルでの、`usage_update` の累計の性質、途中送信が折り込みか待ち行列か、
 `thought_level` の振る舞い、未ログインのときの `agy acp` の挙動、組織の管理ポリシー下の `session/new`・`session/request_permission`・`tool_call_update` の形、
 `call_mcp_tool` の `rawInput` の形。知らない `sessionUpdate` は黙って落とす作りにしてある。
 
@@ -991,7 +991,7 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 ### 2.9 エージェントを足す
 
-エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)・[0274](adr/0274-capability-traits-and-public-marks.md)・[0357](adr/0357-consolidate-backend-leak-guards.md)）。
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)・[0274](adr/0274-capability-traits-and-public-marks.md)・[0361](adr/0361-consolidate-backend-leak-guards.md)）。
 
 **宣言**（`core/backends/agents.mjs` の `AGENTS`、`core/backends/agent-marks.mjs` の状態と性質）・**バックエンド**（`core/backends/<id>.mjs`。§2.3 の形）・
 **身代わりと RIGS**（`tests/lib/fake-<id>.mjs` と `tests/lib/backend-common.mjs` の `RIGS` の 1 行）を書き、

@@ -55,7 +55,8 @@ import { createSuggestion } from './composer/suggestion.mjs';
 import { setupMobileNotify } from './mobile-notify.mjs';
 import { createPresenceReporter } from './presence.mjs';
 import { compatModelText } from './compat-models.mjs';
-import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
+import { KIND, KIND_LABEL, PRESETS, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
+import { connCard } from './conn-card.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
@@ -3466,7 +3467,7 @@ function onEvent(ev, replay = false) {
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   // 作業のダイアログが子の会話の実例で開いているなら、その会話の出来事は実例が描く（主が同じ会話を開いているときは主が描く）
   if (!replay && modalChild && routeModalChild(ev)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; if (connPrefsSig() !== connPrefsSeen) { connPrefsSeen = connPrefsSig(); repaintConn(); } applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -3616,16 +3617,22 @@ function onEvent(ev, replay = false) {
       syncTopbar().catch(() => {});
       delegationSettings.event({ change: 'accounts' });
       window.dispatchEvent(new CustomEvent('ply:claude-accounts-changed'));
+      connAsked.clear(); renderAuth();
+      try { channelsUi.connChanged(); } catch {}
       break;
     case 'agentAccountsChanged':
       agentAccounts.invalidate(); vocabRequests.invalidate(); effortsLoader.invalidate();
       delegationSettings.event({ change: 'accounts' });
       syncTopbar().catch(() => {});
+      connAsked.clear(); renderAuth();
+      try { channelsUi.connChanged(); } catch {}
       break;
     case 'compatEndpointsChanged':
       compatEndpoints.invalidate();
       syncTopbar().catch(() => {});
-      renderAuth();
+      // 数と既定の印は取り直した一覧で描く（askConnLists が読み終えてから描き直す）
+      connAsked.clear(); renderAuth();
+      try { channelsUi.connChanged(); } catch {}
       break;
     case "nextSettings":
       return refresh().then(() => { shellComposer.sync(); paintWorktreeLines(); });
@@ -3992,15 +3999,190 @@ async function refreshAuth({ unsettled = false } = {}) {
   noAgent?.sync();
 }
 
-/** 「アカウントと接続先」の面を開いているエージェント（'' は全部閉じ）。一度に開くのは 1 枚 */
+/** 「接続先」の一覧を開いているエージェント（'' は全部閉じ）。一度に開くのは 1 枚 */
 let openConnAgent = '';
+/** 「接続先の種類」（［＋ 接続先を追加］の次）を開いているエージェント（'' は閉じ） */
+let connAddOpen = '';
 
-/** 「アカウントと接続先」の中の 1 節（見出し + 管理の面が入る枠） */
+/** 接続先の一覧の中の 1 節（管理の面が入る枠。見出しは置かない。ADR 0359） */
 function connSection(which) {
   const sec = el('section', 'conn-sec');
   sec.dataset.sec = which;
-  sec.append(el('h4', null, which === 'accounts' ? t('settings.agents.accounts') : t('settings.agents.endpoints')), el('div', 'conn-slot'));
+  sec.append(el('div', 'conn-slot'));
   return sec;
+}
+
+/**
+ * 新しい会話の既定の接続先（設定のカードの「· 新しい会話の既定」は 1 か所だけ。ADR 0359）。
+ * 互換の既定があればそれ。無ければ既定のアカウント（無い・消えたなら CLI のログイン）。保存の形は今のまま（既定の接続先・既定のアカウント）
+ */
+function connDefaultOf(bid) {
+  const caps = capsOf(bid);
+  const ep = caps.compatEndpoints ? compatEndpoints.defaults()[bid] : '';
+  if (ep && compatEndpoints.get(ep)) return { kind: 'endpoint', id: ep };
+  const acct = composerAccount({ backend: bid, prefs: state.prefs ?? {}, kind: caps.accounts });
+  if (acct && accountList(bid).some((a) => a.id === acct)) return { kind: 'account', id: acct };
+  return { kind: 'cli', id: '' };
+}
+const connIsDefault = (bid, kind, id = '') => { const d = connDefaultOf(bid); return d.kind === kind && d.id === id; };
+/**
+ * ［既定にする］。互換の接続先は既定の接続先を書く。アカウント・CLI のログイン（''）は既定のアカウントを書き、既定の接続先を公式に戻す
+ * （サーバーの compatEndpointDefault が 1 回で両方を書く）
+ */
+async function setConnDefault(bid, target) {
+  $("setupError").textContent = "";
+  try { await cmd('compatEndpointDefault', { agent: bid, ...target }); }
+  catch (e) { $("setupError").textContent = t('conn.defaultFailed', { error: e.message }); return; }
+  if (target.account !== undefined) {
+    // prefs の便りを待たずに印を移す（便りが来れば同じ値で上書きされる）
+    const prefs = state.prefs ?? {};
+    const value = target.account || null;
+    state.prefs = { ...prefs, backends: { ...(prefs.backends ?? {}), [bid]: { ...(prefs.backends?.[bid] ?? {}), account: value } },
+      ...(capsOf(bid).accounts === 'token' ? { claudeAccount: value } : {}) };
+  }
+  if (capsOf(bid).compatEndpoints) await compatEndpoints.load(true).catch(() => {});
+  repaintConn();
+}
+/** 既定のアカウントの記憶の写し（prefs の便りで変わったときだけ描き直す） */
+const connPrefsSig = () => JSON.stringify([state.prefs?.claudeAccount ?? null,
+  Object.entries(state.prefs?.backends ?? {}).map(([k, v]) => [k, v?.account ?? null])]);
+let connPrefsSeen = '';
+
+/** 頭の行の数を出すために一覧（アカウント・互換）を取りに行ったエージェント（変わったという便りで空にする） */
+const connAsked = new Set();
+function askConnLists(b) {
+  if (connAsked.has(b.id)) return;
+  connAsked.add(b.id);
+  Promise.all([b.capabilities?.accounts ? loadAccounts(b.id) : null, b.capabilities?.compatEndpoints ? compatEndpoints.load().catch(() => []) : null])
+    .then(() => repaintConn()).catch(() => {});
+}
+/** 既定・数が変わった: 設定のカードと、開いている一覧の面を描き直す */
+function repaintConn() {
+  renderAuth();
+  if (!claudeAccounts.panel.hidden) claudeAccounts.repaint();
+  agentAccounts.repaint(); compatEndpoints.repaint();
+}
+/** 一覧の接続先の数と、対応が要る数（アカウントのログインがまだ・互換の確認に失敗・既定の CLI のログインが切れている） */
+function connCounts(b, st) {
+  const accts = b.capabilities?.accounts ? accountList(b.id) : [];
+  const eps = b.capabilities?.compatEndpoints ? compatEndpoints.list(b.id) : [];
+  const cliBad = st.supported && (!st.loggedIn || st.expired) && !st.pending && !st.unconfirmed;
+  const fix = accts.filter((a) => !a.ready).length + eps.filter((e) => e.ready === false).length + (cliBad && connDefaultOf(b.id).kind === 'cli' ? 1 : 0);
+  return { n: 1 + accts.length + eps.length, fix };
+}
+
+/** CLI のログインの接続先のカード（一覧の先頭。［ログインする］［既定にする］［ログアウト］。ログイン中のメールは状態の行。ADR 0359） */
+function cliLoginCard(b, st) {
+  const remote = Boolean(window.plyRemote);
+  const isDef = connIsDefault(b.id, 'cli');
+  const status = !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
+    : st.pending ? t('conn.pending')
+    : st.expired ? t('conn.expired')
+    : st.loggedIn ? (st.account ? t('conn.officialAs', { email: st.account }) : t('conn.signedIn'))
+    : st.checkFailed ? t("settings.agents.checkFailed")
+    : st.unconfirmed ? t("settings.agents.unconfirmed")
+    : remote ? `${t('conn.signedOut')} · ${t("remote.loginOnHostShort")}` : t('conn.signedOut');
+  const warn = Boolean(st.supported && !st.pending && !st.unconfirmed && (!st.loggedIn || st.expired));
+  // ログインを待っている間の［やめる］は頭の行（初回の案内の行と同じ部品）が持つ
+  const canLogin = !remote && st.supported && !st.pending && (!st.loggedIn || st.expired);
+  return connCard({
+    name: t('conn.cliLogin'), isDefault: isDef, status, warn, dataset: { conn: 'cli' },
+    actions: [
+      canLogin && { label: st.expired ? t('conn.relogin') : t('conn.login'), act: 'login', quiet: true,
+        onClick: () => { authFocus = { agent: b.id, pending: true }; authLogin(b); } },
+      !isDef && { label: t('conn.makeDefault'), act: 'default', onClick: () => setConnDefault(b.id, { account: '' }) },
+      !remote && st.supported && st.loggedIn && !st.pending && { label: t('conn.logout'), act: 'logout', onClick: () => authLogout(b) },
+    ],
+  });
+}
+
+/** 一覧の下の［＋ 接続先を追加］と、押した後の「接続先の種類」（公式 1 つ・互換のプリセット）。追加の欄が開いている間は出さない */
+function connAddArea(b) {
+  const box = el('div', 'conn-add');
+  const kind = b.capabilities?.accounts, compat = Boolean(b.capabilities?.compatEndpoints);
+  const adding = (kind === 'token' && claudeAccounts.openAgent === b.id && claudeAccounts.adding)
+    || (kind === 'agent' && agentAccounts.openAgent === b.id && agentAccounts.adding)
+    || (compat && compatEndpoints.openAgent === b.id && compatEndpoints.adding);
+  if (adding) { box.hidden = true; return box; }
+  const official = () => {
+    connAddOpen = '';
+    if (kind === 'token') claudeAccounts.add().then(() => renderAuth());
+    else if (kind === 'agent') { agentAccounts.add(); renderAuth(); }
+  };
+  const closeKinds = () => { connAddOpen = ''; renderAuth(); $("authSec").querySelector(`[data-agent="${b.id}"] [data-add]`)?.focus(); };
+  if (connAddOpen !== b.id) {
+    const add = el('button', 'btn mp-link', t('conn.add'));
+    add.type = 'button'; add.dataset.add = b.id;
+    add.onclick = (e) => {
+      e.stopPropagation();
+      // 互換を持たないエージェントは、種類を選ぶまでもなく公式（アカウント）を足す
+      if (!compat && kind) { official(); return; }
+      connAddOpen = b.id; renderAuth();
+      $("authSec").querySelector(`[data-agent="${b.id}"] .conn-kinds .mp-preset`)?.focus();
+    };
+    box.append(add);
+    return box;
+  }
+  const stage = connCard({ name: t('conn.kindTitle'), actions: [{ label: t('conn.cancel'), onClick: closeKinds }] });
+  stage.classList.add('is-open', 'conn-kinds');
+  stage.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeKinds(); } };
+  const preset = (name, hint, onClick, id) => {
+    const p = el('button', 'mp-preset');
+    p.type = 'button'; p.dataset.kind = id;
+    p.append(el('span', null, name), el('small', null, hint));
+    p.onclick = (e) => { e.stopPropagation(); onClick(); };
+    return p;
+  };
+  const group = (label, buttons) => {
+    const g = el('div', 'mp-presets');
+    g.setAttribute('role', 'group'); g.setAttribute('aria-label', label);
+    g.append(...buttons);
+    stage.append(el('div', 'conn-kind-h', label), g);
+  };
+  if (kind) group(t('conn.kindOfficial'), [preset(t('conn.officialPreset'), t('conn.officialHint', { agent: b.label }), official, 'official')]);
+  if (compat) group(t('conn.kindCompat', { kind: KIND_LABEL[KIND[b.id]] ?? '' }), (PRESETS[b.id] ?? []).map((p) => preset(p.name, p.hint ?? '', () => {
+    connAddOpen = '';
+    compatEndpoints.startAdd(b.id, p.id).then(() => renderAuth());
+  }, p.id)));
+  box.append(stage);
+  return box;
+}
+
+/** 接続先の一覧の面（灰色の面 1 枚: CLI のログイン → 登録したアカウント → 互換の接続先 →［＋ 接続先を追加］。ADR 0359） */
+function connPanel(b, st, { accounts, endpoints }) {
+  const p = el('div', 'mp-panel conn-panel');
+  // 環境変数の API キーは、どの接続先を選んでもそちらが使われる（事故になるので、そのときだけ 1 行）
+  if (b.capabilities?.accounts === 'token' && claudeAccounts.envApiKey()) p.append(el('p', 'mp-note mp-warn conn-env', t('conn.envKey')));
+  p.append(cliLoginCard(b, st));
+  if (accounts) p.append(connSection('accounts'));
+  if (endpoints) p.append(connSection('endpoints'));
+  p.append(connAddArea(b));
+  return p;
+}
+/** 追加の欄を閉じた（足し終えた・やめた）: 一覧の［＋ 接続先を追加］を戻し、そこへフォーカスを置く */
+function connAddEnd() {
+  const id = openConnAgent;
+  renderAuth();
+  if (id) $("authSec").querySelector(`[data-agent="${id}"] [data-add]`)?.focus({ preventScroll: true });
+}
+
+/** 設定のそのエージェントの「接続先」の一覧を開く（入力欄の「接続先を管理…」・API キーのページなど） */
+function openAgentConns(bid) {
+  const b = state.backends.find((x) => x.id === bid);
+  if ($('onboardingDialog').open) $('onboardingDialog').close();
+  onboarding.open();
+  if (!b) return;
+  if (openConnAgent !== bid) toggleAgentConn(b);
+  $("authSec").querySelector(`[data-agent="${bid}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+/** そのエージェントの一覧の面（アカウント・互換）のうち、まだ開いていないものを開く（片方だけが外から開かれたとき） */
+function openConnModules(id) {
+  const b = state.backends.find((x) => x.id === id);
+  if (!b || state.auth.get(id)?.installed === false) return;
+  const caps = b.capabilities ?? {};
+  if (caps.accounts === 'token' && claudeAccounts.openAgent !== id) claudeAccounts.open();
+  if (caps.accounts === 'agent' && agentAccounts.openAgent !== id) agentAccounts.open(id);
+  if (caps.compatEndpoints && compatEndpoints.openAgent !== id) compatEndpoints.open(id);
 }
 
 /**
@@ -4011,7 +4193,9 @@ function mountPanel(agentId, sec, panel) {
   const slot = document.querySelector(`#authSec [data-agent="${agentId}"] .agent-conn [data-sec="${sec}"] .conn-slot`);
   if (!slot || !panel) return;
   slot.append(panel);
+  const fresh = openConnAgent !== agentId;
   openConnAgent = agentId;
+  if (fresh) { connAddOpen = ''; openConnModules(agentId); }
   paintConnState();
 }
 
@@ -4027,22 +4211,25 @@ function paintConnState() {
 
 /** 「接続」を全部畳む（面側も閉じて、途中の追加・ログインの流れも片付ける） */
 function closeAgentConns() {
-  openConnAgent = '';
+  openConnAgent = ''; connAddOpen = '';
   claudeAccounts.close(); agentAccounts.close(); compatEndpoints.close();
   paintConnState();
 }
 
-/** カードの「アカウントと接続先」。開いていれば畳み、畳んでいればそのエージェントの面を開く */
+/** カードの［接続先］。開いていれば畳み、畳んでいればそのエージェントの一覧を開く */
 function toggleAgentConn(b) {
   if (openConnAgent === b.id) { closeAgentConns(); return; }
   const st = state.auth.get(b.id) ?? {};
   const accounts = b.capabilities?.accounts && st.installed !== false;
   const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
-  openConnAgent = b.id;
+  openConnAgent = b.id; connAddOpen = '';
+  const onToggle = document.activeElement?.matches?.("#authSec .connect");
   paintConnState();
   // open() が onOpen → mountPanel を呼び、面がカードの中の枠へ移る
   if (accounts) (b.capabilities.accounts === 'token' ? claudeAccounts.open() : agentAccounts.open(b.id));
   if (endpoints) compatEndpoints.open(b.id);
+  // open() は設定の脇のメニューへフォーカスを移す（onboarding.open）。［接続先］を押した人は、そこに残す
+  if (onToggle) $("authSec").querySelector(`[data-agent="${b.id}"] .connect`)?.focus({ preventScroll: true });
 }
 
 /** 描き直しで外れた管理の面を、開いているカードの枠へ戻す（面は作り直さない。中身と途中の流れはそのまま） */
@@ -4125,14 +4312,24 @@ const agentRows = createRowKit({
 /** 読み上げに伝えたカードの状態（変わったときだけ #authLive に書く） */
 const authSpoken = new Map();
 
+/** 設定のカードの中で、描き直しのたびに作り直される要素に居るとき、描き直しの後に同じ役の要素を指す selector（無ければ null） */
+function authKeepSel(a) {
+  if (!a?.closest?.("#authSec .agent-card")) return null;
+  if (a.matches(".connect")) return ".connect";
+  if (a.matches("[data-add]")) return "[data-add]";
+  if (a.matches(".conn-kinds .mp-preset")) return `.conn-kinds .mp-preset[data-kind="${CSS.escape(a.dataset.kind ?? "")}"]`;
+  const act = a.closest("[data-act]");
+  return act ? `[data-act="${act.dataset.act}"]` : null;
+}
+
 function renderAuth() {
   const sec = $("authSec");
   const targets = state.backends;
   sec.hidden = targets.length === 0;
   const focus = parkConnPanels(sec);
-  // 描き直しで消えるカードのボタン（［ログイン］［やめる］）に居たら、同じカードの同じ役のボタンへ戻す
-  const actFocus = document.activeElement?.closest?.("#authSec [data-act]");
-  const keepAct = actFocus ? { agent: actFocus.closest(".agent-card")?.dataset.agent, act: actFocus.dataset.act } : null;
+  // 描き直しで消えるカードの要素（［ログイン］［やめる］・［接続先］・［＋ 接続先を追加］・種類のタイル）に居たら、同じカードの同じ役の要素へ戻す
+  const keepSel = authKeepSel(document.activeElement);
+  const keepAgent = keepSel ? document.activeElement.closest(".agent-card")?.dataset.agent : null;
   for (const id of authCancelling) if (!state.auth.get(id)?.pending) authCancelling.delete(id);
   sec.replaceChildren();
   if (!targets.length) { $("authNeed").hidden = true; syncAuthDot(); return; }
@@ -4152,7 +4349,26 @@ function renderAuth() {
     // 行は初回の案内・会話の中の一覧と同じ部品（web/agent-row.mjs）。ここだけが持つ操作（ログアウト・状態を確認・接続）は行の右の列へ足す
     const rowEl = agentRows.build(rowAgent(b), { near: plan.near });
     const actions = rowEl.querySelector(".ar2-a");
-    if (st.supported && st.loggedIn && !st.pending && !window.plyRemote) {
+    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Antigravity・Devin の頭の行は今のまま（ADR 0359）
+    const accounts = b.capabilities?.accounts && st.installed !== false;
+    const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
+    const conns = Boolean(accounts || endpoints);
+    if (conns) {
+      askConnLists(b);
+      // 頭の行の状態は「● 接続先 N」か「⚠ 対応が要る接続先 N」。ログイン・ログアウトは CLI のログインのカードへ移す
+      if (["ok", "nologin", "expired"].includes(agentRows.bodyOf(rowAgent(b)))) {
+        const { n, fix } = connCounts(b, st);
+        rowEl.querySelector(".ar2-h .arow-s")?.replaceChildren(el("span", fix ? "st fail" : "st", fix ? t("conn.needFix", { n: fix }) : t("conn.count", { n })));
+      }
+      actions.querySelector(':scope > [data-act="login"]')?.remove();
+      if (st.supported && !st.pending && !window.plyRemote && !actions.querySelector('[data-act="check"]')) {
+        const check = el("button", "btn", t("settings.agents.checkStatus"));
+        check.type = "button";
+        check.dataset.act = "check";
+        check.onclick = (e) => { e.stopPropagation(); checkAuthNow(b); };
+        actions.append(check);
+      }
+    } else if (st.supported && st.loggedIn && !st.pending && !window.plyRemote) {
       const out = el("button", "btn", t("settings.agents.signOut"));
       out.type = "button";
       out.dataset.act = "login";
@@ -4164,13 +4380,10 @@ function renderAuth() {
       check.onclick = (e) => { e.stopPropagation(); checkAuthNow(b); };
       actions.append(out, check);
     }
-    // アカウントと接続先。持っているものだけ（アカウントのみのエージェントは「アカウント」）。1 つの面に両方を縦に並べる
-    const accounts = b.capabilities?.accounts && st.installed !== false;
-    const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
-    if (accounts || endpoints) {
+    if (conns) {
       const connect = el("button", "btn connect");
       connect.type = "button";
-      connect.append(el("span", "t", accounts && endpoints ? t("settings.agents.accountsEndpoints") : accounts ? t("settings.agents.accounts") : t("settings.agents.endpoints")));
+      connect.append(el("span", "t", t("conn.toggle")));
       const chev = svgEl("svg", { viewBox: "0 0 12 12", "aria-hidden": "true" });
       chev.append(svgEl("path", { d: "M2 4l4 4 4-4", fill: "none", stroke: "currentColor", "stroke-width": "1.6", "stroke-linecap": "round" }));
       connect.append(chev);
@@ -4179,9 +4392,9 @@ function renderAuth() {
       actions.append(connect);
     }
     card.append(rowEl);
-    // 使っているアカウントと CLI の在り処（あるものだけ。版は説明の title に出す。ADR 0212）
+    // 使っているアカウントと CLI の在り処（あるものだけ。版は説明の title に出す。ADR 0212）。接続先の一覧を持つエージェントのメールは CLI のログインのカードへ
     const meta = el("div", "agent-meta");
-    if (st.loggedIn && st.account) meta.append(el("span", "acct", st.account));
+    if (!conns && st.loggedIn && st.account) meta.append(el("span", "acct", st.account));
     if (st.cliPath) {
       if (meta.childNodes.length) meta.append(el("span", "sep", "·"));
       const where = el("span", "path", st.cliPath);
@@ -4189,13 +4402,11 @@ function renderAuth() {
       meta.append(where);
     }
     if (meta.childNodes.length) card.append(meta);
-    // 「アカウントと接続先」の面（アカウント → 接続先の順に縦に並ぶ）
-    if (accounts || endpoints) {
-      // 開け閉めはカードの右上のボタンだけ（面に見出しと［閉じる］は置かない）
+    // 接続先の一覧（開け閉めはカードの右上の［接続先］だけ。面に見出しと［閉じる］は置かない）
+    if (conns) {
       const conn = el("div", "agent-conn");
       conn.hidden = true;
-      if (accounts) conn.append(connSection('accounts'));
-      if (endpoints) conn.append(connSection('endpoints'));
+      conn.append(connPanel(b, st, { accounts, endpoints }));
       card.append(conn);
     }
     // 直前のログインの時間切れ・失敗（やめたものは出さない）
@@ -4224,8 +4435,8 @@ function renderAuth() {
     const target = sec.querySelector(`[data-agent="${authFocus.agent}"] :is([data-act="login"],[data-act="cancel"])`);
     authFocus = null;
     if (lost) target?.focus();
-  } else if (keepAct && lost) {
-    sec.querySelector(`[data-agent="${keepAct.agent}"] [data-act="${keepAct.act}"]`)?.focus();
+  } else if (keepSel && keepAgent && lost) {
+    sec.querySelector(`[data-agent="${keepAgent}"] ${keepSel}`)?.focus({ preventScroll: true });
   }
   const line = $("authNeed");
   // 使えるものが 1 つも無いと分かっているときは、その一言（押すと設定）。一部にだけログインが要るときは従来どおり
@@ -4698,8 +4909,10 @@ function paintSettingsNotice() {
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) item("effort", next.effort || t("chat.next.useDefault"));
     if (next.mode !== undefined) item("mode", state.modes[next.mode]?.label ?? next.mode);
     if (next.cwd) item("cwd", worktreeNextText(next.cwd) ?? next.cwd);
-    if (next.endpoint !== undefined) item("endpoint", endpointLabel(next.endpoint));
-    if (next.account !== undefined) item("account", accountLabel(next.account));
+    // 接続先は 1 項目（互換ならその名前、公式ならアカウントの名前。'' は CLI のログイン。ADR 0359）
+    const connChanged = next.endpoint !== undefined && next.endpoint !== (s.compatEndpoint ?? "")
+      || !nextEndpoint && next.account !== undefined && next.account !== (s.claudeAccount ?? "");
+    if (connChanged) item("endpoint", nextEndpoint ? endpointLabel(nextEndpoint) : accountLabel(next.account ?? s.claudeAccount ?? "", next.backend));
     // 変えるのが worktree だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0089）
     const compact = !behind && items.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
     $("nextSettings").classList.toggle("wt-compact", compact);
@@ -4792,11 +5005,17 @@ function cwdOptions() {
 // Claude のアカウントの設定（web/claude-accounts.mjs）。入力欄のチップが候補を引くので、controls より先に作る
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); delegationSettings.event({ change: 'accounts' }); } });
+  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); delegationSettings.event({ change: 'accounts' }); connAsked.clear(); renderAuth(); },
+  isDefault: (id) => connIsDefault(claudeAccounts.agent, 'account', id),
+  makeDefault: (id) => setConnDefault(claudeAccounts.agent, { account: id }),
+  onAddEnd: () => connAddEnd() });
 // Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
 const agentAccounts = setupAgentAccounts({ cmd, labelOf,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
+  onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); connAsked.clear(); renderAuth(); },
+  isDefault: (bid, id) => connIsDefault(bid, 'account', id),
+  makeDefault: (bid, id) => setConnDefault(bid, { account: id }),
+  onAddEnd: () => connAddEnd() });
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
@@ -4870,20 +5089,37 @@ function connectorsNote(c) {
   if (c.connectedCount == null) return null;
   return { text: c.needsAuthCount ? t('composer.account.connectors.countAuth', { n: c.connectedCount, auth: c.needsAuthCount }) : t('composer.account.connectors.count', { n: c.connectedCount }) };
 }
+/** 「CLI のログイン」の接続先の 2 行目（公式 · ログイン中のメール。メールが分からなければ「公式」） */
+function cliLoginSub(bid) {
+  const st = state.auth.get(bid);
+  return st?.loggedIn && st.account ? t("conn.officialAs", { email: st.account }) : t("conn.official");
+}
 function accountOptionsOf(backend, value, quota) {
   const list = accountList(backend);
   return [
-    { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken"), usage: a.ready ? weekUsage(quota, a.id) : null, conn: a.ready ? connectorsNote(a.connectors) : null })),
-    ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
+    { value: "", label: t("conn.cliLogin"), hint: cliLoginSub(backend), usage: weekUsage(quota, ""), isDefault: connIsDefault(backend, "cli") },
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? t("conn.official") : t("conn.subSignedOut"), warn: !a.ready,
+      usage: a.ready ? weekUsage(quota, a.id) : null, conn: a.ready ? connectorsNote(a.connectors) : null, isDefault: connIsDefault(backend, "account", a.id) })),
+    ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.endpoint.deleted"), hint: t("chat.account.chooseAgain"), gone: true }] : []),
   ];
 }
 function accountLabel(id, bid = null) {
-  if (!id) return t("chat.account.signedInAccount");
+  if (!id) return t("conn.cliLogin");
   const lists = bid ? [accountList(bid)] : state.backends.map((b) => accountList(b.id));
-  return lists.flat().find((a) => a.id === id)?.name ?? t("chat.account.deleted");
+  return lists.flat().find((a) => a.id === id)?.name ?? t("chat.endpoint.deleted");
 }
-let accountWarning = "";
+/**
+ * 接続先の警告（入力欄の上の一文）は 1 つ。互換の接続先を選んでいればその警告、公式なら選んだアカウントの警告（ADR 0359）
+ */
+const connWarnings = { account: "", endpoint: "" };
+let connWarning = "";
+function paintConnWarning(part, text) {
+  connWarnings[part] = text;
+  const next = state.endpoint ? connWarnings.endpoint : connWarnings.account;
+  if (connWarning && $("settingsError").textContent === connWarning) $("settingsError").textContent = "";
+  connWarning = next;
+  if (next) $("settingsError").textContent = next;
+}
 /** 入力欄のアカウントの出し分け。登録が無く、選んでもいない会話には、モデルの面にアカウントの節を出さない */
 async function syncAccount(s, bid, { value = composerSelection().account, visible = true, current = () => true } = {}) {
   const supported = Boolean(capsOf(bid).accounts);
@@ -4891,26 +5127,24 @@ async function syncAccount(s, bid, { value = composerSelection().account, visibl
   if (!current()) return;
   state.accountShown = visible && supported && (list.length > 0 || Boolean(value));
   const chosen = list.find((a) => a.id === value);
-  const warning = !state.accountShown || !value ? "" : !chosen ? t("chat.account.deletedWarning")
+  const warning = !state.accountShown || !value ? "" : !chosen ? t("chat.endpoint.deletedWarning")
     : !chosen.ready ? t("chat.account.noTokenWarning", { name: chosen.name }) : "";
-  if (accountWarning && $("settingsError").textContent === accountWarning) $("settingsError").textContent = "";
-  accountWarning = warning;
-  if (warning) $("settingsError").textContent = warning;
   state.account = value;
+  paintConnWarning("account", warning);
 }
 
 // 互換の接続先の設定（web/compat-endpoints.mjs）。入力欄の面が候補を引くので、controls より先に作る
 const compatEndpoints = setupCompatEndpoints({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   openPage: name => $(`${name}Tab`)?.click(),
-  onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); },
-  officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
-// 管理の面が開きたいとき、面をそのエージェントのカードの「アカウントと接続先」の中へ移す
-claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', claudeAccounts.panel));   // backend-allow: Claude のアカウントの面は Claude のカード専用
+  onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); renderAuth(); },
+  onAddEnd: () => connAddEnd() });
+// 管理の面が開きたいとき、面をそのエージェントのカードの「接続先」の一覧の中へ移す
+claudeAccounts.onOpen(() => mountPanel(claudeAccounts.agent, 'accounts', claudeAccounts.panel));
 agentAccounts.onOpen(id => mountPanel(id, 'accounts', agentAccounts.panel));
 compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', compatEndpoints.panel); });
 function endpointLabel(id) {
-  if (!id) return t("chat.endpoint.official");
+  if (!id) return t("conn.cliLogin");
   return compatEndpoints.get(id)?.name ?? t("chat.endpoint.deleted");
 }
 /** 会話の次のターンの接続先（予約があればそれ。エージェントを変える予約で接続先が書かれていなければ公式） */
@@ -4919,7 +5153,6 @@ function endpointOf(s) {
   const next = s.nextSettings;
   return next?.endpoint ?? (next && next.backend !== s.backend ? "" : s.compatEndpoint ?? "");
 }
-let endpointWarning = "";
 /** 入力欄の接続先の出し分け。選べないエージェントでは節を出さない。消えた・確認に失敗した接続先は入力欄の上に一文 */
 async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible = Boolean(s), current = () => true } = {}) {
   const supported = Boolean(capsOf(bid).compatEndpoints);
@@ -4930,10 +5163,8 @@ async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible =
   const chosen = list.find((e) => e.id === value);
   const warning = !value ? "" : !chosen ? t("chat.endpoint.deletedWarning")
     : chosen.ready === false ? t("chat.endpoint.failedWarning", { name: chosen.name }) : "";
-  if (endpointWarning && $("settingsError").textContent === endpointWarning) $("settingsError").textContent = "";
-  endpointWarning = warning;
-  if (warning) $("settingsError").textContent = warning;
   state.endpoint = value;
+  paintConnWarning("endpoint", warning);
 }
 /** 入力欄のモデルの面に渡す接続先の値と口（web/composer-controls.mjs の endpointSection / compatModelSection） */
 function endpointView(bid) {
@@ -4943,21 +5174,38 @@ function endpointView(bid) {
 /** 接続先の値と口（選んでいる接続先 selected を渡す版。子の会話のモーダルの入力欄もこれで作る） */
 function endpointViewOf(bid, selected) {
   const list = compatEndpoints.list(bid);
-  const defaults = compatEndpoints.defaults();
   const row = list.find((e) => e.id === selected) ?? null;
-  const official = bid === "claude" ? t("chat.endpoint.officialClaude") : t("chat.endpoint.officialCodex");
+  const where = (e) => `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}`;
   return {
     selected, row, lost: lostText(bid),
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
+    // 先頭は CLI のログイン（アカウントの節が無い面ではこれが公式の行。web/composer-controls.mjs の connOptions）
     options: [
-      { value: "", label: t("chat.endpoint.official"), sub: official, isDefault: !defaults[bid] },
-      ...list.map((e) => ({ value: e.id, label: e.name, isDefault: defaults[bid] === e.id, warn: e.ready === false,
-        sub: `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}${e.ready === false ? t("chat.endpoint.failedSuffix") : ""}`, title: `${e.name}（${e.baseUrl}）` })),
+      { value: "", label: t("conn.cliLogin"), sub: cliLoginSub(bid), usage: weekUsage(usageSource.get(bid)?.quota, ""), isDefault: connIsDefault(bid, "cli") },
+      ...list.map((e) => ({ value: e.id, label: e.name, isDefault: connIsDefault(bid, "endpoint", e.id), warn: e.ready === false,
+        sub: e.ready === false ? t("conn.subFailed", { kind: where(e) }) : where(e), title: `${e.name}（${e.baseUrl}）` })),
       ...(selected && !row ? [{ value: selected, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
     ],
-    manage: () => compatEndpoints.open(bid),
+    manage: () => openAgentConns(bid),
   };
 }
+
+/**
+ * 接続先の候補の取得口（メインの入力欄と同じ部品で、選んでいる値だけ呼び手のもの）。子の会話のモーダルの入力欄・bot のページが使う。
+ * 登録が無く選んでもいないアカウントの節、選べないエージェントの接続先の節は出さない（syncAccount / syncEndpoint と同じ）
+ */
+const connChoices = {
+  load: async (backend) => {
+    await Promise.all([loadAccounts(backend), capsOf(backend).compatEndpoints ? compatEndpoints.load().catch(() => []) : null]);
+  },
+  accounts: (backend, value) => {
+    if (!capsOf(backend).accounts) return null;
+    if (!accountList(backend).length && !value) return null;
+    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota);
+  },
+  endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
+  hasAccounts: (backend) => accountList(backend).length > 0,
+};
 
 /** 作業ディレクトリを変える（入力欄のチップ・フォルダーを送り終えたとき）。送信済みの会話は次のターンから */
 function applyCwd(v) {
@@ -5134,8 +5382,17 @@ const controls = chatComposer.useControls({
     model: (v) => chooseModel(v),
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
     endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); warmEfforts({ endpoint: v, model: "" }); },
-    // Claude のアカウント。'' はログイン中のアカウント（既定）
+    // Claude のアカウント。'' は CLI のログイン
     account: (v) => { state.account = v; controls.paint(); chooseSettings({ account: v }); warmEfforts({ account: v }); },
+    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。1 回の予約で両方を書く。ADR 0359）
+    conn: ({ endpoint = "", account = "" }) => {
+      const moved = endpoint !== (state.endpoint ?? "");
+      state.endpoint = endpoint; state.account = account;
+      if (moved) { state.model = ""; state.effort = ""; }
+      controls.paint();
+      chooseSettings(capsOf(state.shownBackend ?? activeBackendId()).compatEndpoints ? { endpoint, account } : { account });
+      warmEfforts(moved ? { endpoint, account, model: "" } : { account });
+    },
     effort: (effort) => { state.effort = effort; controls.paint(); chooseSettings({ effort, rememberEffort: true }); },
     mode: (v) => {
       state.mode = v;
@@ -8584,18 +8841,30 @@ const channelsUi = setupChannels({
     return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
   },
   efforts: (args) => cmd('efforts', args),
+  // bot のページの接続先の行（入力欄と同じ部品。登録が変わったら connChanged で知らせる）
+  conn: connChoices,
   noteChats: () => { setHomeSplit(false); if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),
     items: (scope) => backgroundItems(scope).filter(i => i.group === 'agent'),
     subscribe: (fn) => { watched.listeners.add(fn); return () => watched.listeners.delete(fn); },
-    open: (scope) => openWork(undefined, scope),
+    open: (scope, key) => openWork(key, scope),
     link: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
     mount: (root, scope) => { channelRoots.set(root, scope); },
     paint: () => paintDelegateCards(),
   },
   openSidebar: () => setSidebar(true),
+  // ToDo（スレッド・DM の頭。web/channels/thread.mjs・feed.mjs）: Chats の会話と同じ部品を、頭・面・入口だけ替えて作る。道具は後から読む（この下の定義より先に呼ばれるので、関数で包む）
+  todo: (o) => {
+    const inst = createSessionTodo({
+      ...o,
+      cmd: (command, args) => cmd(command, args), notify: (text) => notify(text), labelOf: (backend) => labelOf(backend), logo: (backend) => backendLogo(backend, ''),
+      openLink: (link) => (link.kind === 'url' ? openExternalLink(link.url) : filePreview.open({ path: link.path, line: null }, null)),
+      linkMenu: (x, y, link, missing) => filePreview.menu(x, y, { path: link.path, kind: link.kind === 'dir' ? 'directory' : 'file', sessionId: inst.sessionId(), missing }),
+    });
+    return inst;
+  },
   // スレッドの `!` の行（宛先の bot の会話のシェル）。Chats の行と同じ部品で、出力・終わりは onShellEvent が描き直す
   shellRow: (m) => commandMsg(m),
   showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
@@ -9140,7 +9409,7 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
  * 会話の操作のメニュー（脇の行の右クリック・「…」、701px以上のタイトル行の「…」）。lead は先頭への追加項目。
  */
 function rowMenu(s, x, y, lead = []) {
-  let vocab = null, efforts = null, endpoints = null, accounts = null;
+  let vocab = null, efforts = null, conns = null;
   let waitingVisible = false;
   const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
   // 枝の行き来。親があるか子がある行だけ。家族は開いている間に取り寄せる（メニューは同期で組む）
@@ -9197,8 +9466,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, backend: s.nextSettings?.backend ?? s.backend, model: id, rememberModel: true })
           .then(refresh).catch((e) => sideNote(t("session.menu.modelFailed", { error: e.message }))),
       })) },
-    ...(endpoints ?? (capsOf(s.nextSettings?.backend ?? s.backend).compatEndpoints ? [{ label: t('session.menu.endpoint'), pending: waitingVisible, sub: () => [] }] : [])),
-    ...(accounts ?? (capsOf(s.nextSettings?.backend ?? s.backend).accounts ? [{ label: t('session.menu.account'), pending: waitingVisible, sub: () => [] }] : [])),
+    ...(conns ?? (capsOf(s.nextSettings?.backend ?? s.backend).compatEndpoints || capsOf(s.nextSettings?.backend ?? s.backend).accounts ? [{ label: t('session.menu.endpoint'), pending: waitingVisible, sub: () => [] }] : [])),
     { sep: true },
     { label: t("session.menu.effort"), pending: !efforts && waitingVisible, hint: efforts ? ((s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || t("chat.model.default")) : '', sub: () =>
       Object.entries(efforts ?? {}).map(([effort, m]) => ({
@@ -9225,8 +9493,7 @@ function rowMenu(s, x, y, lead = []) {
   (async () => { try { vocab = await loadVocab(bid, s.nextSettings?.account ?? s.claudeAccount ?? '', s.nextSettings?.cwd || s.cwd || ''); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
   cmd("efforts", { backend: bid, account: s.nextSettings?.account ?? s.claudeAccount ?? '', model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined })
     .then(value => { efforts = value; repaint(); }).catch(() => { efforts = {}; repaint(); });
-  rowEndpointItems(s).then(value => { endpoints = value; repaint(); });
-  rowAccountItems(s).then(value => { accounts = value; repaint(); });
+  rowConnItems(s).then(value => { conns = value; repaint(); });
 }
 
 /** 脇の会話の行の「変更の記録」。会話の記録の history を、時刻・誰が・前 → 後・理由で並べる面を開く */
@@ -9592,18 +9859,30 @@ function useGitText(text) {
 // ---------------------------------------------------------------- 上部と入力欄の同期
 
 let topbarVersion = 0;
-/** 右クリックメニューのアカウント（入力欄と同じ選択肢。登録が無く、選んでもいなければ出さない） */
-async function rowAccountItems(s) {
+/**
+ * 右クリックメニューの「接続先（次のターン）」（入力欄と同じ並び: CLI のログイン → アカウント → 互換。ADR 0359）。
+ * 選べる先が CLI のログインだけで、それを選んでいれば出さない
+ */
+async function rowConnItems(s) {
   const bid = s.nextSettings?.backend ?? s.backend;
-  if (!capsOf(bid).accounts) return [];
-  const list = await loadAccounts(bid);
-  const value = s.nextSettings?.account ?? s.claudeAccount ?? "";
-  if (!list.length && !value) return [];
-  const choices = [{ value: "", label: t("chat.account.signedInAccount"), note: "" }, ...list.map((a) => ({ value: a.id, label: a.name, note: a.ready ? "" : t("chat.account.noToken") }))];
-  return [{ label: t("session.menu.account"), hint: accountLabel(value), sub: () => choices.map((c) => ({
-    label: c.label, hint: c.note, checked: c.value === value,
-    onClick: () => cmd("setTurnSettings", { sessionId: s.id, account: c.value })
-      .then(refresh).catch((e) => sideNote(t("session.menu.accountFailed", { error: e.message }))),
+  const caps = capsOf(bid);
+  if (!caps.accounts && !caps.compatEndpoints) return [];
+  const [list, eps] = await Promise.all([caps.accounts ? loadAccounts(bid) : [],
+    caps.compatEndpoints ? compatEndpoints.load().then((all) => all.filter((e) => e.agent === bid)).catch(() => []) : []]);
+  const account = caps.accounts ? s.nextSettings?.account ?? s.claudeAccount ?? "" : "";
+  const endpoint = caps.compatEndpoints ? endpointOf(s) : "";
+  if (!list.length && !eps.length && !account && !endpoint) return [];
+  const official = caps.compatEndpoints ? { endpoint: "" } : {};
+  const choices = [
+    { key: "account:", label: t("conn.cliLogin"), note: "", patch: { ...official, account: "" } },
+    ...list.map((a) => ({ key: `account:${a.id}`, label: a.name, note: a.ready ? "" : t("conn.subSignedOut"), patch: { ...official, account: a.id } })),
+    ...eps.map((e) => ({ key: `endpoint:${e.id}`, label: e.name, note: e.ready === false ? t("chat.endpoint.failedNote") : "", patch: { endpoint: e.id } })),
+  ];
+  const sel = endpoint ? `endpoint:${endpoint}` : `account:${account}`;
+  return [{ label: t("session.menu.endpoint"), hint: endpoint ? endpointLabel(endpoint) : accountLabel(account, bid), sub: () => choices.map((c) => ({
+    label: c.label, hint: c.note, checked: c.key === sel,
+    onClick: () => cmd("setTurnSettings", { sessionId: s.id, ...c.patch })
+      .then(refresh).catch((e) => sideNote(t("session.menu.endpointFailed", { error: e.message }))),
   })) }];
 }
 
@@ -9619,24 +9898,9 @@ function noteEndpointFailure(card, result, sessionId = state.current) {
   if (!e || card.querySelector(".tc-endpoint-note")) return;
   const note = el("p", "tc-endpoint-note", t("chat.endpoint.noWebSearch", { name: e.name }));
   const more = el("button", "clink", t("chat.endpoint.details")); more.type = "button";
-  more.onclick = () => compatEndpoints.open(e.agent);
+  more.onclick = () => openAgentConns(e.agent);
   note.append(" ", more);
   card.append(note);   // 畳んだ詳細（details）の外に置く。畳んでいても見える
-}
-
-/** 右クリックメニューの接続先（入力欄と同じ選択肢。接続先を選べるエージェントの会話だけ） */
-async function rowEndpointItems(s) {
-  const bid = s.nextSettings?.backend ?? s.backend;
-  if (!capsOf(bid).compatEndpoints) return [];
-  const list = (await compatEndpoints.load().catch(() => [])).filter((e) => e.agent === bid);
-  const value = endpointOf(s);
-  if (!list.length && !value) return [];
-  const choices = [{ value: "", label: t("chat.endpoint.official"), note: "" }, ...list.map((e) => ({ value: e.id, label: e.name, note: e.ready === false ? t("chat.endpoint.failedNote") : "" }))];
-  return [{ label: t("session.menu.endpoint"), hint: endpointLabel(value), sub: () => choices.map((c) => ({
-    label: c.label, hint: c.note, checked: c.value === value,
-    onClick: () => cmd("setTurnSettings", { sessionId: s.id, endpoint: c.value })
-      .then(refresh).catch((e) => sideNote(t("session.menu.endpointFailed", { error: e.message }))),
-  })) }];
 }
 
 // AI がタイトルを考えている会話。その間は欄に書き込ませず、途中で一覧が更新されても開け直さない
@@ -10978,6 +11242,7 @@ function connect() {
       notificationInbox.reconnected();
       // 同じ会話を開いたままでも、切れたときに受け取れなかった ToDo の一覧を取り直す
       sessionTodo.reconnected();
+      channelsUi.reconnected();   // スレッド・DM の ToDo も同じ
       presenceReporter.reset();
       presenceReporter.report(true);
       modalPresence.reset();
@@ -11082,17 +11347,10 @@ const workControls = createWorkControls({
   setMode: writeMode,
   recent: cwdOptions,
   worktreeNote: (branch) => t('worktree.childLocked', { branch }),
-  // 子のアカウント・接続先の候補（メインの accountOptions / endpointView と同じ部品。選んでいる値だけ子のもの）。
-  // 登録が無く選んでもいないアカウントの節、選べないエージェントの接続先の節は出さない（syncAccount / syncEndpoint と同じ）
-  loadChoices: async (backend) => {
-    await Promise.all([loadAccounts(backend), capsOf(backend).compatEndpoints ? compatEndpoints.load().catch(() => []) : null]);
-  },
-  accounts: (backend, value, endpoint) => {
-    if (!capsOf(backend).accounts) return null;
-    if (!accountList(backend).length && !value) return null;
-    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota);
-  },
-  endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
+  // 子のアカウント・接続先の候補（メインの入力欄と同じ部品。選んでいる値だけ子のもの。connChoices）
+  loadChoices: connChoices.load,
+  accounts: connChoices.accounts,
+  endpointView: connChoices.endpointView,
   revalidate: revalidateVocab,
   repaint: () => { workComposer?.paintControls(); syncWorkUsage(); syncWorkResume(); },
   fail: (error, kind) => workComposer?.say(kind === 'mode' ? t('chat.sys.modeSaveFailed', { error }) : t('chat.settingsHold.settings', { error }), true),
@@ -11632,7 +11890,7 @@ const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, 
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
 // 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ
-const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); },
+const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) openAgentConns(agent); else $('setupTab').click(); },
   recentFolders: () => cwdOptions().map((o) => o.value) });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => openConversation(id) });

@@ -1,13 +1,12 @@
 // 欲求の計算（ADR 0126）。数値 0〜1 を **コードで** 決める純粋な関数（モデルを呼ばない。SDK も DB も import しない）。
 // 「体験」ではなく、ふるいと画面に見せる材料。好奇心・不安・人恋しさ・疲れの 4 つ。
 //
-//   computeDrives({ now, unread, loops, recent, lastHumanAt, failures, budgetUsed }) → { curiosity, anxiety, loneliness, fatigue }
+//   computeDrives({ now, unread, loops, recent, lastHumanAt, failures }) → { curiosity, anxiety, loneliness, fatigue }
 //     unread … { human, bot, toMe }（前回の心拍から後の出来事の数。human = 人の投稿・bot = 他の bot の投稿・toMe = 自分宛ての @ を含む投稿。人・他の bot のどちらからでも）
 //     loops … 開いている気がかり [{ due?: ms, updatedAt }]
 //     recent … 思考の流れの末尾 [{ kind, text, at }]（新しいものが後ろ）
 //     lastHumanAt … 人が最後に書いた時刻（ms。分からなければ null）
 //     failures … 最近失敗で終わった bot のターンの数
-//     budgetUsed … 今日の予算の使った割合 0〜1（分からなければ null）
 //   similarity(a, b) → 0〜1  … 2 つの文の似かよい（2 文字ずつの重なり。日本語でも語の区切りに頼らない）。疲れ・繰り返しの測り方に使う
 export const DRIVE_NAMES = Object.freeze(['curiosity', 'anxiety', 'loneliness', 'fatigue']);
 
@@ -40,7 +39,7 @@ export function repetition(thoughts) {
   return sum / (rows.length - 1);
 }
 
-export function computeDrives({ now, unread = {}, loops = [], recent = [], lastHumanAt = null, failures = 0, budgetUsed = null } = {}) {
+export function computeDrives({ now, unread = {}, loops = [], recent = [], lastHumanAt = null, failures = 0 } = {}) {
   const human = unread.human ?? 0, bot = unread.bot ?? 0, toMe = unread.toMe ?? 0;
   // 好奇心: 新しい出来事（人の投稿も他の bot の投稿も同じ重み）と、答えの出ていない気がかりの数
   const fresh = clamp01((human + bot) / 3);
@@ -57,8 +56,8 @@ export function computeDrives({ now, unread = {}, loops = [], recent = [], lastH
   // 人恋しさ: 人の最後の投稿からの時間（12 時間で頭打ち）と、自分宛ての未返信
   const since = Number.isFinite(lastHumanAt) ? Math.max(0, now - lastHumanAt) / HOUR : null;
   const loneliness = since === null ? 0 : 0.7 * clamp01(since / 12) + 0.3 * clamp01(toMe);
-  // 疲れ: 思考の行の量・同じことの繰り返し・予算の減り
+  // 疲れ: 思考の行の量・同じことの繰り返し
   const thoughts = recent.filter((r) => r.kind === 'think');
-  const fatigue = 0.4 * clamp01(thoughts.length / 40) + 0.4 * repetition(thoughts.slice(-6)) + 0.2 * (budgetUsed ?? 0);
+  const fatigue = 0.4 * clamp01(thoughts.length / 40) + 0.4 * repetition(thoughts.slice(-6));
   return { curiosity: round2(curiosity), anxiety: round2(anxiety), loneliness: round2(loneliness), fatigue: round2(fatigue) };
 }

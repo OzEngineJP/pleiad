@@ -1,4 +1,4 @@
-// 心拍（ADR 0126）: ふるいで止まる行・安いモデルの呼び方と返事の当てはめ・引き継ぎ・予算（自発の分も数える。0 なら止まり、未読は残る）・失敗・止めた bot・間隔の下限・
+// 心拍（ADR 0126）: ふるいで止まる行・安いモデルの呼び方と返事の当てはめ・引き継ぎ・失敗・止めた bot・間隔の下限・使用量の枠で止めない（bot 専用の使用量の仕組みは無い。ADR 0357）・
 // 気がかりの条件で早める・外から来た文・他の bot の投稿も人の投稿と同じに数える（ふるい・@・答え済み・外から来た文のきっかけ）。モデルは身代わり（ask）。チャンネルは本物のサービス、保存は一時のデータ置き場。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -6,12 +6,10 @@ import path from 'node:path';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createBrainStore } from '../../core/brain/store.mjs';
 import { createPulse, PULSE_FLOOR_MS } from '../../core/brain/pulse.mjs';
-import { createBudget, BRAIN_DAILY_TOKENS } from '../../core/bots/budget.mjs';
-import { dayOf } from '../../core/channels/budget.mjs';
 import { normalizePulse } from '../../core/bots/store.mjs';
 
 export const name = 'brain-pulse';
-export const title = '心拍: ふるい・安いモデルの返事の当てはめ・引き継ぎ・予算（0 なら止まり未読は残る）・失敗・眠らせた bot・間隔の下限・気がかりの条件';
+export const title = '心拍: ふるい・安いモデルの返事の当てはめ・引き継ぎ・使用量で止めない・失敗・眠らせた bot・間隔の下限・気がかりの条件';
 
 const MIN = 60_000;
 
@@ -26,8 +24,7 @@ export default async function (t) {
   const channels = createChannelService({ dir: path.join(dir, 'channels'), now, listBots: bots.list });
   await channels.start();
   const brain = createBrainStore({ dataDir: dir, now });
-  const host = { currentLocale: () => 'ja', store: { getPrefs: async () => ({}) }, readQuota: async () => null, usageStore: {} };
-  const budget = createBudget({ channels, host, now, brain });
+  const host = { currentLocale: () => 'ja', store: { getPrefs: async () => ({}) } };
   const handoffs = [];
   let handoffResult = { ok: true };
   const dispatch = { handoff: async (args) => { handoffs.push(args); return handoffResult; } };
@@ -42,7 +39,7 @@ export default async function (t) {
   };
   const timers = [];
   const fakeClock = { now, setTimer: (fn, ms) => { const h = { fn, ms }; timers.push(h); return h; }, clearTimer: (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); } };
-  const pulse = createPulse({ dataDir: dir, brain, channels, bots, host, budget, dispatch, clock: fakeClock, now, ask });
+  const pulse = createPulse({ dataDir: dir, brain, channels, bots, host, dispatch, clock: fakeClock, now, ask });
   const human = { kind: 'human' };
   const rows = (id = bot.id) => brain.list(id, { limit: 100 });
   const last = (id = bot.id) => brain.list(id, { limit: 1 })[0];
@@ -50,17 +47,16 @@ export default async function (t) {
     // ---- 家のチャンネルが無い・止めている bot
     t.ok('止めている bot（pulse.on が false）の心拍は走らない', (await pulse.beat(idle.id)).skipped === 'off' && prompts.length === 0 && rows(idle.id).length === 0);
     const noHome = await pulse.beat(bot.id);
-    t.ok('家のチャンネル（予算を引く先）が無ければ自発はしない。静かな 1 行（noHome）だけ', noHome.gate.reason === 'noHome' && last().kind === 'quiet' && last().meta.reason === 'noHome' && prompts.length === 0);
+    t.ok('家のチャンネル（入っているチャンネル）が無ければ自発はしない。静かな 1 行（noHome）だけ', noHome.gate.reason === 'noHome' && last().kind === 'quiet' && last().meta.reason === 'noHome' && prompts.length === 0);
 
     const home = await channels.create({ name: 'dev', members: [bot.id] }, human);
-    await channels.update({ channelId: home.id, budget: { daily: 5 } }, human);
     const first = await channels.post({ channelId: home.id, text: '最初の投稿' }, human);
 
     // ---- ふるいで止まる（モデルを呼ばない）
     clock += 11 * MIN;
     const calm = await pulse.beat(bot.id);
     const st1 = brain.state(bot.id);
-    t.ok('変化の無い心拍は、安いモデルを呼ばず「静か」の 1 行だけ残す（理由・欲求・予算の残りが付く）', prompts.length === 0 && calm.did !== 'think' && last().kind === 'quiet' && last().meta.reason !== undefined && last().meta.drives && last().meta.budget);
+    t.ok('変化の無い心拍は、安いモデルを呼ばず「静か」の 1 行だけ残す（理由・欲求が付く。予算の残りは付かない）', prompts.length === 0 && calm.did !== 'think' && last().kind === 'quiet' && last().meta.reason !== undefined && last().meta.drives && last().meta.budget === undefined);
     // 最初の投稿は、起きる前の投稿ではない（カーソルは 10 分前から）: 最初の心拍では人の投稿として読まれる
     t.ok('最初の心拍の未読は直前の 1 間隔分だけを読む', calm.gate.reason === 'human' || calm.gate.reason === 'nothing');
     clock += 11 * MIN;
@@ -84,9 +80,7 @@ export default async function (t) {
     t.ok('気がかりが足され、1 変化 1 行が流れに残る', loop.id === 'doc' && loop.wakeOn.word === '資料' && rows().some((x) => x.kind === 'loop' && x.refs[0] === 'doc' && x.text.includes('気がかりを足した')));
     const st = brain.state(bot.id);
     t.ok('次に起きる時刻: bot が 1 分と決めても、下限の 5 分に収める', st.nextAt === clock + PULSE_FLOOR_MS && st.reservedAt === clock + PULSE_FLOOR_MS && st.cursorAt === clock && st.lastHumanAt === post.at);
-    t.ok('自発の分も予算に数える: 家のチャンネルの今日の分（トークンは入力 + 出力 + キャッシュ読み / 10。キャッシュ読みは 1/10）', brain.spentTokens(bot.id, dayOf(clock)) === 1000 + 200 + 90);
-    const left = await budget.leftBrain({ channelId: home.id, botId: bot.id });
-    t.ok('予算の残り: 今日のトークンの上限から引かれる。使用枠が読めないので % は数えない（止めもしない）', left.tokensLeft === BRAIN_DAILY_TOKENS - 1290 && left.channel === 5 && left.known === true);
+    t.ok('自発の分は、bot 専用の使用量には数えない（数える口が無い）。流れの行に、その回のトークンの数だけ残る', brain.spentTokens === undefined && (await pulse.status(bot.id)).budget === undefined && think.tokens.output === 200);
 
     // ---- 予約した時刻・気がかりの条件
     clock += 6 * MIN;
@@ -110,29 +104,19 @@ export default async function (t) {
     t.ok('条件に当たらない投稿では早めない', brain.state(bot.id).nextAt === clock - MIN + PULSE_FLOOR_MS);
     pulse.stop();
 
-    // ---- 予算 0 → 自発は止まり、未読は残る
+    // ---- 使った量では止めない（bot 専用の予算・1 日のトークンの上限は無い。ADR 0357）。channels.update の budget は受け付けず、効かない
     clock += 11 * MIN;
     brain.setState(bot.id, { cursorAt: clock - MIN, reservedAt: null, sinceMuse: 0 });
     await channels.update({ channelId: home.id, budget: { daily: 0 } }, human);
-    const unread = await channels.post({ channelId: home.id, text: '予算が無い間の投稿です' }, human);
+    const unread = await channels.post({ channelId: home.id, text: '枠の値が 0 でも読む投稿です' }, human);
     prompts.length = 0;
-    const before = brain.state(bot.id).cursorAt;
-    const blocked = await pulse.beat(bot.id, { force: true });
-    t.ok('予算が 0 なら、人の［今すぐ］でも安いモデルを呼ばない（budget）。未読のカーソルは進めず残る', blocked.gate.reason === 'budget' && prompts.length === 0 && brain.state(bot.id).cursorAt === before && last().meta.reason === 'budget');
-    await channels.update({ channelId: home.id, budget: { daily: 5 } }, human);
-    answer = { do: 'note', summary: '戻ってきた' };
-    clock += 1000;
-    const resumed = await pulse.beat(bot.id);
-    t.ok('予算が戻ったら、残していた未読を読む', resumed.gate.reason === 'human' && prompts.at(-1).includes('予算が無い間の投稿です') && unread.id);
-
-    // ---- トークンの上限（使用枠が読めなくても止まる）
-    brain.addSpend(home.id, bot.id, { day: dayOf(clock), percent: 0, tokens: BRAIN_DAILY_TOKENS });
-    prompts.length = 0;
-    clock += 11 * MIN;
-    const capped = await pulse.beat(bot.id, { force: true });
-    t.ok('bot ごとの 1 日のトークンの上限を超えたら止まる（使用枠が読めなくても。fail-closed）', capped.gate.reason === 'budget' && prompts.length === 0 && (await budget.allowsBrain({ channelId: 'c_missing', botId: bot.id })) === false);
+    answer = { do: 'note', summary: '予算の値に関係なく読んだ' };
+    const unlimited = await pulse.beat(bot.id, { force: true });
+    t.ok('予算の値（0）を渡されても、［今すぐ］は止まらず安いモデルを呼んで未読を読む（budget の理由は無い）',
+      unlimited.gate.reason !== 'budget' && prompts.length === 1 && prompts[0].includes('枠の値が 0 でも読む投稿です') && unread.id && last().meta?.reason !== 'budget');
+    const noBudgetRow = brain.list(bot.id, { limit: 100 }).filter((x) => x.meta?.reason === 'budget' || x.meta?.budget);
+    t.ok('流れに、予算の理由の行も残りの数も残らない', noBudgetRow.length === 0);
     clock += 25 * 3600_000;
-    t.ok('日付が変われば、また使える', (await budget.allowsBrain({ channelId: home.id, botId: bot.id })) === true);
 
     // ---- 眠らせた bot
     clock += 11 * MIN;
@@ -166,8 +150,8 @@ export default async function (t) {
     handoffs.length = 0;
     await pulse.beat(bot.id);
     const act = rows().find((x) => x.kind === 'act');
-    t.ok('「確かめる・話す」は賢いモデルへの引き継ぎ（理由・行き先・本文・頼んだ行の seq・家のチャンネル）。頼んだ行が流れに残る',
-      handoffs.length === 1 && handoffs[0].botId === bot.id && handoffs[0].why === '議題の候補を出して聞く' && handoffs[0].where === 'p_thread' && handoffs[0].homeChannelId === home.id
+    t.ok('「確かめる・話す」は賢いモデルへの引き継ぎ（理由・行き先・本文・頼んだ行の seq）。頼んだ行が流れに残る',
+      handoffs.length === 1 && handoffs[0].botId === bot.id && handoffs[0].why === '議題の候補を出して聞く' && handoffs[0].where === 'p_thread' && handoffs[0].homeChannelId === undefined
       && handoffs[0].actSeq === act.seq && handoffs[0].text.includes('自分で起きました') && handoffs[0].text.includes('議題を聞きたい') && act.text === '議題の候補を出して聞く' && !act.meta.taintOnly);
     t.ok('引き継ぎの本文は投稿ではなく下書きの扱い（そのまま写さない・黙ってよい）', handoffs[0].text.includes('現在の依頼への回答に必要な情報だけ') && handoffs[0].text.includes('投稿は残りません'));
     clock += 11 * MIN;

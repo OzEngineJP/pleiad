@@ -9,9 +9,6 @@ import { writeAtomic } from './atomic-file.mjs';
 import { CLAUDE_COST_DELTA } from './usage-migrations.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-// 記録の入力は「キャッシュ読みを含む」で、cachedTokens はその内訳（Claude・Codex・Antigravity とも。Antigravity は 2026-10-04 まで分けて入れていた）。
-// cachedTokens が入力より大きい記録は古い Antigravity の形なので、足して読む。割合は 1 を超えないようにする
-export const inputWithCache = r => { const input = number(r?.inputTokens) ?? 0, cached = number(r?.cachedTokens) ?? 0; return cached > input ? input + cached : input; };
 // Thread totals include previous turns; last describes the latest model request.
 export function createCodexMeter() {
   const previous = {}, totals = {};
@@ -353,7 +350,7 @@ export function usageRecord(record, at) {
   // どの会話のターンか（bot ごと・スレッドごとの合計を引くため。ADR 0109）。この欄が付く前の記録には無い
   if (typeof record.sessionId === 'string' && /^[\w-]{1,200}$/.test(record.sessionId)) safe.sessionId = record.sessionId;
   // 会話を持たない内部呼出しの内訳（Issue #180。記憶の整理・心拍・要約・候補・題名）。sessionId は付けないので会話の集計には混ざらず、
-  // backend ごとの合計（tokensSince）には入る。値は短い文字列だけを残す（秘密は渡さない。アカウントは id・接続先は id）
+  // backend ごとの合計には入る。値は短い文字列だけを残す（秘密は渡さない。アカウントは id・接続先は id）
   if (record.internalTask && typeof record.internalTask === 'object') {
     const task = Object.fromEntries(Object.entries(record.internalTask)
       .filter(([key, value]) => ['kind', 'botId', 'model', 'account', 'endpoint'].includes(key) && typeof value === 'string' && /^[\w .:/@-]{1,120}$/.test(value)));
@@ -421,11 +418,6 @@ export function createUsageStore(dir, { now = Date.now } = {}) {
     async records({ sessionIds, since = 0 } = {}) {
       await writes;
       return open().forSessions([...new Set(sessionIds ?? [])], since);
-    },
-    /** backend の、since（ms）以後の記録のトークンの合計（入力・出力・キャッシュ）。チャンネルの予算が週の枠 1% あたりを割り出すのに使う（core/bots/budget.mjs。ADR 0119） */
-    async tokensSince(backend, since = 0) {
-      await writes;
-      return open().tokensSince(backend, since);
     },
     async summary(backend) {
       await writes;

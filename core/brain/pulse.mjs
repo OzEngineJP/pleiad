@@ -7,21 +7,20 @@
 // 守っていること（安全の制限。型は決めない: 何を考えるか・いつ話すかは bot が決める）:
 //   - 心拍は bot ごとの設定（Bot.pulse.on。既定 OFF）。ON にした bot だけ動く。止めた bot（paused）は動かない
 //   - 間隔は既定 10 分、bot が決めても 5〜60 分（floorMs 未満にはしない）。PC が止まっていた間の取りこぼしは最新の 1 回だけ
-//   - 予算（core/bots/budget.mjs の allowsBrain）が 0 なら、安いモデルも賢いモデルも呼ばない。未読のカーソルは進めず残す
 //   - 安いモデルは道具なし（読み取りのモード・投稿の種類に入れない・channels.* の書き込みは ops が断る）。投稿は賢いモデルへの引き継ぎ経由だけ
 //   - 外から来た文（taint）は思考の行・気がかりに引き継ぐ。それだけを理由にした引き継ぎは「確かめる」まで（投稿するかは賢いモデルが通常の規則で決める）
 //   - 独り言を意味記憶には書かない（記憶の出どころ検査は緩めない。ここから memory.* は呼ばない）
 //
-//   createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory, clock, ask, floorMs, tickMs }) → Pulse
+//   createPulse({ dataDir, brain, channels, bots, host, dispatch, memory, clock, ask, floorMs, tickMs }) → Pulse
 //     host … store.getPrefs・getBackend・listBackends・resolveModel・resolveEffort・internalCall・currentLocale（learn.mjs と同じ）
-//     budget … createBudget の返り（allowsBrain・leftBrain・chargeBrain）。dispatch … { handoff }（賢いモデルへの引き継ぎ）
+//     dispatch … { handoff }（賢いモデルへの引き継ぎ）
 //     ask(prompt, { bot, prefs }) → string | { text, callId?, usage? }   … 安いモデルの身代わり（テスト用）。無ければ内部呼出しで聞く
 //     floorMs・tickMs・everyMs … 間隔の下限・タイマーの確かめる間隔・既定の間隔の上書き（テストと開発中の確かめ用。bots-host が環境変数から渡す）
 //   Pulse:
 //     start()・stop()・close()   … タイマー（tickMs ごとに、時刻の来た bot の心拍を 1 本ずつ流す）
-//     beat(botId, { force }): Promise<Result>   … 1 回の心拍。Result = { botId, ran, gate?, did?, error?, skipped? }。force は人の［今すぐ］（ふるいは通すが、止めた bot・予算は越えない）
+//     beat(botId, { force }): Promise<Result>   … 1 回の心拍。Result = { botId, ran, gate?, did?, error?, skipped? }。force は人の［今すぐ］（ふるいは通すが、止めた bot は越えない）
 //     onPosted(post, channel): void   … 投稿の後。気がかりの「起こしてほしい条件」に当たれば、次の心拍を早める（間隔の下限は守る）
-//     status(botId): Promise<{ on, paused, running, nextAt, lastBeatAt, drives, budget }>
+//     status(botId): Promise<{ on, paused, running, nextAt, lastBeatAt, drives, home }>
 //     pause(botId, paused): State   … ［眠らせる］・起こす
 import os from 'node:os';
 import { agentT } from '../i18n.mjs';
@@ -32,7 +31,6 @@ import { computeDrives } from './drives.mjs';
 import { gate as runGate, wakeMatches } from './gate.mjs';
 import { beatPrompt, handoffText, WORK_NOTES_VERSION, workNotesContext } from './inner.mjs';
 import { parseBeat } from './answer.mjs';
-import { BRAIN_DAILY_TOKENS } from '../bots/budget.mjs';
 
 /** 心拍の間隔の下限・上限（ms）。bot が「次に起きる時刻」を決めても、ここに収める */
 export const PULSE_FLOOR_MS = 5 * 60_000;
@@ -47,14 +45,14 @@ const log = (...a) => console.error('  pulse:', ...a);
 const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
 
-/** 予算を引く「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル。list は channels.list() の返り。予約（wakes.mjs）も使う */
+/** 心拍の「家」のチャンネル: Bot.pulse.channelId（有効なチャンネルなら）、無ければ入っている最初のチャンネル。list は channels.list() の返り。予約（wakes.mjs）も使う */
 export function pickHome(bot, list) {
   const usable = (c) => c.kind === 'channel' && !c.archivedAt && !c.home;
   const chosen = bot.pulse?.channelId ? list.find((c) => c.id === bot.pulse.channelId && usable(c)) : null;
   return chosen ?? list.filter((c) => usable(c) && c.members?.includes(bot.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0] ?? null;
 }
 
-export function createPulse({ dataDir, brain, channels, bots, host, budget, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
+export function createPulse({ dataDir, brain, channels, bots, host, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
   let timer = null;
   let closed = true;
   let chain = Promise.resolve();
@@ -66,7 +64,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
 
   // ------------------------------------------------------------ 材料
 
-  /** 予算を引く「家」のチャンネル（pickHome） */
+  /** 心拍の「家」のチャンネル（pickHome） */
   const homeOf = async (bot) => pickHome(bot, await channels.list());
 
   /**
@@ -138,25 +136,31 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (!base) throw new Error(`pulse backend unavailable: ${backendId}`);
     const cwd = os.homedir();
     const own = backendId === bot.backend;
-    const accountId = own && base.capabilities?.accounts ? bot.account ?? '' : '';
+    // 互換の接続先を選んだ bot は、心拍も同じ接続先で動く（ADR 0359。アカウントは使わない）。引けない（消した・確認に失敗した等）ときは投げて止める（公式へ落とさない）
+    const endpointId = own && base.capabilities?.compatEndpoints ? bot.endpoint ?? '' : '';
+    const endpoint = endpointId && typeof host.endpointResolve === 'function' ? await host.endpointResolve(endpointId, backendId) : null;
+    if (endpointId && !endpoint) throw new Error(`pulse endpoint unavailable: ${endpointId}`);
+    const row = endpointId && typeof host.endpointRow === 'function' ? await host.endpointRow(endpointId) : null;
+    const accountId = !endpointId && own && base.capabilities?.accounts ? bot.account ?? '' : '';
     // アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、使えないバックエンドを受ける（下の resolveModel が断る。心拍は走らせない）
     const backend = accountId && typeof host.accountBackend === 'function'
       ? await host.accountBackend(base, accountId)
       : base;
-    const model = await host.resolveModel(null, bot.pulse?.model || prefs.backends?.[backendId]?.model || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined, backend, cwd, '');
-    const effort = await host.resolveEffort(null, prefs.backends?.[backendId]?.effort || undefined, backend, model, cwd, null);
+    // 接続先では公式の既定（prefs）のモデル・段を持ち込まない
+    const askedModel = bot.pulse?.model || (endpointId ? '' : prefs.backends?.[backendId]?.model) || (!bot.pulse?.backend && !prefs.memoryLearnBackend && own ? bot.model : undefined) || undefined;
+    const model = await host.resolveModel(null, askedModel, backend, cwd, endpointId);
+    const effort = await host.resolveEffort(null, (endpointId ? '' : prefs.backends?.[backendId]?.effort) || undefined, backend, model, cwd, row);
     const mode = narrowestMode(backend.modes());
     if (!mode) throw new Error(`pulse backend has no read-only mode: ${backendId}`);
     // 分離して呼べない backend では第2段を起動しない（恒常的なので、再試行しても同じ。journal 行も作らないで止める）
     if (typeof backend.internalTurn !== 'function' || !capabilityValue(backend.capabilities?.internalCall))
       throw Object.assign(new Error(`pulse backend cannot run isolated internal calls: ${backendId}`), { code: INTERNAL_UNAVAILABLE });
-    // 内部呼出し（Issue #180。会話も接続先の履歴も作らない。usage は internalTurn の返りで直接 chargeBrain へ）。
+    // 内部呼出し（Issue #180。会話も接続先の履歴も作らない）。
     // 心拍も bot のアカウントの枠で動く（ADR 0224）。bot 自身の backend（アカウントを選べるもの）で走るときだけ
     let out;
     try {
-      out = await host.internalCall({ kind: 'pulse', backend: base, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id, accountId });
+      out = await host.internalCall({ kind: 'pulse', backend: base, prompt, model, effort, mode, cwd, locale: locale(), botId: bot.id, accountId, ...(endpoint ? { endpoint } : {}) });
     } catch (e) {
-      // 呼出しを始めた後の失敗（部分の使用量を含む）。予算へは呼び出し側で反映する
       e.internalCallAttempted = true;
       throw e;
     }
@@ -184,7 +188,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const every = everyOf(bot);
     const home = await homeOf(bot);
     const stamp = { lastBeatAt: at };
-    // 家のチャンネルが無い: 予算を引く先が無いので自発はしない
+    // 家のチャンネルが無い（入っているチャンネルが無い）: 自発はしない
     if (!home) {
       brain.append(bot.id, { kind: 'quiet', meta: { reason: 'noHome' } });
       brain.setState(bot.id, { ...stamp, nextAt: at + every });
@@ -197,24 +201,18 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const recent = brain.tail(bot.id, 12);
     const loops = workNotesContext({ loops: brain.loops(bot.id, 'open') }).loops;
     const prefs = await host.store.getPrefs().catch(() => ({}));
-    const cheapBackend = bot.pulse?.backend || prefs.memoryLearnBackend || bot.backend;
-    const left = await budget.leftBrain({ channelId: home.id, botId: bot.id, backend: cheapBackend, model: bot.pulse?.model });
-    const allowed = await budget.allowsBrain({ channelId: home.id, botId: bot.id });
-    const dayUsed = left ? 1 - Math.max(0, left.tokensLeft) / BRAIN_DAILY_TOKENS : null;
-    const budgetUsed = left?.daily ? Math.max(dayUsed ?? 0, 1 - (left.channel ?? left.daily) / left.daily) : dayUsed;
     const drives = computeDrives({
       now: at, unread: { human: events.filter((e) => e.authorKind === 'human').length, bot: events.filter((e) => e.authorKind === 'bot').length, toMe: events.filter((e) => e.toMe).length },
-      loops, recent, lastHumanAt: Math.max(lastHumanAt ?? 0, state.lastHumanAt ?? 0) || null, failures: state.failures ?? 0, budgetUsed,
+      loops, recent, lastHumanAt: Math.max(lastHumanAt ?? 0, state.lastHumanAt ?? 0) || null, failures: state.failures ?? 0,
     });
-    const verdict = runGate({ now: at, paused: state.paused, allowed, events, loops, reservedAt: state.reservedAt, drives, sinceMuse: state.sinceMuse ?? 0, force });
-    const meta = { reason: verdict.reason, ...(verdict.detail ? { detail: verdict.detail } : {}), ...(verdict.loopId ? { loop: verdict.loopId } : {}), drives, unread: events.length,
-      ...(left ? { budget: { channel: left.channel, tokensLeft: Math.round(left.tokensLeft) } } : {}) };
+    const verdict = runGate({ now: at, paused: state.paused, events, loops, reservedAt: state.reservedAt, drives, sinceMuse: state.sinceMuse ?? 0, force });
+    const meta = { reason: verdict.reason, ...(verdict.detail ? { detail: verdict.detail } : {}), ...(verdict.loopId ? { loop: verdict.loopId } : {}), drives, unread: events.length };
     const common = { ...stamp, drives, lastHumanAt: Math.max(lastHumanAt ?? 0, state.lastHumanAt ?? 0) || null };
 
     if (!verdict.pass) {
       brain.append(bot.id, { kind: 'quiet', meta });
-      // 止めた bot・予算なしでは、未読のカーソルを進めず残す（予算が戻ったら読む）
-      brain.setState(bot.id, { ...common, cursorAt: verdict.keepUnread || verdict.reason === 'paused' ? state.cursorAt ?? since : cursorTo,
+      // 止めた bot では、未読のカーソルを進めず残す（起こしたら読む）
+      brain.setState(bot.id, { ...common, cursorAt: verdict.reason === 'paused' ? state.cursorAt ?? since : cursorTo,
         nextAt: at + every, sinceMuse: (state.sinceMuse ?? 0) + 1 });
       return { botId, ran: true, gate: verdict, did: 'quiet' };
     }
@@ -226,37 +224,20 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     const cleanTrigger = events.some((e) => !e.taint && (e.authorKind === 'human' || e.authorKind === 'bot')) || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
     const taint = taintedInput ? (events.find((e) => e.taint)?.taint ?? loops.find((l) => l.taint)?.taint ?? 'web') : null;
     const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, stream: brain.tail(bot.id, 40), loops,
-      budget: left ? { channel: left.channel ?? left.daily ?? 0, known: left.known } : null, related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
+      related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
     let answered;
     try {
       const response = ask ? await ask(prompt, { bot, prefs }) : await askBackend(bot, prompt, prefs);
       answered = typeof response === 'string' ? { text: response } : response;
     } catch (e) {
       // 恒常的な理由（内部呼出しに対応できない backend 等）は、指数再試行しても同じなので理由を残して心拍を止める。
-      // 呼出しを始める前の失敗なので予算には数えない
       if (e?.code === INTERNAL_UNAVAILABLE) return stopped(bot, { state, at, common, meta, cursor: state.cursorAt ?? since, message: errText(e) });
-      // 呼出しを始めた後の失敗・中断は、部分の使用量が取れなくても「不明」として予算に残す（無料で繰り返させない）
-      if (e?.internalCallAttempted || e?.usage) {
-        try { await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: cheapBackend, model: bot.pulse?.model, usage: e?.usage ?? null }); }
-        catch (budgetError) { log('could not charge the budget:', errText(budgetError)); return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(budgetError) }); }
-      }
       return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(e) });
     }
-    if (answered.aborted) {
-      // 中止は失敗として間隔を伸ばし、取れた使用量（不明を含む）は予算に残す。結果は採用しない
-      try { await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: answered.backend ?? cheapBackend, model: answered.model, usage: answered.usage ?? null }); }
-      catch (budgetError) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(budgetError) }); }
-      return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: `pulse: ${answered.reason ?? 'aborted'}` });
-    }
+    // 中止は失敗として間隔を伸ばす。結果は採用しない
+    if (answered.aborted) return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: `pulse: ${answered.reason ?? 'aborted'}` });
     const usage = answered.usage ?? null;
     const tokens = usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, cached: usage.cachedTokens ?? 0 } : null;
-    // 使用量が測れなくても chargeBrain は呼ぶ（null なら「不明」の印を残し、その日の自発を止める。0 扱いにはしない。Issue #180）。
-    // 予算の記録に失敗したら、その後の解析・引き継ぎ（AI/外部の行動）へ進まない（帳簿の無い消費を増やさない）
-    try {
-      await budget.chargeBrain({ channelId: home.id, botId: bot.id, backend: answered.backend ?? cheapBackend, model: answered.model, usage });
-    } catch (e) {
-      return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(e) });
-    }
     let parsed;
     try { parsed = parseBeat(answered.text, { now: at }); }
     catch (e) { return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta: { ...meta, ...(answered.callId ? { call: answered.callId } : {}) }, message: errText(e), tokens }); }
@@ -276,7 +257,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     brain.setState(bot.id, { ...common, cursorAt: cursorTo, nextAt, reservedAt: reservedAt ?? sleepAt, sinceMuse: 0, failures: 0 });
 
     // ⑧ 賢いモデルへの引き継ぎ（確かめる・話す）
-    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, home, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at });
+    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at });
     return { botId, ran: true, gate: verdict, did: parsed.do, seq };
   }
 
@@ -304,16 +285,12 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     } catch { return []; }
   }
 
-  async function handOff(bot, home, parsed, { taint, taintOnly, at }) {
+  async function handOff(bot, parsed, { taint, taintOnly, at }) {
     const l = locale();
     const stream = brain.tail(bot.id, 20);
     const act = brain.append(bot.id, { kind: 'act', text: parsed.handoff.why, refs: parsed.refs, taint, meta: { workNotesVersion: WORK_NOTES_VERSION, where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
-    if (!(await budget.allowsBrain({ channelId: home.id, botId: bot.id }))) {
-      brain.append(bot.id, { kind: 'result', text: agentT(l, 'brain.line.handoffFailed', { reason: agentT(l, 'brain.reason.budget') }), refs: [String(act.seq)], taint });
-      return;
-    }
     const text = handoffText({ locale: l, now: at, why: parsed.handoff.why, stream, loops: brain.loops(bot.id, 'open'), taintOnly });
-    const result = await dispatch.handoff({ botId: bot.id, why: parsed.handoff.why, where: parsed.handoff.where ?? null, text, actSeq: act.seq, homeChannelId: home.id, taint })
+    const result = await dispatch.handoff({ botId: bot.id, why: parsed.handoff.why, where: parsed.handoff.where ?? null, text, actSeq: act.seq, taint })
       .catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) brain.append(bot.id, { kind: 'result', text: agentT(l, 'brain.line.handoffFailed', { reason: result?.reason ?? '' }), refs: [String(act.seq)], taint });
   }
@@ -375,10 +352,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (!bot) return null;
     const state = brain.state(botId);
     const home = await homeOf(bot).catch(() => null);
-    const left = home ? await budget.leftBrain({ channelId: home.id, botId }).catch(() => null) : null;
     return { on: Boolean(bot.pulse?.on), paused: Boolean(state.paused), running: running.has(botId), nextAt: bot.pulse?.on && !state.paused ? state.nextAt : null,
-      lastBeatAt: state.lastBeatAt, drives: state.drives, home: home ? { id: home.id, name: home.name } : null,
-      budget: left ? { daily: left.daily, channel: left.channel, tokensLeft: Math.round(left.tokensLeft), tokensDaily: BRAIN_DAILY_TOKENS, known: left.known } : null };
+      lastBeatAt: state.lastBeatAt, drives: state.drives, home: home ? { id: home.id, name: home.name } : null };
   }
 
   return {

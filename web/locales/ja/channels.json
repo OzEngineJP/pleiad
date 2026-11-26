@@ -46,6 +46,7 @@
     "loading": "読み込んでいます…",
     "loadFailed": "読み込めませんでした: {{error}}",
     "retry": "もう一度読む",
+    "retryTurn": "やり直す",
     "older": "前の投稿を読み込んでいます…",
     "newer": "↓ 新しい投稿",
     "day": {
@@ -84,12 +85,14 @@
     "lastReply": "最後の返信 {{when}}",
     "state": {
       "working": "作業中",
+      "thinking": "考えている",
+      "writing": "書いている",
       "waiting": "あなた待ち",
       "done": "終了",
       "checking": "要確認",
       "failed": "失敗",
       "failedWithBody": "終わり方に問題がありました",
-      "stopped": "止めました",
+      "stopped": "中断しました",
       "skipped": "スキップ",
       "missed": "Pleiad が止まっていた間の分"
     },
@@ -138,13 +141,6 @@
       "noBots": "bot はまだありません。",
       "memo": "ここでの決まり（メモ）",
       "memoHint": "このチャンネルで動く bot が毎回読む、短い決まり事を書けます。",
-      "budget": "予算",
-      "budgetDaily": "1 日",
-      "budgetPerThread": "1 スレッドまで",
-      "budgetDailyLabel": "1 日の予算（週の使用枠に対する %）",
-      "budgetPerThreadLabel": "1 スレッドが使える分（1 日の予算に対する %）",
-      "budgetHint": "bot のバックエンドの週の使用枠に対する目安です。人が呼んだ分も数え、使い切ると bot どうしの呼びかけだけ止まります（人が呼べば答えます）。1 日を空にすると予算なし。",
-      "budgetToday": "今日の使用: {{spent}}%",
       "archive": "アーカイブする",
       "unarchive": "アーカイブをやめる",
       "cancel": "やめる",
@@ -174,7 +170,6 @@
     "replies_other": "{{count}} 件の返信",
     "noReplies": "返信はまだありません",
     "entry": {
-      "toc": "このスレッドの目次",
       "browser": "ブラウザー"
     },
     "composer": {
@@ -182,44 +177,10 @@
       "working": "スレッドに返信 · 作業中でも {{name}} に届きます",
       "to": "スレッドに返信 · {{name}} に届きます"
     },
-    "stop": "止める",
-    "stopping": "止めています…",
     "stopFailed": "止められませんでした: {{error}}",
     "titleNoSession": "このスレッドにはまだ bot の会話がありません",
     "shellNoSession": "宛先の bot のこのスレッドの会話がまだありません。先に話しかけてから実行してください",
-    "shellWhere": "{{name}} の作業場所で実行",
-    "band": {
-      "context": "コンテキスト {{rate}}%",
-      "contextTitle": "{{name}} のこのスレッドの会話のコンテキスト {{rate}}%",
-      "working": "{{who}} が作業中",
-      "waiting": "{{who}} があなたを待っています",
-      "someone": "bot",
-      "calls": "呼び合い {{count}} 回",
-      "stopped": "止めました",
-      "tokens": "このスレッドで {{tokens}} トークン",
-      "tokensTitle": "新しい入力 {{input}} · 出力 {{output}}（キャッシュ読み出し {{cached}} は含めません）"
-    },
-    "budget": {
-      "title": "今日の予算",
-      "label": "予算",
-      "spoken": "予算 {{pct}}。内訳を開く",
-      "failed": "内訳を読み込めませんでした。",
-      "thread": "このスレッドが今日使ってよい量",
-      "amount": "使った分 {{spent}} / 配分 {{allowance}}（bot のバックエンドの週の使用枠に対する目安）",
-      "derived": "このスレッドを起こした元のスレッドの分もあわせて数えています。",
-      "channel": "チャンネル全体の今日",
-      "channelAmount": "{{spent}} / {{daily}}",
-      "bots": "bot ごとの今日",
-      "botToday": "新しい入力 {{input}} · 出力 {{output}} · キャッシュ読み出し {{cached}}",
-      "botNone": "今日はまだ使っていません",
-      "botLimit": "1 日の上限の目安 {{tokens}} トークン",
-      "botWeek": "週の枠 {{used}} 使用",
-      "botReset": "{{time}} にリセット",
-      "botUnknown": "使用枠を読めません",
-      "resting": "休憩中（{{time}} ごろまで）",
-      "totals": "このスレッドの合計",
-      "hint": "使い切ると bot どうしの呼びかけだけ止まります（人が呼べば答えます）。トークン数にキャッシュ読み出しは含めません。"
-    }
+    "shellWhere": "{{name}} の作業場所で実行"
   },
   "bot": {
     "iconLabel": "アイコンを変更",
@@ -248,7 +209,7 @@
       "title": "動かし方"
     },
     "modeHumanOnly": "承認モードは人間だけが変えられる",
-    "modeAccountHumanOnly": "承認モードとアカウントは人間だけが変えられる",
+    "modeAccountHumanOnly": "承認モードと接続先は人間だけが変えられる",
     "modeOnly": "{{backend}} では承認モードが「{{mode}}」だけです",
     "folders": {
       "title": "触れてよいフォルダー",
@@ -273,8 +234,15 @@
       "created": "この bot が作った会話",
       "manual": "設定で追加した会話",
       "remove": "外す",
-      "removeLabel": "「{{title}}」を送れる会話から外す",
-      "hint": "この bot が、ほかの会話へ指示を送れます。送り先は、あなたが示した会話と、この bot が作った会話だけです。"
+      "removeLabel": "「{{title}}」を送れる会話から外す"
+    },
+    "fold": {
+      "on": "オン",
+      "off": "オフ",
+      "none": "なし",
+      "count": "{{n}} 件",
+      "pulseOff": "心拍 オフ",
+      "pulseOn": "心拍 {{n}} 分"
     },
     "memory": {
       "title": "記憶"
@@ -282,13 +250,11 @@
     "brain": {
       "title": "活動メモ",
       "record": "モデルの出力の記録",
-      "note": "観測した出来事、実行した作業、未完了の用件の記録です。以前の記録もここで見られ、消せます。活動メモは記憶にならず、人の発言を根拠にした記憶だけが残ります。",
       "pulse": {
         "label": "心拍",
         "every": "心拍の間隔",
         "minutes": "{{n}} 分",
-        "off": "止まっています（呼ばれたときだけ動きます）",
-        "hint": "入れると、この bot は一定の間隔で小さく起き、ほとんどは何もせず、必要なときだけ安いモデルで考えます。話したいときは賢いモデルで起き直します。予算はチャンネルの予算から引き、使い切ると自発は止まります。"
+        "off": "止まっています（呼ばれたときだけ動きます）"
       },
       "status": {
         "next": "次は {{time}} ごろ",
@@ -296,11 +262,8 @@
         "never": "まだ動いていません",
         "paused": "眠らせています",
         "running": "考えています…",
-        "home": "予算: #{{name}}",
-        "budgetLeft": "チャンネルの今日の残り {{pct}}%",
-        "budgetNone": "チャンネルの予算なし",
-        "tokensLeft": "この bot の今日の残り {{k}}k トークン",
-        "noHome": "予算を引くチャンネルがありません（この bot をチャンネルに入れてください）"
+        "home": "家のチャンネル: #{{name}}",
+        "noHome": "家のチャンネルがありません（この bot をチャンネルに入れてください）"
       },
       "actions": {
         "sleep": "眠らせる",
@@ -314,16 +277,10 @@
       "stream": { "title": "最近の流れ", "empty": "まだ何もありません", "quiet": "静か", "quietMany": "静か ×{{n}}", "why": "理由: {{reason}}", "tokens": "{{n}} トークン", "taint": "外から来た文を含む", "total": "全 {{n}} 行" },
       "kind": { "think": "考えた", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
       "reason": {
-        "paused": "眠らせている", "budget": "予算がない", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件", "reserved": "予約した時刻",
+        "paused": "眠らせている", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件", "reserved": "予約した時刻",
         "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない", "internalUnavailable": "心拍のエージェントが内部呼び出しに対応していない"
       },
       "failed": "操作できませんでした: {{error}}"
-    },
-    "usage": {
-      "week": "今週",
-      "tokens": "トークン",
-      "cache": "キャッシュ読み出し",
-      "low": "（低め）"
     },
     "state": {
       "working": "作業中",
@@ -427,7 +384,6 @@
     "new": "ルーティンを作る",
     "edit": "編集",
     "openChannel": "チャンネルを開く",
-    "botEmpty": "この bot のルーティンはまだありません",
     "cancel": "取り消す",
     "create": "作る",
     "save": "保存",

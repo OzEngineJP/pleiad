@@ -32,6 +32,7 @@ export default async function (t) {
         { role: 'user', at: '2026-10-07T01:05:01Z', text: `<pleiad-channel channel="#dev" thread="${root.id}" post="${reply.id}" from="あなた" heard="true">もう少し</pleiad-channel>` },
       ],
       s_dm: [{ role: 'user', at: '2026-10-07T02:00:00Z', text: '<pleiad-channel channel="DM" post="DMPOST" from="あなた">やあ</pleiad-channel>' }],
+      s_dm_thread: [{ role: 'user', at: '2026-10-07T02:10:00Z', text: '<pleiad-channel channel="DM" post="DMREPLY" thread="DMPOST" from="あなた">スレッドで</pleiad-channel>' }],
     };
     const deps = { locale: 'ja', channels, botOfSession: async () => null, modeOf: async () => ({ scope: 'workspace', autonomy: 'ask' }), audit: () => {},
       rawMessages: async (id) => histories[id] ?? [], bots: { get: async ({ botId }) => (botId === 'b_owl' ? { id: 'b_owl', dmSessionId: 's_dm' } : null) } };
@@ -52,6 +53,12 @@ export default async function (t) {
     histories.s_dm[0].text = histories.s_dm[0].text.replace('DMPOST', dmPost.id);
     const d = await run(HUMAN, { channelId: dm.id, postId: dmPost.id });
     t.ok('DM は bot の DM の会話から', d.ok && d.result.deliveries.length === 1 && d.result.deliveries[0].sessionId === 's_dm', JSON.stringify(d));
+    // DM のスレッドの返信は、そのスレッドの会話（ThreadState.sessions）から。DM の会話の方には無い
+    const dmReply = await channels.post({ channelId: dm.id, threadId: dmPost.id, text: 'スレッドで' }, { kind: 'human' });
+    histories.s_dm_thread[0].text = histories.s_dm_thread[0].text.replace('DMREPLY', dmReply.id).replace('thread="DMPOST"', `thread="${dmPost.id}"`);
+    await channels.threads.update(dm.id, dmPost.id, { sessions: { b_owl: 's_dm_thread' } });
+    const dr = await run(HUMAN, { channelId: dm.id, postId: dmReply.id });
+    t.ok('DM のスレッドの返信は、そのスレッドの会話から（DM の会話ではない）', dr.ok && dr.result.deliveries.length === 1 && dr.result.deliveries[0].sessionId === 's_dm_thread', JSON.stringify(dr));
     // 人だけ・知らない投稿
     const ai = await run({ by: 'agent', via: 'cli', sessionId: 's_x' }, { channelId: dev.id, postId: reply.id });
     t.ok('AI からは使えない', !ai.ok, JSON.stringify(ai));

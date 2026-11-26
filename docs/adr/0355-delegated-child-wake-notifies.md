@@ -21,7 +21,7 @@
 **委譲した子が動いて止まったら、誰が起こしたかに関係なく、タスクを running → completed と動かし、最新の結果で依頼元へ通知する。通知には、何がきっかけだったかを書く。**
 
 1. **寄せ先は `agentTasks`**（`core/agent-tasks.mjs` の `external`）。子の会話で送信待ち（outbox）から始まるターンは、サーバーの outbox の `start` が `agentTasks.external(sessionId, kind, turn)` に渡す。`agentTasks` はターンが始まる前にタスクを引き取る。
-   - タスクの回が走っていない: 新しい回を始める（`run` の `external`）。送信待ちがターンを受け付けた直後（`onStarted` が true を返した直後。`began`）に、行を `running` にし、`lastActivityAt` を動かし、通知を `none` に戻す。作業場所が片付いていれば、ターンの前に作り直す（`renewTaskWorktree`。`ply_task_send` で起きたときと同じ）。ターンが終わったら `finishChild` で最新の返答を結果にし、通知を `pending` → `sent` と動かす。
+   - タスクの回が走っていない: 新しい回を始める（`run` の `external`）。送信待ちがターンを受け付けた直後（`onStarted` が true を返した直後。`began`）に、行を `running` にし、`lastActivityAt` を動かし、通知を `none` に戻す。作業場所が片付いていれば、ターンの前に作り直す（`renewTaskWorktree`。`ply_task_send` で起きたときと同じ。作り直せなければ元の場所では走らせない。片付けは回の終わりに 1 度。[ADR 0360](adr/0360-delegated-worktree-settle-once.md)）。ターンが終わったら `finishChild` で最新の返答を結果にし、通知を `pending` → `sent` と動かす。
    - タスクの回が走っている（`ply_task_send` の回や、別の外のターンの回）: その回に合流する。回は合流したターンが終わるまで締めない（`joining`）。送信待ちが次のターンを始めようとしている間も締めない。待ち終えたら `closeRun` で回を締め、その後に来たターンは次の回として走り、もう 1 回知らせる。
    - ターンが始まらなかった（会話が忙しくて送信待ちへ戻った `requeue`・始まる前に失敗した）: タスクの行は変えない（始まった後に戻ったときは、前の状態と通知へ戻す）。
    - タスクが無い会話・ホストに任せた子（根）・閉じたタスク・止めている最中のタスクは、今までどおりターンだけを走らせる。

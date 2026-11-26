@@ -1,5 +1,5 @@
 // 心拍を入れた bot（ADR 0126）をサーバー越しに通す。fake バックエンド（安いモデルの返事は AGENT_HOST_FAKE_PULSE の台本）。LLM もネットワークも使わない。
-//   ① 心拍の設定は bots.update の pulse（広げる向きは guarded）。② ［今すぐ］の心拍 → 思考の流れの行・気がかり。③ 引き継ぎ → DM の賢いモデルのターン → 投稿・結果の行・予算。
+//   ① 心拍の設定は bots.update の pulse（広げる向きは guarded）。② ［今すぐ］の心拍 → 思考の流れの行・気がかり。③ 引き継ぎ → DM の賢いモデルのターン → 投稿・結果の行。
 //   ④ 黙る引き継ぎは投稿を残さない。⑤ 独り言が投稿に写らない。⑥ 呼ばれたターンの末尾に思考の流れの末尾と気がかり（心拍を入れた bot だけ）。
 //   ⑦ 隠れた会話（pulse・learner）からの channels.* の書き込みは断る。
 import fs from 'node:fs/promises';
@@ -13,7 +13,7 @@ import { findLeaks } from '../../core/brain/inner.mjs';
 import { openReadOnly } from '../../core/db.mjs';
 
 export const name = 'brain-server';
-export const title = '心拍を入れた bot: 設定・今すぐの心拍・引き継ぎ（話す・黙る）・予算・独り言が漏れない・呼ばれたターンの末尾・隠れた会話の書き込みの拒否';
+export const title = '心拍を入れた bot: 設定・今すぐの心拍・引き継ぎ（話す・黙る）・予算の欄が無い・独り言が漏れない・呼ばれたターンの末尾・隠れた会話の書き込みの拒否';
 
 const until = async (fn, { ms = 20_000, label = '' } = {}) => {
   const end = Date.now() + ms;
@@ -97,7 +97,7 @@ export default async function (t) {
     const onBot = await call('bots.update', { botId: owl.id, pulse: { on: true } });
     t.ok('画面（人）から心拍を入れる。Lynx は止めたまま', onBot.pulse.on === true && (await call('bots.get', { botId: lynx.id })).pulse.on === false);
     const v0 = await view(owl.id);
-    t.ok('brain.view: 流れ・気がかりは空。状態に家のチャンネル（入っている最初のチャンネル）と予算が出る', v0.stream.length === 0 && v0.loops.length === 0 && v0.status.on === true && v0.status.home.id === dev.id && v0.status.budget.tokensLeft === 1_500_000 && v0.status.budget.daily === 5);
+    t.ok('brain.view: 流れ・気がかりは空。状態に家のチャンネル（入っている最初のチャンネル）が出る。予算の欄は無い（ADR 0357）', v0.stream.length === 0 && v0.loops.length === 0 && v0.status.on === true && v0.status.home.id === dev.id && v0.status.budget === undefined);
 
     // ---- ② ［今すぐ］の心拍 → 思考の流れ・気がかり
     const human1 = await call('channels.post', { channelId: dev.id, text: '来週の発表の資料、まだ決まっていないんだよね' });
@@ -149,12 +149,9 @@ export default async function (t) {
     const dmPosts = (await read(dmId)).posts.filter((p) => p.author?.kind === 'bot' && !p.deletedAt);
     t.ok('黙って終えたターンは投稿を残さない。結果の行は「黙った」', dmPosts.length === 1 && silent.stream.some((r) => r.text === '（黙った）'));
 
-    // ---- ⑤ 予算: 自発の分も数える
-    const budget = (await view(owl.id)).status.budget;
-    // 安いモデル 3 回 + 引き継ぎのターン 2 回。fake の usage は 1 回 入力 1000・出力 200・キャッシュ読み 900（読みは 1/10 で数える）
-    t.ok('予算: 心拍と引き継ぎの分がトークンの 1 日の上限から引かれる（5 回分）', budget.tokensLeft <= 1_500_000 - 5 * 1290 && budget.tokensLeft > 1_500_000 - 6 * 1290, JSON.stringify(budget));
+    // ---- ⑤ 予算: bot 専用の使用量の仕組みは無い（ADR 0357）。心拍と引き継ぎを何度走らせても、予算の欄も 1 日の上限も出てこない
     const info = await call('channels.get', { channelId: dev.id });
-    t.ok('チャンネルの予算の定義は変わらない（今日の分は頭の中の行に持つ。スレッドの行を作らない）', info.budget === undefined || info.budget.daily === 5);
+    t.ok('予算: 心拍と引き継ぎを走らせても、状態にもチャンネルにも予算の欄が無い', (await view(owl.id)).status.budget === undefined && info.budget === undefined);
 
     // ---- ⑥ 呼ばれたターンの末尾
     const asked = await call('channels.post', { channelId: dev.id, text: '@Owl notes:' });
@@ -202,7 +199,7 @@ export default async function (t) {
     await call('brain.pause', { botId: owl.id, paused: false });
     const cleared = await call('brain.clear', { botId: owl.id });
     const v9 = await view(owl.id);
-    t.ok('流れを消す（人）。気がかりも消え、予算の使った分は残る', cleared.stream > 0 && v9.stream.length === 0 && v9.loops.length === 0 && v9.status.budget.tokensLeft < 1_500_000);
+    t.ok('流れを消す（人）。気がかりも消える', cleared.stream > 0 && v9.stream.length === 0 && v9.loops.length === 0);
     void human1;
 
     // ---- DB の形: 追記の行・JSON のファイルを増やさない

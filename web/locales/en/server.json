@@ -64,30 +64,30 @@
   },
   "accounts": {
     "backend": {
-      "inUse": "The {{agent}} account is in use. Wait for its operations to finish and try again.",
-      "inUseByTurn": "The {{agent}} account is in use by a conversation or background command. Wait for it to finish and try again.",
-      "removing": "The {{agent}} account is being deleted.",
-      "removedOrRemoving": "The {{agent}} account is being deleted or has been deleted.",
-      "directoryRemoved": "The {{agent}} account directory has been deleted. Add the account again.",
-      "loginRunning": "Sign-in to this {{agent}} account is already in progress.",
+      "inUse": "The {{agent}} connection is in use. Wait for its operations to finish and try again.",
+      "inUseByTurn": "The {{agent}} connection is in use by a conversation or background command. Wait for it to finish and try again.",
+      "removing": "The {{agent}} connection is being deleted.",
+      "removedOrRemoving": "The {{agent}} connection is being deleted or has been deleted.",
+      "directoryRemoved": "The {{agent}} connection directory has been deleted. Add the connection again.",
+      "loginRunning": "Sign-in to this {{agent}} connection is already in progress.",
       "loginCancelled": "{{agent}} sign-in was cancelled.",
-      "notLoggedIn": "Sign in to this {{agent}} account first.",
+      "notLoggedIn": "Sign in to this {{agent}} connection first.",
       "loginNoCredential": "No credentials were found after {{agent}} sign-in. Sign in again.",
       "loginFailed": "{{agent}} sign-in could not be completed. Please try again.",
-      "permissionsUnknown": "Could not determine the access permissions needed to protect this {{agent}} account's credentials.",
-      "permissionsFailed": "Could not set access permissions to protect this {{agent}} account's credentials.",
-      "credentialUnreadable": "Unable to read {{agent}} account credentials."
+      "permissionsUnknown": "Could not determine the access permissions needed to protect this {{agent}} connection's credentials.",
+      "permissionsFailed": "Could not set access permissions to protect this {{agent}} connection's credentials.",
+      "credentialUnreadable": "Unable to read {{agent}} connection credentials."
     },
-    "deleted": "That account has been deleted.",
-    "notRegistered": "That account is not registered.",
-    "nameRequired": "Enter a name for the account.",
-    "listBroken": "The account list (agent-accounts.json) cannot be read.",
-    "badBackend": "This agent cannot have accounts.",
-    "credentialUnreadable": "The account credentials cannot be read: {{message}}",
-    "loginBusy": "This account is already signing in",
+    "deleted": "That connection has been deleted.",
+    "notRegistered": "That connection is not registered.",
+    "nameRequired": "Enter a name for the connection.",
+    "listBroken": "The connection list (agent-accounts.json) cannot be read.",
+    "badBackend": "This agent cannot have registered connections.",
+    "credentialUnreadable": "The connection credentials cannot be read: {{message}}",
+    "loginBusy": "This connection is already signing in",
     "loginFailed": "Sign-in could not be completed",
-    "tooMany": "You can register up to 100 accounts",
-    "credentialMissing": "Sign in to this account first"
+    "tooMany": "You can register up to 100 connections",
+    "credentialMissing": "Sign in to this connection first"
   },
   "permission": {
     "delegateEscalationHost": "This delegation runs {{agent}} on {{host}} in \"{{mode}}\" ({{modeId}}).",
@@ -202,8 +202,8 @@
     "endpointInvalid": "Invalid endpoint.",
     "endpointNotRegistered": "The selected endpoint is not registered.",
     "modelUnavailable": "The selected model is not available.",
-    "accountInvalid": "Invalid account.",
-    "accountNotRegistered": "The selected account is not registered.",
+    "accountInvalid": "Invalid connection.",
+    "accountNotRegistered": "The selected connection is not registered.",
     "unknownPref": "Unknown setting: {{key}}",
     "unknownMode": "Unknown approval mode: {{value}}",
     "unknownModel": "Unknown model: {{value}}"
@@ -295,13 +295,13 @@
       "FILE_BROKEN": "The API keys file (api-keys.json) can't be read. Fix or move the file"
     },
     "origin": {
-      "endpoint": "key used by the {{agent}} endpoint",
+      "endpoint": "key used by the {{agent}} connection",
       "voice": "key used by voice calls",
       "judge": "key used by automatic delegate selection",
       "labeled": "{{name}} ({{origin}})",
       "unnamed": "Unnamed key"
     },
-    "endpointKeyDeleted": "The key this endpoint used was deleted. Choose another key and check the connection again"
+    "endpointKeyDeleted": "The key this connection used was deleted. Choose another key and check the connection again"
   },
   "compat": {
     "redactedKey": "[key]",
@@ -379,11 +379,11 @@
       "badAgent": "Invalid agent."
     },
     "resolve": {
-      "deleted": "This conversation's endpoint has been deleted. Choose another endpoint from the model panel in the input area.",
-      "wrongAgent": "This conversation's endpoint \"{{name}}\" is for {{agent}}. Choose another endpoint.",
-      "failed": "The last check of endpoint \"{{name}}\" failed. Check it again under Settings › Agents › Endpoints, or choose another endpoint.",
-      "keyMissing": "No key is selected for the endpoint \"{{name}}\". Register one in Settings › Secrets and variables and choose it when editing the endpoint.",
-      "keyUnreadable": "Can't read the key for endpoint \"{{name}}\"."
+      "deleted": "This conversation's connection has been deleted. Choose another connection from the model panel in the input area.",
+      "wrongAgent": "This conversation's connection \"{{name}}\" is for {{agent}}. Choose another connection.",
+      "failed": "The last check of the connection \"{{name}}\" failed. Check it again under Connections in Settings › Agent settings, or choose another connection.",
+      "keyMissing": "No key is selected for the connection \"{{name}}\". Register one in Settings › Secrets and variables and choose it when editing the connection.",
+      "keyUnreadable": "Can't read the key for connection \"{{name}}\"."
     }
   },
   "mcp": {
@@ -547,13 +547,13 @@
     },
     "usage": {
       "timeout": "Timed out while getting usage.",
-      "needsLogin": "To show usage, complete \"Log in to claude.ai\" under \"Claude accounts\" in Settings.",
-      "loginAccount": "Signed-in account",
+      "needsLogin": "To show usage, press \"Sign in\" on the connection in Settings › Agent settings.",
+      "loginAccount": "CLI login",
       "failed": "Could not get usage: {{message}}",
-      "failedReauth": "Could not get usage: {{message}}. If this keeps happening, press \"Log in to claude.ai again\".",
+      "failedReauth": "Could not get usage: {{message}}. If this keeps happening, press \"Sign in again\".",
       "keychain": "Could not get usage because the Mac keychain can't be opened. Unlock the screen and it will show on the next read. If it keeps failing after unlocking, sign in again.",
       "relogin": "Can't read usage because the sign-in details have no token. You need to sign in again: run claude auth login in a terminal.",
-      "reauthNeeded": "The claude.ai login for this account has expired. Press \"Log in to claude.ai again\"."
+      "reauthNeeded": "The claude.ai login for this connection has expired. Press \"Sign in again\"."
     },
     "redacted": {
       "token": "[token]",
@@ -587,36 +587,36 @@
       "notReady": "Authorization is not ready yet. Wait a moment and try again."
     },
     "accounts": {
-      "nameRequired": "Enter a display name for the account.",
+      "nameRequired": "Enter a display name for the connection.",
       "nameTooLong": "Use {{max}} characters or fewer for the display name.",
-      "nameDuplicate": "An account with this name already exists.",
-      "listBroken": "Could not read the Claude account list. The file is corrupted.",
-      "badId": "Invalid account ID.",
-      "notRegistered": "That account is not registered.",
-      "deleted": "The Claude account selected for this conversation was deleted. Choose another account."
+      "nameDuplicate": "A connection with this name already exists.",
+      "listBroken": "Could not read the Claude connection list. The file is corrupted.",
+      "badId": "Invalid connection ID.",
+      "notRegistered": "That connection is not registered.",
+      "deleted": "The connection selected for this conversation was deleted. Choose another connection."
     },
     "connectors": {
-      "ownDirLogin": "Claude account “{{name}}” isn't signed in to claude.ai, or the sign-in has expired. Sign in from the account list in Settings.",
+      "ownDirLogin": "Connection “{{name}}” isn't signed in to claude.ai, or the sign-in has expired. Sign in from Connections in Settings › Agent settings.",
       "keychain": "Can't open the Mac keychain that holds the sign-in for “{{name}}”. Unlock the screen, then send again.",
-      "keychainAuth": "The sign-in for Claude account “{{name}}” was refused. Unlock the Mac keychain, then send again. If it keeps happening after unlocking, sign in again.",
-      "ssh": "Claude account “{{name}}” can't be used from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
+      "keychainAuth": "The sign-in for connection “{{name}}” was refused. Unlock the Mac keychain, then send again. If it keeps happening after unlocking, sign in again.",
+      "ssh": "Connection “{{name}}” can't be used from a login without a screen, such as ssh. Start Pleiad from the Mac's screen.",
       "ownDirLinks": "Couldn't prepare links from the dedicated config folder for “{{name}}” to the shared config folder. Check the folders' contents and permissions.",
       "ownDirLinksWindows": "Couldn't create links in the dedicated config folder for “{{name}}”. Check Windows Developer Mode or permission to create symbolic links, and check folder access.",
       "ownDirProfile": "Couldn't apply connector settings to the dedicated config folder for “{{name}}”.",
-      "login": "The claude.ai sign-in for Claude account \"{{name}}\" is missing or unreadable. Sign in again from the account list in Settings.",
-      "version": "Update Claude Code. Registered accounts require CLI 2.1.322 or later and the SDK pinned by Pleiad (current: CLI {{cli}} / SDK {{sdk}}, baseline: {{verified}}). Update Pleiad if the SDK differs.",
-      "platform": "Claude account \"{{name}}\" is not available on this OS ({{platform}}) yet.",
-      "env": "Claude account \"{{name}}\" cannot be used while another authentication or endpoint is specified ({{names}}, in the environment or settings.json).",
-      "envSettings": "Claude account \"{{name}}\" cannot be used because settings.json (shared, workspace, local, or managed) could not be read (cannot confirm that no other authentication is specified).",
-      "history": "Claude account \"{{name}}\" cannot be used while a setting that moves the conversation history is specified ({{names}}, in the environment or settings.json).",
-      "profile": "The connector settings for Claude account \"{{name}}\" could not be applied to the shared settings folder."
+      "login": "The claude.ai sign-in for connection \"{{name}}\" is missing or unreadable. Sign in again from Connections in Settings › Agent settings.",
+      "version": "Update Claude Code. Registered connections require CLI 2.1.322 or later and the SDK pinned by Pleiad (current: CLI {{cli}} / SDK {{sdk}}, baseline: {{verified}}). Update Pleiad if the SDK differs.",
+      "platform": "Connection \"{{name}}\" is not available on this OS ({{platform}}) yet.",
+      "env": "Connection \"{{name}}\" cannot be used while another authentication or endpoint is specified ({{names}}, in the environment or settings.json).",
+      "envSettings": "Connection \"{{name}}\" cannot be used because settings.json (shared, workspace, local, or managed) could not be read (cannot confirm that no other authentication is specified).",
+      "history": "Connection \"{{name}}\" cannot be used while a setting that moves the conversation history is specified ({{names}}, in the environment or settings.json).",
+      "profile": "The connector settings for Connection \"{{name}}\" could not be applied to the shared settings folder."
     }
   },
   "effort": {
-    "useEndpoint": "Uses the endpoint settings.",
+    "useEndpoint": "Uses the connection settings.",
     "notSent": "Not sent (endpoint setting)",
     "supported": "Used with supported models.",
-    "useAgentEndpoint": "Uses the agent and endpoint settings.",
+    "useAgentEndpoint": "Uses the agent and connection settings.",
     "unavailable": "The selected effort is not available. Choose another."
   },
   "backends": {
@@ -635,10 +635,10 @@
   },
   "codex": {
     "accounts": {
-      "shareFailed": "Could not share {{entry}} with this Codex account ({{code}}). Enable symbolic links and try again.",
-      "threadBusy": "The Codex conversation is busy in another account or context. Wait for it to finish and try again.",
+      "shareFailed": "Could not share {{entry}} with this Codex connection ({{code}}). Enable symbolic links and try again.",
+      "threadBusy": "The Codex conversation is busy in another connection or context. Wait for it to finish and try again.",
       "releaseTimeout": "The previous Codex conversation did not finish closing. Wait a moment and try again.",
-      "releaseFailed": "Could not close the previous Codex account's connection. Please try again."
+      "releaseFailed": "Could not close the previous Codex connection. Please try again."
     },
     "description": "Uses your ChatGPT subscription.",
     "modes": {
@@ -794,7 +794,7 @@
   },
   "opencode": {
     "usage": {
-      "cliLogin": "OpenCode signed-in account",
+      "cliLogin": "CLI login",
       "copilotUnavailable": "GitHub Copilot returned no finite quota snapshot. Quota is unlimited or unavailable.",
       "copilotPremiumRequests": "GitHub Copilot Premium requests",
       "copilotPremiumModels": "GitHub Copilot Premium models",
@@ -834,8 +834,8 @@
       "compactionOwner": "OpenCode could not safely exclude Pleiad-managed instructions from this request. Start a new conversation or change the instruction owner to OpenCode."
     },
     "auth": {
-      "accountRunCommand": "Run this command in a terminal to sign in to this OpenCode account.",
-      "accountLoggedIn": "Signed in to the OpenCode account.",
+      "accountRunCommand": "Run this command in a terminal to sign in to this OpenCode connection.",
+      "accountLoggedIn": "Signed in to the OpenCode connection.",
       "freeOnly": "OpenCode Zen free models only",
       "detail": "OpenCode (providers connected with opencode auth login)",
       "runCommand": "Run this command in a terminal, choose the provider to connect, and sign in. (This updates automatically when you finish)",
@@ -846,7 +846,7 @@
   },
   "antigravity": {
     "accounts": {
-      "unavailable": "Antigravity account switching is unavailable because its shared OS credentials cannot be safely isolated. Use the currently signed-in account, or a separate OS user or virtual machine."
+      "unavailable": "Switching Antigravity connections is unavailable because its shared OS credentials cannot be safely isolated. Use the CLI login, or a separate OS user or virtual machine."
     },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {
@@ -1131,7 +1131,7 @@
       "oauthAppsWeekly": "OAuth apps, weekly",
       "modelWeekly": "{{model}}, weekly"
     },
-    "codexUnavailable": "Cannot get usage. It is not shown for API connections or unsupported accounts.",
+    "codexUnavailable": "Cannot get usage. It is not shown for API connections or unsupported connections.",
     "claudeUnavailable": "Cannot get usage. It is not shown for API connections, insufficient permissions, or unsupported CLIs.",
     "authChanged": "Sign-in status changed. Refresh to update.",
     "fetchFailed": "Could not get usage. Check that you are signed in and refresh after a while.",

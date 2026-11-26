@@ -128,8 +128,13 @@ export function createWorkControls(h) {
     },
     // 互換の接続先。'' は公式。モデルとエフォートは接続先の既定へ戻る（メイン・server と同じ）
     endpoint: (childId, v) => choose(childId, { endpoint: v }, { endpoint: v, model: '', effort: '' }),
-    // アカウント。'' はログイン中のアカウント（既定）
+    // アカウント。'' は CLI のログイン
     account: (childId, v) => choose(childId, { account: v }, { account: v }),
+    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。ADR 0359）
+    conn: (childId, { endpoint = '', account = '' }) => {
+      const moved = endpoint !== (selection(childId).endpoint ?? '');
+      choose(childId, { endpoint, account }, moved ? { endpoint, account, model: '', effort: '' } : { endpoint, account });
+    },
     openModel: (childId) => { const s = selection(childId); if (s.backend) h.revalidate(s.backend, accountOf(s), s.cwd); },
     // 子では使わない口（worktree・エージェント）は渡さない
   };

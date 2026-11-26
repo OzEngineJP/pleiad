@@ -7,13 +7,11 @@
 //   - 時刻は今から WAKE_MIN_LEAD_MS 以上・WAKE_MAX_AHEAD_MS 以内。1 回きり（繰り返しはルーティン）
 //   - 起こし方は心拍の引き継ぎと同じ道（dispatch.wakeReserved → inbox の inner → pump → startTurn）。承認・強い bot の確認・［止める］・休憩中がそのまま効く
 //   - Pleiad が止まっていた間に時刻を過ぎた予約は、起動後に遅れて 1 回だけ起きる。同じ会話の予約が重なっていたら 1 回にまとめる（何十回も重ねない）
-//   - 自発の分なので予算から引く（心拍と同じ。スレッドならそのチャンネル、DM なら bot の家のチャンネル。家が無ければ bot の 1 日のトークンの上限だけ）。
-//     予算が無い・休憩中は捨てずに待ち、WAKE_RETRY_MS ごとに見直す
+//   - 休憩中（サービスの使用量の上限）は捨てずに待ち、WAKE_RETRY_MS ごとに見直す
 //   - 止めたスレッド・アーカイブしたチャンネル・消した bot・もう無い会話の予約は起こさず、理由を付けて閉じる
 //
-//   createWakes({ dataDir, channels, bots, dispatch, budget, clock, now, emit, localeOf, tickMs }) → Wakes
-//     dispatch … { wakeReserved({ botId, sessionId, channelId, threadId, why, text, homeChannelId, taint }) → { ok, reason? }, restingUntil(bot) }
-//     budget … createBudget の返り（allowsBrain）
+//   createWakes({ dataDir, channels, bots, dispatch, clock, now, emit, localeOf, tickMs }) → Wakes
+//     dispatch … { wakeReserved({ botId, sessionId, channelId, threadId, why, text, taint }) → { ok, reason? }, restingUntil(bot) }
 //   Wakes:
 //     add({ botId, sessionId, channelId, threadId, at, note, taint }): Wake   … 投げる: WakeError（code: 'WAKE_TIME' | 'WAKE_LIMIT'）
 //     list(botId, { status? }): Wake[]・get(id): Wake | null
@@ -29,7 +27,6 @@ import { agentT } from '../i18n.mjs';
 import { openData } from '../data-schema.mjs';
 import { wakeTable } from '../db.mjs';
 import { whenOf } from './inner.mjs';
-import { pickHome } from './pulse.mjs';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -40,7 +37,7 @@ export const WAKE_MAX_AHEAD_MS = 30 * DAY;
 export const WAKE_KEEP_MS = 7 * DAY;
 /** 時刻を確かめる間隔の上限（PC のスリープでタイマーが遅れても、起きてからこの間に気付く） */
 export const WAKE_TICK_MS = 30_000;
-/** 予算なし・休憩中で待たせた予約を見直す間隔 */
+/** 休憩中で待たせた予約を見直す間隔 */
 export const WAKE_RETRY_MS = 10 * MIN;
 /** これ以上遅れて起きたら「遅れた」と書く */
 export const WAKE_LATE_MS = 2 * MIN;
@@ -50,13 +47,13 @@ const errText = (e) => String(e?.message ?? e);
 const clip = (s, n) => [...String(s ?? '').replace(/\r\n/g, '\n').trim()].slice(0, n).join('');
 const taintOf = (v) => (v === 'webhook' || v === 'web' ? v : null);
 /** 起こせなかったときに、閉じずに待たせる理由（時間が経てば起こせる） */
-const TRANSIENT = new Set(['resting', 'budget', 'closed']);
+const TRANSIENT = new Set(['resting', 'closed']);
 
 export class WakeError extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
-export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS } = {}) {
+export function createWakes({ dataDir, channels, bots, dispatch, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS } = {}) {
   let handle = null, table = null;
   let timer = null;
   let closed = true;
@@ -90,7 +87,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, 
   /** 閉じる（起こさない）。reason は残す */
   const drop = (w, reason) => save({ ...w, status: 'dropped', reason, closedAt: now() });
 
-  /** 待たせる（予算なし・休憩中）。WAKE_RETRY_MS 後に見直す */
+  /** 待たせる（休憩中）。WAKE_RETRY_MS 後に見直す */
   const wait = (w, reason) => save({ ...w, waiting: reason, retryAt: now() + WAKE_RETRY_MS });
 
   /** 起こす文（`<pleiad-inner kind="wake">` の中身）。重なった予約はまとめて 1 回 */
@@ -122,14 +119,10 @@ export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, 
       if (th?.stopped) { for (const w of list) drop(w, 'stopped'); return false; }
     }
     if (dispatch.restingUntil?.(bot)) { for (const w of list) wait(w, 'resting'); return false; }
-    // 予算: スレッドならそのチャンネル、DM なら bot の家のチャンネル。家が無い DM だけの bot は、チャンネルの % の数え先が無いので、
-    // bot の 1 日のトークンの上限（BRAIN_DAILY_TOKENS）だけを見る（自分の予約で自分を起こし続けても、上限で止まる）
-    const home = channel.kind === 'channel' ? channel : pickHome(bot, await channels.list().catch(() => []));
-    if (!(await budget.allowsBrain({ channelId: home?.id ?? null, botId: bot.id }))) { for (const w of list) wait(w, 'budget'); return false; }
     const at = now();
     const result = await dispatch.wakeReserved({
       botId: bot.id, sessionId: head.sessionId, channelId: head.channelId, threadId: head.threadId ?? null,
-      why: list.map((w) => w.note).filter(Boolean).join(' / '), text: wakeText(list, at), homeChannelId: home?.id ?? null, taint: list.find((w) => w.taint)?.taint ?? null,
+      why: list.map((w) => w.note).filter(Boolean).join(' / '), text: wakeText(list, at), taint: list.find((w) => w.taint)?.taint ?? null,
     }).catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) {
       const reason = result?.reason ?? 'failed';
@@ -177,7 +170,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, budget, clock, 
     if (closed) return;
     if (timer) clock.clearTimer(timer);
     timer = null;
-    // 待たせている予約（予算なし・休憩中）は retryAt まで数えない（過ぎた時刻のまま 1 秒ごとに起きない）
+    // 待たせている予約（休憩中）は retryAt まで数えない（過ぎた時刻のまま 1 秒ごとに起きない）
     let next = null;
     try {
       for (const w of open().due(now() + tickMs)) { const at = Math.max(w.at, w.retryAt ?? 0); if (next == null || at < next) next = at; }

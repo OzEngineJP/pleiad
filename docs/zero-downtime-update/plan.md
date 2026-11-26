@@ -1,6 +1,6 @@
 # 無停止の更新 — 段階に分けた実装計画
 
-> **2026-11-26 追記（[ADR 0358](../adr/0358-antigravity-on-acp.md)）**: agy は ACP（`agy acp`）に替わり、段階 3 の `antigravity-held.mjs`・`antigravity-cli.mjs`・`antigravity-pids.mjs` は `core/backends/acp-held.mjs` などに置き換わった（[stage3-agy.md](stage3-agy.md) の追記）。agy の項は旧い口（stream-json）の計画の記録。
+> **2026-11-26 追記（[ADR 0362](../adr/0362-antigravity-on-acp.md)）**: agy は ACP（`agy acp`）に替わり、段階 3 の `antigravity-held.mjs`・`antigravity-cli.mjs`・`antigravity-pids.mjs` は `core/backends/acp-held.mjs` などに置き換わった（[stage3-agy.md](stage3-agy.md) の追記）。agy の項は旧い口（stream-json）の計画の記録。
 
 > 履歴資料: ここにある設計・計画は旧 handover 方式の記録で、現行実装ではない。更新と復元の規則は [ADR 0270](../adr/0270-server-may-die-anytime.md) 段 4b を参照する。
 

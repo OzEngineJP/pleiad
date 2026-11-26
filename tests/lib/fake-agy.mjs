@@ -617,7 +617,8 @@ async function runAcp() {
       if (slowly) { await pause(token, Number(slowly[1] ?? 300)); if (token.cancelled) return finish(); }
 
       if (text === "error-body") { say("本文は届いた"); throw acpError(-32000, "結果は失敗"); }
-      const noReplyLimit = text === "limit-no-reply" || text.endsWith("\nlimit-no-reply");
+      // 委譲の isolate では依頼の後に worktree の段落が付き、末尾の段落が依頼でなくなる。届いた本文全体の行で見る
+      const noReplyLimit = wire.split("\n").some(line => line === "limit-no-reply");
       if (text === "error-after-reply" || text === "limit-after-reply" || noReplyLimit || text === "error-after-tool") {
         if (!noReplyLimit) say("完成した返事");
         if (text === "error-after-tool") startTool("read_file", { path: "x" });

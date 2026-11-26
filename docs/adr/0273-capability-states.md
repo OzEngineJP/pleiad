@@ -41,7 +41,7 @@
 - **性質（traits）は能力ではないので分ける**（[0274](0274-capability-traits-and-public-marks.md)）。`effortInModelId`・
   `instructionsAtStart`・`failureDiagnostics`・`promptDelivery` は `true` / `false` だけで書き、状態を持たない。
 - **写しの文書を消す。** `docs/backend-matrix.md` を消し、一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
-  （後の版で廃止した。対応は公開文書のエージェントのページで見る。[0357](0357-consolidate-backend-leak-guards.md)）。
+  （後の版で廃止した。対応は公開文書のエージェントのページで見る。[0361](0361-consolidate-backend-leak-guards.md)）。
   `docs/multi-backend.md`「エージェントを足す」は試験の案内に寄せて短くする。
 
 ## 理由

@@ -147,7 +147,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     plyAgents: true,
     plyInstructions: true,
     shell: 'host',          // Pleiad が実行し、その結果を次のターンの発言に含める（ADR 0054）
-    // ply_shell はまだ渡さない（ADR 0227 の理由は stream-json の口のもので、ACP の mcpServers なら渡せる見込み。再判定は ADR 0358 の残る課題。それまで印は据え置く）
+    // ply_shell はまだ渡さない（ADR 0227 の理由は stream-json の口のもので、ACP の mcpServers なら渡せる見込み。再判定は ADR 0362 の残る課題。それまで印は据え置く）
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）

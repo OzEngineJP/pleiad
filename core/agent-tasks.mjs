@@ -131,6 +131,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   lockWaiting = () => false,
   // 子の worktree の今の状態（core/worktree-host.mjs の taskState）。ply_task_status・ply_task_wait の workspaceSummary に使う
   workspaceState = async () => null,
+  // 子の回が終わったときの worktree の片付け（core/worktree-host.mjs の taskDone）。(task, { sessions })。runTask が回の終わりに 1 回だけ呼ぶ
+  // （上限・ログイン切れで次の委譲先へ続く間・任せ直しの間は呼ばない。sessions は cwd を元の場所へ戻す子の会話）
+  settleWorkspace = async () => null,
   // 子が返答を終えて裏の作業だけを待っているか（ADR 0170）。待っていれば { since（待ち始めた時刻 ms）, tasks: [{ kind, label }] }、無ければ null。
   // 待っている間は止めず、依頼元へ deliverBackground で知らせ、backgroundMinutes ごとに知らせ直す
   backgroundWaiting = () => null, deliverBackground = async () => 'ok',
@@ -618,6 +621,19 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
     // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
     const halted = () => quitStops.has(r.taskId) || (closed && r.status !== 'cancelling');
+    // 子の worktree の片付けは、切り替えを含む回全体が終わるときに 1 回だけ行う。回の途中（上限・ログイン切れで次の委譲先へ続くとき）ではしない
+    // 片付けたら workspaceSettled。次のターンを始めたら（片付けた後に指示が積まれた）戻す。
+    // runSessions は回の途中で任せ直した（run.reroute）前の子の会話。消すときにその cwd も元の場所へ戻す（残すと attached で消せない）
+    let workspaceSettled = false;
+    const runSessions = new Set();
+    const settleRunWorkspace = async result => {
+      if (workspaceSettled || r.host) return result;
+      const worktree = result?.worktree ?? r.worktree;
+      if (!worktree?.id || !r.sessionId) return result;
+      workspaceSettled = true;
+      const workspace = await settleWorkspace({ ...structuredClone(r), worktree }, { sessions: [r.sessionId, ...runSessions] }).catch(() => null);
+      return workspace && result ? { ...result, workspace } : result;
+    };
     try {
       while (!controller.signal.aborted) {
         // A held turn can finish during update preflight. Leave its next prompt in the queue.
@@ -649,6 +665,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         }, 'run.start'); }
         catch { stalled = true; break; }
         activeInstructionIds = instructionIds;
+        workspaceSettled = false;
         const finish = adopted;
         adopted = null;
         const input = { messageId: instructionIds.length ? `task-send-${instructionIds[0]}` : undefined };
@@ -689,7 +706,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             try { await commit(r.taskId, row => {
               if (controller.signal.aborted || halted() || row.status !== 'running' || !autoTarget(row)) throw new Error('Task changed');
               row.backend = next.backend; row.model = next.model; row.effort = next.effort; row.mode = next.mode; row.routing = next.routing;
-              if (result.worktree) row.worktree = result.worktree;
+              if (result.worktree) { row.worktree = result.worktree; row.cwd = result.worktree.path; }
               endTurnCommands(row); settleCommands(row);
             }, 'run.limitSwitch'); }
             catch { await next.rollback?.().catch(() => {}); break; }
@@ -710,7 +727,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
             if (next.routing) row.routing = next.routing;
           }, 'run.reroute'); }
           catch { await rollback({ sessionId: next.sessionId }).catch(() => {}); break; }
-          bySession.delete(previous); bySession.set(r.sessionId, r);
+          bySession.delete(previous); bySession.set(r.sessionId, r); runSessions.add(previous);
           // 交換で役目を終えた子の実行資材（ブラウザーのデーモンなど）を片付ける。会話そのものは失敗の経緯として残す
           try { ended(previous); } catch (e) { report({ event: 'unexpected', operation: 'reroute.ended', taskId: r.taskId, code: e?.code ?? null }); }
           result = await execute(structuredClone(r), prompt, controller.signal, {});
@@ -733,6 +750,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           activeInstructionIds = undefined; requeued = true;
           return;
         }
+        const endStatus = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (r.queue.length ? 'queued' : 'completed') : 'failed';
+        if (endStatus !== 'queued') result = await settleRunWorkspace(result);
         await record(r.taskId, row => {
           if (quitStops.has(r.taskId)) return;
           row.result = String(result?.text ?? ''); row.error = result?.error ?? null;
@@ -741,7 +760,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           // 子の worktree の、終わった時点の状態（ADR 0089。取り込まれていなければ完了通知に 1 行出る）
           if (result?.workspace) row.workspace = result.workspace; else delete row.workspace;
           // 追加の指示で再開した回に、片付いていた作業場所を作り直したとき
-          if (result?.worktree) row.worktree = result.worktree;
+          if (result?.worktree) { row.worktree = result.worktree; row.cwd = result.worktree.path; }
           for (const id of instructionIds) setInstruction(row, id, 'delivered');
           // 実行前に拒否されたコマンド。前の完了通知の後に走った回の分を足していく（通知の前に続けて走った回の分も落とさない）
           const got = Array.isArray(result?.rejections) ? result.rejections : [];
@@ -767,9 +786,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     } catch (e) {
       // 外から起きたターンが始まる前に投げた（子の会話が消えていたなど）: 行は起こす前のまま。ターンは external() が素のまま流す
       if (wake && !wake.started) unstarted = true;
-      else if (!halted()) await record(r.taskId, row => { if (quitStops.has(r.taskId)) return; row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row);
+      else if (!halted()) { await settleRunWorkspace(null); await record(r.taskId, row => { if (quitStops.has(r.taskId)) return; row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row);
         if (row.status !== 'cancelled' || row.stoppedBy) { runEvent(row, row.status, ''); eventWritten = true; }
-        endTurnCommands(row); settleCommands(row); }, 'run.error');
+        endTurnCommands(row); settleCommands(row); }, 'run.error'); }
     } finally {
       if (halted() || r.status === 'stopUnconfirmed' || r.status === 'interrupted') { live.delete(r.taskId); return; }
       // 外から起きたターンが始まらなかった: 起こす前の状態のまま手を離す（積まれた指示・前の回の通知は kick が拾う）
@@ -777,7 +796,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
       // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
       // 結果を書かずに止まった回（取り直しの途中・始まる前に止めた）も、止めた側が分かれば回の終わりの出来事を残す
-      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!eventWritten && row.stoppedBy) { runEvent(row, 'cancelled', ''); eventWritten = true; } if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.cancelled');
+      if (r.status === 'cancelling' || controller.signal.aborted) {
+        if (!(!requeued && r.status === 'queued' && r.queue.length)) await settleRunWorkspace(null);
+        await record(r.taskId, row => { if (!eventWritten && row.stoppedBy) { runEvent(row, 'cancelled', ''); eventWritten = true; } if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.cancelled');
+      }
       live.delete(r.taskId); settlingInstructions.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; resetNotice(row); }, 'run.queued');

@@ -1,6 +1,6 @@
 // bot のページの決まりごと（web/channels/bot-model.mjs。DOM に触れない）: どのモードでフォルダーを限れないか（計画 §7.2-2）・
 // 承認モードの選び直し・使用量の字・記憶の出どころの行き先・フォルダーの足し引き。
-import { foldersUnlimited, validMode, onlyMode, modeAfterBackend, tokensText, usageView, sourceView, shortDate, shortTime, learnStatusView, newDraft, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
+import { foldersUnlimited, validMode, onlyMode, modeAfterBackend, sourceView, shortDate, shortTime, learnStatusView, newDraft, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
 
 export const name = 'bot-page-model';
 export const title = 'bot のページ: 全部自動でフォルダーを限れないのは範囲 full だけ・承認モードの選び直し・使用量・出どころの行き先';
@@ -22,14 +22,6 @@ export default async function (t) {
   t.ok('語彙に無ければ default、無ければ先頭', validMode(CLAUDE, 'ask') === 'default' && validMode(CODEX, 'default') === 'ask' && validMode({}, 'x') === '');
   t.ok('バックエンドを替えても、同じ id があれば承認モードを保つ', modeAfterBackend(CODEX, 'ask') === 'ask' && modeAfterBackend(AGY, 'default') === 'yolo');
   t.ok('選べるモードが 1 つのバックエンドだけ onlyMode が返す（Antigravity）', onlyMode(AGY) === 'yolo' && onlyMode(CLAUDE) === null && onlyMode({}) === null);
-
-  t.ok('トークンの短い字', [tokensText(0), tokensText(980), tokensText(1500), tokensText(312000), tokensText(1420000), tokensText(2100000)].join(' ') === '0 980 1.5k 312k 1.42M 2.1M',
-    [tokensText(0), tokensText(980), tokensText(1500), tokensText(312000), tokensText(1420000), tokensText(2100000)].join(' '));
-  const u = usageView({ weekTokens: 1420000, cacheRatio: 0.94 });
-  t.ok('使用量: キャッシュ読み出しの割合', u.tokens === '1.42M' && u.cache === 94 && !u.warn && !u.empty);
-  t.ok('使用量: 9 割を切ったら注意', usageView({ weekTokens: 10, cacheRatio: 0.89 }).warn && !usageView({ weekTokens: 10, cacheRatio: 0.9 }).warn);
-  t.ok('使用量: 読み出しが無い（null）ときは割合を出さない・注意もしない', usageView({ weekTokens: 310000, cacheRatio: null }).cache === null && !usageView({ weekTokens: 5, cacheRatio: null }).warn);
-  t.ok('使用量: 無いときも壊れない', usageView(undefined).tokens === '0' && usageView(undefined).empty);
 
   const now = new Date(2026, 9, 3, 12).getTime();
   t.ok('日付: 今日は null、昨日までは M/D', shortDate(new Date(2026, 9, 3, 1).getTime(), now) === null && shortDate(new Date(2026, 9, 2, 23).getTime(), now) === '10/2');
