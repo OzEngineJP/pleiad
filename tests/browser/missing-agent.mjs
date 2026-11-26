@@ -577,13 +577,21 @@ try {
     check(s.errors.length === 0, 'ページの例外が無い', s.errors);
   }]);
 
-  scenes.push(['ボット作成のエージェント欄: 使えないエージェントは選べず、状態が出る・使えるものは選べる（ルーティン作成にはエージェント欄が無い）', async () => {
+  scenes.push(['bot のページのエージェント欄: 使えないエージェントは選べず、状態が出る・使えるものは選べる（作る 3 段とルーティン作成にはエージェント欄が無い）', async () => {
     // Claude は使える。Codex は未インストール、Antigravity は未ログイン
     const s = await scene({ login: true, sdk: 'local', backends: 'claude,codex,antigravity', env: { AGENT_HOST_AGY_BIN: installFakeAgy(path.join(scratch, 'agy-bot')) } });
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
     await settled(page);
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'new' } })));
+    // 作る 3 段はエージェントを既定のまま作る（ADR 0359）。画面と同じ WS で作ってから、その bot のページで確かめる
+    const botId = await page.evaluate(() => new Promise((resolve, reject) => {
+      const token = new URL(location.href).searchParams.get('token') ?? '';
+      const ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+      ws.onopen = () => ws.send(JSON.stringify({ kind: 'command', command: 'invoke', id: 'ma1', args: { op: 'bots.create', args: { name: 'Agent' } } }));
+      ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.kind !== 'response' || m.id !== 'ma1') return; ws.close(); m.ok ? resolve(m.result.id) : reject(new Error(String(m.error))); };
+      ws.onerror = () => reject(new Error('ws'));
+    }));
+    await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })), botId);
     await page.waitForSelector('#botView:not([hidden]) #botName', { timeout: 15_000 });
     await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent, null, { timeout: 15_000 });
     const before = await page.locator('#botModelChip').getAttribute('data-backend');

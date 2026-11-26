@@ -1,8 +1,8 @@
 // 画面のアカウントごとのモデル一覧・表示・選択（ADR 0329）:
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
-//   - web/channels/bot-page.mjs: 作成下書きの account 選択で語彙引き直し、作成時は setAccount → update(model/effort)、アカウント更新イベントで S.vocab 破棄。
-//     作成の後の段（アカウント・モデルの設定）で落ちたら、できた bot のページへ移して理由を出す（bot は消さない。最初の段で落ちたときは作る画面に留まる）
+//   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、アカウント更新イベントで S.vocab 破棄。
+//     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0359）
 //   - web/channels/thread-composer.mjs: host.vocab / host.efforts へ account を渡し、invalidateVocab() で取り直す
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
@@ -230,7 +230,7 @@ export default async function (t) {
       t.ok('delegation-routing-view: 結果行・省略理由・失敗内訳・やり直し候補で model(b, m, account) へ account を渡す', true);
     }
 
-    // ---- 3. bot-page.mjs: 作成下書きの account 切替で語彙を引き直し、保存時は setAccount → update の順
+    // ---- 3. bot-page.mjs: bot のページで account を替えると語彙を引き直し、モデルは bots.update で保存する。作るのは 3 段（ADR 0359）
     {
       const body = el('div');
       body.id = 'channelsBody';
@@ -240,9 +240,10 @@ export default async function (t) {
 
       const vocabCalls = [];
       const invokeOrder = [];
+      let row = { id: 'b_1', name: 'MythosBot', color: 2, backend: 'claude', account: '', model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
       const pageHost = {
         state: {
-          backend: 'claude', cwd: '/w', account: '', sessions: [],
+          backend: 'claude', backendId: 'claude', cwd: '/w', account: '', sessions: [],
           backends: [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token' } }],
         },
         vocab: async (backend, cwd, opts = {}) => {
@@ -272,26 +273,21 @@ export default async function (t) {
         askQuota: async () => null,
         invoke: async (op, args) => {
           invokeOrder.push([op, args]);
-          if (op === 'bots.list') return { bots: [] };
+          if (op === 'bots.list') return { bots: [row] };
           if (op === 'channels.list') return { channels: [] };
-          if (op === 'bots.get') return { id: 'b_new_1', name: 'MythosBot', icon: '', backend: 'claude', account: 'verified', model: 'claude-mythos-5-2', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
-          if (op === 'bots.create') return { id: 'b_new_1', name: args.name, icon: '', backend: 'claude', account: '', model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
-          if (op === 'bots.setAccount') return { id: 'b_new_1', name: 'MythosBot', icon: '', backend: 'claude', account: args.account, model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
-          if (op === 'bots.update') return { id: 'b_new_1', name: 'MythosBot', icon: '', backend: 'claude', account: 'verified', model: args.model ?? '', effort: args.effort ?? '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
+          if (op === 'bots.get') return { ...row };
+          if (op === 'bots.create') return { id: 'b_new_1', name: args.name, color: args.color, backend: args.backend, persona: args.persona ?? '', dmChannelId: 'c_dm_new', account: '', model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
+          if (op === 'bots.setAccount') { row = { ...row, account: args.account, model: '' }; return { ...row }; }
+          if (op === 'bots.update') { row = { ...row, ...args }; delete row.botId; return { ...row }; }
           return {};
         },
       };
 
       const page = createBotPage(pageHost);
-      page.show({ kind: 'bot', id: 'new' });
-      await tick();
-      await tick();
+      page.show({ kind: 'bot', id: 'b_1' });
+      for (let i = 0; i < 5; i++) await tick();
 
       const botView = body.querySelector('#botView');
-      const nameIn = botView.querySelector('#botName');
-      nameIn.value = 'MythosBot';
-      nameIn.dispatchEvent({ type: 'input' });
-
       // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す。
       // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、アカウントの行から一覧へ進む
       const popButton = (key) => botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
@@ -306,6 +302,7 @@ export default async function (t) {
       assert.ok(Boolean(acctBtn), 'bot ページのモデル面にアカウント選択行が出る');
       acctBtn.click();
       for (let i = 0; i < 5; i++) await tick();
+      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.setAccount' && a.account === 'verified'), JSON.stringify(invokeOrder));
       assert.ok(vocabCalls.some((c) => c.backend === 'claude' && c.account === 'verified'), JSON.stringify(vocabCalls));
 
       // アカウントを選ぶと上の段へ戻る。モデルの行から一覧へ進む
@@ -314,29 +311,18 @@ export default async function (t) {
       assert.ok(Boolean(mythosBtn), '承認のあるアカウントを選ぶと Mythos 5.2 が選択肢に出る');
       mythosBtn.click();
       for (let i = 0; i < 5; i++) await tick();
-
-      // 作成を押すと create(model なし) → setAccount('verified') → update(model: 'claude-mythos-5-2') の順
-      botView.querySelector('.bp-create').click();
-      for (let i = 0; i < 8; i++) await tick();
-      const seq = invokeOrder.filter(([op]) => op === 'bots.create' || op === 'bots.setAccount' || op === 'bots.update');
-      assert.equal(seq.length, 3, JSON.stringify(seq));
-      assert.equal(seq[0][0], 'bots.create');
-      assert.equal(seq[0][1].model, undefined);
-      assert.equal(seq[1][0], 'bots.setAccount');
-      assert.equal(seq[1][1].account, 'verified');
-      assert.equal(seq[2][0], 'bots.update');
-      assert.equal(seq[2][1].model, 'claude-mythos-5-2');
+      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.update' && a.model === 'claude-mythos-5-2'), JSON.stringify(invokeOrder));
 
       // アカウント更新イベントで S.vocab を捨て、再取得する
       const vBefore = vocabCalls.length;
       page.onEvent({ type: 'claudeAccountsChanged' });
       for (let i = 0; i < 5; i++) await tick();
       assert.ok(vocabCalls.length > vBefore, 'claudeAccountsChanged で語彙を引き直す');
-      t.ok('bot-page: 下書きの account ごとに語彙を引き直し、作成は setAccount の後に update で model を保存する', true);
+      t.ok('bot-page: account ごとに語彙を引き直し、account は setAccount・model は update で保存する', true);
 
-      // 作れたあとの段（アカウント・モデル）で落ちたとき: bot はもうあるので同じ名前では作り直せない。この画面に「作れませんでした」と留めず、
-      // できた bot の画面へ移して知らせる（消さない）。作る最初の段（bots.create）で落ちたときは、これまでどおり作る画面に留まる
-      const createWith = async (failAt) => {
+      // 作る 3 段: 名前 → 色 → 人格。エージェントは今の入力欄のもの、モデル・承認モードは既定。作ったら DM へ移る。
+      // bots.create で落ちたときは 3 段目に留まり、理由を出す
+      const createWith = async (fail) => {
         const body2 = el('div');
         body2.id = 'channelsBody';
         const title2 = el('div');
@@ -344,63 +330,59 @@ export default async function (t) {
         document.getElementById = (id) => ({ channelsBody: body2, channelsPageTitle: title2 })[id] ?? null;
         const calls = [];
         const shown = [];
-        const failing = {
+        const host2 = {
           ...pageHost,
           invoke: async (op, args) => {
-            calls.push(op);
-            if (op === failAt) throw new Error(`${op} failed`);
+            calls.push([op, args]);
+            if (fail && op === 'bots.create') throw new Error('bots.create failed');
             return pageHost.invoke(op, args);
           },
         };
-        const page2 = createBotPage(failing);
+        const page2 = createBotPage(host2);
         // 実際は web/channels/index.mjs が channels:show を聞いて、各部品の show を同期で呼ぶ。同じ順で聞く
         const onShow = (ev) => { shown.push(ev.detail); page2.show(ev.detail); };
         document.addEventListener('channels:show', onShow);
         try {
           page2.show({ kind: 'bot', id: 'new' });
-          await tick();
-          await tick();
+          for (let i = 0; i < 5; i++) await tick();
           const view = body2.querySelector('#botView');
-          view.querySelector('#botName').value = 'MythosBot';
-          view.querySelector('#botName').dispatchEvent({ type: 'input' });
-          view.querySelector('#botModelChip').click();
-          await tick();
-          await tick();
-          // 2 段の面: アカウントの行 → 一覧で選ぶ → 上の段へ戻る → モデルの行 → 一覧で選ぶ
-          const pick = (key) => view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
-          pick('nav:account').click();
-          await tick();
-          await tick();
-          pick('account:verified').click();
-          for (let i = 0; i < 5; i++) await tick();
-          pick('nav:model').click();
-          await tick();
-          await tick();
-          pick('model:claude-mythos-5-2').click();
-          for (let i = 0; i < 5; i++) await tick();
-          calls.length = 0;
+          const btn = (label) => view.querySelector('.bp-ob-actions').querySelectorAll('button').find((b) => b.textContent === label);
+          const nameIn = view.querySelector('#botObName');
+          assert.ok(Boolean(nameIn), '作る画面は 1 段目（名前）から');
+          assert.equal(btn(tr('channels:bot.onboard.next')).disabled, true, '名前が空のうちは次へ進めない');
+          nameIn.value = 'Kite';
+          nameIn.dispatchEvent({ type: 'input' });
+          assert.equal(btn(tr('channels:bot.onboard.next')).disabled, false);
+          btn(tr('channels:bot.onboard.next')).click();
+          // 2 段目: 8 色。今の bot（橙）の次の色（緑）が選ばれている。桃を選ぶ
+          const sw = view.querySelector('.bp-ob-step').querySelectorAll('.bp-swatch');
+          assert.equal(sw.length, 8);
+          assert.equal(sw.find((b) => b.getAttribute('aria-pressed') === 'true')?.dataset.color, '3', '作った順の次の色が選ばれている');
+          sw.find((b) => b.dataset.color === '4').click();
+          btn(tr('channels:bot.onboard.next')).click();
+          // 3 段目: 人格（空でもよい）
+          const area = view.querySelector('#botObPersona');
+          area.value = '短く答える';
+          area.dispatchEvent({ type: 'input' });
           view.querySelector('.bp-create').click();
-          for (let i = 0; i < 10; i++) await tick();
-          return { shown, view, error: view.querySelector('.bp-err'), writes: calls.filter((op) => /^bots\.(create|setMode|setAccount|update|delete)$/.test(op)) };
+          for (let i = 0; i < 8; i++) await tick();
+          return { shown, view, calls };
         } finally {
           document.removeEventListener('channels:show', onShow);
         }
       };
-      for (const failAt of ['bots.setAccount', 'bots.update']) {
-        const r = await createWith(failAt);
-        const want = failAt === 'bots.setAccount' ? ['bots.create', 'bots.setAccount'] : ['bots.create', 'bots.setAccount', 'bots.update'];
-        assert.deepEqual(r.writes, want, `${failAt}: ${JSON.stringify(r.writes)}`);
-        assert.deepEqual(r.shown, [{ kind: 'bot', id: 'b_new_1' }], `${failAt}: できた bot の画面へ移る ${JSON.stringify(r.shown)}`);
-        assert.equal(r.error.textContent, tr('channels:bot.createPartial', { error: `${failAt} failed` }), `${failAt}: 移った後に、作れたが一部が効かなかったと知らせる`);
-        assert.equal(r.error.hidden, false);
-        assert.equal(r.view.querySelector('.bp-create').hidden, true, `${failAt}: できた bot の画面では［作る］を出さない（もう一度押すと同じ名前で落ちる）`);
-      }
-      const early = await createWith('bots.create');
-      assert.deepEqual(early.writes, ['bots.create']);
-      assert.deepEqual(early.shown, [], '作る最初の段で落ちたときは移らない');
-      assert.equal(early.error.textContent, tr('channels:bot.createFailed', { error: 'bots.create failed' }));
-      assert.equal(early.view.querySelector('.bp-create').hidden, false, '作る画面に留まり、やり直せる');
-      t.ok('bot-page: 作れたあとの段（アカウント・モデル）で落ちたら、できた bot の画面へ移して知らせる（消さない）。最初の段で落ちたときは作る画面に留まる', true);
+      const ok = await createWith(false);
+      const made = ok.calls.filter(([op]) => /^bots\.(create|setMode|setAccount|update)$/.test(op));
+      assert.equal(made.length, 1, JSON.stringify(made));
+      assert.deepEqual(made[0], ['bots.create', { name: 'Kite', color: 4, backend: 'claude', persona: '短く答える' }]);
+      assert.deepEqual(ok.shown, [{ kind: 'channel', id: 'c_dm_new' }], '作ったら DM へ移る');
+      const bad = await createWith(true);
+      assert.deepEqual(bad.shown, [], '作れなかったときは移らない');
+      const obErr = bad.view.querySelector('.bp-ob').querySelector('.bp-err');
+      assert.equal(obErr.textContent, tr('channels:bot.createFailed', { error: 'bots.create failed' }));
+      assert.equal(obErr.hidden, false);
+      assert.ok(Boolean(bad.view.querySelector('.bp-create')), '3 段目に留まり、やり直せる');
+      t.ok('bot-page: 作る 3 段（名前 → 色 → 人格）で bots.create を 1 回呼び、DM へ移る。落ちたら 3 段目に留まる', true);
     }
 
     // ---- 4. thread-composer.mjs: vocab / efforts に account を渡し、invalidateVocab で引き直す
