@@ -4574,7 +4574,7 @@ async function consumeSendReservation(sessionId, snapshot) {
   const consumed = await store.consumeNextSettings(sessionId, next => Object.entries(next).every(([key, value]) => (
     key === 'cwd' && snapshot.cwd ? path.resolve(value) === path.resolve(snapshot.cwd) : value === snapshot[key]
   )));
-  if (consumed) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null });
+  if (consumed) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null, applied: true });
 }
 
 /** 今の設定と予約の違い。並びはエージェント → モデル → エフォート → 承認モード（帯と跡の行の並び） */
@@ -4671,7 +4671,7 @@ async function applyReservedNow(sessionId, { via = 'button', snapshot } = {}) {
       else await store.setSessionData(sessionId, 'nextSettings', null, { durable: true });
       if (want.model !== undefined) emitGlobal({ type: 'model', sessionId, model: want.model, by: 'human', live: true });
       if (want.mode !== undefined) emitGlobal({ type: 'mode', sessionId, mode: want.mode, by: 'human', live: true });
-      if (!snapshot) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null });
+      if (!snapshot) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null, applied: true });
       await recordSettingsChange(sessionId, changes, { live: true });
       return 'live';
     }
@@ -9161,6 +9161,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     await store.setMode(sessionId, permissionMode);
     await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
     if (reserved) {
+      // 予約はこの送信の設定として効いた（model・effort などは予約の値で送る）。applied: true で画面に効いた値として知らせる
       if (args?.settings) {
         await consumeSendReservation(sessionId, reserved);
         if (args.worktreeCwd) {
@@ -9169,7 +9170,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
         }
       } else {
         await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
-        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
+        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null, applied: true });
       }
       emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
       if (prior) {

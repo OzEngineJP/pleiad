@@ -337,6 +337,8 @@ const SUITES = [
   './unit/server-mode-next-turn.mjs',
   // 作業中の設定の変更: 予約・［今すぐ変える］（止めずに／止めて続ける）・送ったら適用・跡の行（ADR 0341）
   './unit/server-live-settings.mjs',
+  // 止まっている会話から送った予約: 一致すれば消え、違えば残り、書き込みと重なっても同じ値は残らない
+  './unit/server-send-reservation.mjs',
   // 予約したモデルは一覧が縮んでも backend へ届く。選ぶとき（setTurnSettings）の確かめは一度だけ取り直す
   './unit/server-reserved-model.mjs',
   './unit/server-send-model.mjs',
@@ -644,6 +646,8 @@ const SUITES = [
   './unit/work-stop.mjs',
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）
   './unit/composer-new-session.mjs',
+  // 止まっている会話から送った瞬間に、予約の帯（#nextSettings）が一瞬も出ない（client.mjs の nextSettings と paintSettingsNotice）
+  './unit/send-status-flash.mjs',
   // 圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く（client.mjs の userMessage・paintCompactions）
   './unit/compaction-boundary-position.mjs',
   './unit/server-groups.mjs',

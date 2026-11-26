@@ -3634,8 +3634,28 @@ function onEvent(ev, replay = false) {
       connAsked.clear(); renderAuth();
       try { channelsUi.connChanged(); } catch {}
       break;
-    case "nextSettings":
+    case "nextSettings": {
+      // 送った瞬間、サーバーは予約を消す知らせを「走っている」より先に流す。取り直しを待つと、その間だけ
+      // 「走っている、かつ行には古い予約」になり、止まっていた会話の帯が一瞬出る。知らせの値を先に行へ載せ、帯はここですぐ描く。
+      // 消す知らせではチップを描き直さない（行のモデルはまだ予約の前の値で、描き直すと選んだモデルが一瞬戻る）。
+      // 書く前に始まった取り直しが古い予約のまま届いても、settleNext が消した値を載せ直す。
+      const row = ev.sessionId ? state.sessions.find((s) => s.id === ev.sessionId) : null;
+      if (row && Object.hasOwn(ev, "nextSettings")) {
+        const previous = row.nextSettings;
+        row.nextSettings = ev.nextSettings;
+        settledNext.set(ev.sessionId, {
+          value: ev.nextSettings,
+          // サーバーが効かせて消した予約（applied: true）だけ、古い取り直しがチップを予約の前へ戻さないように行へ写す。
+          // 今の値に戻した・取り消しは applied を持たないので写さない（推測しない）
+          applied: ev.applied === true && ev.nextSettings == null ? previous : null,
+          worktreePending: typeof ev.worktreePending === "boolean" ? ev.worktreePending : row.worktreePending,
+          version: refreshVersion,
+        });
+      }
+      paintSettingsNotice();
+      if (ev.nextSettings) syncTopbar().catch(() => {});
       return refresh().then(() => { shellComposer.sync(); paintWorktreeLines(); });
+    }
     // エージェントの変更は会話に行を出さない（入力欄の「次のターンから」の行と引き継ぎの案内が持つ。ADR 0067）
     case "backend":
       return refresh().then(() => shellComposer.sync());
@@ -4739,7 +4759,7 @@ let cwdSaving = 0;   // 作業ディレクトリを保存している間、チ�
 // 書いている間に別の会話の変更などで取り直しが走っても、チップが前の選択へ戻らない（pendingChoice）
 const inflightNext = new Map();   // sessionId -> [{ patch }]（書く順）
 // 書けた予約と、そのときの取り直しの版。それ以前に始まった取り直しの写しは書く前の値を持つので、載せ直す（settleNext）
-const settledNext = new Map();    // sessionId -> { value, version }
+const settledNext = new Map();    // sessionId -> { value, applied?, worktreePending, version }
 function reserveSettings(patch, targetId = state.current) {
   const id = targetId;
   if (!id) return;
@@ -5050,10 +5070,21 @@ function settleNext(version) {
   for (const [id, entry] of settledNext) {
     if (version > entry.version) { settledNext.delete(id); continue; }
     const row = state.sessions.find((s) => s.id === id);
-    if (row) {
-      row.nextSettings = entry.value;
-      if (entry.worktreePending !== undefined) row.worktreePending = entry.worktreePending;
+    if (!row) continue;
+    // 送って消した予約を、書く前の取り直しが古い nextSettings のまま戻しても帯を出し直さない。
+    // チップの元（会話の行）も、その予約の値にしてから消す（予約の前のモデルへ戻さない）。取り消しは applied を持たない
+    if (entry.value == null && entry.applied) {
+      const applied = entry.applied;
+      if (applied.backend !== undefined) row.backend = applied.backend;
+      if (applied.model !== undefined) row.model = applied.model;
+      if (applied.effort !== undefined) row.effort = applied.effort;
+      if (applied.mode !== undefined) row.mode = applied.mode;
+      if (applied.cwd) row.cwd = applied.cwd;
+      if (applied.account !== undefined) row.claudeAccount = applied.account;
+      if (applied.endpoint !== undefined) row.compatEndpoint = applied.endpoint;
     }
+    row.nextSettings = entry.value;
+    if (entry.worktreePending !== undefined) row.worktreePending = entry.worktreePending;
   }
 }
 function composerSelection() {
