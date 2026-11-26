@@ -405,6 +405,15 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
       return out;
     },
 
+    /** 記憶 id の段・作業場所を最後に変えた記録の by（無ければ null）。夜の整理が、人が選んだ段を付け直さないために使う */
+    lastPlacedBy: (id) => {
+      for (let i = records.length - 1; i >= 0; i--) {
+        const r = records[i];
+        if (r.id === id && r.op === 'edit' && r.place) return r.by ?? null;
+      }
+      return null;
+    },
+
     /** 忘れる（墓石を残す）。無い id は null */
     forget: ({ id, by, via }) => serial(async () => {
       await ensureReady(); await syncNow();

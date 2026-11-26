@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { OpError, defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError, QUOTE_MIN } from '../memory/guard.mjs';
+import { LOOP_TEXT_MAX } from '../brain/answer.mjs';
 import { slashPath } from '../git-root.mjs';
 import { USER_LAYER, MEMORY_TIERS, WORKSPACE_MAX, oneLine } from '../memory/store.mjs';
 import { MEMORY_KINDS, MEMORY_STATUSES, WEIGHT_MIN, WEIGHT_MAX } from '../memory/strength.mjs';
@@ -47,7 +48,7 @@ const changesTags = (entry, args) => TAG_KEYS.some((key) => args[key] !== undefi
 
 const learnStatusOut = z.object({
   at: z.string(), enabled: z.boolean(), summaryEnabled: z.boolean(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
-  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
+  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
   skip: z.object({ reason: z.string(), count: z.number(), at: z.number() }).nullable(),
   failure: z.object({ message: z.string(), count: z.number(), at: z.number(), retryAt: z.number() }).nullable(),
   halted: z.object({ message: z.string(), at: z.number() }).nullable(),
@@ -128,6 +129,44 @@ const callCtx = async (ctx, who) => ({
   hasTodos: await hasTodoList(ctx, who.sessionId),
 });
 
+/**
+ * AI が約束を記憶に書こうとして断られた（MEMORY_REJECTED の promiseTodo / promiseLoop）とき、その約束を実際に置く（ADR 0359）。
+ * 会話に ToDo があれば ToDo へ、無ければ bot の気がかりへ（気がかりを持たない bot でない会話は、ToDo を作って足す）。
+ * 同じ文が開いたまま既にあれば足さない（言い直しで増やさない）。置けたら理由を promiseTodoAdded / promiseLoopAdded に付け替えた MemoryError を返す。
+ * 道具が無い・一覧が満杯・失敗のときは、元の断り（自分で置く案内）のまま返す。記憶には書かない。memory.edit と夜の整理は置かない（断るだけ）。
+ * 置き先の仕組みは todos.add（core/todos.mjs）と brain.loopAdd（core/brain/store.mjs の applyLoops）のものをそのまま使う（上限・押し出しもそちらの決まり）
+ */
+async function redirectPromise(ctx, who, err, text) {
+  if (!(err instanceof MemoryError) || err.code !== 'MEMORY_REJECTED' || !['promiseTodo', 'promiseLoop'].includes(err.reason) || !who.sessionId) return err;
+  const note = oneLine(String(text ?? '')).slice(0, LOOP_TEXT_MAX);
+  if (!note) return err;
+  const toTodo = async () => {
+    if (!ctx.todos?.add || !ctx.todos?.list) return null;
+    const scope = { kind: 'session', id: who.sessionId };
+    if (!ctx.todos.list(scope).items.some((item) => item.text === note && item.status !== 'done')) {
+      const backend = (await ctx.sessions?.get(who.sessionId).catch(() => null))?.row?.backend;
+      ctx.todos.add(scope, { entries: [{ text: note }], by: backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' } });
+    }
+    return 'promiseTodoAdded';
+  };
+  const toLoop = async () => {
+    if (!who.botId || !ctx.brain?.applyLoops) return null;
+    if (ctx.brain.loops(who.botId, 'open').some((loop) => loop.text === note)) return 'promiseLoopAdded';
+    const taint = (await ctx.botOfSession?.(who.sessionId))?.taint ?? null;
+    const { applied } = ctx.brain.applyLoops(who.botId, [{ op: 'add', text: note }], { taint });
+    if (!applied.length) return null;
+    for (const a of applied) ctx.brain.append(who.botId, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint });
+    return 'promiseLoopAdded';
+  };
+  for (const place of err.reason === 'promiseTodo' ? [toTodo, toLoop] : [toLoop, toTodo]) {
+    try {
+      const reason = await place();
+      if (reason) return new MemoryError('MEMORY_REJECTED', reason);
+    } catch { /* 置けなかった。次の置き先か、元の断り */ }
+  }
+  return err;
+}
+
 export const memoryOps = [
   defineOp({
     id: 'memory.list',
@@ -198,8 +237,14 @@ export const memoryOps = [
       if (who.botId && (await ctx.bots?.get({ botId: who.botId }).catch(() => null))?.plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the built-in agent has no memory' }));
       const layer = layerOf(ctx, who, args.layer);
       const call = await callCtx(ctx, who);
-      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
-        tier: args.tier, workspace: args.workspace }, who.author, call));
+      return guarded(ctx, async () => {
+        try {
+          return await ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
+            tier: args.tier, workspace: args.workspace }, who.author, call);
+        } catch (err) {
+          throw await redirectPromise(ctx, who, err, args.text);   // 約束は記憶に書かず、ToDo か気がかりへ置く
+        }
+      });
     },
   }),
 
@@ -280,7 +325,7 @@ export const memoryOps = [
     risk: 'write',
     riskReason: 'Starts one memory-organization turn on the chosen backend right now and clears a stopped state. It is explicit: the automatic switch off still skips it',
     input: z.object({}),
-    output: z.object({ read: z.number().optional(), changed: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
+    output: z.object({ read: z.number().optional(), changed: z.number().optional(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-now'] } },
     handler: async (ctx) => ctx.memoryLearner.learnNow(),
   }),

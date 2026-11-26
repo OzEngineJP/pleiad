@@ -50,6 +50,7 @@ export function learnStatusView(status, now = Date.now()) {
   if (status.running) parts.push({ key: 'running' });
   else if (status.lastRunAt && result) parts.push({ key: result.changed ? 'ran' : 'ranNone', params: { when: shortTime(result.at ?? status.lastRunAt, now), n: result.changed } });
   else if (!status.lastRunAt) parts.push({ key: 'never' });
+  if (result?.retiered) parts.push({ key: 'retiered', params: { n: result.retiered } });   // 段を付け直した数（夜の整理は増やすだけでなく選び直す。ADR 0359）
   if (result?.more) parts.push({ key: 'more' });
   if (result?.deferred) parts.push({ key: 'deferred', params: { n: result.deferred } });
   if (status.failure) parts.push({ key: 'failed', params: { error: status.failure.message } });

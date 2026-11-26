@@ -26,12 +26,14 @@
 //       … edit の workspace は null で外せる。tier・workspace だけの直しは updatedAt を進めない
 //       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す。無い id は MEMORY_NOT_FOUND
 //       … 約束（kind = promise）は人以外は書けない（write・直した結果が約束になる edit は MEMORY_REJECTED: promiseTodo / promiseLoop。ctx.hasTodos が真なら ToDo へ、
-//         偽なら気がかりへ置くよう返す。段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
+//         偽なら気がかりへ置くよう返す。service は断るだけで、実際に置くのは core/ops/memory.mjs の memory.write（redirectPromise）。
+//         段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
 //         （archiveLegacyPromises。AI なし・updatedAt 据え置き・記録に migration を残す・段を外しても再度は行わない）
-//   place({ id, tier?, workspace?, reason?, migration?, expect?, by? }): Promise<{ placed, entry?, reason? }>
+//   place({ id, tier?, workspace?, reason?, migration?, expect?, by?, unlessHumanPlaced? }): Promise<{ placed, entry?, reason? }>
 //       … コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。core/memory/learn.mjs の sortStart・sortUndo）。null・省略で外す。
 //         本文・出どころ・強さ・updatedAt には触れず、by は既定でシステム。expect（今の { tier?, workspace? }）を渡すと、今もそのままのときだけ直す（人が後から直した記憶を上書きしない）。
-//         返りの reason は notFound / changed / same。migration・reason は変更記録に残る
+//         unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人の記憶には触れない（夜の整理が使う）。
+//         返りの reason は notFound / changed / human / same。migration・reason は変更記録に残る
 //   archiveLegacyPromises(): Promise<string[]>・placements(migration): Promise<{ id, from, to }[]>
 //       … 前者は上の約束の移行を今すぐもう一度行う（何度でも同じ。一度きりの振り分けの最初に呼ぶ）。後者は一括移行が変えた段・作業場所の前後（取り消しの材料）
 //   rev(): number                                                 … log.jsonl の最後の rev
@@ -310,13 +312,15 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
      * コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。本文・出どころ・強さには触れず、updatedAt も進めない）。
      * tier・workspace は null か省略で外す。expect（{ tier?, workspace? }）を渡すと、今がその段・作業場所のままのときだけ直す
      * （振り分けの途中・後に人が直した記憶を上書きしないため）。by は既定でシステム。migration・reason は変更記録に残る。
-     * 返りは { placed: true, entry } か { placed: false, reason: 'notFound' | 'changed' | 'same' }
+     * unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人（画面の選び直し）の記憶には触れない（夜の整理が人の選んだ段を戻さないため）。
+     * 返りは { placed: true, entry } か { placed: false, reason: 'notFound' | 'changed' | 'human' | 'same' }
      */
-    async place({ id, tier, workspace, reason, migration, expect, by = { kind: 'system' } } = {}) {
+    async place({ id, tier, workspace, reason, migration, expect, by = { kind: 'system' }, unlessHumanPlaced = false } = {}) {
       await catchUp();
       const old = store.get(id);
       if (!old) return { placed: false, reason: 'notFound' };
       if (expect && ((old.tier ?? null) !== (expect.tier ?? null) || (old.workspace ?? null) !== (expect.workspace ?? null))) return { placed: false, reason: 'changed' };
+      if (unlessHumanPlaced && store.lastPlacedBy(id)?.kind === 'human') return { placed: false, reason: 'human' };
       if (tier != null && !isTier(tier)) throw rejected('tier');
       const place = workspace == null ? null : placeOf(workspace);
       if (tier === 'workspace' && !place) throw rejected('workspaceUnknown');

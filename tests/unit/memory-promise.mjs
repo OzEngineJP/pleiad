@@ -9,6 +9,8 @@ import { MemoryError } from '../../core/memory/guard.mjs';
 import { createMemoryService, PROMISE_ARCHIVE_MIGRATION } from '../../core/memory/service.mjs';
 import { createMemoryStore } from '../../core/memory/store.mjs';
 import { registry } from '../../core/ops/index.mjs';
+import { createTodos } from '../../core/todos.mjs';
+import { createBrainStore } from '../../core/brain/store.mjs';
 
 export const name = 'memory-promise';
 export const title = '約束は記憶に書かない・既存の約束は保存だけへ（AI なし・戻せる）・保存だけは配送・検索・夜の整理に出ない';
@@ -83,6 +85,59 @@ export default async function (t) {
     t.ok('ToDo の一覧が引けない会話も promiseLoop（気がかりへ）', noList.code === 'MEMORY_REJECTED' && /brain\.loopAdd/.test(noList.error ?? noList.message ?? JSON.stringify(noList)));
     t.ok('どれも保存されない', !svcOps.store.entries().some((e) => e.kind === 'promise'));
     t.ok('約束でない書き込みは ToDo の有無に関わらず通る', (await write('sbot-todo', { kind: 'stop', text: '本番は金曜に出さない' })).ok === true);
+
+    // ---- ops: 置き先の道具（ctx.todos.add・ctx.brain）があれば、断ったうえで ToDo か気がかりへ実際に置く（記憶には書かない）
+    const reasonOf = (r) => r.error ?? r.message ?? JSON.stringify(r);
+    const redirDir = path.join(root, 'redirect');
+    const todosReal = createTodos({ dataDir: redirDir });
+    const brainReal = createBrainStore({ dataDir: redirDir });
+    try {
+      const deps2 = { ...deps, todos: todosReal, brain: brainReal };
+      const invoke = (sessionId, op, args, d = deps2) => registry.invoke(agentP(sessionId), op, args, d);
+      const PROMISE = '週明けに連絡する約束';
+      const todoTexts = (id) => todosReal.list({ kind: 'session', id }).items.map((i) => i.text);
+      const loopTexts = (botId = BOT) => brainReal.loops(botId, 'open').map((l) => l.text);
+      todosReal.add({ kind: 'session', id: 'sbot-todo' }, { entries: [{ text: '見積もり' }], by: { kind: 'user' } });
+      const memoryBefore = svcOps.store.entries().length;
+
+      const toTodo = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
+      t.ok('memory.write: ToDo のある会話は、断ったうえで ToDo に実際に足す（理由は「ToDo に追加しました」）',
+        toTodo.code === 'MEMORY_REJECTED' && /ToDo に追加しました/.test(reasonOf(toTodo)) && todoTexts('sbot-todo').join() === `見積もり,${PROMISE}`, JSON.stringify([toTodo, todoTexts('sbot-todo')]));
+      const added = todosReal.list({ kind: 'session', id: 'sbot-todo' }).items[1];
+      t.ok('足した項目は未着手・書いた者は agent（todos.add と同じ形）。気がかりには足さない', added.status === 'todo' && added.by?.kind === 'agent' && loopTexts().length === 0);
+      await invoke('sbot-todo', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
+      t.ok('言い直しても同じ ToDo は増えない', todoTexts('sbot-todo').length === 2);
+
+      const toLoop = await invoke('sbot-none', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
+      t.ok('memory.write: ToDo の無い bot の会話は、気がかりに実際に置く（理由は「気がかりに置きました」）。ToDo は作らない',
+        toLoop.code === 'MEMORY_REJECTED' && /気がかりに置きました/.test(reasonOf(toLoop)) && loopTexts().join() === PROMISE && todoTexts('sbot-none').length === 0, JSON.stringify([toLoop, loopTexts()]));
+      t.ok('気がかりを足したことが流れ（stream）にも 1 行残る', brainReal.list(BOT, {}).some((r) => r.kind === 'loop' && r.text.includes(PROMISE)));
+      await invoke('sbot-none', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
+      t.ok('言い直しても同じ気がかりは増えない', loopTexts().length === 1);
+
+      const toAgentTodo = await invoke('sx-agent', 'memory.write', { layer: 'user', text: PROMISE, sources: grounds, kind: 'promise' });
+      t.ok('bot でない AI の会話（気がかりが無い）は、ToDo を作って足す', toAgentTodo.code === 'MEMORY_REJECTED' && /ToDo に追加しました/.test(reasonOf(toAgentTodo)) && todoTexts('sx-agent').join() === PROMISE
+        && loopTexts().length === 1);
+
+      // 置けないときは、元の断り（自分で置く案内）のまま
+      const failing = { list: todosReal.list, add: () => { throw new Error('boom'); } };
+      const fallbackLoop = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: '別の約束です、ToDo に入らないとき', sources: grounds, kind: 'promise' }, { ...deps2, todos: failing });
+      t.ok('ToDo へ足せないときは bot なら気がかりへ置く', /気がかりに置きました/.test(reasonOf(fallbackLoop)) && loopTexts().includes('別の約束です、ToDo に入らないとき'));
+      const noPlace = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: '置き先が無いときの約束です', sources: grounds, kind: 'promise' }, { ...deps, todos: failing });
+      t.ok('どこにも置けないときは元の案内（todos.add）のまま断る。何も足さない', noPlace.code === 'MEMORY_REJECTED' && /todos\.add/.test(reasonOf(noPlace)) && !/追加しました|置きました/.test(reasonOf(noPlace))
+        && !todoTexts('sbot-todo').includes('置き先が無いときの約束です') && !loopTexts().includes('置き先が無いときの約束です'));
+
+      // 約束でない書き込み・edit・保存は置かない
+      const stopIn = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: '本番は土日に出さない', sources: grounds, kind: 'stop' });
+      const stopEntry = svcOps.store.entries().find((e) => e.text === '本番は土日に出さない');
+      const editTo = await invoke('sbot-todo', 'memory.edit', { id: stopEntry.id, kind: 'promise' });
+      t.ok('約束でない書き込みは ToDo にも気がかりにも足さない。edit で約束にする直しは断るだけで置かない（記憶も約束にならない）',
+        stopIn.ok === true && editTo.code === 'MEMORY_REJECTED' && todoTexts('sbot-todo').length === 2 && loopTexts().length === 2 && svcOps.store.get(stopEntry.id).kind === 'stop');
+      t.ok('約束はどの経路でも記憶に保存されない（約束でない 2 件だけ増えた）', svcOps.store.entries().length === memoryBefore + 1 && !svcOps.store.entries().some((e) => e.kind === 'promise'));
+    } finally {
+      todosReal.close();
+      brainReal.close();
+    }
     svcOps.stop();
 
     // ---- 既存の約束の一括移行（起動の最初の読み込みで 1 度。AI なし・updatedAt 据え置き・記録・戻せる・再起動で増えない）

@@ -32,6 +32,8 @@ export default async function (t) {
   t.ok('整理: まだ走っていない・次の予定', keys(learnStatusView({ lastRunAt: null, lastResult: null, nextAt: now + 3600000, paused: false }, now)) === 'never,next');
   const ran = learnStatusView({ lastRunAt: now - 3600000, lastResult: { at: now - 3600000, read: 4, changed: 3, deferred: 1 }, nextAt: now + 86400000, paused: false }, now);
   t.ok('整理: 覚えた件数・後に回した会話・次の予定（目立たせない）', keys(ran) === 'ran,deferred,next' && ran.parts[0].params.n === 3 && ran.parts[0].params.when === '11:00' && !ran.warn, JSON.stringify(ran));
+  const retiered = learnStatusView({ lastRunAt: now - 3600000, lastResult: { at: now - 3600000, read: 4, changed: 0, retiered: 7 }, nextAt: null, paused: false }, now);
+  t.ok('整理: 段を変えた件数（覚えた件数が無くても出す）', keys(retiered) === 'ran,retiered' || keys(retiered) === 'ranNone,retiered', JSON.stringify(retiered));
   t.ok('整理: 何も覚えなかった回', keys(learnStatusView({ lastRunAt: now, lastResult: { at: now, read: 0, changed: 0 }, nextAt: null, paused: false }, now)) === 'ranNone');
   const bad = learnStatusView({ lastRunAt: null, lastResult: null, nextAt: now, paused: false, failure: { message: 'down', count: 1 }, skip: { reason: 'failed', count: 2 } }, now);
   t.ok('整理: 失敗と飛ばした回数（理由）は目立たせる', keys(bad) === 'never,failed,skipped,next' && bad.warn && bad.parts[2].params.reasonKey === 'failed');

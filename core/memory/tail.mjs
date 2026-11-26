@@ -126,6 +126,16 @@ export function fitEntries(entries, { max, perItem, total }) {
 }
 
 /**
+ * 段の付いた記憶の並び順（核の写しと夜の整理の候補の選び方が共有する。重み・薄れは使わない）:
+ * 人が書いた・直したもの → やめたこと（kind = stop）→ 新しく更新した順 → 新しく書いた順 → id
+ */
+export const tieredOrder = (a, b) => {
+  const human = (e) => (e.by?.kind === 'human' || e.origBy?.kind === 'human' ? 0 : 1);
+  const stop = (e) => (e.kind === 'stop' ? 0 : 1);
+  return (human(a) - human(b)) || (stop(a) - stop(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at) || (a.id < b.id ? -1 : 1);
+};
+
+/**
  * 段の付いた記憶を核の写しに入れる（記憶 段階2）。段の無い記憶は従来の強さの仕組み（pickCore）のまま残し、
  * 段の付いた記憶には重み・薄れを使わない。上限を超えたときは、人が書いた・直したもの → やめたこと → 新しく更新した順。
  * 「保存だけ」は返さない。「この作業場所で」は workspace が今の作業場所と同じものだけ。合わないものは入りきらなかった数に入れない。
@@ -136,13 +146,10 @@ export function pickTieredCore(userEntries, botEntries, { workspace = null, now 
   const untiered = (list) => list.filter((e) => !e.tier);
   const legacy = pickCore(untiered(userEntries), untiered(botEntries), { layerTokens, now });
   const all = [...userEntries, ...botEntries].filter((e) => e.tier);
-  const human = (e) => (e.by?.kind === 'human' || e.origBy?.kind === 'human' ? 0 : 1);
-  const stop = (e) => (e.kind === 'stop' ? 0 : 1);
-  const order = (a, b) => (human(a) - human(b)) || (stop(a) - stop(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at) || (a.id < b.id ? -1 : 1);
   const take = (list, budget) => {
     const picked = [];
     let used = 0;
-    for (const e of [...list].sort(order)) {
+    for (const e of [...list].sort(tieredOrder)) {
       const cost = estimateTokens(e.text) + 3;
       if (used + cost > budget) continue;
       picked.push(e);

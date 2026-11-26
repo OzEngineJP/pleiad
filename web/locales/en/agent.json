@@ -1956,7 +1956,7 @@
         "limit": "How many to return (max 8, default 5)."
       },
       "write": {
-        "summary": "Write one line to memory (300 characters max). Quote a human's words as the grounds (sources). URLs, commands, instruction-like text and anything a human had forgotten are refused.",
+        "summary": "Write one line to memory (300 characters max). Quote a human's words as the grounds (sources). URLs, commands, instruction-like text and anything a human had forgotten are refused. Promises (kind: promise) and work progress are not written to memory; they are put in the conversation's to-do list (or the bot's concerns when it has none).",
         "layer": "Layer: user (about the user, shared by every bot) or your own layer (self or a bot id).",
         "text": "What to remember: one line, a factual note (300 characters max).",
         "why": "Why it is worth remembering (optional).",
@@ -1998,7 +1998,7 @@
         "summary": "When the automatic memory organizer last ran, its result and the next run, and how many times and why it did not run (also reports enabled, episode summaries, running, failure and halted)."
       },
       "learnNow": {
-        "summary": "Run the automatic memory organizer once now (also clears a halted state to retry. Does nothing while automatic organization is off)."
+        "summary": "Run the automatic memory organizer once now (adds new memories and re-selects the tier of existing ones. Also clears a halted state to retry. Does nothing while automatic organization is off)."
       },
       "sortStatus": {
         "summary": "Return the state of the one-time memory sort (status, memories still without a tier, how many were processed, counts per tier, failures). It never returns memory text."
@@ -2110,6 +2110,8 @@
       "workspaceUnknown": "The workspace cannot be decided. This conversation's folder is not a git repository, so pass workspace or use the always or archive tier.",
       "promiseTodo": "Promises and work progress are not written to memory. This conversation has a to-do list, so add it there (todos.add).",
       "promiseLoop": "Promises and work progress are not written to memory. This conversation has no to-do list, so put it in your concerns (brain.loopAdd).",
+      "promiseTodoAdded": "Promises and work progress are not written to memory. It was added to this conversation's to-do list instead (no need to add it again).",
+      "promiseLoopAdded": "Promises and work progress are not written to memory. It was put in this bot's concerns instead (no need to add it again).",
       "layer": "You cannot write to this layer (user or your own).",
       "notFound": "That memory, post or message was not found.",
       "quote": "The quote does not appear in the actual words.",

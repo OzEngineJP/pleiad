@@ -11,6 +11,11 @@
 // runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
 //   予定の分の実行には数えず、lastRunAt を進めない）。省くと全部（予定の分の実行）。
 //
+// 夜の整理は「増やす」から「選び直す」へ（ADR 0359 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、保存だけ・約束を除いた
+//   「いつも」と、読む会話の作業場所の記憶・段の無い記憶だけを（記憶の分 12,000 トークン・1 回の入力は約 40,000 トークンまで）AI へ渡す。重みは選ぶにも段にも使わない。
+//   AI は新しい記憶に加えて、渡した記憶の段の付け直し候補（tiers）を返せる。段・作業場所を決めて付けるのはコード（1 回の実行で 20 件まで。人が書いた記憶・約束・人が選んだ段は付け直さない）。
+//   同じ文・忘れた記憶かどうかは、渡した分ではなく全件（保存だけ・忘れた記憶を含む）を見る memory.write がコードで調べる。付け直しは変更記録に migration（nightly:<日付>）と理由が残る。
+//
 // 一度きりの振り分け（ADR 0359 段階 2 の単位 4。部品は core/memory/sort.mjs）: 人が設定 › 記憶の［振り分けを始める］（memory.sortStart）を押したときだけ走る。
 //   自動整理が OFF でも始められ、アプリの起動・夜の整理からは始まらない。夜の整理の停止（halted）・失敗の数とは別に数える。
 //   最初に既存の約束を保存だけにする移行（memory.archiveLegacyPromises。何度でも同じ）を行い、段の無い記憶を 50 件・約 8000 トークンずつ内部呼出し（kind = sort）へ渡す。
@@ -31,6 +36,8 @@ import { canonicalWorkspace } from '../git-root.mjs';
 import { MemoryError } from './guard.mjs';
 import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 import { SORT_BATCH_ITEMS, sortItemOf, sortBatchOf, sortPrompt, parseSortAnswer, workspaceOfSources, decideTier } from './sort.mjs';
+import { NIGHTLY_TIER_CHANGES, nightlyItemOf, nightlyMemoryBudget, selectNightlyCandidates, parseTierChanges, decideNightlyTier } from './nightly.mjs';
+import { estimateTokens } from '../../web/token-estimate.mjs';
 
 export const LEARNER_ID = 'b_learner';
 export const DEFAULT_LEARN_AT = '02:00';
@@ -90,7 +97,7 @@ const genOf = (p) => (autoLearnAllowed(p) ? timeOf(p?.memoryLearnFrom) : null);
 const clip = (text) => { const a = [...String(text ?? '')]; return a.length > STATEMENT_CHARS ? `${a.slice(0, STATEMENT_CHARS).join('')}…` : a.join(''); };
 /** ms の時刻（数・ISO の文字列）。読めなければ 0 */
 const timeOf = (value) => { const n = typeof value === 'number' ? value : Date.parse(value ?? ''); return Number.isFinite(n) ? n : 0; };
-// status: 最後の結果 lastResult { at, read, changed, deferred, scoped? }・その日の予定を飛ばした印 skip { due, reason, count, at }
+// status: 最後の結果 lastResult { at, read, changed, retiered（段を付け直した数）, deferred, scoped? }・その日の予定を飛ばした印 skip { due, reason, count, at }
 // （count は予定の回の数。同じ回を毎分数えない）・失敗 failure { at, message, count, retryAt }。成功で skip と failure を消す
 const emptyStatus = () => ({ lastResult: null, skip: null, failure: null, halted: null });
 const emptyState = () => ({ version: 1, cursor: { sessions: {}, posts: {} }, lastRunAt: 0, status: emptyStatus() });
@@ -115,13 +122,17 @@ function parseLearnerJson(text) {
 /** OFF・世代の替わりで打ち切った実行をあらわす印。中止を失敗や停止（halted）へ変えないために、失敗の種類とは別の印で投げる */
 const stopped = () => Object.assign(new Error('learner stopped'), { stopped: true });
 
+/** 夜の整理の返りを読む。memories は必須、tiers（渡した記憶の段の付け直し）は無くてもよい */
 function parseAnswer(raw) {
   const text = String(raw ?? '').trim();
   const body = text.startsWith('```') ? text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '') : text;
   const parsed = parseLearnerJson(body);
   if (!Array.isArray(parsed?.memories)) throw new Error('learner returned no memories array');
-  return parsed.memories;
+  return { memories: parsed.memories, tiers: parsed.tiers };
 }
+
+/** 付け直しの変更記録に残す名前（その日の夜の整理。記録から前後を辿って戻せる） */
+const nightlyMigration = (at) => `nightly:${new Date(at).toISOString().slice(0, 10)}`;
 
 export function createMemoryLearner({ dataDir, channels, bots, memory, host, clock, readPrefs = () => host.store.getPrefs(),
   listSessions = null, readMessages = null, ask = null, now = () => clock.now(), cwdOf = null, workspaceOf = canonicalWorkspace } = {}) {
@@ -188,6 +199,23 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
 
   /** 走っているターンの会話か（host.sessionBusy。無ければ走っていない扱い） */
   const sessionRunning = (id) => Boolean(host.sessionBusy?.(id));
+
+  /** 会話の cwd と記憶の出どころから正規の作業場所を決める（同じ cwd で git を何度も呼ばない。振り分けと夜の整理が使う）。決められなければ null */
+  function placeResolver() {
+    const places = new Map();
+    const cwdOfSession = cwdOf ?? (async (id) => (await host.store.get(id))?.cwd ?? null);
+    const ofCwd = async (cwd) => {
+      if (!places.has(cwd)) places.set(cwd, await Promise.resolve(workspaceOf(cwd)).catch(() => null));
+      return places.get(cwd);
+    };
+    return {
+      ofSession: async (id) => {
+        const cwd = await Promise.resolve(cwdOfSession(id)).catch(() => null);
+        return typeof cwd === 'string' && cwd ? ofCwd(cwd) : null;
+      },
+      ofEntry: async (entry) => entry.workspace || workspaceOfSources(entry.sources, { cwdOf: cwdOfSession, workspaceOf: ofCwd }),
+    };
+  }
 
   async function collect(scope = null) {
     const items = [];
@@ -371,17 +399,64 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return changed;
   }
 
-  async function process(items, prefs, mayWrite) {
-    const existing = (await memory.list()).filter((e) => e.tier !== 'archive');   // 保存だけの記憶は AI へ渡さない（ADR 0359）
-    const prompt = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"stop|decision|share|pref|note","weight":1,"status":"open|done","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
+  /**
+   * 夜の整理の段の付け直し（AI の返りの tiers）を、コードが決めて適用する。sent は AI へ渡した記憶（それ以外の id は捨てる）。
+   * 1 回の実行（budget.left。束をまたいで共有）で付け直せるのは NIGHTLY_TIER_CHANGES 件まで。人が書いた記憶・人が選んだ段・約束は付け直さない
+   * （decideNightlyTier・memory.place の unlessHumanPlaced）。変更記録に migration（nightly:<日付>）と理由が残るので、記録から前後を辿って戻せる
+   */
+  async function applyTierChanges(raw, sent, budget, mayWrite, resolver) {
+    const by = { kind: 'bot', botId: LEARNER_ID };
+    let retiered = 0;
+    for (const change of parseTierChanges(raw, sent.map((e) => e.id))) {
+      if (budget.left <= 0) break;
+      const entry = sent.find((e) => e.id === change.id);
+      const workspace = change.tier === 'workspace' && !entry.workspace ? await resolver.ofEntry(entry) : null;
+      const decided = decideNightlyTier(change, entry, workspace);
+      if (decided.skip) continue;
+      if (!(await mayWrite())) break;
+      try {
+        const done = await memory.place({ id: entry.id, tier: decided.tier, workspace: decided.workspace, reason: decided.reason, migration: nightlyMigration(now()), by,
+          unlessHumanPlaced: true, expect: { tier: entry.tier ?? null, workspace: entry.workspace ?? null } });
+        if (done.placed) { retiered++; budget.left--; }
+      } catch (e) {
+        if (!(e instanceof MemoryError)) throw e;
+        log('tier change rejected:', e.code ?? e.message);
+      }
+    }
+    return retiered;
+  }
+
+  /**
+   * 夜の整理の 1 束（ADR 0359 段階 2 の単位 5。選び方は core/memory/nightly.mjs）。既存の記憶は全件ではなく、選んだ分だけを AI へ渡す
+   * （保存だけ・約束は渡さない。「いつも」と、読む会話の作業場所の記憶・段の無い記憶。1 回の入力が約 40,000 トークンに収まる分）。
+   * 返りの memories は新しい記憶・書き換え（従来どおり）、tiers は渡した記憶の段の付け直し。同じ文・忘れた記憶かどうかは全件を見る memory.write が調べる。
+   * 返りは { changed（書いた記憶の数）, retiered（段を付け直した数） }
+   */
+  async function process(items, prefs, mayWrite, tierBudget = { left: NIGHTLY_TIER_CHANGES }) {
+    const resolver = placeResolver();
+    const workspaces = [];
+    for (const id of new Set(items.map((item) => item.sessionId).filter(Boolean))) {
+      const place = await resolver.ofSession(id);
+      if (place && !workspaces.includes(place)) workspaces.push(place);
+    }
+    const layers = ['user', ...new Set(items.flatMap((item) => [item.botId, ...(item.botIds ?? [])]).filter(Boolean))];
+    const tierRule = tierBudget.left > 0
+      ? `You may also re-select the tier of the existing memories shown: add "tiers":[{"id":"existing memory id","tier":"always|workspace|archive","reason":"under 80 characters"}] to the JSON. always = useful in every conversation; workspace = useful only in the workspace it was made in; archive = outdated, resolved or superseded, kept only for search. A memory with tier null is not sorted yet. Change a tier only with a clear reason, never for a human-written memory, and return at most ${tierBudget.left} tier changes. Do not choose a workspace; the code decides it.\n`
+      : '';
+    const head = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"stop|decision|share|pref|note","weight":1,"status":"open|done","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
       `Remember durable preferences, rules, corrections and reasons for decisions. Do not remember promises, tasks, deadlines or work progress; when you find them, do nothing. Return at most ${CANDIDATES_PER_CALL} memories, the most durable ones. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
-      `Give each memory a kind: stop (something the human told us to stop or not to do again), decision (an agreed choice and its reason), share (who does what), pref (a preference or correction), note (anything else). Never use kind promise. When a statement repeats an existing memory, edit that memory (when AI-written) instead of adding a new one.\n` +
-      `Existing memories: ${JSON.stringify(existing.map((e) => ({ id: e.id, layer: e.layer, text: e.text, by: e.by, origBy: e.origBy, kind: e.kind, weight: e.weight, status: e.status })))}\n` +
-      `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item, text: clip(item.text) })))}\n</pleiad-memory-learn>`;
-    if (!(await mayWrite())) return 0;   // memory.list の await 中に OFF/停止/世代替わりがあり得るので、ask の直前に確かめ直す
+      `Give each memory a kind: stop (something the human told us to stop or not to do again), decision (an agreed choice and its reason), share (who does what), pref (a preference or correction), note (anything else). Never use kind promise. When a statement repeats an existing memory, edit that memory (when AI-written) instead of adding a new one. The existing memories shown are a selection, not all of them; archived memories and promises are not shown.\n` +
+      tierRule;
+    const statements = `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item, text: clip(item.text) })))}\n</pleiad-memory-learn>`;
+    // 記憶の分は、指示と人の発言の分を引いた残り（12,000 トークンまで）。全件ではなく、選んだ分だけを渡す
+    const picked = selectNightlyCandidates(await memory.list(), { workspaces, layers, budget: nightlyMemoryBudget(estimateTokens(head + statements)) });
+    const prompt = `${head}Existing memories: ${JSON.stringify(picked.entries.map(nightlyItemOf))}\n${statements}`;
+    if (!(await mayWrite())) return { changed: 0, retiered: 0 };   // memory.list の await 中に OFF/停止/世代替わりがあり得るので、ask の直前に確かめ直す
     const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, mayWrite);
-    const candidates = parseAnswer(typeof response === 'string' ? response : response.text);
-    return writeCandidates(candidates, items, response, existing, null, mayWrite);
+    const answer = parseAnswer(typeof response === 'string' ? response : response.text);
+    const changed = await writeCandidates(answer.memories, items, response, picked.entries, null, mayWrite);
+    const retiered = tierBudget.left > 0 && picked.entries.length ? await applyTierChanges(answer.tiers, picked.entries, tierBudget, mayWrite, resolver) : 0;
+    return { changed, retiered };
   }
 
   /** 静かになったスレッド: 要約と、その bot に長く残す記憶を同じ安いモデルの 1 ターンで作る。 */
@@ -466,8 +541,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       if (state.status.halted) return { skipped: 'halted' };   // scoped・エピソードの自動経路もここを通るので、停止ラッチはここでも止める（解除は learnNow・再有効化だけ）
       // 予定の回の lastRunAt は始めた時刻（走っている間に更新された会話・後へ回した会話を、次の回で読み落とさない）
       const startedAt = now();
-      let read = 0, changed = 0, calls = 0, more = false, stopped = false;
+      let read = 0, changed = 0, retiered = 0, calls = 0, more = false, stopped = false;
       const deferred = new Set();
+      const tierBudget = { left: NIGHTLY_TIER_CHANGES };   // 段の付け直しは 1 回の実行（束をまたいで）20 件まで
       try {
         for (;;) {
           const batch = await collect(scope);
@@ -475,7 +551,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
           // OFF にされた直後（または OFF→ON で世代が替わった後）の AI 呼び出し・記憶の書き込みへは進まない
           if (batch.items.length) {
             if (!(await mayWrite(gen))) { stopped = true; break; }
-            changed += await process(batch.items, prefs, () => mayWrite(gen));
+            const done = await process(batch.items, prefs, () => mayWrite(gen), tierBudget);
+            changed += done.changed;
+            retiered += done.retiered;
             // 処理の途中で別経路が停止を記録していれば、続きの束・書き込みへは進まない（印も残す）
             if (state.status.halted) { stopped = true; break; }
           }
@@ -493,14 +571,14 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
           throw e;
         }
       }
-      const result = { at: now(), read, changed, deferred: deferred.size, ...(more ? { more: true } : {}), ...(stopped ? { stopped: state.status.halted ? 'halted' : 'off' } : {}), ...(scope ? { scoped: true } : {}) };
+      const result = { at: now(), read, changed, retiered, deferred: deferred.size, ...(more ? { more: true } : {}), ...(stopped ? { stopped: state.status.halted ? 'halted' : 'off' } : {}), ...(scope ? { scoped: true } : {}) };
       if (!scope) state.lastRunAt = startedAt;
       // halted はラッチ（明示解除まで戻さない）。実行中にエピソード側が記録した停止・失敗（一時エラーの回数・retryAt）を、この成功で消さない
       state.status = { lastResult: result, skip: scope ? state.status.skip : null,
         failure: state.status.failure === failureAtStart ? null : state.status.failure,
         halted: state.status.halted ?? null };
       await save();
-      return { read, changed, deferred: deferred.size, ...(more ? { more: true } : {}) };
+      return { read, changed, retiered, deferred: deferred.size, ...(more ? { more: true } : {}) };
     })().finally(() => { running = null; });
     return running;
   }
@@ -630,13 +708,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     let record = sortRead();
     const persist = (patch = {}) => sortSave(record = { ...record, ...patch, updatedAt: now() });
     const attempted = new Set();      // この回で問い合わせた id（答えが無かった・失敗した記憶を、同じ回で何度も送らない）
-    const cwdPlaces = new Map();      // cwd → 正規の作業場所（git を何度も呼ばない）
-    const cwdOfSession = cwdOf ?? (async (id) => (await host.store.get(id))?.cwd ?? null);
-    const placeOfCwd = async (cwd) => {
-      if (!cwdPlaces.has(cwd)) cwdPlaces.set(cwd, await Promise.resolve(workspaceOf(cwd)).catch(() => null));
-      return cwdPlaces.get(cwd);
-    };
-    const workspaceFor = async (entry) => entry.workspace || workspaceOfSources(entry.sources, { cwdOf: cwdOfSession, workspaceOf: placeOfCwd });
+    const workspaceFor = placeResolver().ofEntry;
     let streak = 0;
     try {
       await memory.archiveLegacyPromises();   // 約束は AI へ渡さず、先にコードで保存だけにする（何度行っても同じ）
