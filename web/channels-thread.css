@@ -84,7 +84,7 @@
 }
 /* 広げた可視化は、投稿の中の提示の幅（100%・margin 0）を外して左右へ伸ばす（style.css の .visualize-widened と同じ値） */
 .post-presents .present-visualization.visualize-widened{width:auto;max-width:none;margin-left:var(--widen-l,-4px);margin-right:var(--widen-r,-4px)}
-.th-rdiv{display:flex;align-items:center;gap:8px;margin:2px 10px 0;font-size:var(--fs-xs);color:var(--ink-weak)}
+.th-rdiv{display:flex;align-items:center;gap:8px;margin:2px 10px 0;font-size:var(--fs-meta);color:var(--ink-weak)}
 .th-rdiv:empty{display:none}
 .ch-thread .post-tool.reply{display:none}
 /* 「編集済み」は進捗を同じ投稿で書き換えるので出さない（作業中・あなた待ちの行は返事の場所に出す） */
@@ -102,7 +102,7 @@
 .th-tools{margin:4px 0 2px}
 /* 作業ログ（ADR 0117）: 返事の下に畳む。独り言・終わりの報告の文と道具の行 */
 .th-worklog{margin:6px 0 2px;min-width:0}
-.th-worklog-head{display:inline-flex;align-items:center;gap:6px;margin-left:-8px;padding:2px 10px 2px 8px;border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer;list-style:none;user-select:none}
+.th-worklog-head{display:inline-flex;align-items:center;gap:6px;margin-left:-8px;padding:2px 10px 2px 8px;border-radius:var(--r-pill);font-size:var(--fs-meta);color:var(--ink-weak);cursor:pointer;list-style:none;user-select:none}
 .th-worklog-head::-webkit-details-marker{display:none}
 .th-worklog-head::before{content:'\203A';display:inline-block;transition:transform var(--dur-fast) var(--ease-out)}
 .th-worklog[open]>.th-worklog-head::before{transform:rotate(90deg)}
@@ -117,7 +117,7 @@
 .post-presents .present{width:100%;max-width:100%;min-width:0;margin:0}
 .post-presents .present-image .present-body>img{width:100%;height:360px;object-fit:contain}
 .post-body ul.ck{list-style:none;margin:8px 0 2px;padding:10px 12px;background:var(--surface-1);border-radius:var(--r-m);display:flex;flex-direction:column;gap:3px}
-.post:hover .post-body ul.ck{background:var(--surface-paper)}
+@media (hover:hover){.post:hover .post-body ul.ck{background:var(--surface-paper)}}
 /* 書きかけの流し（ADR 0367）: 保存の前の分を本文の続きとして出す。届いた分は 120ms（--dur-fast）で浮かび上がる。動きを減らす設定では出すだけ */
 .post-tail{overflow-wrap:anywhere;line-height:1.6;font-size:var(--fs);white-space:pre-wrap;min-width:0}
 .post-tail[hidden]{display:none}
@@ -157,9 +157,12 @@
   .th-chan{margin-left:0;padding:0;align-self:flex-start;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-meta);font-weight:400;line-height:20px}
   .th-browser,.th-entries .th-todo,.th-entries .vc-call,.th-top .th-wand{display:none}
   .th-more{display:inline-flex}
-  .th-log,.th-frame > .th-log{padding:2px 22px 10px 6px}
-  .th-sys{margin-left:44px}
-  .th-perms{--gut:44px}
+  .th-log,.th-frame > .th-log{padding:2px 18px 10px 24px}
+  .th-rdiv{margin:0 0 10px}
+  .th-worklog{margin-top:8px}
+  .post-tail{font-size:var(--fs-body);line-height:1.7}
+  .th-sys,.th-shell-where,.th-branch-from{margin-left:0}
+  .th-perms{--gut:24px;margin-left:-24px}
   .th-subs{margin:0 10px 2px}
   .deck[data-deck=solo] .th-side{display:inline-flex}   /* 形・位置・印は全部の ≡ で同じ（style.css の .side-opener） */
 }

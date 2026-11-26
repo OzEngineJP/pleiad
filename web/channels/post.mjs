@@ -367,9 +367,12 @@ export function fillPost(root, post, ctx) {
     body.hidden = true;
   } else if (info.kind === 'human') {
     // あなたの投稿は Chats の自分の発言と同じ描き方（添付をその位置に・長ければ畳む。原文は dataset.raw。web/user-message.mjs）
+    body.classList.add('body');
     paintUserBody(body, post.text ?? '', (post.attachments ?? []).map(presentOf));
     highlightMentions(body, (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name)), (post.mentions ?? []).map((m) => ctx.bots.get(m)));
   } else {
+    // 通常の会話の Markdown（style.css の .body）に揃える（承認済み 2026-11-27）。システム行（.post.sys）は小さい字のまま
+    if (info.kind !== 'system') body.classList.add('body');
     body.innerHTML = post.attachments?.length
       ? attachedBodyHtml(post.text ?? '', post.attachments, (s) => ctx.host.renderAssistantMarkdown(s))
       : ctx.host.renderAssistantMarkdown(post.text ?? '');
