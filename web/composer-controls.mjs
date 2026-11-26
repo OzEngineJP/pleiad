@@ -743,7 +743,8 @@ function subView(ctx) {
       return wrap(title, [
         plist(opts.map((o) => optRow({ key: o.key, sel: o.key === sel, ic: o.warn ? glyph(...WARN) : null, name: o.label, note: o.note, two: Boolean(o.note), warn: o.warn,
           tag: o.isDefault ? DEFAULT_TAG() : "", meta: o.kind === "account" ? weekMeta(o.usage) : null, title: o.title,
-          disabledReason: o.kind === "account" && o.key !== sel ? ctx.blocked?.("account", o.value) : null,
+          // 選べない理由（設定 › 委譲の候補の面だけが渡す。確認に失敗した互換の接続先・同じ候補。ADR 0361）
+          disabledReason: o.key !== sel && !o.gone ? ctx.blocked?.(o.kind, o.value) : null,
           onPick: () => ctx.pick("conn", () => choose(o)) })), title),
         ep?.row && ep.lost ? pnote(t("composer.endpoint.lost", { items: ep.lost })) : null,
         manage ? plist([linkRow({ key: "epmanage", ic: glyph(PLUG), text: t("composer.endpoint.manage"), onClick: () => { ctx.hide(false); manage(); } })]) : null,
@@ -859,9 +860,11 @@ function compatModelView(ctx) {
   // メイン → 今のモデル → 一覧の順
   const cands = modelCandidates(ep.row.models ?? [], ep.row.modelInfo ?? {}, [main, cur]);
   const roleOf = (id) => ep.roleNames.filter(([k]) => ep.row.roles?.[k] === id && k !== "main").map(([, n]) => n).join("・");
+  // 選べない理由（委譲の候補の「同じ候補がこのレベルにある」。入力欄は blocked を渡さない）
+  const blocked = (id) => id === cur ? null : ctx.blocked?.("model", id);
   const commit = (id) => {
     const v = String(id ?? "").trim();
-    if (!v) return;
+    if (!v || blocked(v)) return;
     const next = v === main ? "" : v;
     ctx.pick("model", () => { if (next !== (d.model ?? "")) ctx.on.model(next); });
   };
@@ -870,7 +873,7 @@ function compatModelView(ctx) {
     const q = String(ctx.st.q ?? "").trim().toLowerCase();
     const { shown, more } = searchModels(cands, q);
     const rows = shown.map((c) => optRow({ key: `model:${c.id}`, sel: c.id === cur, name: c.text, note: c.sub, title: c.id, tag: c.id === main ? DEFAULT_TAG() : "",
-      meta: roleOf(c.id) ? el("span", "meta", roleOf(c.id)) : null, badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null, onPick: () => commit(c.id) }));
+      meta: roleOf(c.id) ? el("span", "meta", roleOf(c.id)) : null, badge: c.oneM ? { text: "1M", title: ONE_M_TITLE } : null, disabledReason: blocked(c.id), onPick: () => commit(c.id) }));
     const parts = rows.length ? [plist(rows, t("composer.model.candidates"))] : [pnote(q ? t("composer.model.notListed") : t("composer.model.noList"))];
     if (more > 0) parts.push(pnote(moreText(more)));
     box.replaceChildren(...parts);

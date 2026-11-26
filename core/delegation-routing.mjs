@@ -92,13 +92,25 @@ export function parseCandidate(id) {
   if (mark < 0) return { backend: head, model, account: null };
   const account = head.slice(mark + 1);
   if (mark === 0 || !ACCOUNT_ID.test(account)) return null;
+  // 互換の接続先（ADR 0361）。`@` の後ろが ep- で始まれば接続先の id（アカウントの id は acct-…）。
+  // 古い版はこれを登録の無いアカウントとして no_account で飛ばす（レベルを既定に戻さない）
+  if (isEndpointRef(account)) return { backend: head.slice(0, mark), model, account: null, endpoint: account };
   return { backend: head.slice(0, mark), model, account };
 }
 
-/** 候補の id を組む。account が ''・null（ログイン中・アカウントを持たない）なら `backend:model` */
-export function candidateId(backend, model, account = null) {
-  return account ? `${backend}@${account}:${model}` : `${backend}:${model}`;
+/** 互換の接続先の id か（core/compat-endpoints.mjs の ep-<16 進>。ADR 0361） */
+export const isEndpointRef = s => typeof s === 'string' && s.startsWith('ep-');
+
+/**
+ * 候補の id を組む。account が ''・null（ログイン中・アカウントを持たない）なら `backend:model`。
+ * endpoint（互換の接続先の id）を渡せば `backend@<接続先>:model`（account は見ない。ADR 0361）
+ */
+export function candidateId(backend, model, account = null, endpoint = null) {
+  const scope = endpoint || account;
+  return scope ? `${backend}@${scope}:${model}` : `${backend}:${model}`;
 }
+/** 振り分けの target（{ backend, model, account, endpoint? }）の候補の id */
+export const targetCandidate = target => candidateId(target.backend, target.model, target.account || null, target.endpoint || null);
 
 /** 設定の levels の順（弱い → 強い）。読み替えに使う */
 export const levelOrder = settings => (settings?.levels ?? DEFAULTS.levels).map(l => l.id);
@@ -115,7 +127,17 @@ export function tierAccounts(settings, backend) {
   const out = new Set();
   for (const list of Object.values(settings?.tiers ?? {})) for (const c of list) {
     const parsed = parseCandidate(c);
-    if (parsed?.backend === backend) out.add(parsed.account ?? '');
+    if (parsed?.backend === backend && !parsed.endpoint) out.add(parsed.account ?? '');
+  }
+  return out;
+}
+
+/** レベルに入っている互換の接続先の id（Set。ADR 0361） */
+export function tierEndpoints(settings, backend = null) {
+  const out = new Set();
+  for (const list of Object.values(settings?.tiers ?? {})) for (const c of list) {
+    const parsed = parseCandidate(c);
+    if (parsed?.endpoint && (backend == null || parsed.backend === backend)) out.add(parsed.endpoint);
   }
   return out;
 }
@@ -460,12 +482,15 @@ export function sameIdentity(a, b) {
  * blocked(backend, model, account) は、上限で再試行を待っている・上限で止まったばかりの枠（ADR 0229）。
  *   { reason: 'retry_waiting' | 'recently_limited', until? }（until は戻る見込みの時刻 ms）を返せば、その枠は使えない
  */
-export function checkCandidate(candidate, { usage, settings, now, blocked = () => null }) {
+export function checkCandidate(candidate, { usage, settings, now, blocked = () => null, endpoints = [] }) {
   const parsed = parseCandidate(candidate);
   const entry = parsed ? usage?.[parsed.backend] : null;
+  // 互換の接続先の候補は公式の使用量を使わない（ADR 0361）。使用量をまだ一度も取っていない（取り置きが空）ときも接続先の状態で決める。
+  // 止めるのは、エージェントが入っていない・無効と分かっているときだけ
+  if (parsed?.endpoint && (entry?.available || (!entry && !Object.keys(usage ?? {}).length))) return checkEndpoint(parsed, { endpoints, blocked });
   // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
   if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}),
-    ...(parsed?.account ? { account: parsed.account } : {}) };
+    ...(parsed?.account ? { account: parsed.account } : {}), ...(parsed?.endpoint ? endpointOf(parsed, endpoints) : {}) };
   const checkedAt = entry.checkedAt ?? null;
   const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
   // アカウントを登録したエージェント（ADR 0222）: 候補のアカウントの行だけ
@@ -488,6 +513,31 @@ export function checkCandidate(candidate, { usage, settings, now, blocked = () =
     ...(check.deferred ? { avoidPercent: settings.avoidPercent, maxUsed: maxUsage(windows, now), weeklyRate: weeklyPace(windows, now) } : {}),
     ...(check.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
 }
+
+/**
+ * 互換の接続先の状態（checkCandidate の endpoints）。{ id, agent, name, state: 'ready' | 'check_failed' | 'key_unreadable' }。
+ * 返すのは { account: null, endpoint, endpointLabel }（登録に無い・別のエージェントの接続先なら endpointLabel は null）
+ */
+const endpointRow = (parsed, endpoints) => (endpoints ?? []).find(e => e.id === parsed.endpoint && e.agent === parsed.backend) ?? null;
+function endpointOf(parsed, endpoints) {
+  return { account: null, endpoint: parsed.endpoint, endpointLabel: endpointRow(parsed, endpoints)?.name ?? null };
+}
+/**
+ * 互換の接続先の候補（ADR 0361）。使用量は読めないので、使用量では後回しにしない（使える）。
+ * 飛ばすのは、登録に無い・別のエージェントの接続先（no_endpoint）、確認に失敗した（check_failed）、キーを読めない（key_unreadable）、
+ * 直近に 429 を返した（blocked の枠のアカウントは endpoint:<id>）ときだけ
+ */
+function checkEndpoint(parsed, { endpoints, blocked }) {
+  const base = { ...endpointOf(parsed, endpoints), checkedAt: null };
+  const row = endpointRow(parsed, endpoints);
+  if (!row) return { ok: false, reason: 'unavailable', detail: 'no_endpoint', ...base };
+  if (row.state === 'check_failed' || row.state === 'key_unreadable') return { ok: false, reason: 'unavailable', detail: row.state, ...base };
+  const held = blocked(parsed.backend, parsed.model, endpointSlot(parsed.endpoint));
+  if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), ...base };
+  return { ok: true, ...base };
+}
+/** 互換の接続先の枠のアカウント（core/slot-limits.mjs の鍵。公式のアカウントの id と重ならない） */
+export const endpointSlot = id => `endpoint:${id}`;
 
 /** 登録したアカウントの 1 行を見る（checkCandidate・pickAccount）。行ごとの取得時刻が古ければ、枠より先にそれで後回しにする */
 function assessRow(backend, model, row, { checkedAt, policy, settings, now, blocked }) {
@@ -525,10 +575,13 @@ export function pickAccount({ backend, model = null, accounts, usage, settings, 
 }
 
 /** 振り分けの記録（ply_delegate の返り値の routing。タスクと子会話のメタデータにも同じ形で残す） */
-export function pinnedRouting({ kind, backend, model = null, account = null, accountLabel = null }) {
+export function pinnedRouting({ kind, backend, model = null, account = null, accountLabel = null, endpoint = null, endpointLabel = null }) {
   return { mode: 'pinned', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
-    target: { backend, model: model ?? null, account: account ?? null, ...(accountLabel ? { accountLabel } : {}) }, skipped: [], usageAt: null, fallback: null };
+    target: { backend, model: model ?? null, account: account ?? null, ...(accountLabel ? { accountLabel } : {}), ...endpointFields({ endpoint, endpointLabel }) },
+    skipped: [], usageAt: null, fallback: null };
 }
+/** target・飛ばした行の接続先の欄（互換の接続先のときだけ。ADR 0361） */
+const endpointFields = c => c?.endpoint ? { endpoint: c.endpoint, ...(c.endpointLabel ? { endpointLabel: c.endpointLabel } : {}) } : {};
 
 // ---- 子の思考の強さ（ADR 0164） -----------------------------------------------------
 
@@ -569,12 +622,12 @@ export function effortTierFor({ settings, candidate, preferred = null }) {
 export function manualRouting({ kind, candidate, check, of, from, effortTier = null }) {
   const { backend, model } = parseCandidate(candidate);
   return { mode: 'manual', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
-    target: { backend, model, account: check.account ?? null, ...(check.accountLabel ? { accountLabel: check.accountLabel } : {}) }, skipped: [],
+    target: { backend, model, account: check.account ?? null, ...(check.accountLabel ? { accountLabel: check.accountLabel } : {}), ...endpointFields(check) }, skipped: [],
     usageAt: check.checkedAt == null ? null : new Date(check.checkedAt).toISOString(), fallback: null,
     ...(check.windows ? { targetWindows: check.windows } : {}),
     ...(effortTier ? { effortTier } : {}),
     ...(check.deferred ? { selectedWithLowHeadroom: { reason: check.reason, ...(check.window ? { window: check.window } : {}), avoidPercent: check.avoidPercent } } : {}),
-    retry: { of, from: from ? { backend: from.backend ?? null, model: from.model ?? null, account: from.account ?? null } : null, by: 'user' } };
+    retry: { of, from: from ? { backend: from.backend ?? null, model: from.model ?? null, account: from.account ?? null, ...(from.endpoint ? { endpoint: from.endpoint } : {}) } : null, by: 'user' } };
 }
 
 /**
@@ -585,7 +638,7 @@ export function manualRouting({ kind, candidate, check, of, from, effortTier = n
  * 選べれば { ok: true, routing }、全部だめなら { ok: false, routing }（target は null）。
  * usageAt は選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）
  */
-export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {}, blocked }) {
+export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {}, blocked, endpoints = [] }) {
   const difficulty = judged.signals ? difficultyOf(judged.signals) : 'mid';
   const order = levelOrder(settings);
   const kindName = kindAt(settings, kind)?.name || null;
@@ -603,7 +656,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       difficulty, baseTier: base, ...(baseInfo ? { baseTierName: baseInfo.name, baseTierIndex: baseInfo.index } : {}),
       tier: target?.tier ?? null, ...(targetInfo ? { tierName: targetInfo.name, tierIndex: targetInfo.index } : {}),
       target: target ? { backend: target.backend, model: target.model, account: target.account,
-        ...(target.accountLabel ? { accountLabel: target.accountLabel } : {}) } : null,
+        ...(target.accountLabel ? { accountLabel: target.accountLabel } : {}), ...endpointFields(target) } : null,
       // 選んだ候補に効いた枠の今の使用率（委譲カードの内訳に出す。飛ばした候補は skipped[].window）
       ...(target?.windows ? { targetWindows: target.windows } : {}),
       ...(target?.deferred ? { selectedWithLowHeadroom: { reason: target.reason,
@@ -612,14 +665,15 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   };
   const soft = [];
   // アカウントを持つ候補（アカウントを書いた候補・登録のあるエージェントの候補）は、飛ばした行にアカウントを添える
-  const scopedOf = parsed => Boolean(parsed) && (parsed.account != null || Array.isArray(usage?.[parsed.backend]?.accounts));
+  // 互換の接続先の候補は、アカウントの代わりに接続先を添える（ADR 0361）
+  const scopedOf = parsed => Boolean(parsed) && !parsed.endpoint && (parsed.account != null || Array.isArray(usage?.[parsed.backend]?.accounts));
   const inspect = (tier, chooseSoft) => {
     const localSoft = [];
     for (const candidate of settings.tiers[tier] ?? []) {
       const parsed = parseCandidate(candidate);
-      const assessed = checkCandidate(candidate, { usage, settings, now, blocked });
+      const assessed = checkCandidate(candidate, { usage, settings, now, blocked, endpoints });
       const check = Object.hasOwn(rejected, candidate) ? { ok: false, reason: rejected[candidate], checkedAt: assessed.checkedAt,
-        account: assessed.account, accountLabel: assessed.accountLabel ?? null } : assessed;
+        account: assessed.account, accountLabel: assessed.accountLabel ?? null, ...endpointFields(assessed) } : assessed;
       if (check.checkedAt != null) seen.push(check.checkedAt);
       if (check.ok && !check.deferred) return { tier, backend: parsed.backend, model: parsed.model, ...check };
       if (check.deferred) localSoft.push({ tier, candidate, check });
@@ -627,6 +681,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       const level = info(tier);
       skipped.push({ candidate, tier, ...(level ? { tierName: level.name, tierIndex: level.index } : {}),
         ...(scoped ? { account: check.account ?? parsed.account ?? '', accountLabel: check.accountLabel ?? null } : {}),
+        ...(parsed?.endpoint ? { endpoint: parsed.endpoint, endpointLabel: check.endpointLabel ?? null } : {}),
         reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.until ? { until: iso(check.until) } : {}), ...(check.window ? { window: check.window } : {}),
         ...(scoped && check.windows?.length ? { windows: check.windows } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
@@ -667,12 +722,19 @@ const modelKnownInUsage = (entry, parsed) => {
  * アカウントを持つ候補（scoped: アカウントを書いた候補・アカウントを登録したエージェントの候補）は、そのアカウントの行の使用量だけ
  * （account・accountLabel。ログイン中は ''）
  */
-export function candidateStates({ settings, usage, now = Date.now(), blocked }) {
+export function candidateStates({ settings, usage, now = Date.now(), blocked, endpoints = [] }) {
   const order = levelOrder(settings);
   const ids = [...new Set(order.flatMap(level => settings.tiers[level] ?? []))];
   return ids.map(candidate => {
     const parsed = parseCandidate(candidate);
-    const check = checkCandidate(candidate, { usage, settings, now, blocked });
+    const check = checkCandidate(candidate, { usage, settings, now, blocked, endpoints });
+    // 互換の接続先の候補（ADR 0361）: 使用量は読めない（windows は空）。画面は「使用量は読めない」と出す
+    if (parsed?.endpoint) {
+      return { candidate, backend: parsed.backend, model: parsed.model, account: null, endpoint: parsed.endpoint, endpointLabel: check.endpointLabel ?? null,
+        tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
+        usable: check.ok, deferred: false, reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
+        ...(check.until ? { until: new Date(check.until).toISOString() } : {}), checkedAt: null, windows: [] };
+    }
     const entry = parsed ? usage?.[parsed.backend] : null;
     const scoped = Boolean(parsed) && (parsed.account != null || Array.isArray(entry?.accounts));
     const row = scoped ? entry?.accounts?.find(a => a.account === (parsed.account ?? '')) ?? null : null;
@@ -695,7 +757,8 @@ export function formatSkippedCandidates(skipped) {
   // until は上限で止まった枠の戻る見込み（ISO。Issue #111）。依頼元が「いつ頼み直せるか」を読めるように残す
   const reasonLine = s => `${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}${s.until ? ` until ${s.until}` : ''}`;
   return skipped.map(s => {
-    const label = s.account === undefined ? '' : ` [${String(s.accountLabel || (s.account === '' ? 'login' : 'account')).replace(/[\]\r\n]/g, ' ')}]`;
+    const label = s.endpoint ? ` [${String(s.endpointLabel || s.endpoint).replace(/[\]\r\n]/g, ' ')}]`
+      : s.account === undefined ? '' : ` [${String(s.accountLabel || (s.account === '' ? 'login' : 'account')).replace(/[\]\r\n]/g, ' ')}]`;
     return `- ${s.candidate}${label} (${s.tier}): ${reasonLine(s)}`;
   }).join('\n');
 }
@@ -710,6 +773,8 @@ export function settingsWarnings({ settings, usage }) {
   for (const candidate of [...new Set(Object.values(settings.tiers ?? {}).flat())]) {
     const parsed = parseCandidate(candidate);
     const entry = usage?.[parsed.backend];
+    // 互換の接続先の候補は、エージェントが使えるかだけ（接続先の状態は候補の行に出す。モデルは接続先が決める。ADR 0361）
+    if (parsed.endpoint) { if (!entry?.available) out.push({ candidate, reason: 'unavailable' }); continue; }
     const missingAccount = Array.isArray(entry?.accounts) ? !entry.accounts.some(a => a.account === (parsed.account ?? '')) : Boolean(parsed.account);
     if (!entry?.available) out.push({ candidate, reason: 'unavailable' });
     else if (missingAccount) out.push({ candidate, reason: 'no_account' });

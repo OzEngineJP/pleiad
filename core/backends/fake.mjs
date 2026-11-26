@@ -182,6 +182,18 @@ function subagentsOf(sessionId) {
   try { return (JSON.parse(fs.readFileSync(process.env.AGENT_HOST_FAKE_SUBAGENTS ?? "", "utf8"))[sessionId] ?? []).map((a) => ({ messages: [], ...a })); } catch { return own ?? []; }
 }
 
+// AGENT_HOST_FAKE_NATIVE_SESSIONS=<JSON のファイル> … [{ sessionId, cwd?, title?, tag?, lastModified? }]。起動時に読み、
+// Pleiad の記録（sidecar）の無いネイティブの会話として置く（会話の側の tag。上位 limit 件に入らない古い会話の状態の検査用。
+// tests/unit/server-status-rename-all.mjs）
+try {
+  for (const row of JSON.parse(fs.readFileSync(process.env.AGENT_HOST_FAKE_NATIVE_SESSIONS ?? '', 'utf8'))) {
+    if (!row?.sessionId) continue;
+    const at = row.lastModified ?? now();
+    sessions.set(row.sessionId, { sessionId: row.sessionId, title: row.title ?? null, cwd: row.cwd ?? null, createdAt: new Date(at).toISOString(),
+      lastModified: at, tag: row.tag ?? null, messages: [], subagents: [] });
+  }
+} catch { /* 指定が無い・読めないときは置かない */ }
+
 function ensure(sessionId, cwd) {
   let s = sessions.get(sessionId);
   if (!s) {

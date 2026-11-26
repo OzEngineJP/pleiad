@@ -2,7 +2,7 @@
 // 自動選択のモデルは偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
 import { buildAgyModels } from '../../core/backends/antigravity-models.mjs';
 import { effortCapability } from '../../core/effort.mjs';
-import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, candidateId,
+import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, tierEndpoints, targetCandidate, endpointSlot, candidateId,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm, REFRESH_MS, STALE_MS, WARM_MS } from '../../core/delegation-usage.mjs';
@@ -777,6 +777,50 @@ export default async function (t) {
   const manual = manualRouting({ kind: 'implement', candidate: 'claude:sonnet', check: { ok: true, account: '', checkedAt: NOW }, of: 'ply-task-x', from: null, effortTier: 't3' });
   t.ok('人が選び直した記録は強さを引く段を持つ（段が無ければ付けない）', manual.effortTier === 't3'
     && !('effortTier' in manualRouting({ kind: 'implement', candidate: 'claude:sonnet', check: { ok: true, account: '', checkedAt: NOW }, of: 'ply-task-x', from: null })));
+
+  // ---- 互換の接続先の候補（ADR 0361）
+  {
+  const EP = 'ep-0123456789ab';
+  const epCand = `codex@${EP}:vendor/fake-large`;
+  const epParsed = parseCandidate(epCand);
+  t.ok('互換の候補を読む: backend@ep-…:model は endpoint を持ち、account は null', epParsed?.backend === 'codex' && epParsed.model === 'vendor/fake-large' && epParsed.account === null && epParsed.endpoint === EP);
+  t.ok('候補の id に戻せる（endpoint が account より先。モデルの : はそのまま）', candidateId('codex', 'vendor/fake-large', 'acct-x', EP) === epCand
+    && parseCandidate(`codex@${EP}:qwen3:32b`)?.model === 'qwen3:32b' && targetCandidate({ backend: 'codex', model: 'vendor/fake-large', account: '', endpoint: EP }) === epCand);
+  t.ok('アカウントの候補は今までどおり（endpoint を持たない）', parseCandidate('claude@acct-oz:opus')?.account === 'acct-oz' && !('endpoint' in parseCandidate('claude@acct-oz:opus')));
+  const epSettings = normalizeSettings({ tiers: { t1: [epCand, 'codex:gpt-6-luna'], t2: ['claude:sonnet', `claude@${EP}:glm-5`] } });
+  t.ok('互換の候補を段に保存できる。段のアカウントには数えず、段の接続先に数える', epSettings.tiers.t1[0] === epCand && !tierAccounts(epSettings, 'codex').has(EP)
+    && [...tierEndpoints(epSettings)].join() === EP && tierEndpoints(epSettings, 'fake').size === 0);
+  t.ok('既定のレベルに互換の候補を入れない', !Object.values(normalizeSettings({}).tiers).flat().some(c => parseCandidate(c)?.endpoint));
+  const ready = [{ id: EP, agent: 'codex', name: 'OpenRouter', state: 'ready' }];
+  const epCheck = (endpoints, { usage = S1, blocked } = {}) => checkCandidate(epCand, { usage, settings: epSettings, now: NOW, endpoints, ...(blocked ? { blocked } : {}) });
+  const okEp = epCheck(ready);
+  t.ok('使える互換の候補: 使用量は読めないが後回しにしない（ok・deferred 無し）。接続先の名前を持つ', okEp.ok === true && !okEp.deferred && okEp.endpoint === EP && okEp.endpointLabel === 'OpenRouter' && okEp.account === null);
+  t.ok('公式の使用量がまだ空でも、互換の候補は接続先の状態で決める', epCheck(ready, { usage: {} }).ok === true);
+  t.ok('エージェントが入っていない（available: false）なら使えない', epCheck(ready, { usage: { ...S1, codex: { ...S1.codex, available: false } } }).detail === 'not_installed');
+  t.ok('飛ばす 1: 登録に無い接続先（no_endpoint）', epCheck([]).ok === false && epCheck([]).detail === 'no_endpoint');
+  t.ok('飛ばす 2: 別のエージェントの接続先も登録に無いのと同じ', epCheck([{ ...ready[0], agent: 'claude' }]).detail === 'no_endpoint');
+  t.ok('飛ばす 3: 確認に失敗（check_failed）', epCheck([{ ...ready[0], state: 'check_failed' }]).detail === 'check_failed');
+  t.ok('飛ばす 4: キーを読めない（key_unreadable）', epCheck([{ ...ready[0], state: 'key_unreadable' }]).detail === 'key_unreadable');
+  const slots = [];
+  const held = epCheck(ready, { blocked: (b, m, a) => { slots.push([b, m, a].join('|')); return a === `endpoint:${EP}` ? { reason: 'recently_limited', until: NOW + HOUR } : null; } });
+  t.ok('飛ばす 5: 直近の 429（接続先の枠 endpoint:<id> を引く）', held.ok === false && held.reason === 'recently_limited' && held.until === NOW + HOUR && slots.join() === `codex|vendor/fake-large|endpoint:${EP}`, JSON.stringify({ held, slots }));
+  const order = (tiers, endpoints = ready) => route({ kind: 'trivial', judged: { judge: 'none', signals: null }, settings: normalizeSettings({ tiers }), usage: S1, now: NOW, endpoints });
+  const first = order({ t1: [epCand, 'codex:gpt-6-luna'] });
+  t.ok('レベルの中では人の並べた順（互換が先なら互換）', first.ok && first.routing.target.endpoint === EP && first.routing.target.endpointLabel === 'OpenRouter' && first.routing.target.account === null, JSON.stringify(first.routing.target));
+  const second = order({ t1: ['codex:gpt-6-luna', epCand] });
+  t.ok('公式が先なら公式（互換を先に回さない）', second.ok && second.routing.target.model === 'gpt-6-luna' && !second.routing.target.endpoint);
+  const skippedEp = order({ t1: [epCand, 'codex:gpt-6-luna'] }, [{ ...ready[0], state: 'check_failed' }]);
+  const skip = skippedEp.routing.skipped.find(s => s.candidate === epCand);
+  t.ok('確認に失敗した互換の候補を飛ばして次へ。飛ばした行に接続先と理由', skippedEp.ok && skippedEp.routing.target.model === 'gpt-6-luna' && skip?.endpoint === EP && skip.detail === 'check_failed', JSON.stringify(skippedEp.routing.skipped));
+  const text = formatSkippedCandidates(skippedEp.routing.skipped);
+  t.ok('飛ばした候補の行は接続先の名前を [] に入れる', text.includes(`${epCand} [OpenRouter]`) || text.includes('[OpenRouter]'), text);
+  const states = candidateStates({ settings: epSettings, usage: S1, now: NOW, endpoints: ready });
+  const st = states.find(s => s.candidate === epCand);
+  t.ok('候補の状態: 互換の候補は使える・使用量の窓は空・接続先の名前', st?.usable === true && st.deferred === false && st.endpoint === EP && st.endpointLabel === 'OpenRouter' && st.windows.length === 0, JSON.stringify(st));
+  const pinned = pinnedRouting({ kind: 'implement', backend: 'codex', model: null, endpoint: EP, endpointLabel: 'OpenRouter' });
+  t.ok('名指し（ply_delegate の endpoint）の記録に接続先と名前', pinned.target.endpoint === EP && pinned.target.endpointLabel === 'OpenRouter' && pinned.target.account === null);
+  t.ok('接続先の枠の鍵は公式のアカウントと重ならない', endpointSlot(EP) === `endpoint:${EP}`);
+  }
 
   t.ok('9 種類の kind', KINDS.length === 9);
 }
