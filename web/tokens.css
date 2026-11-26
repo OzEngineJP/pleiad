@@ -40,7 +40,7 @@
   /* -- 塗り（fill）。唯一の有彩色の面。主要操作にだけ使う。文字は --on-fill 固定 -- */
   --fill-primary:#3a499e;     /* 送信・許可・回答する */
   --fill-primary-hover:#2f3c86;
-  --fill-off:#596089;         /* スイッチのオフのトラック。面（--surface-1・--surface-paper）に対して明暗どちらでも 3:1 以上 */
+  --fill-off:#7c84ad;         /* スイッチのオフのトラック。面（--surface-1・--surface-paper）に対して明暗どちらでも 3:1 以上で、オン（--fill-primary）より明るい */
   --on-fill:#f4f5ff;          /* 塗りの上に乗る文字・アイコン。ほぼ白 */
 
   /* -- 文字（ink）。濃い青が本文。「青い線と文字」を地に置く -- */
