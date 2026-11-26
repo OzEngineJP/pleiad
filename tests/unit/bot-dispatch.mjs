@@ -118,10 +118,11 @@ export default async function (t) {
           ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
             createSession: async ({ botId, threadId }) => { const sessionId = `s_new_${botId}`; sessions[sessionId] = { bot: { botId, kind: 'thread', channelId: 'c_1', threadId, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } }; return { sessionId }; } } : {}),
         };
-        const memory = { turnContext: async () => ({ notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }) };
+        const memoryCalls = [];   // memory.turnContext に渡った引数（作業場所 cwd の受け渡しを見る）
+        const memory = { turnContext: async (args) => { memoryCalls.push(args); return { notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }; } };
         const d = createDispatcher({ channels, bots, memory, episodes, host });
         dRef = d;
-        return { d, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
+        return { d, memoryCalls, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
@@ -209,6 +210,20 @@ export default async function (t) {
         await w.d.onCompacted('s1');
         const later = await w.d.turnExtras(w.turn);
         t.ok('圧縮の後も申し送りを繰り返さない', !later.notes.some((n) => n.includes('<pleiad-bot-recent>')) && requested === 1, JSON.stringify({ notes: later.notes, requested }));
+      }
+      // 記憶の作業場所（段 2 単位 3）: ターンの cwd（無ければ保存済みの会話の cwd）を memory.turnContext へ渡す。どちらも無ければ null
+      {
+        const w = world('none');
+        w.turn.info.cwd = 'D:/dev/app/src';
+        await w.d.turnExtras(w.turn);
+        t.ok('このターンの cwd を memory.turnContext に渡す', w.memoryCalls.at(-1)?.cwd === 'D:/dev/app/src', JSON.stringify(w.memoryCalls));
+        delete w.turn.info.cwd;
+        w.sessions.s1.cwd = 'D:/dev/stored';
+        await w.d.turnExtras(w.turn);
+        t.ok('ターンに cwd が無ければ、保存済みの会話の cwd を渡す', w.memoryCalls.at(-1)?.cwd === 'D:/dev/stored', JSON.stringify(w.memoryCalls.at(-1)));
+        delete w.sessions.s1.cwd;
+        await w.d.turnExtras(w.turn);
+        t.ok('cwd がどこにも無い会話は null（作業場所なし）', w.memoryCalls.at(-1)?.cwd === null);
       }
       // チャンネルの「ここでの決まり」（memo）: 受け取っていない・変わった・取り直し（圧縮）のときだけ、末尾の文脈の包みで渡す。指示ではなく材料として包む
       {

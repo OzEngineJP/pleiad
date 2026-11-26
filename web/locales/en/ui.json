@@ -99,6 +99,12 @@
         "failed": "Failed",
         "retryAt": "Retrying at {{when}}",
         "waiting": "On",
+        "fit": "Didn't fit at the start of a conversation: {{tiers}} (passed when they relate to the topic)",
+        "fitTier": {
+          "untiered": "{{n}} untiered",
+          "always": "{{n}} always",
+          "workspace": "{{n}} workspace"
+        },
         "loadFailed": "Couldn't load status"
       },
       "act": {

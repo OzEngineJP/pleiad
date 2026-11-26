@@ -3349,6 +3349,26 @@
       "input": "f16d1746215b"
     },
     {
+      "id": "memory.coreFit",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "core-fit"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "914a9abc7d0e"
+    },
+    {
       "id": "memory.edit",
       "risk": "write",
       "riskOf": true,
@@ -6962,6 +6982,11 @@
     {
       "id": "mcp.setSettings",
       "path": "mcp-servers settings",
+      "positional": []
+    },
+    {
+      "id": "memory.coreFit",
+      "path": "memory core-fit",
       "positional": []
     },
     {

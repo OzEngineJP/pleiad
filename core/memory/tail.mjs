@@ -15,8 +15,17 @@ import { strengthOf, kindOrder, FADED_BELOW } from './strength.mjs';
 export const DELTA_MAX = 20;
 /** 関係する記憶の件数の上限 */
 export const RELATED_MAX = 5;
-/** 核の写しの 1 層あたりのトークンの目安（新しいものから入れ、残りは件数だけ） */
+/** 核の写しの 1 層あたりのトークンの目安（新しいものから入れ、残りは件数だけ）。段の無い既存の記憶に使う */
 export const CORE_LAYER_TOKENS = 1200;
+/** 段の付いた記憶の核の写しの目安。「いつも」と、今の作業場所の「この作業場所で」で分ける */
+export const CORE_ALWAYS_TOKENS = 6000;
+export const CORE_WORKSPACE_TOKENS = 3000;
+/** 関係する記憶の 1 件の上限と、末尾 1 回の合計の上限（トークン）。件数は RELATED_MAX */
+export const RELATED_ITEM_TOKENS = 150;
+export const RELATED_TOTAL_TOKENS = 2000;
+/** memory.search の件数と合計の上限（各件は RESULT_TOKENS まで。service.mjs） */
+export const SEARCH_MAX = 8;
+export const SEARCH_TOTAL_TOKENS = 1200;
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -86,6 +95,95 @@ export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOK
   return { user: u.picked, bot: b.picked, omitted: u.omitted + b.omitted, faded: u.faded + b.faded, ids: [...u.picked, ...b.picked].map((e) => e.id) };
 }
 
+const cleanWorkspace = (v) => String(v ?? '').replaceAll('\\', '/').replace(/\/+$/, '');
+/** 2 つの作業場所が同じか（\ と末尾の / はそろえて比べる）。どちらかが無ければ同じではない（作業場所の無い会話は「この作業場所で」を受けない） */
+export const sameWorkspace = (a, b) => Boolean(a) && Boolean(b) && cleanWorkspace(a) === cleanWorkspace(b);
+
+/** 本文を tokens トークンに収まるまで切った行（収まっていればそのまま） */
+export function clipEntry(entry, tokens) {
+  if (estimateTokens(entry.text) <= tokens) return entry;
+  let text = [...entry.text];
+  while (text.length > 1 && estimateTokens(`${text.join('')}…`) > tokens) text = text.slice(0, Math.floor(text.length * 0.9));
+  return { ...entry, text: `${text.join('')}…` };
+}
+
+/**
+ * 順位の順の記憶を、件数（max）・1 件（perItem トークン）・合計（total トークン）の上限に収める。1 件は切り、合計を超える件から後は出さない。
+ * 関係する記憶（末尾）と memory.search が同じ形で使う
+ */
+export function fitEntries(entries, { max, perItem, total }) {
+  const out = [];
+  let used = 0;
+  for (const entry of entries) {
+    if (out.length >= max) break;
+    const clipped = clipEntry(entry, perItem);
+    const cost = estimateTokens(clipped.text);
+    if (used + cost > total) break;
+    out.push(clipped);
+    used += cost;
+  }
+  return out;
+}
+
+/**
+ * 段の付いた記憶を核の写しに入れる（記憶 段階2）。段の無い記憶は従来の強さの仕組み（pickCore）のまま残し、
+ * 段の付いた記憶には重み・薄れを使わない。上限を超えたときは、人が書いた・直したもの → やめたこと → 新しく更新した順。
+ * 「保存だけ」は返さない。「この作業場所で」は workspace が今の作業場所と同じものだけ。合わないものは入りきらなかった数に入れない。
+ * 返りは pickCore と同じ形に、omittedByTier・inactiveWorkspace を足したもの。
+ */
+export function pickTieredCore(userEntries, botEntries, { workspace = null, now = Date.now(), layerTokens = CORE_LAYER_TOKENS,
+  alwaysTokens = CORE_ALWAYS_TOKENS, workspaceTokens = CORE_WORKSPACE_TOKENS } = {}) {
+  const untiered = (list) => list.filter((e) => !e.tier);
+  const legacy = pickCore(untiered(userEntries), untiered(botEntries), { layerTokens, now });
+  const all = [...userEntries, ...botEntries].filter((e) => e.tier);
+  const human = (e) => (e.by?.kind === 'human' || e.origBy?.kind === 'human' ? 0 : 1);
+  const stop = (e) => (e.kind === 'stop' ? 0 : 1);
+  const order = (a, b) => (human(a) - human(b)) || (stop(a) - stop(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at) || (a.id < b.id ? -1 : 1);
+  const take = (list, budget) => {
+    const picked = [];
+    let used = 0;
+    for (const e of [...list].sort(order)) {
+      const cost = estimateTokens(e.text) + 3;
+      if (used + cost > budget) continue;
+      picked.push(e);
+      used += cost;
+    }
+    return { picked, omitted: list.length - picked.length };
+  };
+  const always = take(all.filter((e) => e.tier === 'always'), alwaysTokens);
+  const matching = all.filter((e) => e.tier === 'workspace' && sameWorkspace(e.workspace, workspace));
+  const inactiveWorkspace = all.filter((e) => e.tier === 'workspace' && !sameWorkspace(e.workspace, workspace)).length;
+  const local = take(matching, workspaceTokens);
+  const keep = new Set([...always.picked, ...local.picked].map((e) => e.id));
+  const mergeLayer = (legacyPicked, source) => {
+    const tagged = source.filter((e) => keep.has(e.id));
+    return [...legacyPicked, ...tagged].map((e, i) => [e, i]).sort(([a, i], [b, j]) => (kindOrder(a) - kindOrder(b)) || (i - j)).map(([e]) => e);
+  };
+  const user = mergeLayer(legacy.user, userEntries);
+  const bot = mergeLayer(legacy.bot, botEntries);
+  const omittedByTier = { untiered: legacy.omitted, always: always.omitted, workspace: local.omitted };
+  const omitted = omittedByTier.untiered + omittedByTier.always + omittedByTier.workspace;
+  return { user, bot, omitted, omittedByTier, inactiveWorkspace, faded: legacy.faded, ids: [...user, ...bot].map((e) => e.id) };
+}
+
+/**
+ * 会話の始まりに入りきらない記憶の件数（設定 › 記憶が出す）。段ごとに { untiered, always, workspace }。
+ * workspace を渡せばその作業場所で見たとき、省けば作業場所ごとに見て入りきらなかった数の合計。保存だけ（archive）は数えない。
+ * 返りは { omitted: { untiered, always, workspace }, total, inactiveWorkspace }（inactiveWorkspace は今の作業場所に合わず、渡さない件。作業場所を省くと 0）
+ */
+export function coreFitCounts(userEntries, botEntries, { workspace = null, now = Date.now() } = {}) {
+  const base = pickTieredCore(userEntries, botEntries, { workspace, now });
+  let local = base.omittedByTier.workspace;
+  if (!workspace) {
+    const places = new Map();
+    for (const e of [...userEntries, ...botEntries]) if (e.tier === 'workspace' && e.workspace) places.set(cleanWorkspace(e.workspace), e.workspace);
+    local = 0;
+    for (const place of places.values()) local += pickTieredCore(userEntries, botEntries, { workspace: place, now }).omittedByTier.workspace;
+  }
+  const omitted = { untiered: base.omittedByTier.untiered, always: base.omittedByTier.always, workspace: local };
+  return { omitted, total: omitted.untiered + omitted.always + omitted.workspace, inactiveWorkspace: workspace ? base.inactiveWorkspace : 0 };
+}
+
 /** 核の写しの 1 行。種類があれば見出しの代わりに頭に付ける（「[約束] …」。済んだ約束は「[約束・済み] …」） */
 const coreLine = (locale, e) => {
   if (!e.kind) return `- ${e.text}`;
@@ -115,6 +213,7 @@ export function turnContext({ now, delta = [], related = [], locale }) {
     for (const d of shown) lines.push(`- ${agentT(locale, `memory.turn.${d.kind}`, { layer: layerLabel(locale, d.layer), text: d.text })}`);
     if (delta.length > shown.length) lines.push(`- ${agentT(locale, 'memory.more', { n: delta.length - shown.length })}`);
   }
-  if (related.length) lines.push('', agentT(locale, 'memory.turn.related'), ...related.slice(0, RELATED_MAX).map((e) => `- ${e.text}`));
+  const near = fitEntries(related, { max: RELATED_MAX, perItem: RELATED_ITEM_TOKENS, total: RELATED_TOTAL_TOKENS });
+  if (near.length) lines.push('', agentT(locale, 'memory.turn.related'), ...near.map((e) => `- ${e.text}`));
   return turnContextEnvelope(lines.join('\n'));
 }

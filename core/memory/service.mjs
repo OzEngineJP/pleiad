@@ -13,7 +13,11 @@
 //   start(): Promise<void>・stop(): void
 //   list({ layer }): Promise<MemoryEntry[]>                       … layer は 'user' か botId。ファイルの順。各行に今の強さ strength と faded（核の写しに入らない）を付ける
 //   get({ id }): Promise<MemoryEntry|null>
-//   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）。保存だけ（tier = archive）は出さない（list には出る）
+//   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 8 件・各 150 トークン・合計 1200 トークンまで。layer 省略なら layers（無ければ全層）。保存だけ（tier = archive）は出さない（list には出る）。
+//       ほかの作業場所の記憶は引ける（会話へ自動で渡すものとは違う）
+//   coreFit({ layer?, workspace? }): Promise<{ layer, workspace, omitted: { untiered, always, workspace }, total, inactiveWorkspace }>
+//       … 会話の始まりに入りきらない記憶の件数（設定 › 記憶用）。layer は user（既定。user だけ）か bot の id（その bot と user を合わせて）。
+//         workspace を省くと、作業場所ごとに見て入りきらなかった数の合計
 //   write({ layer, text, why?, sources, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
 //       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0118）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
 //       tier・workspace は段と作業場所（store.mjs）。省いたときの既定: 人は always。bot・AI は ctx.sessionCwd（会話の cwd）に git の本体があれば
@@ -25,19 +29,21 @@
 //         偽なら気がかりへ置くよう返す。段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
 //         （archiveLegacyPromises。AI なし・updatedAt 据え置き・記録に migration を残す・段を外しても再度は行わない）
 //   rev(): number                                                 … log.jsonl の最後の rev
-//   turnContext({ bot, session, sessionId?, incomingText, now?, locale? }):
-//       Promise<{ notes: string[], memRev: number, delivered: string[], snapshotDue: boolean }>
+//   turnContext({ bot, session, sessionId?, incomingText, cwd?, now?, locale? }):
+//       Promise<{ notes: string[], memRev: number, delivered: string[], snapshotDue: boolean, omitted?: { untiered, always, workspace } }>
 //       … bot は Bot（id）、session は sidecar の SessionBot（memRev・snapshotDue・delivered）。notes は memoryCoreEnvelope（snapshotDue のときだけ）と
 //         turnContextEnvelope（毎ターン）の並び。返りの memRev・delivered・snapshotDue を dispatch が sidecar に書き戻す。dispatch.turnExtras がこれを返す
+//       … cwd は会話の cwd。その git の本体（canonicalWorkspace）が今の作業場所で、無ければ「この作業場所で」の記憶は渡さない。
+//         核の写し（snapshotDue）は tail.mjs の pickTieredCore（いつも 6000・この作業場所で 3000・段なしは従来の層ごと 1200 トークン）。入りきらなかった件数は返りの omitted
+//         （核の写しを作ったターンだけ）。差分は 20 件まで（保存だけ・ほかの作業場所は出さない）。関係する記憶は 5 件・各 150・合計 2000 トークンまで
 import path from 'node:path';
 import { agentT } from '../i18n.mjs';
-import { estimateTokens } from '../../web/token-estimate.mjs';
 import { canonicalWorkspace, slashPath } from '../git-root.mjs';
 import { createMemoryStore, fingerprintOf, isLayer, isTier, isWorkspace, oneLine, USER_LAYER } from './store.mjs';
 import { createMemoryIndex } from './index.mjs';
 import { MemoryError, checkText, checkSources, sourceResolvers, capWeight } from './guard.mjs';
 import { strengthOf, FADED_BELOW } from './strength.mjs';
-import { foldDelta, pickCore, coreSnapshot, turnContext as turnContextText } from './tail.mjs';
+import { foldDelta, pickTieredCore, coreFitCounts, coreSnapshot, turnContext as turnContextText, sameWorkspace, fitEntries, RELATED_MAX, RELATED_ITEM_TOKENS, RELATED_TOTAL_TOKENS, SEARCH_MAX, SEARCH_TOTAL_TOKENS } from './tail.mjs';
 
 export { MemoryError };
 
@@ -58,13 +64,9 @@ const withStrength = (entry, at) => {
   return { ...entry, strength: Math.round(strength * 100) / 100, faded: strength < FADED_BELOW };
 };
 
-/** 150 トークンに収まるまで切る（本文は 300 字までなので、普通は切らない） */
-const clip = (entry) => {
-  if (estimateTokens(entry.text) <= RESULT_TOKENS) return entry;
-  let text = [...entry.text];
-  while (text.length > 1 && estimateTokens(`${text.join('')}…`) > RESULT_TOKENS) text = text.slice(0, Math.floor(text.length * 0.9));
-  return { ...entry, text: `${text.join('')}…` };
-};
+/** 会話の作業場所（here）から見える記憶か。保存だけ（archive）は見えない。「この作業場所で」は here と同じ作業場所のものだけ（here が無ければ見えない）。
+ *  段の無い記憶・「いつも」はどの会話にも見える。memory.search だけはほかの作業場所も引ける（これは使わない） */
+const visibleIn = (here) => (entry) => !archived(entry) && (entry.tier !== 'workspace' || sameWorkspace(entry.workspace, here));
 
 export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {}, withLayer = (_layer, fn) => fn(), workspaceOf = canonicalWorkspace } = {}) {
   const dir = path.join(dataDir, 'memory');
@@ -162,14 +164,15 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     return out;
   }
 
-  /** 差分の記録のうち AI へ見せない id（今が保存だけの記憶と、保存だけのまま忘れた記憶。段を付けただけの記録が差分に出ないように） */
-  const hiddenIds = (records) => {
+  /** 差分の記録のうち、この会話（visible: visibleIn(作業場所)）へ見せない id。今が保存だけ・ほかの作業場所の記憶と、そのまま忘れた記憶
+   *  （段を付けただけの記録が差分に出ないように。ほかの作業場所の記憶は、その場所の会話にだけ届ける） */
+  const hiddenIds = (records, visible) => {
     const hidden = new Set();
     const last = new Map();
     for (const r of records) last.set(r.id, r);
     for (const [id, r] of last) {
-      const now = store.get(id);
-      if (now ? archived(now) : r.op === 'forget' && archived(r.entry)) hidden.add(id);
+      const entry = store.get(id) ?? (r.op === 'forget' ? r.entry : null);
+      if (entry && !visible(entry)) hidden.add(id);
     }
     return hidden;
   };
@@ -224,8 +227,23 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       await ensureIndex();
       const scope = layer ? [layer] : layers?.length ? layers : null;
       const at = now();
-      // 保存だけ（archive）は探しても出さない（AI へ渡す道なので。人は一覧で見る）
-      return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit, accept: (e) => !archived(e) })).map((e) => withStrength(clip(e), at));
+      // 保存だけ（archive）は探しても出さない（AI へ渡す道なので。人は一覧で見る）。ほかの作業場所の記憶は引ける。8 件・合計 1200 トークンまで
+      const max = Math.min(SEARCH_MAX, Math.max(1, Number.isFinite(limit) ? Math.trunc(limit) : 5));
+      const hits = await index.search({ query, ...(scope ? { layers: scope } : {}), limit: max, accept: (e) => !archived(e) });
+      return fitEntries(hits, { max, perItem: RESULT_TOKENS, total: SEARCH_TOTAL_TOKENS }).map((e) => withStrength(e, at));
+    },
+
+    /**
+     * 会話の始まりに入りきらない記憶の件数（設定 › 記憶用）。layer は bot の id（その bot と user を合わせて見る）か user（user だけ。既定）。
+     * workspace を省くと、作業場所ごとに見て入りきらなかった数の合計。返りは tail.mjs の coreFitCounts の形に layer・workspace を足したもの
+     */
+    async coreFit({ layer = USER_LAYER, workspace = null } = {}) {
+      needLayer(layer);
+      await catchUp();
+      const place = placeOf(workspace);
+      const live = (name) => store.entries(name).filter((e) => !archived(e));
+      const fit = coreFitCounts(live(USER_LAYER), layer === USER_LAYER ? [] : live(layer), { workspace: place, now: now() });
+      return { layer, workspace: place, ...fit };
     },
 
     async write({ layer, text, why, sources, kind, weight, status, tier, workspace } = {}, author, ctx = {}) {
@@ -306,35 +324,48 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
     rev: () => store.rev(),
 
-    async turnContext({ bot, session = {}, sessionId = null, incomingText = '', now: at = now(), locale } = {}) {
+    async turnContext({ bot, session = {}, sessionId = null, incomingText = '', cwd = null, now: at = now(), locale } = {}) {
       await ensureIndex();
       if (sessionId) userWrites.delete(sessionId);   // 新しいターンの始まり: user 層への書き込みの数え直し
       const layers = bot?.id ? [USER_LAYER, bot.id] : [USER_LAYER];
       const rev = store.rev();
       const due = session.snapshotDue === true;
+      // この会話の作業場所（cwd の git の本体。git の外・cwd が無い会話は null = 「この作業場所で」の記憶は 1 件も渡さない）
+      const here = await hereOf({ sessionCwd: cwd });
+      const visible = visibleIn(here);
       let delivered = due ? [] : [...(session.delivered ?? [])];
       const notes = [];
       let delta = [];
+      let omitted = null;
       if (due) {
-        // 核の写しが今の全体を含むので、差分は要らない。保存だけ（archive）は入れない
+        // 核の写しが今の全体を含むので、差分は要らない。保存だけ（archive）は入れない。入りきらなかった数は返りの omitted に（段ごと）
         const live = (layer) => store.entries(layer).filter((e) => !archived(e));
-        const core = pickCore(live(USER_LAYER), bot?.id ? live(bot.id) : [], { now: at });
+        const core = pickTieredCore(live(USER_LAYER), bot?.id ? live(bot.id) : [], { workspace: here, now: at });
         const snapshot = coreSnapshot({ core, locale });
         if (snapshot) notes.push(snapshot);
         delivered = core.ids;
+        omitted = core.omittedByTier;
       } else {
         const records = store.recordsSince(Number.isInteger(session.memRev) ? session.memRev : 0);
-        const hidden = hiddenIds(records);
+        const hidden = hiddenIds(records, visible);
         const folded = foldDelta(hidden.size ? records.filter((r) => !hidden.has(r.id)) : records, { layers, skipVia: sessionId });
         delta = folded.items;
         delivered = [...delivered, ...folded.skipped, ...delta.filter((d) => d.kind !== 'forget').map((d) => d.id)];
       }
-      const related = incomingText
-        ? (await index.related({ text: incomingText, layers, exclude: delivered, limit: 5, accept: (e) => !archived(e) })).map((r) => r.entry)
-        : [];
+      // 関係する記憶: 段の付いたもの（始まりに入りきらなかった「いつも」と、今の作業場所の「この作業場所で」。入ったものは渡し済みで外れる）を先に、
+      // 残りの枠を段の無い記憶で埋める。保存だけ・ほかの作業場所は出さない。5 件・1 件 150 トークン・合計 2000 トークンまで
+      let hits = [];
+      if (incomingText) {
+        hits = await index.related({ text: incomingText, layers, exclude: delivered, limit: RELATED_MAX, accept: (e) => Boolean(e.tier) && visible(e) });
+        if (hits.length < RELATED_MAX) {
+          const more = await index.related({ text: incomingText, layers, exclude: [...delivered, ...hits.map((h) => h.entry.id)], limit: RELATED_MAX - hits.length, accept: visible });
+          hits = [...hits, ...more];
+        }
+      }
+      const related = fitEntries(hits.map((h) => h.entry), { max: RELATED_MAX, perItem: RELATED_ITEM_TOKENS, total: RELATED_TOTAL_TOKENS });
       delivered = [...new Set([...delivered, ...related.map((e) => e.id)])].slice(-DELIVERED_MAX);
       notes.push(turnContextText({ now: at, delta, related, locale }));
-      return { notes, memRev: rev, delivered, snapshotDue: false };
+      return { notes, memRev: rev, delivered, snapshotDue: false, ...(omitted ? { omitted } : {}) };
     },
   };
   let operations = Promise.resolve();

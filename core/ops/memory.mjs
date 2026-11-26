@@ -53,6 +53,13 @@ const learnStatusOut = z.object({
   halted: z.object({ message: z.string(), at: z.number() }).nullable(),
 });
 
+// 会話の始まりに入りきらない記憶の件数（段ごと。設定 › 記憶が出す）
+const coreFitOut = z.object({
+  layer: z.string(), workspace: z.string().nullable(),
+  omitted: z.object({ untiered: z.number().int(), always: z.number().int(), workspace: z.number().int() }),
+  total: z.number().int(), inactiveWorkspace: z.number().int(),
+});
+
 /** MemoryError → OpError（会話の言語の文）。ほかの例外はそのまま */
 const asOpError = (ctx, err) => {
   if (!(err instanceof MemoryError)) return err;
@@ -139,6 +146,24 @@ export const memoryOps = [
     handler: async (ctx, { query, layer, limit }) => {
       const who = await whoIs(ctx, { write: false });
       return ctx.memory.search({ query, limit: limit ?? 5, ...scopeOf(ctx, who, layer) });
+    },
+  }),
+
+  // 会話の始まりに入りきらない記憶の件数（段なし・いつも・この作業場所で）。設定 › 記憶が出す。bot は自分の層と user だけ
+  defineOp({
+    id: 'memory.coreFit',
+    summary: 'agent:ops.memory.coreFit.summary',
+    risk: 'read',
+    input: z.object({
+      layer: z.string().min(1).max(80).optional().describe(D('coreFit', 'layer')),
+      workspace: z.string().max(WORKSPACE_MAX).optional().describe(D('coreFit', 'workspace')),
+    }),
+    output: coreFitOut,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'core-fit'] } },
+    handler: async (ctx, { layer, workspace }) => {
+      const who = await whoIs(ctx, { write: false });
+      const name = layer ? layerOf(ctx, who, layer) : (who.botId ?? USER_LAYER);
+      return guarded(ctx, () => ctx.memory.coreFit({ layer: name, workspace }));
     },
   }),
 

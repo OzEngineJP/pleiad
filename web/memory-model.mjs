@@ -43,6 +43,17 @@ export function learnPanelView(status, { enabled, authOut, unconfirmed } = {}) {
   return { mode: 'waiting', actions: ['now'] };
 }
 
+/** 会話の始まりに入りきらない記憶（memory.coreFit の返り）を、設定 › 記憶の 1 行の材料にする。段の順（段なし・いつも・この作業場所で）で、0 の段は出さない。
+    全部入っている・形が違うときは null（行を出さない） */
+export function coreFitView(fit) {
+  const omitted = fit?.omitted;
+  if (!omitted || typeof omitted !== 'object') return null;
+  const parts = ['untiered', 'always', 'workspace']
+    .map((tier) => ({ tier, n: Number.isFinite(omitted[tier]) ? Math.max(0, Math.trunc(omitted[tier])) : 0 }))
+    .filter((p) => p.n > 0);
+  return parts.length ? { parts, total: parts.reduce((sum, p) => sum + p.n, 0) } : null;
+}
+
 /** bot のページの導線ボタンの短い状態（認証までは見ない。失敗・停止はどちらも「失敗」。詳しくは設定 › 記憶 を開く） */
 export function learnRouteView(status, { enabled } = {}) {
   if (!status) return { key: 'open' };

@@ -260,6 +260,7 @@ export default async function (t) {
       list: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
       search: async () => [{ id: 'm_x', layer: 'user', text: 'PR は小さく', sources: [], at: 1, updatedAt: 1, by: { kind: 'human' }, ...secret }],
       get: async () => null,
+      coreFit: async ({ layer }) => ({ layer, workspace: null, omitted: { untiered: 0, always: 1, workspace: 0 }, total: 1, inactiveWorkspace: 0, ...secret }),   // 段 2 単位 3（始まりに入りきらない件数）
     },
     brain: { list: () => [{ seq: 1, botId: 'b_1', at: 1, kind: 'think', text: '考える', ...secret }], loops: () => [{ id: 'l1', status: 'open', text: 'やりかけ', updatedAt: 1, ...secret }], count: () => 1 },   // 頭の中（ADR 0126）
     wakes: { list: () => [{ id: 'w1', botId: 'b_1', status: 'pending', at: 1, note: 'あとで確かめる', channelId: 'c_1', threadId: null, createdAt: 1, ...secret }], now: () => 1 },   // 予約（ADR 0140）

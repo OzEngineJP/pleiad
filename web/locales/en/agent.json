@@ -1950,7 +1950,7 @@
         "layer": "Layer: user (about the user) or a bot id. In a bot's conversation, self is its own layer."
       },
       "search": {
-        "summary": "Search memory by words (space-separated words are ANDed; each result is capped at 150 tokens).",
+        "summary": "Search memory by words (space-separated words are ANDed; each result is capped at 150 tokens and the total at 1,200 tokens. Memories kept as archive-only are not returned; memories of other workspaces are).",
         "query": "Words to find (space-separated: all of them must match).",
         "layer": "Layer (user or a bot id). Omit for every layer you can use.",
         "limit": "How many to return (max 8, default 5)."
@@ -1988,6 +1988,11 @@
         "workspace": "Workspace (same as write's workspace).",
         "sources": "Grounds for changing the text (same as write's sources).",
         "confirm": "An AI is rewriting a memory that a person wrote."
+      },
+      "coreFit": {
+        "summary": "How many memories did not fit into the start of a conversation, per tier (untiered, always, this workspace). Memories that did not fit are passed when they relate to the topic.",
+        "layer": "Layer. user (default: only user memory) or a bot id (that bot together with user). In a bot's conversation, self is its own layer.",
+        "workspace": "Workspace (slash-separated, no trailing slash). Omit to get the total of what did not fit, looking at each workspace in turn."
       },
       "learnStatus": {
         "summary": "When the automatic memory organizer last ran, its result and the next run, and how many times and why it did not run (also reports enabled, episode summaries, running, failure and halted)."

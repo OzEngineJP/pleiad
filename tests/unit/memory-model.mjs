@@ -1,6 +1,6 @@
 // 記憶の自動整理の状態の決まり（web/memory-model.mjs。DOM に触れない）:
 // 実効の入切・確定の未ログイン・受動の未確認と、設定 › 記憶 › bot の状態の優先順・bot ページの導線の短い状態。
-import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, learnRouteView } from '../../web/memory-model.mjs';
+import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, learnRouteView, coreFitView } from '../../web/memory-model.mjs';
 
 export const name = 'memory-model';
 export const title = '記憶の自動整理: 実効の入切・認証の確かさ・状態の優先順（停止・失敗は未確認で隠さない）';
@@ -67,5 +67,16 @@ export default async function (t) {
     const at = new Date(2030, 0, 2, 3, 4).getTime();
     const v = learnRouteView({ nextAt: at }, { enabled: true });
     return v.key === 'next' && typeof v.params.at === 'string' && v.params.at.length > 0;
+  })());
+
+  // ---- 会話の始まりに入りきらない記憶（memory.coreFit。設定 › 記憶の 1 行）
+  t.ok('入りきらない記憶が無ければ行を出さない（null）', coreFitView({ omitted: { untiered: 0, always: 0, workspace: 0 }, total: 0 }) === null && coreFitView(null) === null && coreFitView({}) === null && coreFitView({ omitted: 'x' }) === null);
+  t.ok('段の順（段なし・いつも・この作業場所で）で、0 の段は出さない', (() => {
+    const v = coreFitView({ omitted: { workspace: 2, always: 0, untiered: 5 }, total: 7 });
+    return v.parts.map((p) => `${p.tier}:${p.n}`).join() === 'untiered:5,workspace:2' && v.total === 7;
+  })());
+  t.ok('数でない値・負の値・小数は 0 か整数に直す（形が壊れても落ちない）', (() => {
+    const v = coreFitView({ omitted: { untiered: 'x', always: -3, workspace: 2.9 } });
+    return v.parts.length === 1 && v.parts[0].tier === 'workspace' && v.parts[0].n === 2 && v.total === 2;
   })());
 }

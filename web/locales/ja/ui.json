@@ -99,6 +99,12 @@
         "failed": "失敗しました",
         "retryAt": "{{when}} に再試行",
         "waiting": "オン",
+        "fit": "始まりに入りきらない記憶: {{tiers}}（関係する話のときに渡します）",
+        "fitTier": {
+          "untiered": "段なし {{n}} 件",
+          "always": "いつも {{n}} 件",
+          "workspace": "作業場所 {{n}} 件"
+        },
         "loadFailed": "状態を読み込めませんでした"
       },
       "act": {

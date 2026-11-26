@@ -12,7 +12,7 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { learnStatusView, shortTime } from './channels/bot-model.mjs';
-import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView } from './memory-model.mjs';
+import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, coreFitView } from './memory-model.mjs';
 
 export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, learnBackend, onLogin }) {
   const $ = (id) => document.getElementById(id);
@@ -25,6 +25,7 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
   const actionsBox = $('memoryLearnActions');
   const saved = $('memoryLearnSaved');
   let status = null;        // memory.learnStatus の返り（読めていなければ null）
+  let fit = null;           // memory.coreFit（user 層）の返り。会話の始まりに入りきらない記憶の件数（読めていなければ null。出さないだけで失敗にはしない）
   let seq = 0;              // 読み直しの番号（遅い返事を捨てる）
   let busy = false;         // learnNow・接続の確認を動かしている間
   let busyKind = null;      // 動かしている操作の種類（接続の確認中に「整理しています」と出さないため）
@@ -46,8 +47,16 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
 
   /** 最後に走った様子の短い文（raw のエラー文は出さない。failed・paused・next・skipped はパネル側の状態が担うのでここでは抜く。
       skipped の運用カウンタは OFF 期間の古い印が ON の補足に残り誤解を生むので出さない。履歴は API（learnStatus.skip）に残る） */
+  /** 会話の始まりに入りきらない記憶の件数の文（無ければ空。入りきらない記憶は関係する話のときに渡る） */
+  function fitParts() {
+    const view = coreFitView(fit);
+    if (!view) return [];
+    const tiers = view.parts.map((p) => t(`settings.memory.status.fitTier.${p.tier}`, { n: p.n })).join(' · ');
+    return [t('settings.memory.status.fit', { tiers })];
+  }
+
   function subParts(view) {
-    if (view.mode === 'off') return [t('settings.memory.status.offSub')];
+    if (view.mode === 'off') return [t('settings.memory.status.offSub'), ...fitParts()];
     const parts = [];
     const lv = status ? learnStatusView(status) : null;
     if (lv) {
@@ -67,7 +76,7 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
     // 止まった状態の脇の注記は「もう一度」が要る旨（停止はログインだけでは戻らない）。本体がログイン待ちのときはログインで再開する
     if (authNote === 'authWait') parts.push(t(view.mode === 'halted' || view.mode === 'failed' ? 'settings.memory.status.authWaitStoppedSub' : 'settings.memory.status.authWaitSub', { agent }));
     else if (authNote === 'unconfirmed') parts.push(t('settings.memory.status.unconfirmedSub', { agent }));
-    return parts;
+    return [...parts, ...fitParts()];
   }
 
   function actionButton(kind, backend) {
@@ -139,8 +148,11 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
     const mine = ++seq;
     try {
       const s = await invoke('memory.learnStatus', {});
+      // 入りきらない件数は補足。読めなくても状態の行は出す
+      const f = await invoke('memory.coreFit', { layer: 'user' }).catch(() => null);
       if (mine !== seq) return;
       status = s;
+      fit = f;
       paintStatus();
     } catch {
       if (mine !== seq) return;
