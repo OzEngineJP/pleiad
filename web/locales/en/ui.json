@@ -103,7 +103,7 @@
         "fitTier": {
           "untiered": "{{n}} untiered",
           "always": "{{n}} always",
-          "workspace": "{{n}} workspace"
+          "workspace": "{{n}} in this workspace"
         },
         "loadFailed": "Couldn't load status"
       },
@@ -119,7 +119,7 @@
       },
       "sort": {
         "title": "Memory sorting",
-        "note": "Asks the AI once to sort memories that have no tier into Always, Workspace or Archive. It only runs when you press Start, even if automatic organization is off. Memory text is never rewritten, and you can undo it afterwards",
+        "note": "Asks the AI once to sort memories that have no tier into Always, In this workspace or Stored only. It only runs when you press Start, even if automatic organization is off. Memory text is never rewritten, and you can undo it afterwards",
         "status": {
           "none": "Not sorted yet",
           "running": "Sorting",
@@ -132,8 +132,8 @@
         "sub": {
           "untiered": "{{n}} without a tier",
           "processed": "{{n}} processed",
-          "tiers": "Always {{always}} · Workspace {{workspace}} · Archive {{archive}}",
-          "unknown": "{{n}} archived because the workspace was unknown",
+          "tiers": "Always {{always}} · In this workspace {{workspace}} · Stored only {{archive}}",
+          "unknown": "{{n}} stored only because the workspace was unknown",
           "left": "{{n}} left without a tier",
           "changed": "{{n}} skipped because you changed them first",
           "failures": "{{n}} failures",
