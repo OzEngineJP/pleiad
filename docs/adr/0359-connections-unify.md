@@ -61,3 +61,4 @@ bot のページの「アカウント」の節（ADR 0224）は、互換の接�
 - 外せないエージェントのログイン中のカードは、［ログアウト］の代わりに「外すには、端末で次のコマンドを実行します」と、コマンドの 1 行（ログインの案内と同じ等幅 + ［コピー］）を出す。コマンドはバックエンドが `auth.logoutCommand()` で返す（`describeBackends` の `logoutCommand`。OpenCode はログインの案内と同じ書き方）。
 - 変えないもの: Claude Code・Codex・Grok の［ログアウト］、Antigravity・Devin の頭の行。画面の形は `docs/design-system.md` の「外せないエージェントの CLI のログインのカード」。
 - 「影響」の「能力の印は `accounts` と `compatEndpoints` の 2 つのまま」は接続先の印の話で、`logout` はそれとは別に足した印。
+- 同じ日の続き: 接続先 1 つの Antigravity の頭の行の［ログアウト］も、押すと必ず失敗していた（`auth.logout()` は「agy 側で行ってください」で失敗する）。頭の行も同じ印 `logout` で［ログアウト］を出し分け、Antigravity は［状態を確認］だけにして、CLI のパスの下に「外すには、{{agent}} の CLI 側でログアウトします（Pleiad からは外せません）」の 1 行を出す。`agy` には外すコマンドが無いので `logoutCommand` は持たせず、コマンドと［コピー］は出さない。決定 1（Antigravity・Devin の頭の行は変えない）の例外はこの［ログアウト］の出し分けだけで、Devin の頭の行は今のまま。画面の形は `docs/design-system.md` の「外せない『接続先 1 つ』のエージェントの頭の行」。試験は `tests/browser/agent-conn-panel.mjs`（Antigravity・Devin の偽の CLI で頭の行を見る）と `tests/unit/agent-logout-mark.mjs`（印と記述）。

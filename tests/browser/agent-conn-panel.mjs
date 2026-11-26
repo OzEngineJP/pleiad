@@ -6,8 +6,9 @@
 //   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode のそれぞれで確かめる。
 //   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
 //   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
+//   接続先を 1 つしか持たないエージェントの頭の行も同じ印で決める: 外せない Antigravity は［ログアウト］を出さず外し方の 1 行、外せる Devin は［ログアウト］のまま。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
-// 本物のサーバー（Claude・Codex・OpenCode・Grok の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
+// 本物のサーバー（Claude・Codex・OpenCode・Grok・Antigravity・Devin の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,9 +40,14 @@ for (const d of ['.claude', '.codex']) fs.mkdirSync(path.join(home, d), { recurs
 const grokHome = path.join(dataDir, 'grok-home');
 fs.mkdirSync(grokHome, { recursive: true });
 fs.writeFileSync(path.join(grokHome, 'auth.json'), '{"fixture":{"api_key":"fake"}}');
+// Devin のログイン済み（偽の CLI は FAKE_DEVIN_AUTH_FILE が in ならログイン済み）。Antigravity の偽の CLI は既定でログイン済み（agy models が通る）
+const devinAuth = path.join(dataDir, 'devin-auth.txt');
+fs.writeFileSync(devinAuth, 'in');
 let server, browser;
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,grok', AGENT_HOST_LOCALE: 'ja',
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,grok,antigravity,devin', AGENT_HOST_LOCALE: 'ja',
+    AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'),
+    AGENT_HOST_DEVIN_BIN: fakeBin('fake-devin.mjs'), FAKE_DEVIN_AUTH_FILE: devinAuth, DEVIN_CONFIG_HOME: path.join(dataDir, 'devin-config'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
     AGENT_HOST_OPENCODE_BIN: fakeBin('fake-opencode.mjs'), AGENT_HOST_OPENCODE_DATA: ocData,
@@ -86,7 +92,7 @@ try {
   }), card(id));
   const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'] };
   // Pleiad から外せるか（能力の印 logout）。外せないエージェントは［ログアウト］を出さず、端末のコマンドを案内する
-  const canLogout = { claude: true, codex: true, opencode: false, grok: true };
+  const canLogout = { claude: true, codex: true, opencode: false, grok: true, antigravity: false, devin: true };
   // CLI のログインのカードの操作と、外し方の案内（.conn-guide: 文・コマンド・［コピー］）
   const cliCard = (page, id) => page.evaluate(sel => {
     const cc = document.querySelector(`${sel} [data-conn="cli"]`);
@@ -227,6 +233,34 @@ try {
     const cli = await cliCard(page, 'grok');
     check(canLogout.grok && cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, 'grok: 外せるエージェントは［ログアウト］（案内は出さない）', cli);
   }]);
+  // 接続先を 1 つしか持たないエージェント（Antigravity・Devin）の頭の行。ログイン済みにしてから見る（受動の確認では未確認のことがあるので［状態を確認］を押す）
+  for (const id of ['antigravity', 'devin']) {
+    scenes.push([`${id}: 頭の行の［ログアウト］は能力の印 logout で出し分ける`, async page => {
+      const sel = card(id);
+      const ok = () => page.evaluate(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel);
+      for (let i = 0; i < 3 && !(await ok()); i++) {
+        await page.locator(`${sel} [data-act="check"]`).first().click().catch(() => {});
+        await page.waitForFunction(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel, { timeout: 15000 }).catch(() => {});
+      }
+      check(await ok(), `${id}: ログイン済みになる`);
+      const head = await page.evaluate(s => {
+        const c = document.querySelector(s);
+        const guide = c.querySelector(':scope > .agent-logout-guide');
+        return { acts: [...c.querySelectorAll('.ar2-a > button')].map(b => b.textContent.trim()), connect: c.querySelectorAll('.connect').length,
+          guide: guide ? { text: guide.textContent.trim(), buttons: guide.querySelectorAll('button').length, color: getComputedStyle(guide).color,
+            meta: c.querySelector(':scope > .agent-meta') ? Boolean(c.querySelector(':scope > .agent-meta').compareDocumentPosition(guide) & Node.DOCUMENT_POSITION_FOLLOWING) : null } : null };
+      }, sel);
+      check(head.connect === 0, `${id}: 接続先の一覧は持たない（頭の行のカード）`, head);
+      if (canLogout[id]) {
+        check(head.acts.join() === 'ログアウト,状態を確認' && !head.guide, `${id}: 外せるエージェントの頭の行は今までどおり［ログアウト］［状態を確認］（案内は出さない）`, head);
+      } else {
+        check(head.acts.join() === '状態を確認', `${id}: 外せないエージェントの頭の行は［ログアウト］を出さず［状態を確認］だけ`, head);
+        // agy には外すコマンドが無いので、コマンドと［コピー］ではなく説明の 1 行（CLI のパスの行の下）
+        check(head.guide && head.guide.text === '外すには、Antigravity の CLI 側でログアウトします（Pleiad からは外せません）' && head.guide.buttons === 0 && head.guide.meta !== false,
+          `${id}: 代わりに外し方の 1 行を、CLI のパスの下に出す`, head);
+      }
+    }]);
+  }
   const failed = [];
   for (const [name, run] of scenes) {
     const { ctx, page, errors } = await session();

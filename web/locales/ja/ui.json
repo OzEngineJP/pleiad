@@ -163,6 +163,7 @@
       "stateOn": "ログイン中",
       "install": "インストール",
       "signOut": "ログアウト",
+      "logoutElsewhere": "外すには、{{agent}} の CLI 側でログアウトします（Pleiad からは外せません）",
       "signIn": "ログイン",
       "pasteCode": "リダイレクト先の URL か code を貼る",
       "submitCode": "送る",

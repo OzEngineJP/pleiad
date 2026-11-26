@@ -9,5 +9,5 @@
 3. Press "Sign in". Pleiad shows a command to run in a terminal. Press "Copy", run it, and follow the prompts to sign in with your Google account (Antigravity sign-in can only be done from a terminal).
 4. The row switches to "Signed in" automatically when it finishes (it times out after about 10 minutes).
 
-- Signing out of Antigravity cannot be done from Pleiad — do it on the `agy` side (the credentials live in the OS credential store).
+- Signing out of Antigravity cannot be done from Pleiad — do it on the `agy` side (the credentials live in the OS credential store). So the signed-in Antigravity row has no "Sign out" button; it shows a line on how to sign out instead.
 - To stop waiting for sign-in, press "Cancel".

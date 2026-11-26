@@ -163,6 +163,7 @@
       "stateOn": "Signed in",
       "install": "Install",
       "signOut": "Sign out",
+      "logoutElsewhere": "To sign out, use the {{agent}} CLI (Pleiad can't sign you out)",
       "signIn": "Sign in",
       "pasteCode": "Paste the redirect URL or code",
       "submitCode": "Submit",
