@@ -103,7 +103,7 @@
 
 /* ---- あなたの声: 片が足されていく ---- */
 .vc-live .vc-body{display:inline-block}
-.post.vc-live .post-body{display:inline-block;margin-left:-12px;padding:4px 12px;border-radius:var(--r-m);background:transparent;transition:background-color .35s ease}
+.post.vc-live .post-body{display:inline-block;justify-self:start;margin-left:-12px;padding:4px 12px;border-radius:var(--r-m);background:transparent;transition:background-color .35s ease}
 .vc-body.live{background:var(--surface-1)}
 .vc-live.settle .vc-body{animation:vc-settle .35s var(--ease-out)}
 .vc-live.gone{opacity:0;transition:opacity .25s ease}

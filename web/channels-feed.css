@@ -38,13 +38,16 @@
 
 /* ---- 投稿 */
 .post{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;padding:8px 10px;border-radius:var(--r-m);transition:background-color var(--dur-fast) var(--ease-out)}
-.post:hover,.post:focus-within{background:var(--surface-hover)}
+@media (hover:hover){
+  .post:hover,.post:focus-within{background:var(--surface-hover)}
+  .post:hover .post-av:not(.you),.post:focus-within .post-av:not(.you){background:var(--surface-paper)}
+  .post:hover .react-pill:not(.mine),.post:focus-within .react-pill:not(.mine){background:var(--surface-paper)}
+}
 .post.enter{animation:post-in var(--dur) var(--ease-out)}
 @keyframes post-in{from{opacity:0;transform:translateY(6px)}}
 .post-av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--surface-1);font-size:18px;line-height:1;flex:none;color:var(--ink);user-select:none;
   transition:background-color var(--dur-fast) var(--ease-out)}
 .post-av.you{background:var(--surface-3);font-size:13px;font-weight:600}
-.post:hover .post-av:not(.you),.post:focus-within .post-av:not(.you){background:var(--surface-paper)}
 .post-main{min-width:0}
 .post-head{display:flex;align-items:center;gap:6px;min-height:20px;min-width:0;flex-wrap:wrap;font-size:var(--fs-s)}
 .post-name{font-weight:600;color:var(--ink)}
@@ -56,8 +59,6 @@
 .post-body{overflow-wrap:anywhere;line-height:1.6;font-size:var(--fs)}
 .post-body > :first-child{margin-top:0}
 .post-body > :last-child{margin-bottom:0}
-.post-body p{margin:0}
-.post-body p + p{margin-top:4px}
 .post-body .mention{color:var(--ink-blue);font-weight:600}
 .post-deleted{color:var(--ink-weak);font-style:italic}
 .post.deleted .post-av{opacity:.5}
@@ -81,7 +82,6 @@
 .reactions:empty{display:none}
 .react-pill{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:var(--r-pill);background:var(--surface-1);font-size:13px;color:var(--ink);line-height:1;cursor:pointer;
   transition:background-color var(--dur-fast) var(--ease-out)}
-.post:hover .react-pill:not(.mine),.post:focus-within .react-pill:not(.mine){background:var(--surface-paper)}
 .react-pill:hover{background:var(--surface-3)!important}
 .react-pill.mine{background:var(--surface-3)}
 .react-n{font:var(--fs-xs) var(--font-mono);color:var(--ink-weak)}
@@ -253,14 +253,27 @@
   .ch-input{font-size:max(16px,1em) !important;line-height:1.5}
 }
 @media (max-width:700px){
-  .ch-log{padding:2px 6px 10px}
-  .post{grid-template-columns:28px minmax(0,1fr);gap:8px;padding:8px}
-  .post-av{width:28px;height:28px;font-size:16px}
+  .ch-log{padding:2px 18px 10px 24px}
+  /* スマホはアイコンの縦の列をやめ、名前の行に 20px のアイコンを並べる。本文は左 24px・右 18px の全幅（Chats と同じ。承認済み 2026-11-27） */
+  .post{grid-template-columns:20px minmax(0,1fr);column-gap:6px;row-gap:0;padding:6px 0 2px;margin-bottom:14px}
+  .post-main{display:contents}
+  .post-main > *{min-width:0}
+  .post-main > :not(.post-head){grid-column:1 / -1}
+  .post-av,.post-av.you{width:20px;height:20px;font-size:11px;align-self:start;margin-top:2px}
+  .post-head{grid-column:2;min-height:24px;font-size:var(--fs-meta);color:var(--ink-weak);margin-bottom:2px;padding-right:24px}
+  .post-when{font-size:var(--fs-s)}
+  .post-kind,.post-edited{font-size:var(--fs-meta)}
+  .post.sys{grid-template-columns:minmax(0,1fr);padding:2px 0;margin-bottom:6px}
+  .post.sys .post-av{display:none}
+  .post.sys .post-head{grid-column:1;min-height:0}
   .ch-purpose{display:none}
   .top.ch-top h2{flex:1;max-width:none}
   .ch-composer{--ch-pad:var(--sp-1);padding-bottom:10px}   /* 左右は Chats の入力欄と同じ 4px（style.css の --cpad-l・--cpad-r） */
   .mention-list{right:var(--ch-pad);min-width:0}
   .ch-settings{padding:16px}
+}
+@media (max-width:700px) and (hover:none){
+  .post-tools{right:-14px;padding:0}
 }
 @media (prefers-reduced-motion:reduce){.post.enter{animation:none}}
 .bot-face-icon{background:transparent}

@@ -2415,7 +2415,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 /* スマホの設定は名前を省略して 1 行に収め、文脈は上部のメニューから開く（design-system.md「入力欄の設定」「使用量の札とスマホのシート」）。 */
 @media (max-width:700px){
   .crow{flex-wrap:nowrap}
-  .crow > :is(.crow-gap,.draft-saved){display:none}
+  .crow > .draft-saved{display:none}
+  /* モデル・フォルダーの札を出さない入力欄（スレッドなど）では、空きを残して送信を右端へ寄せる（承認済み 2026-11-27） */
+  .crow:has(> :is(.chip.model,.chip.folder):not([hidden])) > .crow-gap{display:none}
   .crow > :is(.chip.model,.chip.folder){flex:1 1 0;min-width:0}
   .crow > .chip.mode .v{display:none}
   .crow > .chip.model :is(.ef,.mdl,.dotsep),.crow > .chip.model .mk :is(.full,.short){display:none}
@@ -2487,9 +2489,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #sessionMore{position:relative}
 }
 
-/* 承認済み（2026-10-22）: スマホの会話の文字と左右の余白。 */
+/* 承認済み（2026-10-22、スレッド・チャンネルの投稿の本文は 2026-11-27）: スマホの会話の文字と左右の余白。 */
 @media (max-width:700px){
-  :is(#log,.bg-thread) .m > .body{font-size:var(--fs-body);line-height:1.7}
+  :is(#log,.bg-thread) .m > .body,.post:not(.sys) .post-body{font-size:var(--fs-body);line-height:1.7}
   :is(#log,.bg-thread) .m.user > .body{padding-left:8px;padding-right:8px}
   :is(.mw.node,.mw.activity) .mw-gutter::before{left:8.5px}
   .mw.card .mw-gutter::before{left:6.5px}

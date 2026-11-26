@@ -68,4 +68,20 @@ export default function (t) {
     /invoke\('channels\.post'/.test(feed) && /invoke\('channels\.react'/.test(feed) && /invoke\('channels\.read'/.test(feed) && !/host\.cmd\(/.test(feed));
   t.ok('流れの受ける出来事', ['channelPost', 'channelReaction', 'channelThread', 'channelRead', 'channelsChanged', 'botsChanged'].every((e) => feed.includes(e)));
   t.ok('web/client.mjs・core/server.mjs には依存を足していない', !/client\.mjs|server\.mjs/.test(feed + read('web/channels/post.mjs') + read('web/channels/reactions.mjs')));
+
+  // ---- スマホのスレッド・投稿の見た目（承認済み 2026-11-27）
+  const postJs = read('web/channels/post.mjs');
+  const feedCss = read('web/channels-feed.css');
+  const threadCss = read('web/channels-thread.css');
+  const styleCss = read('web/style.css');
+  t.ok('post.mjs が bot/人の本文に .body を付け、system 投稿（.post.sys）には付けない',
+    /if \(info\.kind !== 'system'\) body\.classList\.add\('body'\)/.test(postJs));
+  t.ok('channels-feed.css は .post-body p の段落上書きを持たず、ホバー面を @media (hover:hover) に閉じている',
+    !/\.post-body\s+p\b/.test(feedCss) && /@media\s*\(hover:hover\)\s*\{[^}]*\.post:hover,\.post:focus-within\{background:var\(--surface-hover\)\}/.test(feedCss));
+  t.ok('channels-feed.css の 700px 以下は .post-main に display:contents を当て、アイコンを 20px で名前の行へ並べる',
+    /@media\s*\(max-width:700px\)\s*\{[\s\S]*\.post-main\{display:contents\}[\s\S]*width:20px;height:20px/.test(feedCss));
+  t.ok('channels-thread.css の作業ログ見出し・返信区切りは --fs-meta を使い、チェックリストのホバー面を hover:hover に閉じている',
+    /\.th-worklog-head\{[^}]*font-size:var\(--fs-meta\)/.test(threadCss) && /\.th-rdiv\{[^}]*font-size:var\(--fs-meta\)/.test(threadCss) && /@media\s*\(hover:hover\)\{\.post:hover \.post-body ul\.ck/.test(threadCss));
+  t.ok('style.css の 700px 以下で投稿の本文を 17px/1.7 に揃え、札の無い入力欄では .crow-gap を残す',
+    /\.post:not\(\.sys\) \.post-body\{font-size:var\(--fs-body\);line-height:1\.7\}/.test(styleCss) && /\.crow:has\(>\s*:is\(\.chip\.model,\.chip\.folder\):not\(\[hidden\]\)\)\s*>\s*\.crow-gap\{display:none\}/.test(styleCss));
 }
