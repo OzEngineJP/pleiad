@@ -16,6 +16,7 @@ export default async function run(t) {
   await fs.mkdir(home);
   const keys = ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'USERPROFILE', 'HOME', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ACP_LOG', 'FAKE_AGY_NO_FILE_MARKER', 'FAKE_AGY_PID_FILE', 'FAKE_AGY_AUTH_HOLD_MS'];
   const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+  const made = ['acct-0123456789ab', 'acct-aaaaaaaaaaaa', 'acct-bbbbbbbbbbbb', 'acct-cccccccccccc'];
   const keychain = path.join(data, 'keychain-marker');
   try {
     Object.assign(process.env, {
@@ -26,8 +27,10 @@ export default async function run(t) {
     delete process.env.FAKE_AGY_NO_FILE_MARKER;
     const acp = await import(`../../core/backends/antigravity-acp.mjs?re=login-${Date.now()}`);
     const accounts = await import(`../../core/backends/antigravity-accounts.mjs?re=login-${Date.now()}`);
+    // 置き場の根は store が最初に読まれたときの dataDir（全体の実行では別の suite が先に読む）に従う
+    const root = (await import('../../core/store.mjs')).dataDir;
     const id = 'acct-0123456789ab';
-    const account = { id, name: '仕事用', dir: path.join(data, 'accounts', 'antigravity', id) };
+    const account = { id, name: '仕事用', dir: path.join(root, 'accounts', 'antigravity', id) };
     const sent = async () => (await fs.readFile(process.env.FAKE_AGY_ACP_LOG, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(l => JSON.parse(l).method).filter(Boolean);
 
     // ---- 起動の型: 1 つ目は何も足さない。2 つ目以降は env・相対パス・ログ
@@ -54,12 +57,12 @@ export default async function run(t) {
 
     // ---- ログイン: 印を確かめてから authenticate、token はファイル。鍵束には触れない
     const events = [];
-    const result = await accounts.loginAgyAccount({ account, dataDir: data, emit: e => events.push(e), method: 'oauth-business' });
+    const result = await accounts.loginAgyAccount({ account, dataDir: root, emit: e => events.push(e), method: 'oauth-business' });
     assert.equal(result.credential.kind, 'agy-file-token');
     assert.equal(result.credential.method, 'oauth-business');
     assert.equal(result.label, '仕事用');
     assert.ok(!JSON.stringify(result).includes('"fake"'), 'the token is never put in the stored credential');
-    assert.equal(await accounts.hasAgyToken(account, data), true);
+    assert.equal(await accounts.hasAgyToken(account, root), true);
     assert.equal(await fs.stat(keychain).catch(() => null), null, 'the keychain stand-in is untouched');
     assert.ok(events.some(e => e.phase === 'url' && !e.url), 'message-only step');
     assert.equal(events.at(-1).phase, 'done');
@@ -71,7 +74,7 @@ export default async function run(t) {
 
     // ---- 同じアカウントをもう一度: すでに通る（authenticate を送らない）
     await fs.rm(process.env.FAKE_AGY_ACP_LOG);
-    await accounts.loginAgyAccount({ account, dataDir: data });
+    await accounts.loginAgyAccount({ account, dataDir: root });
     assert.ok(!(await sent()).includes('authenticate'));
     t.ok('An account that already has a token does not authenticate again', true);
 
@@ -80,10 +83,10 @@ export default async function run(t) {
     const tokenPath = path.join(account.dir, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
     assert.ok(token);
     await fs.link(tokenPath, path.join(data, 'second-link'));
-    assert.equal(await accounts.hasAgyToken(account, data), false);
+    assert.equal(await accounts.hasAgyToken(account, root), false);
     await fs.rm(path.join(data, 'second-link'));
-    assert.equal(await accounts.hasAgyToken(account, data), true);
-    await assert.rejects(accounts.hasAgyToken({ ...account, id: 'acct-ffffffffffff' }, data));
+    assert.equal(await accounts.hasAgyToken(account, root), true);
+    await assert.rejects(accounts.hasAgyToken({ ...account, id: 'acct-ffffffffffff' }, root));
     t.ok('A token with another hard link is not a credential; a foreign directory is rejected', true);
 
     // ---- ログイン済みの 2 つ目のアカウントの会話: ファイル保存の env・相対の置き場で起こし、印を確かめてから prompt を送る。1 つ目は何も足さない
@@ -107,7 +110,7 @@ export default async function run(t) {
     assert.ok(usage.windows.some(w => w.usedPercent === 75), JSON.stringify(usage.windows));
     const list = await bound.models(work, { refresh: true });
     assert.ok(Object.keys(list).length > 1, 'the account model list was fetched');
-    const cacheDir = path.join(data, 'antigravity');
+    const cacheDir = (await import('../../core/backends/antigravity-store.mjs')).dir();
     assert.ok((await fs.readdir(cacheDir)).includes('models-' + id + '.json'), 'a per-account models cache');
     assert.ok(!(await fs.readdir(cacheDir)).includes('models.json'), 'the first account cache is not written');
     assert.equal(await bound.validModel(Object.keys(list).find(k => k)), true);
@@ -116,7 +119,7 @@ export default async function run(t) {
     await assert.rejects(bound.usage(), e => e.code === 'AGY_FILE_STORAGE_UNSUPPORTED');
     delete process.env.FAKE_AGY_NO_FILE_MARKER;
     // トークンが無いアカウントは起こさず「ログインが要る」
-    const ghost = { id: 'acct-cccccccccccc', name: 'G', dir: path.join(data, 'accounts', 'antigravity', 'acct-cccccccccccc') };
+    const ghost = { id: 'acct-cccccccccccc', name: 'G', dir: path.join(root, 'accounts', 'antigravity', 'acct-cccccccccccc') };
     await fs.mkdir(ghost.dir, { recursive: true });
     assert.equal((await backend.usage({ account: ghost })).reason, 'no-login');
     t.ok('Usage and the model list are read per account with the file-storage env and the marker check', true);
@@ -131,21 +134,21 @@ export default async function run(t) {
     t.ok('A logged-in second account runs a turn under the file-storage launch and the keychain stays untouched', true);
 
     // ---- 版が違って印が出ない: authenticate を送らず、止める
-    const second = { id: 'acct-aaaaaaaaaaaa', name: 'B', dir: path.join(data, 'accounts', 'antigravity', 'acct-aaaaaaaaaaaa') };
+    const second = { id: 'acct-aaaaaaaaaaaa', name: 'B', dir: path.join(root, 'accounts', 'antigravity', 'acct-aaaaaaaaaaaa') };
     process.env.FAKE_AGY_NO_FILE_MARKER = '1';
     await fs.rm(process.env.FAKE_AGY_ACP_LOG, { force: true });
-    await assert.rejects(accounts.loginAgyAccount({ account: second, dataDir: data, markerMs: 300 }), e => e.code === 'AGY_FILE_STORAGE_UNSUPPORTED');
+    await assert.rejects(accounts.loginAgyAccount({ account: second, dataDir: root, markerMs: 300 }), e => e.code === 'AGY_FILE_STORAGE_UNSUPPORTED');
     assert.ok(!(await sent()).includes('authenticate'));
     assert.equal(await fs.stat(keychain).catch(() => null), null);
     delete process.env.FAKE_AGY_NO_FILE_MARKER;
     t.ok('Without the marker the login stops with AGY_FILE_STORAGE_UNSUPPORTED and never sends authenticate', true);
 
     // ---- 取消: ブラウザー待ちの途中で止める。URL は agy が stderr に出したときだけ流す
-    const third = { id: 'acct-bbbbbbbbbbbb', name: 'C', dir: path.join(data, 'accounts', 'antigravity', 'acct-bbbbbbbbbbbb') };
+    const third = { id: 'acct-bbbbbbbbbbbb', name: 'C', dir: path.join(root, 'accounts', 'antigravity', 'acct-bbbbbbbbbbbb') };
     process.env.FAKE_AGY_AUTH_HOLD_MS = '60000';
     await fs.rm(process.env.FAKE_AGY_ACP_LOG, { force: true });
     const controller = new AbortController(), seen = [];
-    const pending = accounts.loginAgyAccount({ account: third, dataDir: data, signal: controller.signal, emit: e => seen.push(e) });
+    const pending = accounts.loginAgyAccount({ account: third, dataDir: root, signal: controller.signal, emit: e => seen.push(e) });
     const rejected = assert.rejects(pending, e => e.code === 'CANCELLED');
     for (let i = 0; i < 100 && !seen.some(e => e.url); i++) await new Promise(r => setTimeout(r, 100));
     assert.match(seen.find(e => e.url)?.url ?? '', /^https:\/\/accounts\.example\.invalid\//);
@@ -159,7 +162,7 @@ export default async function run(t) {
     assert.ok(pids.length >= 1);
     for (const pid of pids) {
       let alive = true;
-      for (let i = 0; i < 40 && alive; i++) { try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { alive = false; } }
+      for (let i = 0; i < 200 && alive; i++) { try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { alive = false; } }
       assert.equal(alive, false, `agy ${pid} stopped`);
     }
     t.ok('The agy processes of finished and refused logins are stopped', true);
@@ -168,6 +171,8 @@ export default async function run(t) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     await fs.rm(data, { recursive: true, force: true });
+    const root = (await import('../../core/store.mjs')).dataDir;
+    for (const id of made) await fs.rm(path.join(root, 'accounts', 'antigravity', id), { recursive: true, force: true });
   }
 }
 

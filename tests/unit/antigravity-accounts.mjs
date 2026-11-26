@@ -24,8 +24,9 @@ export default async function run(t) {
     // モジュールのキャッシュを別にして、他の試験が残した見通し（authGuess）・一覧 cache の影響を受けない
     const { backend } = await import(`../../core/backends/antigravity.mjs?re=accounts-${Date.now()}`);
     const { legacyCapabilities } = await import('../../core/backends/contract.mjs');
+    const root = (await import('../../core/store.mjs')).dataDir;
     const id = 'acct-0123456789ab';
-    const account = { id, name: 'A', dir: path.join(dir, 'accounts', 'antigravity', id),
+    const account = { id, name: 'A', dir: path.join(root, 'accounts', 'antigravity', id),
       get credential() { throw new Error('secret-sentinel must never be read'); } };
     const emissions = [];
     assert.ok(legacyCapabilities(backend.capabilities).accounts);
@@ -72,13 +73,14 @@ export default async function run(t) {
     assert.equal(args[2].at(-1), 'models');
     // 一覧の写し（取れた時刻付き）は使い捨ての置き場に入る（利用者の本物の置き場ではない）
     for (let i = 0; i < 100 && !(await fs.readdir(dir)).includes('antigravity'); i++) await new Promise(r => setTimeout(r, 50));
-    assert.deepEqual((await fs.readdir(dir)).sort(), ['accounts', 'antigravity', 'args.json']);
+    assert.deepEqual((await fs.readdir(dir)).filter(n => n !== 'accounts').sort(), ['antigravity', 'args.json']);
     t.ok('Existing live usage retains its shape, executes only version and read-only usage commands, then warms the missing catalog once', true);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(path.join((await import('../../core/store.mjs')).dataDir, 'accounts', 'antigravity', 'acct-0123456789ab'), { recursive: true, force: true });
   }
 }
 
