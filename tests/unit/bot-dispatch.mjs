@@ -127,7 +127,8 @@ export default async function (t) {
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
 
-      // 途中送信を挟んでも、そのターンの assistant の文は一つの投稿にまとめる。
+      // 人の途中送信を受けたら、そのターンの今の投稿をそこまでの本文で確定し、続きは新しい投稿に出す（ADR 0117 の追記。節 12）。
+      // 分け方の細かい場合（分けない途中送信・止める・失敗・リアクション・channelPost）は tests/unit/bot-steer-split.mjs。
       {
         const w = world('confirm');
         w.host.lastReply = async () => '二つ目の返事';
@@ -139,13 +140,17 @@ export default async function (t) {
         await w.d.onPosted(w.posts[1], w.channel);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
         await tick();
-        t.ok('途中送信の受領でも投稿を分けず、画像を保つ', w.posts.filter((p) => p.turn).length === 1, JSON.stringify(w.posts));
+        t.ok('人の途中送信で今の投稿を確定する（書いている印を外し、画像を保つ）。続きの文ができるまで新しい投稿は作らない',
+          w.posts.filter((p) => p.turn).length === 1 && first.text === '最初の返事' && first.presents?.length === 1 && first.state === 'done', JSON.stringify(w.posts));
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '二つ目の返事' });
         w.d.onTurnEvent(w.turn, { type: 'text.end' });
         w.turns.delete('s1');
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
-        t.ok('途中送信の前後の文章と画像が一つの投稿に残る', first.text === '最初の返事\n\n二つ目の返事' && first.presents?.length === 1
-          && first.state === 'done', JSON.stringify(w.posts));
+        const replies = w.posts.filter((p) => p.turn);
+        t.ok('途中送信の前の文章と画像は確定した投稿に残り、後の文章は新しい投稿に入る', replies.length === 2 && replies[0] === first
+          && first.text === '最初の返事' && first.presents?.length === 1 && first.state === 'done'
+          && replies[1].text === '二つ目の返事' && !replies[1].presents && replies[1].state === 'done'
+          && replies[1].turn.sessionId === 's1', JSON.stringify(w.posts));
       }
       {
         const w = world('confirm');
@@ -160,8 +165,10 @@ export default async function (t) {
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '三つ目の返事' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
         const replies = w.posts.filter((p) => p.turn);
-        t.ok('連続した途中送信でも一つの投稿に文章を順番どおり残す', replies.length === 1
-          && replies[0].text === '最初二つ目三つ目の返事' && replies[0].state === 'done', JSON.stringify(replies));
+        // 新しい投稿ができる前（見せる文が無い間）に次の途中送信が届いても、確定する投稿は無い。その間に書いた文は新しい投稿に順番どおり入る
+        t.ok('連続した途中送信: 最初の分を確定し、続きの文は新しい投稿に順番どおり残す', replies.length === 2
+          && replies[0].text === '最初' && replies[0].state === 'done'
+          && replies[1].text === '二つ目三つ目の返事' && replies[1].state === 'done', JSON.stringify(replies));
       }
       {
         const w = world('confirm');
@@ -175,27 +182,32 @@ export default async function (t) {
         const next = w.d.claimPost(mine);
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
         const replies = w.posts.filter((p) => p.turn);
-        t.ok('明示的な channels.post も途中送信でターン投稿を分けない',
+        // 人の途中送信の後の channels.post は、確定した投稿を書き換えず新しい投稿にする（postId なし = ChannelService が追加する）
+        t.ok('明示的な channels.post の後に人の途中送信が届いたら、確定した投稿に書いた本文はそのまま残り、次の channels.post は新しい投稿になる',
           next.postId === null && replies.length === 1 && replies[0].text === '投稿で書いた先の返事'
           && replies[0].state === 'done', JSON.stringify(replies));
       }
       {
         const w = world('confirm');
         w.host.lastReply = async () => '追加の投稿への返事';
+        const removed = [];
+        w.d.channels.remove = async (a) => { removed.push(a.postId); };   // 空の投稿の取り下げを見る（身代わりは何もしない）
         await w.d.turnExtras(w.turn);
+        const empty = w.posts.find((p) => p.turn);
         await w.d.onPosted(w.posts[1], w.channel);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
         const visible = '最初の返事には画像が入っています。![図](image.png) これを残して、次の依頼を読みます。';
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: visible });
         await tick();
-        const first = w.posts.find((p) => p.turn);
-        t.ok('返事より先に途中送信が届いても、道具の前には最初の返事が表示される', first.text === visible, JSON.stringify(first));
+        const second = w.posts.filter((p) => p.turn).at(-1);
+        // 人の途中送信の時点で何も書いていなければ、空の投稿は残さず、見せる文ができた時点で新しい投稿に出す
+        t.ok('返事より先に途中送信が届いたら、空の投稿は取り下げ、道具の前の返事は新しい投稿に表示される',
+          removed.includes(empty.id) && second.id !== empty.id && second.text === visible, JSON.stringify({ removed, posts: w.posts }));
         w.d.onTurnEvent(w.turn, { type: 'tool.start', id: 't1', name: 'Read', input: {} });
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '追加の投稿への返事' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
-        const replies = w.posts.filter((p) => p.turn);
-        t.ok('途中送信後に表示済みの返事は、次の道具を呼んでも同じ投稿に残る', replies.length === 1
-          && replies[0].text === `${visible}\n\n追加の投稿への返事` && replies[0].state === 'done', JSON.stringify(replies));
+        t.ok('新しい投稿の返事は、次の道具を呼んでも同じ投稿に残る', second.text === `${visible}\n\n追加の投稿への返事` && second.state === 'done'
+          && w.posts.filter((p) => p.turn && p !== empty).length === 1, JSON.stringify(w.posts));
       }
       {
         let requested = 0;
