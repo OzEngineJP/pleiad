@@ -152,7 +152,10 @@ export default async function (t) {
     const found = (await svc.search({ query: '場所を渡した行', layer: 'user' })).find((e) => e.id === explicit.id);
     t.ok('search の行にも tier / workspace が付く（段を直した後の search にも最新が出る）', found?.tier === 'workspace' && found.workspace === 'D:/dev/other');
     await svc.edit({ id: explicit.id, tier: 'archive' }, HUMAN, {});
-    t.ok('search は段を直した後の最新を返す', (await svc.search({ query: '場所を渡した行', layer: 'user' })).find((e) => e.id === explicit.id)?.tier === 'archive');
+    t.ok('保存だけ（archive）に直すと search には出ない（list・get には出る）', !(await svc.search({ query: '場所を渡した行', layer: 'user' })).some((e) => e.id === explicit.id)
+      && (await svc.list({ layer: 'user' })).find((e) => e.id === explicit.id)?.tier === 'archive' && (await svc.get({ id: explicit.id })).tier === 'archive');
+    await svc.edit({ id: explicit.id, tier: 'workspace' }, HUMAN, {});
+    t.ok('段を戻すとまた search に出て、最新の段が付く', (await svc.search({ query: '場所を渡した行', layer: 'user' })).find((e) => e.id === explicit.id)?.tier === 'workspace');
     svc.stop();
 
     // ---- ops: memory.edit の承認・memory.write の既定・memory.list の出力

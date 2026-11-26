@@ -1173,6 +1173,8 @@ const SUITES = [
   './unit/memory-strength.mjs',
   // 記憶の段と作業場所（tier / workspace。markdown の tier / ws・git の本体の canonical・既定・updatedAt を進めない振り分け・AI が人の行の段を変えるときの承認）
   './unit/memory-tier.mjs',
+  // 約束は記憶に書かない（AI・夜の整理は MEMORY_REJECTED。ToDo か気がかりへ）・既存の約束は起動で保存だけへ（AI なし・戻せる）・保存だけは配送・検索・夜の整理に出ない（ADR 0359）
+  './unit/memory-promise.mjs',
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',

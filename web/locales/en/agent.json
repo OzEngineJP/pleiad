@@ -2089,6 +2089,8 @@
       "tier": "The tier must be always, workspace or archive.",
       "workspace": "The workspace is not in the right form (slash-separated, no trailing slash, up to 500 characters).",
       "workspaceUnknown": "The workspace cannot be decided. This conversation's folder is not a git repository, so pass workspace or use the always or archive tier.",
+      "promiseTodo": "Promises and work progress are not written to memory. This conversation has a to-do list, so add it there (todos.add).",
+      "promiseLoop": "Promises and work progress are not written to memory. This conversation has no to-do list, so put it in your concerns (brain.loopAdd).",
       "layer": "You cannot write to this layer (user or your own).",
       "notFound": "That memory, post or message was not found.",
       "quote": "The quote does not appear in the actual words.",

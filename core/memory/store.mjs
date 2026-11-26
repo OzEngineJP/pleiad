@@ -16,6 +16,8 @@
 // log.jsonl の 1 行: { rev, at, op: 'add'|'edit'|'forget'|'unforget', layer, id, text, fp, by, via?, entry? }
 //   forget は entry（消した記憶の全体）と fp（墓石。正規化した本文の sha256 の先頭 16 字）を残す。unforget は forget の entry から戻し、墓石を外す。
 //   via は書いた会話の sessionId（その会話の末尾の差分には同じ記憶を重ねて出さないため）。
+//   edit で段・作業場所が変わったときは place: { from, to }（それぞれ { tier?, workspace? }）も残す。コードの一括移行（既存の約束を保存だけにするなど）は
+//   migration: '<名前>' を付け、by は { kind: 'system' }。段を外せば元に戻り、同じ名前の移行は同じ id にやり直さない（migrated(name)）。
 // 変更はすべて 1 本のキューで直列にする（rev を欠番なく進めるため）。md を先に書き、log を後に足す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -111,6 +113,9 @@ export function renderLayer(layer, entries, title) {
   })} -->`);
   return `${HEADER(layer)}\n# ${title}\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`;
 }
+
+/** 段と作業場所だけの形（記録の place の前後） */
+const placeOf = (entry) => ({ ...(entry.tier ? { tier: entry.tier } : {}), ...(entry.workspace ? { workspace: entry.workspace } : {}) });
 
 /** 外へ出す形（hadMeta・extraMeta を落とす） */
 const publicEntry = (entry) => { const { hadMeta: _hadMeta, extraMeta: _extraMeta, ...rest } = entry; return rest; };
@@ -347,7 +352,7 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
 
     /** 本文・理由・出どころ・種類・重み・状態・段・作業場所を直す。種類・重み・状態・段・作業場所は null で外す（undefined は触らない）。
      *  段・作業場所だけの直し（振り分け）は updatedAt を進めない（記憶の強さ・並び・「直した」の表示を、振り分けで動かさないため）。無い id は null */
-    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace }) => serial(async () => {
+    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration }) => serial(async () => {
       await ensureReady(); await syncNow();
       for (const [layer, list] of cache) {
         const i = list.findIndex((e) => e.id === id);
@@ -374,11 +379,18 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         const next = [...list]; next[i] = entry;
         cache.set(layer, next);
         await writeLayer(layer);
-        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}) });
+        // 段・作業場所が変わったときは前後を記録に残す（戻すとき・後から見るとき用）。migration はコードの一括移行の名前（同じ名前では 1 つの id に 1 度だけ行う）
+        const from = placeOf(old), to = placeOf(entry);
+        const placed = JSON.stringify(from) !== JSON.stringify(to);
+        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}),
+          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}) });
         return { entry: publicEntry(entry), rev: rec.rev };
       }
       return null;
     }),
+
+    /** コードの一括移行 name（edit の migration）を、すでに行った記憶の id。人が段を外しても、次の起動で同じ移行をやり直さないために使う */
+    migrated: (name) => new Set(records.filter((r) => r.op === 'edit' && r.migration === name).map((r) => r.id)),
 
     /** 忘れる（墓石を残す）。無い id は null */
     forget: ({ id, by, via }) => serial(async () => {

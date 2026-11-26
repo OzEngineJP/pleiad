@@ -2088,6 +2088,8 @@
       "tier": "段は always・workspace・archive のどれかです。",
       "workspace": "作業場所の形が正しくありません（/ 区切り・末尾の / なし・500 字まで）。",
       "workspaceUnknown": "作業場所が決まりません。この会話の場所が git のリポジトリではないので、workspace を渡すか、段を always か archive にしてください。",
+      "promiseTodo": "約束・作業の経過は記憶に書きません。この会話に ToDo があるので、そこへ追加してください（todos.add）。",
+      "promiseLoop": "約束・作業の経過は記憶に書きません。この会話に ToDo が無いので、気がかりに置いてください（brain.loopAdd）。",
       "layer": "この層には書けません（user か、自分の層）。",
       "notFound": "その記憶・投稿・発言が見つかりません。",
       "quote": "引用が、実際の発言に見つかりません。",

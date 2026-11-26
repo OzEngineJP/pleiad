@@ -13,7 +13,7 @@
 //   start(): Promise<void>・stop(): void
 //   list({ layer }): Promise<MemoryEntry[]>                       … layer は 'user' か botId。ファイルの順。各行に今の強さ strength と faded（核の写しに入らない）を付ける
 //   get({ id }): Promise<MemoryEntry|null>
-//   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）
+//   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）。保存だけ（tier = archive）は出さない（list には出る）
 //   write({ layer, text, why?, sources, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
 //       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0118）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
 //       tier・workspace は段と作業場所（store.mjs）。省いたときの既定: 人は always。bot・AI は ctx.sessionCwd（会話の cwd）に git の本体があれば
@@ -21,6 +21,9 @@
 //   edit({ id, text?, why?, sources?, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
 //       … edit の workspace は null で外せる。tier・workspace だけの直しは updatedAt を進めない
 //       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す。無い id は MEMORY_NOT_FOUND
+//       … 約束（kind = promise）は人以外は書けない（write・直した結果が約束になる edit は MEMORY_REJECTED: promiseTodo / promiseLoop。ctx.hasTodos が真なら ToDo へ、
+//         偽なら気がかりへ置くよう返す。段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
+//         （archiveLegacyPromises。AI なし・updatedAt 据え置き・記録に migration を残す・段を外しても再度は行わない）
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, sessionId?, incomingText, now?, locale? }):
 //       Promise<{ notes: string[], memRev: number, delivered: string[], snapshotDue: boolean }>
@@ -42,6 +45,10 @@ export { MemoryError };
 export const RESULT_TOKENS = 150;
 /** 渡し済みの id を覚える数（圧縮で空になるので、普段は届かない上限） */
 const DELIVERED_MAX = 400;
+/** 既存の約束を保存だけ（archive）にする一括移行の名前（store.edit の migration。記録に残り、同じ id にはやり直さない） */
+export const PROMISE_ARCHIVE_MIGRATION = 'promise-archive';
+/** 保存だけの記憶か（会話・検索・夜の整理の AI へ渡さない。一覧には出る） */
+const archived = (entry) => entry?.tier === 'archive';
 /** bot が 1 ターンに user 層へ書ける件数（全 bot が読む層なので、暴走・汚染の幅を抑える。超えたら MEMORY_REJECTED:userWriteLimit） */
 export const USER_WRITES_PER_TURN = 5;
 
@@ -70,9 +77,29 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
 
   const announce = (layer) => emit({ type: 'memoryChanged', layer, rev: store.rev() });
 
+  /**
+   * 段の無い既存の約束（kind = promise）を、AI を使わずコードで保存だけ（archive）にする（ADR 0359）。起動の最初の読み込みで 1 度行い、何度走っても同じ。
+   * updatedAt は進めず、変更記録に「システムが段を付けた（migration）」と前後を残す。段を外せば元に戻り、外した後の起動でもやり直さない（記録にある id は飛ばす）。
+   * ToDo・気がかりへは写さない。返りは変えた層
+   */
+  async function archiveLegacyPromises() {
+    const done = store.migrated(PROMISE_ARCHIVE_MIGRATION);
+    const layers = new Set();
+    for (const entry of store.entries()) {
+      if (entry.kind !== 'promise' || entry.tier || done.has(entry.id)) continue;
+      if (await store.edit({ id: entry.id, tier: 'archive', by: { kind: 'system' }, migration: PROMISE_ARCHIVE_MIGRATION })) layers.add(entry.layer);
+    }
+    return [...layers];
+  }
+
   /** 人が markdown を直接直していたら記録に足して配る。変わった層の数 */
   async function catchUp() {
-    if (!started) { await store.init(); started = true; }
+    if (!started) {
+      await store.init();
+      const moved = await archiveLegacyPromises();   // 失敗したら started にしない（次の呼び出しでやり直す）
+      started = true;
+      for (const layer of moved) announce(layer);
+    }
     const changed = await store.sync();
     for (const layer of changed) announce(layer);
     return changed.length;
@@ -89,6 +116,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const needLayer = (layer) => { if (!isLayer(layer)) throw new MemoryError('MEMORY_REJECTED', 'layer', String(layer)); };
   const isHuman = (author) => author?.kind === 'human';
   const rejected = (reason, detail) => new MemoryError('MEMORY_REJECTED', reason, detail);
+  /** 約束は人でなければ記憶に書かない。会話に ToDo があれば ToDo へ、無ければ気がかりへ置くよう断る（ctx.hasTodos は core/ops/memory.mjs が付ける） */
+  const promiseRefusal = (ctx) => rejected(ctx?.hasTodos ? 'promiseTodo' : 'promiseLoop');
 
   /** 外から来た作業場所の形をそろえて検査する（\ は / へ・末尾の / は落とす。形が合わなければ MEMORY_REJECTED）。空は「無し」（null） */
   const placeOf = (value) => {
@@ -132,6 +161,18 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     }
     return out;
   }
+
+  /** 差分の記録のうち AI へ見せない id（今が保存だけの記憶と、保存だけのまま忘れた記憶。段を付けただけの記録が差分に出ないように） */
+  const hiddenIds = (records) => {
+    const hidden = new Set();
+    const last = new Map();
+    for (const r of records) last.set(r.id, r);
+    for (const [id, r] of last) {
+      const now = store.get(id);
+      if (now ? archived(now) : r.op === 'forget' && archived(r.entry)) hidden.add(id);
+    }
+    return hidden;
+  };
 
   /** 出どころの検査（人でなければ必須）。返りは { sources: 確かめた出どころ, humanQuotes: そのうち人の発言の引用 } */
   async function verified(sources, author, ctx) {
@@ -183,13 +224,15 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       await ensureIndex();
       const scope = layer ? [layer] : layers?.length ? layers : null;
       const at = now();
-      return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit })).map((e) => withStrength(clip(e), at));
+      // 保存だけ（archive）は探しても出さない（AI へ渡す道なので。人は一覧で見る）
+      return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit, accept: (e) => !archived(e) })).map((e) => withStrength(clip(e), at));
     },
 
     async write({ layer, text, why, sources, kind, weight, status, tier, workspace } = {}, author, ctx = {}) {
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
+      if (!human && kind === 'promise') throw promiseRefusal(ctx);   // 書かない（保存もしない）。ToDo か気がかりへ
       const placement = await newPlacement({ tier, workspace }, human, ctx);
       const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
@@ -211,6 +254,10 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const old = store.get(id);
       if (!old) throw notFound(id);
       const human = isHuman(author);
+      // 直した結果が約束になる（今が約束のままの直しも含む）なら、人でなければ書かない。保存だけへ寄せる直し（段だけ archive）は通す
+      const resultKind = kind === undefined ? old.kind : kind;
+      const onlyArchiving = tier === 'archive' && [text, why, sources, kind, weight, status, workspace].every((v) => v === undefined);
+      if (!human && resultKind === 'promise' && !onlyArchiving) throw promiseRefusal(ctx);
       const placement = await editedPlacement({ tier, workspace }, old, ctx);
       const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;
@@ -269,18 +316,21 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const notes = [];
       let delta = [];
       if (due) {
-        // 核の写しが今の全体を含むので、差分は要らない
-        const core = pickCore(store.entries(USER_LAYER), bot?.id ? store.entries(bot.id) : [], { now: at });
+        // 核の写しが今の全体を含むので、差分は要らない。保存だけ（archive）は入れない
+        const live = (layer) => store.entries(layer).filter((e) => !archived(e));
+        const core = pickCore(live(USER_LAYER), bot?.id ? live(bot.id) : [], { now: at });
         const snapshot = coreSnapshot({ core, locale });
         if (snapshot) notes.push(snapshot);
         delivered = core.ids;
       } else {
-        const folded = foldDelta(store.recordsSince(Number.isInteger(session.memRev) ? session.memRev : 0), { layers, skipVia: sessionId });
+        const records = store.recordsSince(Number.isInteger(session.memRev) ? session.memRev : 0);
+        const hidden = hiddenIds(records);
+        const folded = foldDelta(hidden.size ? records.filter((r) => !hidden.has(r.id)) : records, { layers, skipVia: sessionId });
         delta = folded.items;
         delivered = [...delivered, ...folded.skipped, ...delta.filter((d) => d.kind !== 'forget').map((d) => d.id)];
       }
       const related = incomingText
-        ? (await index.related({ text: incomingText, layers, exclude: delivered, limit: 5 })).map((r) => r.entry)
+        ? (await index.related({ text: incomingText, layers, exclude: delivered, limit: 5, accept: (e) => !archived(e) })).map((r) => r.entry)
         : [];
       delivered = [...new Set([...delivered, ...related.map((e) => e.id)])].slice(-DELIVERED_MAX);
       notes.push(turnContextText({ now: at, delta, related, locale }));

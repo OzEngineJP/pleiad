@@ -97,10 +97,18 @@ async function visibleEntry(ctx, who, id) {
   return entry;
 }
 
-/** service へ渡す呼び出しの文脈。sessionCwd は書いた会話の cwd（無い・読めなければ null。記憶の作業場所の既定に使う） */
+/** この会話に ToDo があるか（1 件でもあれば真。読めなければ偽）。約束を記憶に書こうとしたとき、ToDo へ置くか気がかりへ置くかを分ける */
+const hasTodoList = async (ctx, sessionId) => {
+  if (!sessionId || !ctx.todos?.list) return false;
+  try { return ((await ctx.todos.list({ kind: 'session', id: sessionId }))?.items?.length ?? 0) > 0; } catch { return false; }
+};
+
+/** service へ渡す呼び出しの文脈。sessionCwd は書いた会話の cwd（無い・読めなければ null。記憶の作業場所の既定に使う）。
+ *  hasTodos は会話に ToDo があるか（約束を断ったときの案内の分け先） */
 const callCtx = async (ctx, who) => ({
   sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale,
   sessionCwd: who.sessionId ? (await ctx.sessionCwd?.(who.sessionId).catch(() => null)) ?? null : null,
+  hasTodos: await hasTodoList(ctx, who.sessionId),
 });
 
 export const memoryOps = [
