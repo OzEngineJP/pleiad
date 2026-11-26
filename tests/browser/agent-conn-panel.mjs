@@ -6,11 +6,12 @@
 //   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode・Antigravity のそれぞれで確かめる。
 //   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
 //   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
-//   Antigravity も［ログアウト］を出さない（外し方のコマンドは持たないので案内も出さない）。
+//   Antigravity も［ログアウト］を出さない。外すコマンドを持たないので、コマンドと［コピー］ではなく「外すには、Antigravity の CLI 側で…」の説明の 1 行を出す。
+//   接続先の一覧を持たない Devin の頭の行も同じ印で決める: 外せる Devin は［ログアウト］［状態を確認］のまま。
 //   Antigravity だけ、追加の前に注意のモーダル（2 つ目の Google アカウント）が出る: やめる → 名前の欄は開かない、理解して追加する → 名前の欄。360px に収まる。
 //   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）を PNG で保存する。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
-// 本物のサーバー（Claude・Codex・OpenCode・Grok の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
+// 本物のサーバー（Claude・Codex・OpenCode・Grok・Antigravity・Devin の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,10 +43,14 @@ for (const d of ['.claude', '.codex']) fs.mkdirSync(path.join(home, d), { recurs
 const grokHome = path.join(dataDir, 'grok-home');
 fs.mkdirSync(grokHome, { recursive: true });
 fs.writeFileSync(path.join(grokHome, 'auth.json'), '{"fixture":{"api_key":"fake"}}');
+// Devin のログイン済み（偽の CLI は FAKE_DEVIN_AUTH_FILE が in ならログイン済み）。Antigravity の偽の CLI は既定でログイン済み（agy models が通る）
+const devinAuth = path.join(dataDir, 'devin-auth.txt');
+fs.writeFileSync(devinAuth, 'in');
 let server, browser;
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity,grok', AGENT_HOST_LOCALE: 'ja',
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity,grok,devin', AGENT_HOST_LOCALE: 'ja',
     AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'),
+    AGENT_HOST_DEVIN_BIN: fakeBin('fake-devin.mjs'), FAKE_DEVIN_AUTH_FILE: devinAuth, DEVIN_CONFIG_HOME: path.join(dataDir, 'devin-config'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
     AGENT_HOST_OPENCODE_BIN: fakeBin('fake-opencode.mjs'), AGENT_HOST_OPENCODE_DATA: ocData,
@@ -97,12 +102,15 @@ try {
     await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
   };
   // Pleiad から外せるか（能力の印 logout）。外せないエージェントは［ログアウト］を出さず、端末のコマンドを案内する
-  const canLogout = { claude: true, codex: true, opencode: false, antigravity: false, grok: true };
+  const canLogout = { claude: true, codex: true, opencode: false, antigravity: false, grok: true, devin: true };
   // CLI のログインのカードの操作と、外し方の案内（.conn-guide: 文・コマンド・［コピー］）
   const cliCard = (page, id) => page.evaluate(sel => {
     const cc = document.querySelector(`${sel} [data-conn="cli"]`);
     const guide = cc.querySelector('.conn-guide');
     return { actions: [...cc.querySelectorAll('.mp-card-actions button')].map(b => b.textContent.trim()),
+      // 状態の行（.mp-ln）が「公式 · <アカウント>」で、警告（.warn: 未ログイン・期限切れ）でも待ち（ログインを待っています）でもない
+      status: cc.querySelector('.mp-head .mp-ln')?.textContent ?? null,
+      signedIn: (ln => Boolean(ln) && !ln.classList.contains('warn') && /^公式 · /.test(ln.textContent) && !/待っています/.test(ln.textContent))(cc.querySelector('.mp-head .mp-ln')),
       logoutButtons: cc.querySelectorAll('[data-act="logout"]').length,
       guide: guide ? { text: guide.textContent.trim(), code: guide.querySelector('code')?.textContent ?? null,
         copy: [...guide.querySelectorAll('button')].map(b => b.textContent.trim()), mono: guide.querySelector('code') ? getComputedStyle(guide.querySelector('code')).fontFamily : null } : null };
@@ -181,7 +189,12 @@ try {
       } else {
         check(!cli.actions.includes('ログアウト') && cli.logoutButtons === 0, `${id}: 外せないエージェントは［ログアウト］を出さない（押しても失敗するだけ）`, cli);
       }
-      if (id === 'antigravity') check(!cli.guide, `${id}: 外し方のコマンドを持たないので、案内も出さない`, cli);
+      if (id === 'antigravity') {
+        // 外すコマンドを持たない（agy に無い）ので、コマンドと［コピー］ではなく説明の 1 行だけ（ログイン中のカードに出す）
+        check(cli.signedIn, `${id}: CLI のログインのカードがログイン中（偽の agy は既定でログイン済み）`, cli);
+        check(cli.guide?.text === '外すには、Antigravity の CLI 側でログアウトします（Pleiad からは外せません）' && cli.guide.code === null && cli.guide.copy.length === 0,
+          `${id}: 代わりに、CLI 側で外す説明の 1 行（コマンドと［コピー］は無い）`, cli);
+      }
       if (id === 'opencode') {
         // コマンドはログインの案内と同じ書き方（見つけた CLI の場所 + auth logout。偽の CLI なのでその場所が入る）
         check(/(^|[\s"])auth logout$/.test(cli.guide?.code ?? '') && /fake-opencode\.mjs/.test(cli.guide.code) && cli.guide.text.startsWith('外すには、端末で') && cli.guide.copy.join() === 'コピー',
@@ -279,6 +292,24 @@ try {
     await page.waitForSelector(`${card('grok')} [data-conn="cli"]`, { timeout: 15000 });
     const cli = await cliCard(page, 'grok');
     check(canLogout.grok && cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, 'grok: 外せるエージェントは［ログアウト］（案内は出さない）', cli);
+  }]);
+  // 接続先の一覧を持たない Devin の頭の行。ログイン済みにしてから見る（受動の確認では未確認のことがあるので［状態を確認］を押す）
+  scenes.push(['devin: 頭の行は今までどおり［ログアウト］［状態を確認］', async page => {
+    const id = 'devin';
+    const sel = card(id);
+    const ok = () => page.evaluate(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel);
+    for (let i = 0; i < 3 && !(await ok()); i++) {
+      await page.locator(`${sel} [data-act="check"]`).first().click().catch(() => {});
+      await page.waitForFunction(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel, { timeout: 15000 }).catch(() => {});
+    }
+    check(await ok(), `${id}: ログイン済みになる`);
+    const head = await page.evaluate(s => {
+      const c = document.querySelector(s);
+      return { acts: [...c.querySelectorAll('.ar2-a > button')].map(b => b.textContent.trim()), connect: c.querySelectorAll('.connect').length,
+        guide: c.querySelectorAll('.conn-guide').length };
+    }, sel);
+    check(head.connect === 0, `${id}: 接続先の一覧は持たない（頭の行のカード）`, head);
+    check(canLogout[id] && head.acts.join() === 'ログアウト,状態を確認' && head.guide === 0, `${id}: 外せるエージェントの頭の行は今までどおり［ログアウト］［状態を確認］（案内は出さない）`, head);
   }]);
   const failed = [];
   for (const [name, run] of scenes) {

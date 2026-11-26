@@ -71,8 +71,8 @@ export default async function (t) {
     // ================================================================ 途中送信の形ごとの扱い（身代わりのサービス・バックエンド）
     {
       let worlds = 0;
-      const world = (steerKind, { realStart = false, more = false, modes = null, episodes = null, memoryNotes = [] } = {}) => {
-        let dRef = null;
+      const world = (steerKind, { realStart = false, more = false, modes = null, episodes = null, memoryNotes = [], brain = null } = {}) => {
+        let dRef = null, postSeq = 0;
         const posts = [
           { id: 'p_root', channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '根', mentions: ['b_1'], at: 1000, reactions: {} },
           { id: 'p_2', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 2', mentions: [], at: 2000, reactions: {} },
@@ -90,9 +90,11 @@ export default async function (t) {
           dir: path.join(tmp, `stub-${steerKind}-${++worlds}`),
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
-          post: async (a, by) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
+          post: async (a, by) => { const post = { id: `p_t${++postSeq}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
           edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }, typeof a.failure === 'string' && { failure: a.failure }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
+          // 取り下げた投稿は流れから外れる（本物の store の snapshot と同じ）
+          withdraw: async ({ postIds }) => { for (const id of postIds) { const i = posts.findIndex((x) => x.id === id); if (i >= 0) posts.splice(i, 1); } },
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
             update: async (c, th, patch) => {
@@ -112,7 +114,8 @@ export default async function (t) {
           runTurn: async (args, _onStarted, hooks) => { started.push({ args, hooks }); if (realStart) await dRef.turnExtras({ info: { sessionId: args.sessionId }, agentLocale: 'ja', stream: {} }); return 'ok'; },
           lastReply: async () => '終わり',
         };
-        const BOT_LIST = more ? [{ id: 'b_1', name: 'Owl', icon: '🦉' }, { id: 'b_2', name: 'Lynx', icon: '🐺' }, { id: 'b_3', name: 'Fox', icon: '🦊' }] : [{ id: 'b_1', name: 'Owl', icon: '🦉' }];
+        const BOT_LIST = (more ? [{ id: 'b_1', name: 'Owl', icon: '🦉' }, { id: 'b_2', name: 'Lynx', icon: '🐺' }, { id: 'b_3', name: 'Fox', icon: '🦊' }] : [{ id: 'b_1', name: 'Owl', icon: '🦉' }])
+          .map((b) => (brain ? { ...b, pulse: { on: true } } : b));
         const bots = {
           get: async ({ botId }) => BOT_LIST.find((b) => b.id === botId) ?? null, list: async () => BOT_LIST,
           ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
@@ -120,7 +123,7 @@ export default async function (t) {
         };
         const memoryCalls = [];   // memory.turnContext に渡った引数（作業場所 cwd の受け渡しを見る）
         const memory = { turnContext: async (args) => { memoryCalls.push(args); return { notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }; } };
-        const d = createDispatcher({ channels, bots, memory, episodes, host });
+        const d = createDispatcher({ channels, bots, memory, episodes, host, ...(brain ? { brain } : {}) });
         dRef = d;
         return { d, memoryCalls, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
@@ -191,7 +194,8 @@ export default async function (t) {
         const w = world('confirm');
         w.host.lastReply = async () => '追加の投稿への返事';
         const removed = [];
-        w.d.channels.remove = async (a) => { removed.push(a.postId); };   // 空の投稿の取り下げを見る（身代わりは何もしない）
+        const withdraw = w.d.channels.withdraw;
+        w.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };   // 空の投稿の取り下げを見る
         await w.d.turnExtras(w.turn);
         const empty = w.posts.find((p) => p.turn);
         await w.d.onPosted(w.posts[1], w.channel);
@@ -948,7 +952,8 @@ export default async function (t) {
         {
           const q = mkWorld();
           const removed = [];
-          q.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = q.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+          const withdraw = q.d.channels.withdraw;
+          q.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };
           await callOwl(q);
           await tick();
           const lynxPost = q.posts.find((p) => p.turn?.sessionId === 's_new_b_2');
@@ -975,9 +980,11 @@ export default async function (t) {
 
       // 使用量の上限（ADR 0119）: 何も書けずに上限で終わったターンは作業中の投稿を消し、Pleiad のお知らせを出して休憩中にする。休憩中の @ は配らず、場所ごとに 1 回だけ知らせる
       {
-        const w = world('plain');
+        const lines = [];
+        const w = world('plain', { brain: { append: (botId, line) => lines.push(line), tail: () => [], loops: () => [] } });
         const removed = [];
-        w.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = w.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+        const withdraw = w.d.channels.withdraw;
+        w.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };
         await w.d.turnExtras(w.turn);
         const turnPost = w.posts.find((p) => p.turn);
         const resetsAt = Date.now() + 3 * 3600_000;
@@ -986,6 +993,9 @@ export default async function (t) {
         await tick();
         const notes = w.posts.filter((p) => String(p.text).includes('使用量の上限'));
         t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「中断しました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|中断しました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
+        const result = lines.find((l) => l.kind === 'result');
+        t.ok('上限: 活動メモの結果の行は上限で終わったと書く（「止められた」と書かない。人が［止める］を押したように読めないように）',
+          result?.text.includes('使用量の上限') && !result.text.includes('止められた') && result.meta?.state === 'limited', JSON.stringify(lines));
         t.ok('上限: 同じスレッドに Pleiad のお知らせを 1 回出す（解除の時刻つき）', notes.length === 1 && notes[0].threadId === 'p_root' && notes[0].text.includes('休みます'), JSON.stringify(notes));
         const owl = await w.d.bots.get({ botId: 'b_1' });
         t.ok('上限: その bot は解除の時刻まで休憩中（bots.overview の restingUntil の元）', w.d.restingUntil(owl) === resetsAt);
