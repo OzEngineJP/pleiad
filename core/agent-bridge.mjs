@@ -44,7 +44,8 @@ export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kin
   // kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
   // account は backend と一緒に書き、子の登録アカウントを固定する（ply_usage の account の値。ADR 0205）
-  tool('ply_delegate', delegateDescription(locale, hosts, kinds, routing), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
+  // endpoint は子を互換の接続先（ply_usage の endpoints の id か名前）で走らせる。account とは一緒に書けない（ADR 0360）
+  tool('ply_delegate', delegateDescription(locale, hosts, kinds, routing), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str, endpoint: str,
     ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),

@@ -4304,7 +4304,10 @@
       "disabled": "not enabled",
       "not_installed": "not installed",
       "no_token": "no token",
-      "no_account": "connection not registered"
+      "no_account": "connection not registered",
+      "no_endpoint": "connection not registered",
+      "check_failed": "check failed",
+      "key_unreadable": "key unreadable"
     },
     "line": {
       "head": "{{kind}} · {{difficulty}} → {{target}}",
@@ -4473,6 +4476,9 @@
       "accountLoginSame": "CLI login ({{name}})",
       "relogin": "Sign in again",
       "reloginLabel": "Sign in to {{account}} again (Settings › Agent settings)",
+      "endpointNoUsage": "usage not reported",
+      "recheck": "Check again",
+      "recheckLabel": "Check {{name}} again",
       "empty": "No candidates",
       "tableTitle": "Work kinds × difficulty",
       "tableKind": "Work kind",

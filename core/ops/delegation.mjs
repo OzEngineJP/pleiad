@@ -107,6 +107,8 @@ export const delegationOps = [
       isolate: z.boolean().optional().describe(D('delegate', 'isolate')),
       host: z.string().max(200).optional().describe(D('delegate', 'host')),
       account: z.string().max(200).optional().describe(D('delegate', 'account')),
+      // 互換の接続先（ADR 0360。id か名前。account とは一緒に書けない。確かめるのは server の requestedEndpoint）
+      endpoint: z.string().max(200).optional().describe(D('delegate', 'endpoint')),
     }) },
     { id: 'taskStatus', tool: 'ply_task_status', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskStatus', 'taskId')),
       offset: z.number().int().min(0).optional().describe(D('taskStatus', 'offset')) }) },

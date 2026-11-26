@@ -47,7 +47,9 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
  *   fixed  … 強さがモデル名に入るもの（Antigravity の -high。段違いは別のモデル名）の、その名前の強さ。選べず、送らない
  * 一覧を引けない・知らないモデルは levels が [] になる（振り分けでは「調整なし」として何も送らない）
  */
-export async function effortCapability(backend, model = '', cwd) {
+export async function effortCapability(backend, model = '', cwd, endpoint = null) {
+  // 互換の接続先の候補（ADR 0360）は接続先の段（モデル ID に段を持たない）
+  if (endpoint) return { levels: Object.keys(await effortOptions(backend, model, cwd, endpoint)).filter(Boolean), fixed: null };
   if (backend.traits?.effortInModelId) {
     const entry = (typeof backend.models === 'function' ? await backend.models(cwd).catch(() => null) : null)?.[model];
     return { levels: [], fixed: entry?.efforts?.length ? entry.defaultEffort ?? null : null };

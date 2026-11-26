@@ -3633,6 +3633,8 @@ function onEvent(ev, replay = false) {
       // 数と既定の印は取り直した一覧で描く（askConnLists が読み終えてから描き直す）
       connAsked.clear(); renderAuth();
       try { channelsUi.connChanged(); } catch {}
+      // 設定 › 委譲の互換の接続先の候補（名前・「使えない（確認に失敗）」。ADR 0360）を取り直す
+      try { delegationSettings.event({ type: 'delegationRoutingChanged', change: 'endpoints' }); } catch {}
       break;
     case "nextSettings":
       return refresh().then(() => { shellComposer.sync(); paintWorktreeLines(); });
@@ -11913,7 +11915,9 @@ const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page,
   openAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
     : capsOf(backend).accounts ? agentAccounts.open(backend, { focus: account }) : null,
   // 候補に足せるのは有効なエージェント（試験用の fake は出さない）
-  agents: () => state.backends.map((b) => b.id).filter((id) => id !== 'fake') });
+  agents: () => state.backends.map((b) => b.id).filter((id) => id !== 'fake'),
+  // 候補の面の「接続先を管理…」: エージェント設定のそのエージェントの接続先の一覧（ADR 0360）
+  openConns: (bid) => openAgentConns(bid) });
 clearThread();
 initTheme();
 initLocale();

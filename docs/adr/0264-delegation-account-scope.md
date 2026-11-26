@@ -2,7 +2,7 @@
 
 ## 状態
 
-承認（2026-10-24）
+承認（2026-10-24）。決定 1（候補の組）と 8（返り値）の一部を [ADR 0360](0360-delegation-compat-candidates.md) で置き換え（候補に互換の接続先 `backend@ep-…:model` を足し、`ply_usage` に `endpoints`、`ply_delegate` に `endpoint`）。
 
 - 関連: [0022](0022-delegation-routing.md)（委譲先の自動選択）、[0040](0040-delegation-routing-headroom.md)（使用量の後回しとアカウントごとの判定）、[0205](0205-ai-chooses-claude-account.md)（AI が委譲の子のアカウントを選ぶ）、[0222](0222-agent-accounts-and-provider-quota.md)（登録アカウントと使用枠）、[0226](0226-delegation-candidate-drag-order.md)（候補の並べ替え）、[0229](0229-opencode-limit-retry-wait.md)（上限で止まった枠）
 
