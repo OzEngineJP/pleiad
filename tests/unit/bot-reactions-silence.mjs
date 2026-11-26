@@ -12,6 +12,7 @@ import { createChannelService } from '../../core/channels/service.mjs';
 import { createDispatcher, QUIET_REACTIONS } from '../../core/bots/dispatch.mjs';
 import { isSilentReply, stripSilentMark, SILENT_MARK } from '../../core/bots/silence.mjs';
 import { answerOf, asksQuestion } from '../../core/bots/reactions.mjs';
+import { vanishedTurnPost } from '../../web/channels/post.mjs';
 
 export const name = 'bot-reactions-silence';
 export const title = 'bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす（DM の bot・AI は起こさない）・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
@@ -99,6 +100,8 @@ export default async function (t) {
   const nextStart = (n, label) => until(() => started.length > n && started[n], { label });
   const quietWait = () => sleep(150);
   const turnPosts = async (channelId, threadId) => (await channels.read({ channelId, threadId, limit: 100 })).posts.filter((p) => p.turn && !p.deletedAt);
+  // 消した投稿も含めたターンの投稿（保存の記録に「削除された投稿」として残るもの）
+  const allTurnPosts = async (channelId, threadId) => (await channels.read({ channelId, threadId, limit: 100 })).posts.filter((p) => p.turn);
 
   try {
     const channel = await channels.create({ name: 'dev', members: ['b_owl', 'b_lynx'] }, human);
@@ -118,6 +121,8 @@ export default async function (t) {
     // ---- 黙って終えた（括弧だけの一言）: 投稿は残らない
     await finish(second, ['（なし）']);
     t.ok('「（なし）」だけで終えたターンは投稿を残さない', (await turnPosts(channel.id, root.id)).length === 1, JSON.stringify(await turnPosts(channel.id, root.id)));
+    t.ok('リアクションだけで起きて黙ったターンは、消した投稿（「削除された投稿」）も残さない（見せるものができるまで投稿を作らない）',
+      (await allTurnPosts(channel.id, root.id)).length === 1, JSON.stringify(await allTurnPosts(channel.id, root.id)));
 
     // ---- 同じ人の 2 度目の答え・答えでないリアクション・自分のリアクションは起こさない
     await channels.react({ channelId: channel.id, postId: question.id, emoji: '✅', on: true }, human);
@@ -165,6 +170,8 @@ export default async function (t) {
     const fifth = await nextStart(4, '@ で Owl が起きる');
     await finish(fifth, [SILENT_MARK]);
     t.ok('印だけで終えたターンは投稿を残さない', (await turnPosts(channel.id, root.id)).length === 2);
+    // 人の @ で起きたターンは「…」を先に出す（作業中が見える）。黙って終えたら取り下げ、「削除された投稿」の行を残さない
+    t.ok('人の @ で起きて黙ったターンは、消した投稿（「削除された投稿」）も残さない', (await allTurnPosts(channel.id, root.id)).length === 2, JSON.stringify(await allTurnPosts(channel.id, root.id)));
     await channels.post({ channelId: channel.id, threadId: root.id, text: '@Owl 件数は？' }, human);
     const sixth = await nextStart(5, '@ で Owl が起きる');
     await finish(sixth, ['（なし）ではなく、見つかったのは 3 件です']);
@@ -245,6 +252,82 @@ export default async function (t) {
     await finish(dmRun, []);
     const dmPosts = (await channels.read({ channelId: dm.id, limit: 100 })).posts.filter((p) => p.turn && !p.deletedAt);
     t.ok('文章を書かずに終えた DM のターンは投稿を残さない', dmPosts.length === 1 && dmPosts[0].id === dmQ.id, JSON.stringify(dmPosts));
+    const dmAll = (await channels.read({ channelId: dm.id, limit: 100 })).posts.filter((p) => p.turn);
+    t.ok('文章を書かずに終えた DM のターンは、消した投稿（「削除された投稿」）も残さない', dmAll.length === 1, JSON.stringify(dmAll));
+
+    // ================================================================ 人に呼ばれていないターンが黙って終えたら、スレッドに何も残さない
+    // （消した投稿の「削除された投稿」の行も。2026-11 に #pleiad開発 のスレッドに 7 行並んだ不具合）。
+    // 子の完了の知らせ・心拍の引き継ぎ（pulse）・予約した起こし（wake）・使用量の上限でのモデルの切り替えの続き・起動で付け直したターン
+    {
+      const thRoot = await channels.post({ channelId: channel.id, text: '@Owl 委譲の様子を見ていて' }, human);
+      const called = await nextStart(started.length, '@ で Owl が起きる');
+      await finish(called, ['子に任せました。終わったら知らせます。']);
+      const sid = called.sessionId;
+      const count = async () => (await allTurnPosts(channel.id, thRoot.id)).length;
+      const base = await count();
+      // Pleiad が内部で起こすターン（完了の知らせ・設定の切り替えの続き）は runTurn の hooks.internal。ターンは userInitiated: false
+      const internalTurn = async (texts, outcome = 'ok') => {
+        const turn = { info: { sessionId: sid }, agentLocale: 'ja', usage: {}, stream: {}, userInitiated: false };
+        turns.set(sid, turn);
+        await d.turnExtras(turn);
+        const early = await count();
+        await finish({ turn, sessionId: sid }, texts, outcome);
+        return early;
+      };
+      const earlyNotice = await internalTurn([SILENT_MARK]);
+      t.ok('子の完了の知らせで起きて黙ったターンは、始まりにも「…」の投稿を作らない', earlyNotice === base, String(earlyNotice - base));
+      t.ok('子の完了の知らせで起きて黙ったターンは、スレッドに何も残さない（消した投稿も）', (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+
+      await internalTurn([], 'limited');
+      t.ok('上限で何も書けずに終えた内部のターンも、スレッドに何も残さない', (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+      await internalTurn([SILENT_MARK]);
+      t.ok('モデルを切り替えた続きのターンが黙って終えたら、スレッドに何も残さない', (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+
+      const n1 = started.length;
+      t.ok('前提: 予約した起こしを受ける', (await d.wakeReserved({ botId: 'b_owl', sessionId: sid, channelId: channel.id, threadId: thRoot.id, why: '進み具合', text: '委譲の進み具合を見る' })).ok);
+      const woke = await nextStart(n1, '予約した起こしで Owl が起きる');
+      const earlyWake = await count();
+      await finish(woke, [SILENT_MARK]);
+      t.ok('予約した起こし（wake）で起きて黙ったターンは、スレッドに何も残さない（始まりにも作らない）', earlyWake === base && (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+
+      const n2 = started.length;
+      t.ok('前提: 心拍の引き継ぎを受ける', (await d.handoff({ botId: 'b_owl', where: thRoot.id, why: '気になった', text: '子の様子を見る' })).ok);
+      const pulsed = await nextStart(n2, '心拍の引き継ぎで Owl が起きる');
+      const earlyPulse = await count();
+      await finish(pulsed, [SILENT_MARK]);
+      t.ok('心拍の引き継ぎ（pulse）で起きて黙ったターンは、スレッドに何も残さない（始まりにも作らない）', earlyPulse === base && (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+
+      // 起動で付け直したターン（ターンの投稿がまだ無い）が黙って終えた
+      const restored = { info: { sessionId: sid }, agentLocale: 'ja', usage: {}, stream: {} };
+      turns.set(sid, restored);
+      t.ok('前提: 投稿の無いターンを付け直せる', await d.restoreTurn(restored, {}));
+      await finish({ turn: restored, sessionId: sid }, [SILENT_MARK]);
+      t.ok('起動で付け直した、投稿の無いターンが黙って終えたら、スレッドに何も残さない', (await count()) === base, JSON.stringify(await allTurnPosts(channel.id, thRoot.id)));
+
+      // 言うことがあれば、内部で起きたターンでも返事は残す
+      await internalTurn(['子が終わりました。結果は 3 件です。']);
+      const spoke = (await turnPosts(channel.id, thRoot.id)).at(-1);
+      t.ok('内部で起きたターンでも、書いた返事は投稿に残る', (await count()) === base + 1 && spoke?.text === '子が終わりました。結果は 3 件です。' && spoke.state === 'done', JSON.stringify(spoke));
+
+      // 人が会話の画面から直接書いたターン（userInitiated）は、これまでどおり始まりに「…」を出す
+      const typed = { info: { sessionId: sid }, agentLocale: 'ja', usage: {}, stream: {}, userInitiated: true };
+      turns.set(sid, typed);
+      await d.turnExtras(typed);
+      const working = (await turnPosts(channel.id, thRoot.id)).at(-1);
+      t.ok('人が書いたターンは、始まりに作業中の投稿（…）を出す', (await count()) === base + 2 && working?.state === 'working', JSON.stringify(working));
+      await finish({ turn: typed, sessionId: sid }, ['はい。']);
+
+      // 人が消した投稿は「削除された投稿」のまま（隠すのは bot のターンの、作業中のまま消えた投稿だけ）
+      const mine = await channels.post({ channelId: channel.id, threadId: thRoot.id, text: '消す投稿' }, human);
+      await channels.remove({ channelId: channel.id, postId: mine.id }, human);
+      const gone = (await channels.read({ channelId: channel.id, threadId: thRoot.id, limit: 100 })).posts.find((p) => p.id === mine.id);
+      t.ok('人が消した投稿は、画面で隠さない（「削除された投稿」のまま）', Boolean(gone?.deletedAt) && !vanishedTurnPost(gone), JSON.stringify(gone));
+      // 前の版が記録に残した、黙って終えたターンの消えた投稿（作業中のまま消したので state が無い）は描かない。記録は書き換えない
+      const legacy = { id: 'p_old', threadId: thRoot.id, author: { kind: 'bot', botId: 'b_owl' }, turn: { botId: 'b_owl', sessionId: sid }, text: '', deletedAt: Date.now(), reactions: {} };
+      t.ok('記録に残った、中身の無い bot のターンの削除済みの投稿は、画面で描かない', vanishedTurnPost(legacy));
+      const doneThenDeleted = { ...spoke, deletedAt: Date.now(), text: '' };
+      t.ok('書き終えた bot の投稿を後から消したもの（state が残る）は、隠さない', !vanishedTurnPost(doneThenDeleted));
+    }
   } finally {
     d.stop();
     await channels.close();

@@ -458,9 +458,12 @@ export async function pinChanges(record, options = {}) {
 }
 
 export function contextTools(runtime, userPrompt = '') {
-  const invoked = new Set(String(userPrompt).match(/\$[\p{L}\p{N}_-]+/gu)?.map(s => s.slice(1)) ?? []);
+  // チャンネルの投稿は <pleiad-channel …>本文</pleiad-channel> の包みで渡る（core/channels/types.mjs）。
+  // 包みの開きタグ（属性は `>` を文字参照にしてあるので `[^>]*` で閉じまで取れる）は、行頭の /名前 の手前の境目として空白に置き換える
+  const text = String(userPrompt).replace(/<pleiad-channel\b[^>]*>/g, ' ');
+  const invoked = new Set(text.match(/\$[\p{L}\p{N}_-]+/gu)?.map(s => s.slice(1)) ?? []);
   // Composer slash mentions can occur anywhere, including multiple manual-only skills.
-  for (const match of String(userPrompt).matchAll(/(?:^|[\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}（(「『、。，,])\/([\p{L}\p{N}_.:-]+)(?![\p{L}\p{N}_.:\/\\-])/gu)) invoked.add(match[1]);
+  for (const match of text.matchAll(/(?:^|[\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}（(「『、。，,])\/([\p{L}\p{N}_.:-]+)(?![\p{L}\p{N}_.:\/\\-])/gu)) invoked.add(match[1]);
   const active = runtime.skills.filter(s => !s.metadata?.['disable-model-invocation'] || invoked.has(s.name));
   const locale = runtime.locale;
   const tools = [];

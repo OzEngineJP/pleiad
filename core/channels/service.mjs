@@ -218,6 +218,12 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     slot.timer.unref?.();
     timers.add(slot.timer);
   }
+  // 消した・取り下げた投稿の、間引いて待っている作業中の更新を捨てる（後から配られて画面に作業中の投稿が戻らないように）
+  function dropEdit(postId) {
+    const slot = edits.get(postId);
+    if (slot?.timer) { clearTimeout(slot.timer); timers.delete(slot.timer); }
+    edits.delete(postId);
+  }
 
   const summariesOf = (all, rootIds) => {
     const wanted = new Set(rootIds);
@@ -552,6 +558,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       await need(channelId);
       for (const id of postIds) {
         const saved = await store.append(channelId, { op: 'withdraw', id, at: now() });
+        dropEdit(id);
         if (saved) emit({ type: 'channelPost', channelId, op: 'withdraw', post: { ...clone(saved), withdrawnAt: saved.withdrawnAt } });
       }
     },
@@ -560,7 +567,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const post = await needPost(channelId, postId);
       if (post.deletedAt) return;
       const saved = await store.append(channelId, { op: 'delete', id: postId, at: now() });
-      edits.delete(postId);
+      dropEdit(postId);
       emit({ type: 'channelPost', channelId, op: 'delete', post: saved });
       Promise.resolve().then(async () => hooks.removed?.(clone(saved), clone(await need(channelId)))).catch((e) => console.error('  channels: removed の後処理に失敗:', String(e?.message ?? e)));
     },
@@ -607,6 +614,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
 
     threads: {
       get: (channelId, threadId) => threadStore.get(channelId, threadId),
+      peek: (channelId, threadId) => threadStore.peek(channelId, threadId),
       list: (channelId) => threadStore.list(channelId),
       async update(channelId, threadId, patch) {
         const thread = await threadStore.update(channelId, threadId, patch);

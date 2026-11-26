@@ -3,6 +3,7 @@
 // - 一覧: Pleiad Plus のホスト（上）とペアリングしたホスト（下・自分の中継サーバー）。
 //   - Plus の行を押すとその PC の窓を開く。同じ hostId の窓は 1 枚で前面化。まだ許可されていない（もう一度の許可が要る）PC は、
 //     確認コードを出して相手の PC の画面の承認を待つ（QR のときと同じ待ちの画面。やめるで中断）
+//   - 取り消された PC の行を押すと詳しい画面（「もう一度許可を依頼する」・削除）。許可は相手の PC の画面の確認で、ここでは省かない
 //   - 自分の中継の行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・名前を変える・削除）
 // - ＋ の流れ（PC を追加）: アプリを入れる › つなぎ方（Plus / 自分の中継）› つなぐ（待つ/コード貼り付け）› 完了
 //
@@ -253,6 +254,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
                 onclick: () => {
                   if (line.needsApproval) startPlusPair(h);
                   else if (line.canOpen) openHost(h.hostId, { via: 'plus' });
+                  else if (line.revoked) openDetail(h.hostId);
                 },
               }));
             }
@@ -274,18 +276,17 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
           name: line.name,
           sub: line.sub,
           key: `host-${h.hostId}`,
-          onclick: () => {
-            detailId = h.hostId;
-            renaming = false;
-            removing = false;
-            message = '';
-            onChange();
-          },
+          onclick: () => openDetail(h.hostId),
         }));
       }
       out.push(ownSec);
     }
     return out;
+  }
+
+  /** 詳しい画面を開く（自分の中継の行と、取り消された Plus の行で共通） */
+  function openDetail(hostId) {
+    detailId = hostId; renaming = false; removing = false; message = ''; onChange();
   }
 
   function detail(host) {
@@ -301,7 +302,8 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
       [t('settings.remote.detail.added'), host.pairedAt ? fmt.dateTime(host.pairedAt, { year: 'numeric', month: 'long', day: 'numeric' }) : ''],
       [t('settings.remote.detail.lastSeen'), host.lastConnectedAt ? fmt.relative(host.lastConnectedAt) : t('settings.remote.detail.never')],
     ]));
-    if (line.revoked) out.push(el('p', 'rm-weak', t('settings.remote.hosts.revokedHint')));
+    const plusRevoked = line.revoked && host.via === 'plus';
+    if (line.revoked) out.push(el('p', 'rm-weak', plusRevoked ? t('settings.remote.hosts.revokedPlusHint') : t('settings.remote.hosts.revokedHint')));
     else {
       const text = agentLine(host);
       if (text) { const note = el('p', 'rm-weak rm-agent', text); note.setAttribute('role', 'status'); out.push(note); }
@@ -319,6 +321,11 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
       const remove = button(t('settings.remote.hosts.remove'), () => { removing = true; message = ''; onChange(); }, 'btn btn-quiet');
       remove.dataset.fk = 'remove';
       if (line.canOpen) acts.append(open);
+      else if (plusRevoked) {
+        const ask = button(t('settings.remote.hosts.requestApproval'), () => startPlusPair(host), 'btn btn-primary');
+        ask.dataset.fk = 'requestApproval';
+        acts.append(ask);
+      }
       acts.append(rename, remove);
       out.push(acts);
     }
@@ -483,6 +490,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
         o.next = {
           disabled: !wz.foundHost || wz.admitting,
           onclick: () => pairPlus(),
+          label: wz.direct && wz.error ? t('settings.remote.hosts.requestApproval') : undefined,
         };
         o.sig = [wz.method, Boolean(wz.foundHost), wz.foundHost?.hostId, wz.admitting, wz.error];
       } else {

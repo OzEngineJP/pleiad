@@ -18,7 +18,7 @@
 //   via は書いた会話の sessionId（その会話の末尾の差分には同じ記憶を重ねて出さないため）。
 //   edit で段・作業場所が変わったときは place: { from, to }（それぞれ { tier?, workspace? }）も残す。コードの一括移行（既存の約束を保存だけにするなど）は
 //   migration: '<名前>' を付け、by は { kind: 'system' }。段を外せば元に戻り、同じ名前の移行は同じ id にやり直さない（migrated(name)）。
-//   一度きりの振り分け（core/memory/sort.mjs）も同じ印（migration: 'sort:<走りの id>'）と、短い理由 reason を付ける。取り消しは 'sort-undo:<走りの id>'。
+//   夜の整理の振り分け（core/memory/sort.mjs）も同じ印（migration: 'sort:<走りの id>'）と、短い理由 reason を付ける。取り消しは 'sort-undo:<走りの id>'。
 //   migrations(name) は、その移行が変えた段・作業場所の前後（from・to）を id ごとに返す。
 // 変更はすべて 1 本のキューで直列にする（rev を欠番なく進めるため）。md を先に書き、log を後に足す。
 import fs from 'node:fs/promises';

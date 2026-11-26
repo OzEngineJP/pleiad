@@ -25,16 +25,15 @@ export function botState(bot, { sessions = [], runningIds = new Set(), waitingId
 }
 
 /**
- * 脇の面の切り替え（チャット / bot）の印。見ていない面にだけ付ける（ADR 0362）。あなたを待っているもの（承認待ちの bot・あなた宛ての投稿）が
- * あれば 'mark'（◆）、作業中のものがあれば 'working'（弧）、どちらも無ければ null。未読だけでは付けない
- * @param {{ tab: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, running: boolean } }} o
+ * 脇の面の切り替え（チャット / bot）の印。あなたを待っているもの（承認待ちの会話・あなたを待っている bot・あなた宛ての投稿）が
+ * あれば、その側を見ている間も片付くまで 'mark'（アイコン右上の点）を残す。作業中・未読だけでは付けない
+ * @param {{ tab?: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, running?: boolean } }} o
  */
-export function tabDots({ tab, channels = [], botStates = [], chats = {} }) {
+export function tabDots({ channels = [], botStates = [], chats = {} }) {
   const live = channels.filter((c) => !c.archivedAt);
-  const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark'
-    : botStates.includes('working') ? 'working' : null;
-  const chatsDot = chats.waiting ? 'mark' : chats.running ? 'working' : null;
-  return { chats: tab === 'chats' ? null : chatsDot, channels: tab === 'channels' ? null : channelsDot };
+  const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark' : null;
+  const chatsDot = chats.waiting ? 'mark' : null;
+  return { chats: chatsDot, channels: channelsDot };
 }
 
 /** 検索語（web/session-find.mjs の parseTerms の形）がすべて名前に当たるか */

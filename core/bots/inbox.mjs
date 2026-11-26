@@ -1,7 +1,7 @@
 // bot へ届ける前の出来事の保存（S4。ADR 0109）。<data>/channels/inbox.json = { version: 1, items: InboxItem[] }。
 // 投稿から bot を起こすとき、まずここへ `pending` で保存してから会話へ渡す（保存できなければ受け付けない。委譲のタスクと同じ）。
 // 状態: pending（未送）→ delivering（渡している最中）→ sent（渡った）/ unknown（結果が分からない。自動では送り直さない）。
-// 起動時は delivering を unknown にして、pending だけを配り直す（recover）。
+// 起動時は、引き継いだターンに属さない delivering を unknown にして、pending を配り直す（recover）。
 //
 //   createInboxStore({ dir, now }) → { load, add, list, mark, remove, recover }
 //     add({ sessionId, botId, channelId, threadId, postId, caller?, reply?, inner?, heard?, heardTo?, reaction? }): Promise<InboxItem>
@@ -13,7 +13,7 @@
 //     list({ sessionId?, status?, channelId?, threadId? }): Promise<InboxItem[]>      … 保存順
 //     mark(ids, status, extra?): Promise<InboxItem[]>                                  … 変わったもの
 //     remove(ids): Promise<number>
-//     recover(): Promise<{ demoted: number, sessions: string[] }>                     … delivering → unknown。pending の会話の id を返す
+//     recover(keptIds?): Promise<{ demoted: number, sessions: string[] }>            … 引き継いだ項目以外の delivering → unknown。pending の会話の id を返す
 // InboxItem: { id: 'i_…', sessionId, botId, channelId, threadId: string|null, postId: string|null, caller?, reply?, inner?, heard?, heardTo?, reaction?, status, at, updatedAt, error? }
 // 読めない版・壊れた JSON は上書きせずに投げる（threads.json と同じ方針）。送り終えた（sent）・結果不明のものは新しい 100 件だけ残す。
 import fs from 'node:fs/promises';
@@ -92,9 +92,10 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
       data.items = data.items.filter((i) => !wanted.has(i.id));
       return before - data.items.length;
     }),
-    recover: () => mutate((data) => {
+    recover: (keptIds = []) => mutate((data) => {
+      const kept = new Set(keptIds);
       let demoted = 0;
-      for (const item of data.items) if (item.status === 'delivering') { item.status = 'unknown'; item.updatedAt = now(); demoted++; }
+      for (const item of data.items) if (item.status === 'delivering' && !kept.has(item.id)) { item.status = 'unknown'; item.updatedAt = now(); demoted++; }
       return { demoted, sessions: [...new Set(data.items.filter((i) => i.status === 'pending').map((i) => i.sessionId))] };
     }),
   };

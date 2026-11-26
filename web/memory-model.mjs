@@ -1,10 +1,10 @@
-// 記憶の自動整理の状態の決まり（DOM に触れない。設定 › 記憶 › bot と、bot のページの「自動整理: …」の導線が使う。docs/design-system.md「設定 › 記憶」）。
+// 毎晩の整理の状態の決まり（DOM に触れない。設定 › bot と、bot のページの「毎晩の整理: …」の導線が使う。docs/design-system.md「設定 › bot」）。
 // 材料は memory.learnStatus の返り（core/ops/memory.mjs）と、整理に使うエージェントの受動のログイン状態（probe なし）。
 // 検査は tests/unit/memory-model.mjs。
 import { shortTime } from './channels/bot-model.mjs';
 //
 // パネルの状態は優先度の高い順に 1 つ:
-//   off          … 自動整理が止まっている（設定の実効 OFF。旧 memoryLearnPaused も OFF 扱い）
+//   off          … 毎晩の整理が止まっている（設定の実効 OFF。旧 memoryLearnPaused も OFF 扱い）
 //   running      … いま走っている
 //   halted       … 失敗で自動再試行をやめた（明示の「もう一度」か再有効化で戻る。再起動で残っている停止を未確認の認証で隠さない）
 //   failed       … 一時的な失敗。自動再試行を待っている
@@ -13,7 +13,7 @@ import { shortTime } from './channels/bot-model.mjs';
 //   waiting      … 次の予定を待っている
 // 認証の未確定（out / unconfirmed）は補助情報: 止まっている・失敗しているときはその状態と［もう一度］を残した上で、認証の注記と入口を添える。
 
-/** 自動整理が動くか。新しい core は status.enabled が実効値（memoryAutoLearn && !memoryLearnPaused）。
+/** 毎晩の整理が動くか。新しい core は status.enabled が実効値（memoryAutoLearn && !memoryLearnPaused）。
     無いときは設定キーで決める（memoryAutoLearn が欠けたままの利用者は OFF。paused の逆にはしない） */
 export const learnEnabledOf = (status, prefs) =>
   typeof status?.enabled === 'boolean' ? status.enabled
@@ -27,7 +27,7 @@ export const authOutOf = (st) =>
 export const authUnconfirmedOf = (st) =>
   st?.supported === true && st.installed !== false && st.unconfirmed === true && !st.pending;
 
-/** 設定 › 記憶 › bot の状態の行。actions は settings.memory.act.<name> のボタン。authNote は止まった状態の脇に出す認証の注記 */
+/** 設定 › bot の状態の行。actions は settings.memory.act.<name> のボタン。authNote は止まった状態の脇に出す認証の注記 */
 export function learnPanelView(status, { enabled, authOut, unconfirmed } = {}) {
   const authNote = authOut ? 'authWait' : unconfirmed ? 'unconfirmed' : null;
   if (!enabled) return { mode: 'off', actions: [] };
@@ -43,52 +43,33 @@ export function learnPanelView(status, { enabled, authOut, unconfirmed } = {}) {
   return { mode: 'waiting', actions: ['now'] };
 }
 
-/** 会話の始まりに入りきらない記憶（memory.coreFit の返り）を、設定 › 記憶の 1 行の材料にする。段の順（段なし・いつも・この作業場所で）で、0 の段は出さない。
-    全部入っている・形が違うときは null（行を出さない） */
-export function coreFitView(fit) {
-  const omitted = fit?.omitted;
-  if (!omitted || typeof omitted !== 'object') return null;
-  const parts = ['untiered', 'always', 'workspace']
-    .map((tier) => ({ tier, n: Number.isFinite(omitted[tier]) ? Math.max(0, Math.trunc(omitted[tier])) : 0 }))
-    .filter((p) => p.n > 0);
-  return parts.length ? { parts, total: parts.reduce((sum, p) => sum + p.n, 0) } : null;
-}
-
 const count = (value) => (Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0);
 
 /**
- * 設定 › 記憶 › 振り分け（一度きりの振り分け。memory.sortStatus の返り）の 1 行と操作。数・内訳・失敗の数だけで、記憶の本文は持たない。
- * mode は settings.memory.sort.status.<mode>（none・running・stopping・stopped・done・failed・undone）。actions は settings.memory.sort.act.<name>
- * （start 始める・resume 続ける・redo もう一度・stop 止める・undo 取り消す）。parts は settings.memory.sort.sub.<key> の材料（0 の項目は出さない）。
- * poll は走っている間 true（画面が数秒ごとに読み直す）。読めていなければ null（欄を出さない）
+ * 設定 › bot の「渡す場面が決まっていない記憶」の 2 行（毎晩の整理が少しずつ決める分。memory.sortStatus の返り。ADR 0363 の 2026-11-26 の改訂）。
+ * 数だけで、記憶の本文は持たない。読めていなければ null（欄を出さない）。
+ *   mode … none（まだ決めていない）・running（いま決めている）・going（毎晩続けている）・done（その回は決めきった）・failed（前の晩はうまくいかなかった）・undone（取り消した）
+ *   untiered … 渡す場面が決まっていない件数。nights・perNight … あと何晩ほど・1 晩に決める件数
+ *   placed・tiers … 決めた件数と内訳（always 毎回渡す・workspace このフォルダーのときだけ・archive 渡さない）
+ *   undone … 取り消しの結果（戻した件数・人が変えていたので残した件数）。undo … ［決めた分を取り消す］を出すか（決めた分があり、いま走っていない）
+ *   show … この欄を出すか（決まっていない記憶か、決めた分か、取り消した記録があるとき）
+ * 振り分けの始める・止める操作は無い（夜の整理のスイッチが入っている間だけ進む）。
  */
 export function sortPanelView(status) {
   if (!status || typeof status !== 'object') return null;
   const untiered = count(status.untiered);
   const tiers = { always: count(status.tiers?.always), workspace: count(status.tiers?.workspace), archive: count(status.tiers?.archive) };
   const placed = tiers.always + tiers.workspace + tiers.archive;
-  const mode = status.running ? (status.stopping ? 'stopping' : 'running') : (['none', 'stopped', 'done', 'failed', 'undone'].includes(status.status) ? status.status : 'none');
-  const undo = placed > 0 ? ['undo'] : [];
-  const actions = mode === 'none' || mode === 'undone' ? ['start']
-    : mode === 'running' ? ['stop']
-    : mode === 'stopping' ? []
-    : mode === 'done' ? [...(untiered > 0 ? ['redo'] : []), ...undo]
-    : ['resume', ...undo];   // stopped・failed
-  const started = mode !== 'none' && mode !== 'undone';
-  const parts = [
-    ...(untiered > 0 ? [{ key: 'untiered', params: { n: untiered } }] : []),
-    ...(started && count(status.processed) > 0 ? [{ key: 'processed', params: { n: count(status.processed) } }] : []),
-    ...(placed > 0 ? [{ key: 'tiers', params: tiers }] : []),
-    ...(count(status.unknown) > 0 ? [{ key: 'unknown', params: { n: count(status.unknown) } }] : []),
-    ...(count(status.left) > 0 ? [{ key: 'left', params: { n: count(status.left) } }] : []),
-    ...(count(status.changed) > 0 ? [{ key: 'changed', params: { n: count(status.changed) } }] : []),
-    ...(count(status.failures) > 0 ? [{ key: 'failures', params: { n: count(status.failures) } }] : []),
-    ...(mode === 'undone' && status.undone ? [{ key: 'undone', params: { restored: count(status.undone.restored), kept: count(status.undone.kept) } }] : []),
-  ];
-  return { mode, actions, parts, warn: mode === 'failed', poll: mode === 'running' || mode === 'stopping' };
+  const mode = status.running ? 'running' : (['going', 'done', 'failed', 'undone'].includes(status.status) ? status.status : 'none');
+  const undone = mode === 'undone' && status.undone ? { restored: count(status.undone.restored), kept: count(status.undone.kept) } : null;
+  return {
+    mode, untiered, nights: count(status.nights), perNight: count(status.perNight), placed, tiers, undone,
+    undo: placed > 0 && mode !== 'running' && mode !== 'undone',
+    show: untiered > 0 || placed > 0 || mode === 'undone',
+  };
 }
 
-/** bot のページの導線ボタンの短い状態（認証までは見ない。失敗・停止はどちらも「失敗」。詳しくは設定 › 記憶 を開く） */
+/** bot のページの導線ボタンの短い状態（認証までは見ない。失敗・停止はどちらも「失敗」。詳しくは設定 › bot を開く） */
 export function learnRouteView(status, { enabled } = {}) {
   if (!status) return { key: 'open' };
   if (!enabled) return { key: 'off' };

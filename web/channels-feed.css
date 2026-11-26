@@ -29,6 +29,8 @@
 .ch-nm:hover{background:var(--surface-hover)}
 .ch-nm:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
 .ch-purpose{flex:1;min-width:0;color:var(--ink-weak);font-size:var(--fs-s);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* margin-left:auto … 目的の文（伸びる要素）が畳まれる（スレッドを開いた・狭い）ときも、メンバー・ルーティン・⋯ を頭の右端に置く */
+.top.ch-top .ch-members{margin-left:auto}
 .ch-members{display:inline-flex;gap:2px;flex:none;padding:2px 4px;border-radius:var(--r-pill)}
 .ch-av{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface-1);font-size:13px;line-height:1;color:var(--ink)}
 .ch-av.you{background:var(--surface-3);font-size:10px;font-weight:600}
@@ -176,6 +178,18 @@
 .mention-list li.it[data-bot]{position:relative;--bot-color:var(--bc1)}
 .mention-list li.it[data-bot].on{background:color-mix(in srgb,var(--bot-color) 14%,var(--surface-paper))}
 .mention-list li.it[data-bot].on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--bot-color)}
+/* ---- 「/」の候補（web/slash-skills.mjs。行の形は web/style.css の :is(...) に .ch-skill-list を加えて共有。ここは置き場所だけ）
+   @ の候補と同じ位置（欄の箱の左右に揃えて、すぐ上）。高さは slash-skills.mjs が上に残っている分までにする */
+.ch-composer .ch-skill-list{left:16px;right:16px;top:auto;bottom:calc(100% - 2px);width:auto;min-width:0;max-width:none;max-height:312px;white-space:normal}
+.ch-skill-list[hidden]{display:none}
+/* 見出し: 顔 + 「Owl のスキル」 + パス（長ければ省く）。件数は右端（.head .n） */
+.ch-skill-list .sk-head{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.ch-skill-list .sk-who{flex:none;color:var(--ink)}
+.ch-skill-list .sk-where{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:0}
+.ch-skill-list .sk-where::before{content:"· "}
+/* 複数の bot の候補が混ざるとき、行頭にそのスキルを持つ bot の顔 */
+.ch-skill-list .sk-faces{display:inline-flex;align-items:center;gap:2px;flex:none;align-self:center;margin-right:6px}
+.ch-skill-list .sk-face{flex:none}
 .mention-av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:11px;line-height:1;flex:none}
 .mention-av.you{background:var(--surface-3);font-size:9px;font-weight:600}
 .mention-list .lbl{font-weight:600}
@@ -210,6 +224,29 @@
 .cs-error:empty{display:none}
 .cs-actions{display:flex;align-items:center;gap:8px}
 .cs-sp{flex:1}
+/* 既定の作業フォルダー（web/channels/cwd-field.mjs）。パスの表示 + ［フォルダーを選ぶ…］ + 浮かぶ候補（.cs-pop）、その下に bot ごとの動く場所（.where）。
+   bot のページの「フォルダーを足す」の部品（.cpath・.caction・.cbrowse）を使う */
+.folder-row{display:flex;gap:8px;align-items:center;position:relative}
+.folder-row .cpath{flex:1;min-width:0;width:auto;display:block;border-radius:var(--r-m);padding:7px 12px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.folder-row .cpath.empty{color:var(--ink-weak);font-family:var(--font)}
+.folder-row .cs-pick{flex:none}
+.cs-pop{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:3;padding:6px;background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow)}
+.cs-pop[hidden]{display:none}
+:root[data-theme="dark"] .cs-pop{background:var(--surface-3)}
+.cs-pop .caption{padding:4px 10px;font-size:11px;color:var(--ink-weak)}
+.cs-pop > button{display:flex;align-items:center;gap:8px;width:100%;min-height:var(--hit,32px);margin:0;padding:4px 10px;border-radius:var(--r-s);background:transparent;color:var(--ink);font-size:13px;text-align:left;cursor:pointer}
+.cs-pop > button:hover{background:var(--surface-sel)}
+.cs-pop > button[aria-current]{font-weight:600}
+.cs-pop > button code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:12px}
+.cs-pop > .caction{margin-top:0;color:var(--ink-blue);font-weight:600}
+.cs-browse{padding:0 4px 4px}
+.cs-browse[hidden]{display:none}
+.where{display:flex;flex-direction:column;gap:4px;margin-top:4px}
+.where[hidden]{display:none}
+.where-row{display:grid;grid-template-columns:auto auto 1fr;gap:6px;align-items:center;min-width:0;font-size:12px}
+.where-row b{font-weight:700}
+.where-row code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:12px;color:var(--ink)}
+.where-row .why{grid-column:2 / 4;margin-top:-2px;font-size:11px;color:var(--ink-weak);line-height:1.5}
 
 /* 指で使う画面は、入力欄の字を 16px 以上に（iOS は 16px 未満の欄に触れると画面を拡大する）。行間は Chats の #prompt と同じ */
 @media (pointer:coarse){

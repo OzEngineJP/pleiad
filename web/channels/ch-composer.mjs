@@ -2,7 +2,7 @@
 // Chats の入力欄と同じ操作を持つ（ADR 0116）: 字の欄は Chats と同じ編集欄（web/md-editor.mjs。要素を渡せば何個でも作れる）、
 // 送信は Ctrl+Enter（Enter は改行）、行は 1 行から中身に合わせて伸びる（上限はマウス 10 行・タッチ 6 行。web/composer-layout.mjs）、
 // 添付はクリップ・貼り付け・ドロップ（ch-attachments.mjs）、書きかけは入力欄ごと（流れはチャンネル・スレッドはスレッド）に端末へ残す。
-// チップは無い（bot の動かし方は bot が持つ）。「@」で bot とメンバーを補完（mention-complete.mjs）。
+// チップは無い（bot の動かし方は bot が持つ）。「@」で bot とメンバーを補完（mention-complete.mjs）、「/」でスキルを補完（slash-skills.mjs。options.skills）。
 // 誰も @ していない文では、淡い提案（「@Owl を呼ぶ」）を欄の上に出す。DM は宛先が決まっているので出さない。
 import { createMarkdownEditor } from '../md-editor.mjs';
 import { isComposingKey } from '../keyboard.mjs';
@@ -11,6 +11,7 @@ import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { setupMentionBlocks } from './mention-blocks.mjs';
+import { setupSlashSkills } from '../slash-skills.mjs';
 import { createChAttachments } from './ch-attachments.mjs';
 import { DRAFT_STORE, parseDrafts, serializeDrafts } from './ch-attach-model.mjs';
 
@@ -34,13 +35,16 @@ const SAVE_WAIT_MS = 400;
  * @param {() => object[]} o.candidates @ の候補（mention-complete.mjs の形）
  * @param {() => { id: string, name: string, color?: number }[]} [o.blockBots] 本文の `@名前` を「顔＋名前」の塊に見せる bot（mention-blocks.mjs。呼べる bot の全員）
  * @param {() => { id: string, name: string, icon: string }|null} [o.suggest] 誰も @ していないときに勧める bot（無ければ提案を出さない）
+ * @param {{ key: (text: string) => string, load: (key: string) => Promise<object[]>, headLabel?: (key: string) => Node|string|null, badge?: (skill: object) => Node|null }|null} [o.skills]
+ *   「/」のスキル候補（スレッドの返信欄と同じ web/slash-skills.mjs）。key は今の本文から決まる引き先の印、load はその印の候補（web/channels/feed-skills.mjs）。
+ *   無ければ「/」の候補は出さない
  * @param {(backend: string) => string} [o.backendLabel]
  * @param {(text: string) => Promise<{required: boolean, botIds: string[]}>} [o.wakePreview] 集団宛てを投稿前に数える
  * @param {(post: { text: string, attachments: { path: string, name: string, mime: string }[], confirmedWake?: string[] }) => Promise<void>} o.onSend 投稿する。失敗したら投げる（字と添付は残る）
  * @returns {{ el: HTMLFormElement, input: HTMLElement, focus(): void, setPlaceholder(text: string): void, setDisabled(on: boolean, reason?: string): void, refresh(): void, clear(): void,
  *   setDraftKey(key: string|null): void, saveDraft(): void, bindDropZone(zone: HTMLElement): void }}
  */
-export function createChComposer({ id, host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, backendLabel, wakePreview, onSend, idPrefix = id }) {
+export function createChComposer({ id, host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, skills = null, backendLabel, wakePreview, onSend, idPrefix = id }) {
   const form = el('form', 'ch-composer');
   form.id = id;
   form.noValidate = true;
@@ -61,13 +65,19 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   list.setAttribute('role', 'listbox');
   list.setAttribute('aria-label', t('channels:feed.mention.label'));
   list.hidden = true;
+  // 「/」の候補の一覧（行の形・中身は Chats・スレッドと同じ web/slash-skills.mjs。置く場所は @ の候補と同じ、欄のすぐ上）
+  const skillList = el('ul', 'clist ch-skill-list');
+  skillList.id = `${id}Skills`;
+  skillList.setAttribute('role', 'listbox');
+  skillList.setAttribute('aria-label', t('chat.composer.skills'));
+  skillList.hidden = true;
   const box = el('div', 'ch-box');
   const input = el('div', 'ch-input');
   input.id = `${id}Input`;
   input.setAttribute('aria-label', t('channels:feed.composer.label'));
   input.setAttribute('aria-autocomplete', 'list');
   input.setAttribute('aria-haspopup', 'listbox');
-  input.setAttribute('aria-controls', list.id);
+  input.setAttribute('aria-controls', skills ? `${list.id} ${skillList.id}` : list.id);
   const row = el('div', 'ch-row');
   const note = el('span', 'ch-note');
   note.setAttribute('role', 'status');
@@ -115,13 +125,20 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   });
   row.append(attach.button, note, send);
   box.append(input, row);
-  form.append(hint, wakeCard, list, box, attach.fileInput);
+  form.append(hint, wakeCard, list, ...(skills ? [skillList] : []), box, attach.fileInput);
 
   const editor = createMarkdownEditor(input, { resolve: () => null, ...attach.editorOptions });
   attach.bind(editor, input);
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${idPrefix}-mention`, backendLabel, onChange: () => paintHint() });
   // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0362）
   const blocks = setupMentionBlocks({ input, bots: blockBots });
+  // 「/」のスキル候補。候補は宛先の bot の動く場所から（@ した bot。誰も @ していなければ呼べるメンバー）。流れには圧縮する会話が無いので /compact は出さない
+  const slash = skills
+    ? setupSlashSkills({
+      input, list: skillList, load: skills.load, cwd: () => skills.key(input.value ?? ''), off: () => editor.inCode(),
+      idPrefix: `${idPrefix}-slash`, compact: false, headLabel: skills.headLabel, badge: skills.badge,
+    })
+    : null;
 
   // ---- 高さ。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（Chats の fitPrompt と同じ決まり）
   function fit() {
@@ -221,6 +238,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   input.addEventListener('keydown', (e) => {
     if (isComposingKey(e)) return;
     if (mention.keydown(e)) return;
+    if (slash?.keydown(e)) return;
     if (blocks.keydown(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
   });
@@ -257,6 +275,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
     say,
     clear() { dismissWake(); input.value = ''; attach.clear(); say(''); saveDraft(); paintHint(); },
     mention,
+    slash,
     /**
      * この入力欄の書きかけの持ち主（流れ = チャンネル・スレッド = スレッド）。変わったら、今の書きかけを元の持ち主へ残し、
      * 新しい持ち主の書きかけ（字と添付）を出す。null は持ち主のいない間（何も残さない）
@@ -282,6 +301,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
     /** 入力欄を外すとき。書きかけを残し、窓・文書に付けた見張りを外す */
     destroy() {
       saveDraft();
+      slash?.close();
       removeEventListener('resize', fit);
       document.removeEventListener('visibilitychange', onHidden);
       removeEventListener('pagehide', saveDraft);

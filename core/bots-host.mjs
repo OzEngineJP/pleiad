@@ -5,6 +5,7 @@
 //   deps（server.mjs が渡す。足りない口が見つかったらここと docs/channels.md に足す）:
 //     store, dataDir, usageStore, sessionSearch, runtime（走っているターンの表）, outbox（人の送信待ち）,
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
+//     updating()（更新のリース中か）・reserveBotStart()（配達開始からターン確保までリースの取得を防ぎ、解除関数を返す。リース中なら null）
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
 //     accountList(backendId)（そのエージェントに登録したアカウント [{ id, name, ready }]。bots.setAccount の検査が使う。ADR 0224）、
 //     endpointHas(backendId, id)（そのエージェントに登録した互換の接続先か。bots.setAccount の検査）・endpointRow(id)（一覧の行。キー無し。段の確かめ）・
@@ -22,6 +23,9 @@
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
 //                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
 //     onTurnEvent(turn, event): void                 … makeEmit の中。bot の会話の分
+//     threadOfSession(sessionId): { channelId, threadId } | null     … 走っているスレッドの bot のターンの会話なら、その書いているスレッド（server.mjs の「スレッド」の枠の突き合わせ。ADR 0367）
+//     sessionsOfThread(channelId, threadId): string[]               … そのスレッドに書いている途中の bot の会話（スレッドを開いた接続への流し直し）
+//     threadSessions(channelId, threadId): string[]                 … そのスレッドに属する bot の会話（保存済みの ThreadState.sessions と走っているターンの和。開いているスレッドからの pageOpen 等の許可範囲）
 //     onTurnEnd(turn, { outcome, interrupted, requeued }): Promise<void>    … endTurn の最後（ターンを手放した後。最終の返答は lastReply、提示は onTurnEvent の present）
 //                       dispatch がターンの投稿を確定した後に、ルーティンの実行なら routines.onTurnEnd が根の投稿の状態（終了・要確認・失敗・止めた）を決める
 //     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）。dispatch（作業中の印）と routines（承認待ちの期限・イベントのトリガ「あなた待ち」）の両方へ
@@ -170,9 +174,21 @@ export function createBotHost(deps) {
       return { botInstructions: extra?.botInstructions ?? setup?.botInstructions ?? null, notes: extra?.notes ?? [], folders: setup?.folders ?? null };
     }, { botInstructions: null, notes: [], folders: null }),
     restoreTurn: guard('restoreTurn', (turn, card) => dispatch.restoreTurn(turn, card), false),
+    loadBots: guard('loadBots', () => bots.load()),
+    recoverRoutines: guard('recoverRoutines', () => routines.recover()),
+    initialDeliveredFor: (sessionId) => dispatch.initialDeliveredFor(sessionId),
     liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
     itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
     callersFor: (sessionId) => dispatch.callersFor(sessionId),
+    // スレッドの枠（開いているスレッドの画面にだけ書きかけを流す。ADR 0367）。壊れても「配らない」だけにする
+    threadOfSession: guard('threadOfSession', (sessionId) => dispatch.threadOfSession(sessionId), null),
+    sessionsOfThread: guard('sessionsOfThread', (channelId, threadId) => dispatch.sessionsOfThread(channelId, threadId), []),
+    // 開いているスレッドに属する bot の会話（保存済み ThreadState.sessions と走っているターンの和）。browserUnifyWs の許可範囲に使う
+    threadSessions: guard('threadSessions', (channelId, threadId) => {
+      const saved = Object.values(channels.threads.peek(channelId, threadId)?.sessions ?? {});
+      const active = dispatch.sessionsOfThread(channelId, threadId);
+      return [...new Set([...saved, ...active].filter((id) => typeof id === 'string' && id))];
+    }, []),
     onTurnEvent: guard('onTurnEvent', (turn, event, options) => dispatch.onTurnEvent(turn, event, options)),
     onTurnReplayEnd: guard('onTurnReplayEnd', (turn) => dispatch.onTurnReplayEnd(turn)),
     // ターンの投稿を確定した後で、ルーティンの実行なら根の投稿の状態（終了・要確認・失敗・止めた）を決める

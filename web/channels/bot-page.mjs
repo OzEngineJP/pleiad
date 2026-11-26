@@ -275,7 +275,7 @@ export function createBotPage(host) {
   const foldBlk = el('div', 'bp-blk bp-folds');
   foldBlk.append(foldSend.el, routinesSlot, foldBrain.el);
   const memHead = el('h4', null, t('channels:bot.memory.title'));
-  memHead.append(memory.route);   // 「自動整理: …」= 設定 › 記憶 への導線（memory-list.mjs が短い状態を出す）
+  memHead.append(memory.route);   // 「毎晩の整理: …」= 設定 › bot への導線（memory-list.mjs が短い状態を出す）
   const memBlk = el('div', 'bp-blk bp-memory');
   memBlk.append(memHead, memory.el);
 

@@ -29,7 +29,7 @@
     "openBot": "bot のページを開く",
     "dm": "DM",
     "home": "チャット",
-    "face": { "label": "表示する一覧", "chats": "チャット", "channels": "bot" },
+    "face": { "label": "表示する一覧", "chats": "チャット", "channels": "bot", "waitingChats": "チャット · あなたを待っている会話があります", "waitingChannels": "bot · あなたを待っているものがあります", "waitingTip": "あなたを待っているものがあります" },
     "newChat": "新しいチャット",
     "newChatTitle": "新しいチャット（{{key}}）",
     "newInChannel": "{{name}} に新しいスレッド",
@@ -98,9 +98,9 @@
     },
     "composer": {
       "label": "投稿の本文",
-      "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ",
+      "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ · / でスキル",
       "shortPlaceholder": "#{{name}} へ投稿",
-      "dm": "{{name}} にメッセージ",
+      "dm": "{{name}} にメッセージ · / でスキル",
       "send": "投稿（{{sendKeys}}）",
       "sendKeys": "{{sendKeys}} で送信",
       "failed": "投稿できませんでした: {{error}}"
@@ -126,13 +126,25 @@
       "nobody": "誰も呼ばれていないので、bot は反応しません",
       "call": "@{{name}} を呼ぶ"
     },
+    "skills": {
+      "one": "{{name}} のスキル",
+      "some": "{{names}} のスキル",
+      "members": "メンバーのスキル"
+    },
     "settings": {
       "open": "メモ・設定",
       "title": "{{name}} のメモ・設定",
       "name": "名前",
       "purpose": "目的",
       "cwd": "既定の作業フォルダー",
-      "cwdHint": "空なら bot それぞれの作業フォルダーを使います。",
+      "cwdHint": "bot は、このフォルダーが自分のフォルダーの中にあるときだけここで動きます。外にあるときや空のときは、bot それぞれのフォルダーで動きます。",
+      "cwdNone": "指定しない",
+      "cwdRecent": "最近",
+      "cwdBrowse": "ほかのフォルダーを開く…",
+      "cwdPicker": "作業フォルダーの候補",
+      "where": "各 bot が動く場所",
+      "whereHome": "ホームフォルダー",
+      "whereOutside": "このフォルダーは {{name}} の作業場所の外なので、{{name}} は自分のフォルダーで動きます",
       "members": "メンバー",
       "membersHint": "メンバーは一覧に載る bot です。bot を起こすには、投稿で @ を付けます。",
       "noBots": "bot はまだありません。",
@@ -283,11 +295,11 @@
   },
   "memory": {
     "route": {
-      "open": "自動整理 ›",
-      "off": "自動整理: オフ ›",
-      "running": "自動整理: 整理中 ›",
-      "failed": "自動整理: 失敗 ›",
-      "next": "自動整理: 次は {{at}} ›"
+      "open": "毎晩の整理 ›",
+      "off": "毎晩の整理: オフ ›",
+      "running": "毎晩の整理: 整理中 ›",
+      "failed": "毎晩の整理: 失敗 ›",
+      "next": "毎晩の整理: 次は {{at}} ›"
     },
     "new": "新しく覚えた",
     "faded": "薄れた",
@@ -302,10 +314,10 @@
       "note": "メモ"
     },
     "tier": {
-      "none": "未振り分け",
-      "always": "いつも",
-      "workspace": "この作業場所で",
-      "archive": "保存だけ"
+      "none": "渡す場面は未定",
+      "always": "毎回渡す",
+      "workspace": "このフォルダーのときだけ",
+      "archive": "渡さない"
     },
     "tierLabel": "渡す範囲",
     "workspaceLabel": "作業場所",
@@ -313,16 +325,16 @@
     "learn": {
       "label": "夜の整理",
       "running": "整理しています",
-      "ran": "{{when}} に {{n}} 件覚えた",
-      "ranNone": "{{when}} に整理した（新しく覚えたものなし）",
-      "retiered": "段を変えた {{n}} 件",
-      "never": "まだ一度も走っていない",
-      "more": "残りの発言は次の回に",
-      "deferred": "作業中だった会話 {{n}} 件は次の回に",
+      "ran": "前回 {{when}} · {{n}} 件書き足しました",
+      "ranNone": "前回 {{when}} · 書き足したものはありませんでした",
+      "retiered": "渡す場面を決め直した {{n}} 件",
+      "never": "まだ一度も整理していません",
+      "more": "読みきれなかった発言は次の回に回します",
+      "deferred": "作業中だった会話 {{n}} 件は次の回に回します",
       "failed": "失敗した（{{error}}）",
       "skipped": "予定を {{n}} 回飛ばした（{{reason}}）",
       "reason": {
-        "off": "自動整理がオフ",
+        "off": "毎晩の整理がオフ",
         "halted": "失敗の後で止めた",
         "paused": "止めていた",
         "failed": "失敗の後の待ち"

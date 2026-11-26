@@ -73,7 +73,8 @@ try {
     await page.waitForFunction(() => document.documentElement.classList.contains('side-open'));
     await page.waitForTimeout(400);   // 開く動き（--dur）が終わるまで
   };
-  const home = '[data-side-key="chsec:home"]';
+  // 見出し（チャット）は無い（11）。状態のフォルダーは木の一番上にあるので、木の全体を「home」として扱う
+  const home = '#groups';
   const chan = `[data-side-key="chsec:${channel.id}"]`;
   const count = (sel) => page.locator(sel).count();
   // 押した後、脇がまだ開いているか（閉じる処理は同じタップの中で side-open を外す）

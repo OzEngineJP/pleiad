@@ -9,10 +9,11 @@ import { el } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText, vanishedTurnPost } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
 import { shownBot } from './plain-bot.mjs';
+import { createWorkPlaces } from './work-places.mjs';
 import { notify } from '../file-actions.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
@@ -31,10 +32,13 @@ import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 import { retrySource, retryFailed } from './retry.mjs';
+import { createThreadStream } from './thread-stream.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
 const LIVE = new Set(['working', 'waiting']);
+/** 書きかけの流し（ADR 0367）に使う出来事。replay のときは使わない */
+const STREAM_TYPES = new Set(['text.delta', 'text.end', 'tool.start', 'turnEnd']);
 
 /** スレッドの題: 根の投稿の最初の行（先頭の @ の呼びかけは外す） */
 export function titleOf(root) {
@@ -60,6 +64,7 @@ export function createThread(host) {
   const cards = new Map();      // 承認の id -> .mw
   let windows = new Map();
   const tools = createToolSource({ cmd: (command, args) => host.cmd(command, args) });
+  const places = createWorkPlaces({ host });   // bot が実際に動く場所（会話がまだ無いときの返信先の作業場所。core の pickCwd と同じ判定）
 
   // ---------------------------------------------------------------- DOM
   const root = el('section', 'ch-thread');
@@ -71,10 +76,11 @@ export function createThread(host) {
   log.tabIndex = 0;
   const older = el('div', 'ch-older', t('channels:feed.older'));
   older.hidden = true;
-  const rootSlot = el('div', 'th-root');
-  const rdiv = el('div', 'th-rdiv');
-  const replies = el('div', 'th-replies');
-  const perms = el('div', 'th-perms bg-thread');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
+  // 投稿の列は Chats と同じ列の入れ物（.col-lane。style.css の「列」）で真ん中に置く（可視化の［広げる］の基準もこの箱）
+  const rootSlot = el('div', 'th-root col-lane');
+  const rdiv = el('div', 'th-rdiv col-lane');
+  const replies = el('div', 'th-replies col-lane');
+  const perms = el('div', 'th-perms bg-thread col-lane');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
   log.append(older, rootSlot, rdiv, replies, perms);
   // 会話の移動（最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
   const frame = el('div', 'log-frame th-frame');
@@ -256,7 +262,46 @@ export function createThread(host) {
       host.invoke('channels.markRead', { channelId: S.channelId, at: last.at }).catch(() => { readSent = 0; });
     }, 300);
   }
-  document.addEventListener('visibilitychange', () => { if (watching()) markRead(); });
+  document.addEventListener('visibilitychange', () => { syncWatch(); if (watching()) markRead(); });
+
+  // ---------------------------------------------------------------- 書きかけの流し（ADR 0367）
+  // 開いているスレッドの bot の返事の書きかけを、保存より先に流してもらう。サーバーの接続の「スレッド」の枠（watchSession の slot: 'thread'）。
+  // 見ている間だけ宣言し、閉じた・別のスレッドを開いた・Chats へ移った・隠れたら外す。宣言の返事に、いま書いている途中の分の写しが入っている
+  let watched = '';     // 宣言しているスレッド（`channelId\nthreadId`）。空は宣言なし
+  let watchSeq = 0;
+  function syncWatch({ force = false } = {}) {
+    const want = S.channelId && S.threadId && watching() ? `${S.channelId}\n${S.threadId}` : '';
+    if (!force && want === watched) return;
+    const seq = ++watchSeq;
+    watched = want;
+    streams.clear();
+    if (!want) { host.cmd('watchSession', { slot: 'thread', sessionId: '' }).catch(() => {}); return; }
+    host.cmd('watchSession', { slot: 'thread', channelId: S.channelId, threadId: S.threadId })
+      .then((got) => { if (seq === watchSeq && watched === want) streams.snapshot(got?.threadStream); })
+      .catch(() => { /* 流れが無くても、投稿は保存のたびに更新される */ });
+  }
+  /** 書きかけの流しの相手: その会話の最後の投稿（作業中のもの）と、その前に確定した同じ会話の投稿の本文（古い順） */
+  function streamChain(sessionId) {
+    let at = -1;
+    for (let i = S.posts.length - 1; i >= 0; i--) {
+      const p = S.posts[i];
+      if (p.turn?.sessionId === sessionId && !p.deletedAt) { at = i; break; }
+    }
+    const post = S.posts[at];
+    if (!post || !LIVE.has(post.state)) return null;
+    const before = [];
+    for (let i = at - 1; i >= 0 && before.length < 6; i--) {
+      const p = S.posts[i];
+      if (p.turn?.sessionId === sessionId && !p.deletedAt) before.unshift(p.text ?? '');
+    }
+    return { post, before };
+  }
+  const streams = createThreadStream({
+    chainFor: (sessionId) => (S.ready ? streamChain(sessionId) : null),
+    repaint: (id) => repaint(id),
+    nearBottom: () => nearBottom(),
+    follow: () => { log.scrollTop = log.scrollHeight; },
+  });
 
   // ---------------------------------------------------------------- 発言者・bot
   const ctx = {
@@ -265,6 +310,7 @@ export function createThread(host) {
     summaryOf: () => null,
     threadOf: () => null,
     sessionTitle: (id) => host.state?.sessions?.find((s) => s.id === id)?.title ?? null,
+    streaming: (p) => streams.streaming(p),   // 書きかけが出ている投稿（状態の行を「書いている」にする。web/channels/post.mjs）
     actions: {
       react: (p, emoji, on, had) => react(p, emoji, on, had),
       quick: (p, emoji) => react(p, emoji, true, false),
@@ -345,13 +391,17 @@ export function createThread(host) {
     const id = lastSpoke ?? Object.keys(S.thread?.sessions ?? {}).find((b) => S.bots.has(b));
     return id ? S.bots.get(id) : null;
   }
-  /** 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact）。会話がまだ無ければ作業場所だけ */
+  /**
+   * 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact）。会話がまだ無ければ作業場所だけ。
+   * 会話がまだ無いときの作業場所は、サーバーが会話を作るときの決め方（pickCwd）と同じ判定で推す: チャンネルの cwd は bot のフォルダーの中のときだけ使う
+   */
   function receiverSession() {
     const bot = receiver();
     if (!bot) return null;
     const sessionId = S.thread?.sessions?.[bot.id] ?? null;
     const row = sessionId ? host.state?.sessions?.find((x) => x.id === sessionId) : null;
-    return { sessionId, cwd: row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? host.state?.homeDir ?? '' };
+    if (!row?.cwd) places.warm([bot]);
+    return { sessionId, cwd: row?.cwd || places.of(bot, S.channel?.cwd).cwd };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -499,6 +549,8 @@ export function createThread(host) {
       }
       if (box.childElementCount) { bodyEl.after(box); below = box; }
     }
+    // 確定前の書きかけは本文のすぐ下（提示・作業ログより上。本文の続きとして読める位置）
+    if (p.turn?.sessionId) streams.attach(bodyEl, p);
     if (p.turn?.sessionId) {
       const slot = logSlot(p);
       if (slot) below.after(slot);
@@ -557,7 +609,7 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 読み込み
   function reset() {
     Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
-    postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
+    postEls.clear(); toolCache.clear(); cards.clear(); tools.forget(); streams.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
     stopBusy = false; composer.setStop();
@@ -582,7 +634,8 @@ export function createThread(host) {
       ]);
       if (seq !== S.seq) return;
       S.channel = channel;
-      S.posts = page.posts ?? [];
+      // 黙って終えたターンの消えた投稿は並べない（「削除された投稿」の行を残さない。post.mjs の vanishedTurnPost）
+      S.posts = (page.posts ?? []).filter((p) => p.id === threadId || !vanishedTurnPost(p));
       S.index = new Map(S.posts.map((p) => [p.id, p]));
       S.thread = (page.threads ?? []).find((th) => th.threadId === threadId) ?? null;
       S.nextBefore = page.nextBefore ?? null;
@@ -623,7 +676,7 @@ export function createThread(host) {
     try {
       const page = await host.invoke('channels.read', { channelId: S.channelId, threadId: S.threadId, before: S.nextBefore, limit: PAGE });
       if (seq !== S.seq) return;
-      const olderPosts = (page.posts ?? []).filter((p) => !S.index.has(p.id));
+      const olderPosts = (page.posts ?? []).filter((p) => !S.index.has(p.id) && !vanishedTurnPost(p));
       const before = log.scrollHeight - log.scrollTop;
       S.posts = [S.posts[0], ...olderPosts, ...S.posts.slice(1)];
       for (const p of olderPosts) S.index.set(p.id, p);
@@ -815,7 +868,7 @@ export function createThread(host) {
   const refreshPendingSoon = () => { clearTimeout(pendingTimer); pendingTimer = setTimeout(refreshPending, 250); };
 
   // ---------------------------------------------------------------- `!` の行（宛先の bot の会話のシェル。Chats と同じ行の部品）
-  const shells = el('div', 'th-shells');
+  const shells = el('div', 'th-shells col-lane');
   perms.after(shells);   // 投稿の列の末尾の目印（会話の移動の部品）より前に置く
   function onShellStart(ev) {
     if (!Object.values(S.thread?.sessions ?? {}).includes(ev.sessionId) || !host.shellRow) return;
@@ -978,8 +1031,8 @@ export function createThread(host) {
       if (!cur) return;
       const was = cur.state;
       Object.assign(cur, p, op === 'delete' ? { deletedAt: p.deletedAt ?? Date.now() } : {});
-      repaint(p.id);
-      if (p.turn?.sessionId && was !== p.state && !LIVE.has(p.state)) tools.refresh(p.turn.sessionId, { force: true });
+      repaint(p.id);   // 保存された本文が伸びた分は、ここで本文に吸収され、書きかけの残りが縮む
+      if (p.turn?.sessionId && was !== p.state && !LIVE.has(p.state)) { tools.refresh(p.turn.sessionId, { force: true }); streams.settled(p.turn.sessionId); }
     }
     afterPosts();
     // 走っている間の道具の行は、投稿の更新（1 秒に 1 回まで）に合わせて取り直す（間隔は thread-tools の REFRESH_MS）
@@ -1011,6 +1064,8 @@ export function createThread(host) {
       const p = ev.post;
       if (!p) return;
       if (ev.op === 'withdraw') { if (p.threadId === S.threadId) { withdrawPost(p.id); refreshPendingSoon(); } return; }
+      // 黙って終えたターンが消した投稿は、取り下げと同じく列から消す（「削除された投稿」の行を残さない）
+      if (ev.op === 'delete' && p.threadId === S.threadId && vanishedTurnPost(p)) { withdrawPost(p.id); refreshPendingSoon(); return; }
       if (p.threadId === S.threadId) refreshPendingSoon();
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);
@@ -1061,6 +1116,11 @@ export function createThread(host) {
       // client.mjs が承認の残りを数え直した後に、答え済みのカードを外す
       if (S.threadId) setTimeout(settleCards, 0);
     },
+    // 書きかけの流し（ADR 0367）。スレッドの枠を宣言している間だけサーバーから届く。replay（会話を読み直した流し直し）は使わない（宣言の返事の写しがある）
+    'text.delta': (ev) => streams.event(ev),
+    'text.end': (ev) => streams.event(ev),
+    'tool.start': (ev) => streams.event(ev),
+    turnEnd: (ev) => streams.event(ev),
   };
 
   // ---------------------------------------------------------------- 開く・閉じる
@@ -1083,10 +1143,12 @@ export function createThread(host) {
       markSelected();
       composer.focus();
       flushReveal();
+      syncWatch();
       return;
     }
     S.seq++;
     reset();
+    syncWatch();   // 別のスレッドを開いたら、前のスレッドの枠は外れて、このスレッドの枠へ替わる
     composer.setDraftKey(threadDraftKey(channelId, threadId));   // 書きかけはスレッドごと（ほかのスレッドへ移っても残る）
     composer.refresh();
     toc.close();
@@ -1103,6 +1165,8 @@ export function createThread(host) {
     todo?.load(null);
     S.seq++;
     S.threadId = null;
+    syncWatch();   // 閉じたら書きかけの流しを外す
+    streams.forget();
     host.background?.watch([]);
     paintSubs();
     markSelected();
@@ -1118,16 +1182,20 @@ export function createThread(host) {
       S.channelId = view.id;
     },
     hide() { /* スレッドは開いたまま（Chats へ移って戻っても同じ所から） */ },
-    onEvent(ev) { events[ev?.type]?.(ev); },
+    onEvent(ev, replay = false) {
+      // 会話を読み直したときの流し直し（replay）の書きかけは使わない。スレッドの枠の返事の写しが、同じ分を重ならずに渡す
+      if (replay && STREAM_TYPES.has(ev?.type)) return;
+      events[ev?.type]?.(ev);
+    },
     /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
     schedulesChanged() { composer.paintSchedules(); },
     /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
-    reconnected() { todo?.reconnected(); },
+    reconnected() { todo?.reconnected(); syncWatch({ force: true }); },   // つなぎ直した接続には枠が無い: 宣言し直して、書きかけの写しをもらう
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };
     },
-    sideTabChanged() {},
+    sideTabChanged() { syncWatch(); },   // Chats へ移ったら流しを外し、戻ったら宣言し直す
     /** テスト・ほかの部品が見る */
     get state() { return { deck: deck.state, threadId: S.threadId, channelId: S.channelId }; },
   };

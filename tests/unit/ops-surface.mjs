@@ -267,7 +267,7 @@ export default async function (t) {
     pulse: { status: async () => ({ on: false, paused: false, running: false, nextAt: null, lastBeatAt: null, drives: null, home: null, ...secret }) },
     memoryLearner: {   // S3
       status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }),
-      sortStatus: async () => ({ status: 'done', running: false, stopping: false, untiered: 1, processed: 2, left: 0, failures: 0, changed: 0, unknown: 1, tiers: { always: 1, workspace: 0, archive: 1 }, startedAt: 1, updatedAt: 2, undone: null, ...secret }),   // 段 2 単位 4（振り分けの様子。数だけ）
+      sortStatus: async () => ({ status: 'done', running: false, untiered: 1, nights: 1, perNight: 500, processed: 2, left: 0, failures: 0, changed: 0, unknown: 1, tiers: { always: 1, workspace: 0, archive: 1 }, startedAt: 1, updatedAt: 2, undone: null, ...secret }),   // 段 2 単位 4（振り分けの様子。数だけ）
     },
     routines: {     // R1（P2）
       list: async () => [{ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },

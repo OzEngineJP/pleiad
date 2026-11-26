@@ -28,12 +28,16 @@ export function createBrowserUnifyWs(deps = {}) {
     client.send(deps.mask ? deps.mask(message) : message);
   };
   // タブ情報の届け先は「見ている会話とその子孫」（inapp-browser.md。親が子の Chrome を会話を移らずに見る）
-  // 見ている会話は main と modal（作業のダイアログで開いた子）の 2 枠。届け先はその和（ADR 0024 の改訂）
+  // 見ている会話は main・modal（作業のダイアログで開いた子）・thread（開いているスレッドの bot 会話）の 3 枠。届け先はその和（ADR 0024 の改訂）
   const scopeOf = id => {
     if (typeof id !== 'string' || !id) return [];
     return [id, ...(deps.descendants?.(id) ?? []).filter(value => typeof value === 'string' && value && value !== id)];
   };
-  const scope = client => [...new Set([...scopeOf(deps.watching?.(client)), ...scopeOf(deps.watchingModal?.(client))])];
+  const scope = client => [...new Set([
+    ...scopeOf(deps.watching?.(client)),
+    ...scopeOf(deps.watchingModal?.(client)),
+    ...(deps.watchingThread?.(client) ?? []).flatMap(scopeOf),
+  ])];
   const allowed = (client, id) => Boolean(id && deps.clients?.().has(client) && scope(client).includes(id));
   const unsubscribe = relay?.onTabEvent((type, payload) => {
     if (!['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'tab:downloads'].includes(type)) return;
@@ -298,7 +302,7 @@ export function createBrowserUnifyWs(deps = {}) {
         catch (error) { deps.log?.(`page tabs: migrate failed: ${String(error?.message ?? error)}`); }
       }
       for (const client of deps.clients?.() ?? []) {
-        if (!deps.watching?.(client) && !deps.watchingModal?.(client)) continue;
+        if (!scope(client).length) continue;
         send(client, { type: 'page:moved', ports: { pages: ports.pages ?? null, isolated: ports.isolated ?? null },
           previous: { pages: previous.pages ?? [], isolated: previous.isolated ?? [] } });
       }

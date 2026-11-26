@@ -117,6 +117,63 @@ export default async function (t) {
     }
   }
 
+  // ---- 取り消された Pleiad Plus の PC（web/remote-hosts.mjs）: 行を押すと詳しい画面へ。「もう一度許可を依頼する」を押したときだけ
+  //      相手の PC の承認を頼む（承認を省かない）。許可が要る行・つながる行の押し方は変えない
+  {
+    const savedWindow = globalThis.window, savedBody = document.body, savedCreate = document.createElement;
+    const calls = [];
+    const mk = (hostId, state) => ({ hostId, name: `desk-${hostId}`, via: 'plus', state, pairedAt: '2026-01-01T00:00:00.000Z', relay: 'relay.example.com' });
+    const all = [mk('h-revoked', 'revoked'), mk('h-reapprove', 'reapprove'), mk('h-connected', 'closed')];
+    const plusState = { status: 'plus', use: true, available: true, state: 'on', hosts: all };
+    globalThis.window = { plyDesktop: { hosts: {
+      onChange: () => {}, onCode: () => {},
+      init: async () => ({ ok: true, hosts: all, encrypted: true, plus: plusState }),
+      list: async () => ({ ok: true, hosts: all, plus: plusState }),
+      open: async id => { calls.push(`open:${id}`); return { ok: true }; },
+      admit: async id => { calls.push(`admit:${id}`); return { ok: true, host: all.find(h => h.hostId === id) }; },
+      remove: async () => ({ ok: true }), rename: async () => ({ ok: true }),
+    } } };
+    // 窓（dialog）は showModal を持つ身代わりにする（この試験の中だけ）
+    document.createElement = t => {
+      const n = new N(t);
+      if (t === 'dialog') { n.showModal = () => { n.open = true; }; n.close = () => { n.open = false; }; }
+      return n;
+    };
+    document.body = new N('body');
+    const settle = () => new Promise(r => setTimeout(r, 5));
+    const find = (ns, pred) => { for (const n of ns ?? []) { if (pred(n)) return n; const hit = find(n?.children, pred); if (hit) return hit; } return null; };
+    try {
+      const panel = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} });
+      await panel.refresh();
+      const row = id => find(panel.build(), n => n?.dataset?.fk === `host-${id}`);
+      const revoked = hostLine(all[0]);
+      t.ok('取り消された Plus の行: 「取り消されました」・開けない・行の押しで承認を頼まない',
+        revoked.revoked && !revoked.canOpen && !revoked.needsApproval && revoked.sub === '取り消されました');
+      row('h-revoked').onclick();
+      await settle();
+      t.ok('取り消された Plus の行を押すと詳しい画面が出る（開く・承認は呼ばれない）',
+        calls.length === 0 && Boolean(find(panel.build(), n => n?.dataset?.fk === 'requestApproval')) && !find(panel.build(), n => n?.dataset?.fk === 'open'), calls.join(','));
+      find(panel.build(), n => n?.dataset?.fk === 'requestApproval').onclick();
+      await settle();
+      t.ok('「もう一度許可を依頼する」で承認を頼み（admit）、許可されてから窓を開く',
+        calls.join(',') === 'admit:h-revoked,open:h-revoked', calls.join(','));
+      find(panel.build(), n => n?.dataset?.fk === 'back').onclick();
+      await settle();
+      calls.length = 0;
+      row('h-reapprove').onclick();
+      await settle();
+      t.ok('もう一度の許可が要る Plus の行は今まで通り、押すと承認を頼む', calls.join(',') === 'admit:h-reapprove,open:h-reapprove', calls.join(','));
+      calls.length = 0;
+      row('h-connected').onclick();
+      await settle();
+      t.ok('つながる Plus の行は今まで通り、押すと開く（承認は頼まない）', calls.join(',') === 'open:h-connected', calls.join(','));
+    } finally {
+      globalThis.window = savedWindow;
+      document.createElement = savedCreate;
+      document.body = savedBody;
+    }
+  }
+
   // ---- モバイルの殻（ホストの窓の中）では「ほかの PC へ」の面自体を出さない。plyRemote のある窓には
   //      plyDesktop.hosts の橋が無いので、設定の「ほかの PC へ」タブは使えない（デスクトップの窓と同じ。
   //      モバイルでは購入への誘導を出さない規則は plus-settings.mjs・remote.mjs の分岐が受け持つ）

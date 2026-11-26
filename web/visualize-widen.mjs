@@ -1,19 +1,22 @@
 // 会話内の可視化を、列の幅（760px）を越えて横に広げる（docs/design-system.md「可視化を広げる」、ADR 0252）。
 //
-// 広げた先は、時間の線の右（.mw-body の左端）から本文の領域の右端（.mw-body の右端）まで。
-// .mw-body は列を真ん中に置くための左右の padding を持ち、可視化があるときは overflow:clip の外へ 5px だけ見せる
-// （style.css の .mw-body:has(.present-visualization.visualize-seamless)）。広げた枠はその padding の箱の 4px 内側に収める。
+// 広げた先は、列の入れ物（LANE。style.css の「列」）の padding の箱の 4px 内側。
+// Chats は発言の中身（#thread .mw-body）で、時間の線の右から本文の領域の右端まで。可視化があるときは overflow:clip の外へ 5px だけ見せる
+// （style.css の .mw-body:has(.present-visualization.visualize-seamless)）。
+// チャンネルのスレッドは投稿の列（.col-lane。web/channels-thread.css）で、時間の線が無いので欄の左端から地図の筋の手前まで。
 // 広げたかどうかは覚えない（描き直すと元の幅）。Esc でも戻る。動きは margin の --dur-slow / --ease-organic
 // （動きを減らす設定では tokens.css が 0ms にするので、すぐ切り替わる）。
 import { t } from './i18n.mjs';
 
 const INSET = 4;
+/** 列の入れ物。style.css の :is(.col-lane,#thread .mw-body) と同じ（［広げる］を出す条件もこれ） */
+export const LANE = '.col-lane, #thread .mw-body';
 export const growIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12h17M7.5 8l-4 4 4 4M16.5 8l4 4-4 4"/></svg>';
 export const shrinkIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h6.5M21 12h-6.5M6.5 8.5L10 12l-3.5 3.5M17.5 8.5L14 12l3.5 3.5"/></svg>';
 
 /** 広げた枠の左右の margin。親の内容の箱を基準に測るので、動きの途中に測っても同じ値になる */
 function margins(card) {
-  const body = card.closest('.mw-body'), parent = card.parentElement;
+  const body = card.closest(LANE), parent = card.parentElement;
   if (!body || !parent) return null;
   const b = body.getBoundingClientRect(), p = parent.getBoundingClientRect(), ps = getComputedStyle(parent);
   const left = p.left + parent.clientLeft + parseFloat(ps.paddingLeft);
@@ -55,8 +58,8 @@ export function wireWiden(card, button) {
     if (wide) {
       place();
       observer = new ResizeObserver(place);
-      // .mw-body は列を 760px に保つよう padding が伸び縮みし、内容の箱は変わらない。外側の箱で見る
-      observer.observe(card.closest('.mw-body') ?? card, { box: 'border-box' });
+      // 列の入れ物は列の幅を保つよう padding が伸び縮みし、内容の箱は変わらない。外側の箱で見る
+      observer.observe(card.closest(LANE) ?? card, { box: 'border-box' });
       document.addEventListener('keydown', onKey);
     } else {
       observer?.disconnect(); observer = null;

@@ -118,6 +118,8 @@ export function createThreadStore({ dir, dataDir = path.dirname(dir), now = Date
 
   return {
     load: () => serial(async () => { load(); }),
+    /** 読み込み済みのスレッドの状態を同期で返す（開いているスレッドの許可範囲など）。未読み込み・不在は null */
+    peek: (channelId, threadId) => { const t = cache?.[threadKey(channelId, threadId)]; return t ? structuredClone(t) : null; },
     get: (channelId, threadId) => serial(async () => { const t = load()[threadKey(channelId, threadId)]; return t ? structuredClone(t) : null; }),
     list: (channelId) => serial(async () => Object.values(load()).filter((t) => !channelId || t.channelId === channelId).map((t) => structuredClone(t))),
     update: (channelId, threadId, patch) => serial(async () => {

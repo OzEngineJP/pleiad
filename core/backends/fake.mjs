@@ -51,7 +51,8 @@
 //                    続きの発言には Claude の履歴と同じ stopHookFollowUp を付ける
 //   "steps:<json>" または "steps:@<json ファイルの絶対パス>" … ツールと本文を台本どおりに並べる。{"steps":[{"tool":"Grep","input":{…},"result":"…","error":false,"ms":600,"ask":false},{"text":"…"}]}
 //                    ms は結果を返すまでの時間、ask はツールを始めたあと承認（kind:"tool"）を待つ（computerApp を添えるとアプリの承認）、images・computer は ply_computer の結果の画像と印、text は本文を書く（前のツールは同じ発言に入る）、newMessage は発言の切れ目（text.end）だけを出す
-//   "bg <本数> gate:<名前>" … "bg" の時間指定の代わりに、ゲート（下の「ゲート」）が開いたときに裏の子が順に終わる（実時間で待たない）
+//   "bg <本数> gate:<名前>" … "bg" の時間指定の代わりに、ゲート（下の「ゲート」）が開いたときに裏の子が順に終わる（実時間で待たない）。
+//                    末尾に " say:<本文>" を付けると、最初の一言（既定は「裏で n 本を動かした」）を本文にできる（スレッドの途中経過に出る長さの一言が要る検査用）
 //   "held:<台本>"  … <台本>（上のどれか）を別プロセスの偽の CLI（fake-agent.mjs）で走らせ、保持役（core/holder/）の子に載せる。サーバーを入れ替えても CLI は走り続け、
 //                    新しいサーバーが記録を再生して続きを受ける（無停止の更新 2b-5。fake-held.mjs。AGENT_HOST_DATA と AGENT_HOST_RUNTIME_ROOT が要る）
 //   "notes:" / "instructions:" … Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す（bot の会話の検査用）
@@ -285,6 +286,7 @@ export function scriptOf(prompt) {
  */
 async function background(text, { s, out, emit, signal, control, runtimeReply }) {
   const [, nArg, secArg] = text.split(/\s+/);
+  const lead = /\ssay:([\s\S]+)$/.exec(text)?.[1]?.trim() || null;   // 最初の一言（既定は「裏で n 本を動かした」）
   const n = Math.max(1, Math.min(5, Math.floor(Number(nArg)) || 2));
   const gate = /^gate:(.+)$/.exec(secArg ?? "")?.[1] ?? null;
   const total = gate ? 0 : Math.max(0.2, Number(secArg) || 6) * 1000;
@@ -337,7 +339,7 @@ async function background(text, { s, out, emit, signal, control, runtimeReply })
   const stopGate = gate ? watchGate(gate, () => { gateOpen = true; poke(); }) : () => {};
   const shown = () => live.map(({ agent, ...x }) => ({ ...x }));
   emit({ type: "background", tasks: shown() });
-  await reply(`裏で ${n} 本を動かした`);
+  await reply(lead ?? `裏で ${n} 本を動かした`);
   const started = Date.now();
   let finished = 0;
   emit({ type: "phase", state: "waiting" });
@@ -1203,7 +1205,7 @@ export const backend = {
         return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
       }) }), usage };
     }
-    // 一度きりの振り分け（<pleiad-memory-sort>）: 本文の言葉だけで決める固定の台本（保存だけ → 保存だけ / この作業場所 → 作業場所 / それ以外 → いつも）。
+    // 段の無い記憶の振り分け（<pleiad-memory-sort>）: 本文の言葉だけで決める固定の台本（保存だけ → 保存だけ / この作業場所 → 作業場所 / それ以外 → いつも）。
     // 本文に「判断不能」とあれば答えを返さない（段なしのままになる）
     if (p.startsWith('<pleiad-memory-sort>')) {
       const line = p.split('\n').find((part) => part.startsWith('Memories: '));
