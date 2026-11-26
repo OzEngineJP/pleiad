@@ -143,7 +143,11 @@ export default async function (t) {
     t.ok("main がその場で答える", c.since(from4).filter((e) => e.type === "text.delta").map((e) => e.text).join("").includes("受け取った: ping with reservation"));
     t.ok("効かせた予約は消え、新しいターンは予約の作業ディレクトリで動く", !(await reservedOf())
       && (await c.cmd("listSessions")).find((x) => x.id === rid)?.cwd === path.resolve(scratch));
+    // 止めて、新しいターン（second ping）の終わりを待つ。from3 からの 1 つ目の turnEnd は、予約を効かせるために止めた前のターンの分なので、2 つ目を待つ
+    // （1 つ目を待つと、新しいターンの始まり（リポジトリの既定を読む git。cwd は scratch）の途中でサーバーを止め、残った git が scratch を掴んで消せなかった）。
+    // 新しいターンは、止めても、止める前に答え終えても、終わりは 2 つ目の turnEnd
     await c.cmd("abort", { sessionId: rid });
-    await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === rid, { from: from3, ms: 10000 });
+    const ends = (e) => e.type === "turnEnd" && e.sessionId === rid;
+    await c.waitFor((e) => ends(e) && c.since(from3).filter(ends).indexOf(e) === 1, { from: from3, ms: 10000 });
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 }

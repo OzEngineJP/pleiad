@@ -46,6 +46,10 @@ export default async function (t) {
   const reset = () => { fs.writeFileSync(logFile, ''); control(); git.placeGuard.reset(); };
   const waitFor = async (cond, ms = 5000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await cond()) return true; await sleep(25); } return false; };
   const placeOf = (dir) => git.placeGuard.placeOf(dir);
+  // 時間切れで止めた子が本当に終わるまで待つ。run() は止めて 3 秒（BACKGROUND_KILL_DEADLINE_MS）で待たずに戻り、まだ生きている子は場所を BUSY にする（設計どおり）。
+  // 重い PC では taskkill の起動と終了だけで 3 秒を超えるので、BUSY・REST の判定は、生きている子が 0 になってから見る。
+  // 上限は taskkill 自身の上限（core/process.mjs の TASKKILL_TIMEOUT_MS = 10 秒）に余裕を足した 15 秒
+  const settled = (dir) => waitFor(() => git.placeGuard.alive(placeOf(dir)) === 0, 15_000);
   const useGit = (opts = {}) => git.setGitBin(process.execPath, { args: [FAKE], ...opts });
   const strays = new Set();
   const harvest = () => { for (const l of lines()) strays.add(l.pid); };
@@ -105,10 +109,14 @@ export default async function (t) {
       const repo = mkRepo('timeouts');
       control({ status: { hang: true } });
       const first = await git.readGit(repo, ['status', '--porcelain=v2'], { timeout: 300 });
+      harvest();
+      await settled(repo);
       t.ok('1 回目の時間切れでは休まない（一時の遅れかもしれない）', first.code === 'TIMEOUT' && git.placeBlocked(repo) === null, JSON.stringify(first));
       const second = await git.readGit(repo, ['status', '--porcelain=v2'], { timeout: 300 });
       harvest();
+      // 休みの長さは、2 回目が戻った直後に測る（止めた子の終わりを待つ時間を混ぜない）
       const rest = git.placeGuard.snapshot(placeOf(repo)).light.restUntil - Date.now();
+      await settled(repo);
       t.ok('続けて 2 回目の時間切れで休む（REST。最初の休みは 30 秒）', second.code === 'TIMEOUT' && git.placeBlocked(repo) === 'REST' && rest > 20_000 && rest <= 30_000, `rest ${rest}ms`);
       const before = lines().length;
       const third = await git.readGit(repo, ['status', '--porcelain=v2'], { timeout: 300 });
@@ -237,17 +245,18 @@ export default async function (t) {
       const repo = mkRepo('cleanup-no-rest');
       control({ 'for-each-ref': { out: refsOut(4) }, 'update-ref': { hang: true } });
       const results = [];
-      for (let i = 0; i < 3; i++) results.push(await git.dropTurnRefs(repo, { timeout: 300 }));
-      harvest();
+      // 時間切れにするのは削除（update-ref）だけ。一覧の読み（for-each-ref）は成功させたいので、偽の git の起動に足りる長い上限にする
+      for (let i = 0; i < 3; i++) { results.push(await git.dropTurnRefs(repo, { timeout: 300, listTimeout: 30_000 })); harvest(); await settled(repo); }
       const lane = git.placeGuard.snapshot(placeOf(repo)).light;
       t.ok('削除の時間切れ（3 回続けても）は null で、場所は休まない（REST にならない・数えにも載らない）', results.every((x) => x === null) && count('update-ref') === 3 && git.placeBlocked(repo) === null && lane.consecutive === 0 && lane.restUntil === 0, `${JSON.stringify(results)} ${JSON.stringify(lane)}`);
       control({ 'for-each-ref': { hang: true } });
-      const listing = [await git.dropTurnRefs(repo, { timeout: 300 }), await git.dropTurnRefs(repo, { timeout: 300 })];
-      harvest();
+      const listing = [];
+      for (let i = 0; i < 2; i++) { listing.push(await git.dropTurnRefs(repo, { timeout: 300 })); harvest(); await settled(repo); }
       t.ok('一覧を読む for-each-ref の時間切れも、休みに数えない', listing.every((x) => x === null) && git.placeBlocked(repo) === null && git.placeGuard.snapshot(placeOf(repo)).light.consecutive === 0);
       control({ status: { hang: true } });
       const real = await git.readGit(repo, ['status', '--porcelain=v2'], { timeout: 300 });
       harvest();
+      await settled(repo);
       t.ok('片付けの時間切れのあとの、普通の読みの時間切れは 1 回目として数える（まだ休まない）', real.code === 'TIMEOUT' && git.placeBlocked(repo) === null && git.placeGuard.snapshot(placeOf(repo)).light.consecutive === 1);
       git.placeGuard.leftover(placeOf(repo), { pid: process.pid, ended: new Promise(() => {}) });
       const before = lines().length;

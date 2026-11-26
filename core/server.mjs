@@ -3665,7 +3665,7 @@ const worktreeHost = createWorktreeHost({
     await killUnder(entry.path).catch(() => {});
     await killHeldUnder(entry.path, { dataDir: store.dataDir, inside: insideDir }).catch(() => {});
   },
-  log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
+  log: line => worktreeLog(line),
   // AGENT_HOST_WORKTREES=off で worktree を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
   worktreeOptions: {
     ...(process.env.AGENT_HOST_WORKTREE_GRACE_MS !== undefined ? { graceMs: Number(process.env.AGENT_HOST_WORKTREE_GRACE_MS) || 0 } : {}),
@@ -3676,19 +3676,23 @@ const worktreeHost = createWorktreeHost({
  * 片付けをまとめて 1 回（ターンの終わり・委譲の完了・パネルを開いたとき。重ならない）。
  * repoDir を渡すと、そのリポジトリの分だけを、throttleMs の間に 1 回までにする（パネルを開くたびに全部の台帳を調べない）。
  * 片付け中に届いた repoDir つきの呼び出しは捨てる（やり直しの印を立てるのは全部の片付けだけ。間隔は始めたときから数える）
+ * 始めた・終えた・飛ばした（間隔の中 interval・別の片付けの最中 busy）は、AGENT_HOST_WORKTREE_LOG のときログの行に出す（試験が時計で推し量らずに待つため）
  */
+function worktreeLog(line) { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); }
 let worktreeSweeping = false, worktreeSweepAgain = false;
 const worktreeSweptAt = new Map();
 function worktreeSweepSoon({ repoDir = null, throttleMs = 0 } = {}) {
+  const what = repoDir ? `repo=${repoDir}` : 'all';
   if (repoDir && throttleMs) {
     const last = worktreeSweptAt.get(repoDir);
-    if (last !== undefined && Date.now() - last < throttleMs) return;
+    if (last !== undefined && Date.now() - last < throttleMs) { worktreeLog(`sweep skip interval ${what}`); return; }
   }
-  if (worktreeSweeping) { if (!repoDir) worktreeSweepAgain = true; return; }
+  if (worktreeSweeping) { if (!repoDir) worktreeSweepAgain = true; worktreeLog(`sweep skip busy ${what}`); return; }
   worktreeSweeping = true;
   if (repoDir) { worktreeSweptAt.set(repoDir, Date.now()); if (worktreeSweptAt.size > 100) worktreeSweptAt.delete(worktreeSweptAt.keys().next().value); }
+  worktreeLog(`sweep start ${what}`);
   worktreeHost.sweep(repoDir ? { repoDir } : {}).catch(e => console.error('  worktree の片付けに失敗:', String(e?.message ?? e)))
-    .finally(() => { worktreeSweeping = false; if (worktreeSweepAgain) { worktreeSweepAgain = false; worktreeSweepSoon(); } });
+    .finally(() => { worktreeSweeping = false; worktreeLog(`sweep done ${what}`); if (worktreeSweepAgain) { worktreeSweepAgain = false; worktreeSweepSoon(); } });
 }
 /** パネルを開いたときの片付けの間隔（リポジトリごと）。AGENT_HOST_WORKTREE_PANEL_SWEEP_MS で変える（試験は 0 で毎回） */
 const WORKTREE_PANEL_SWEEP_MS = process.env.AGENT_HOST_WORKTREE_PANEL_SWEEP_MS !== undefined ? Number(process.env.AGENT_HOST_WORKTREE_PANEL_SWEEP_MS) || 0 : 5 * 60_000;

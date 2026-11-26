@@ -148,12 +148,20 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   const log = [];
   // 契約に外れたイベント（[backend-contract] の行）。直近の出力と違い、捨てずに全部持つ
   const contract = [];
+  // 番号を振った出力の行（試験が「この行が出るまで待つ」ため。mark・lines・waitLine）。直近の出力（log）より長く、2,000 行まで持つ
+  const numbered = [];
+  let lineNo = 0;
+  const lineWaiters = new Set();
   const keep = (chunk) => {
     for (const line of String(chunk).split(/\r?\n/)) {
       if (!line.trim()) continue;
       if (line.includes("[backend-contract]")) contract.push(line.trim());
       log.push(line);
       if (log.length > 200) log.shift();
+      const row = { n: ++lineNo, line };
+      numbered.push(row);
+      if (numbered.length > 2000) numbered.shift();
+      for (const w of lineWaiters) w(row);
     }
   };
   child.stdout.on("data", keep);
@@ -198,6 +206,23 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
     },
     /** 契約に外れたイベントの行（core/backends/contract.mjs）。契約の違反を確かめる試験が読む */
     contractViolations: () => [...contract],
+    /** 今までに出た行の番号（waitLine の from に渡す） */
+    mark: () => lineNo,
+    /** 持っている行のうち re に合うもの（{ n, line }。古い順） */
+    lines: (re) => numbered.filter((row) => re.test(row.line)),
+    /** from より後に re に合う行が出るまで待つ（{ n, line }）。ms を過ぎる・サーバーが終わると、直近の出力を付けて失敗 */
+    waitLine(re, { from = 0, ms = 30_000 } = {}) {
+      const hit = numbered.find((row) => row.n > from && re.test(row.line));
+      if (hit) return Promise.resolve(hit);
+      return new Promise((resolve, reject) => {
+        const done = (fn, value) => { clearTimeout(timer); lineWaiters.delete(watch); child.off("exit", onExit); fn(value); };
+        const watch = (row) => { if (re.test(row.line)) done(resolve, row); };
+        const onExit = () => done(reject, new Error(`${re} の行が出る前にサーバーが終わった\n${tail()}`));
+        const timer = setTimeout(() => done(reject, new Error(`${re} の行が ${ms}ms で出なかった\n${tail()}`)), ms);
+        lineWaiters.add(watch);
+        child.once("exit", onExit);
+      });
+    },
     async stop() {
       if (child.exitCode === null && child.signalCode === null) {
         const done = new Promise((r) => child.once("exit", r));

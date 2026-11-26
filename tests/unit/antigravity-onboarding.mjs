@@ -23,6 +23,8 @@ export default async function (t) {
   const fake = path.join(ROOT, "tests", "lib", "fake-agy.mjs");
   const localAppData = path.join(scratch, "local");
   const authFile = path.join(scratch, "signed-in");
+  // ブラウザーでのログインを済ませた、の合図。これができるまで身代わりの agy は authenticate を返さない（時間で決めない）
+  const signedInBrowser = path.join(scratch, "browser-done");
   // Unix のインストーラは `$HOME/.local/bin` へ置く。本物の HOME を見ないよう使い捨てへ移す
   const win = process.platform === "win32";
   const home = path.join(scratch, "home");
@@ -49,8 +51,8 @@ export default async function (t) {
       LOCALAPPDATA: localAppData,
       FAKE_AGY_NEEDS_AUTH: "1",
       FAKE_AGY_AUTH_FILE: authFile,
-      // ブラウザーでのログインを 3 秒待つ（その間に［やめる］を押せる）
-      FAKE_AGY_AUTH_HOLD_MS: "3000",
+      // ブラウザーでのログインは、合図のファイルができるまで待つ（その間に［やめる］を押せる。重い PC でも時間の競争にしない）
+      FAKE_AGY_AUTH_RELEASE_FILE: signedInBrowser,
       ...(win ? {} : { HOME: home }),
     },
     dataDir: path.join(scratch, "data"),
@@ -87,7 +89,7 @@ export default async function (t) {
     // ---- 4. ログイン。ACP の authenticate（oauth-personal）でブラウザーを開く（ADR 0365 の追記）
     //
     // 1 つ目のアカウントは OS の資格情報ストアに置く既定の場所のまま（ファイル保存の env は付けない）。
-    // 身代わりは FAKE_AGY_AUTH_HOLD_MS の間ブラウザーを待ち、済むと印のファイル（authFile）を書く
+    // 身代わりは合図のファイル（signedInBrowser）ができるまでブラウザーを待ち、済むと印のファイル（authFile）を書く
     // 先に 1 度［やめる］: authenticate を待つ agy を止めて CANCELLED で返り、ほかの窓には cancelled が届く（ADR 0243）
     const first = c.mark();
     const abandoned = c.cmd("authLogin", { backend: "antigravity" }).then(() => null, (e) => e);
@@ -108,6 +110,8 @@ export default async function (t) {
     // ブラウザーを開けなかったとき agy が stderr に出す URL は、開くリンクとして届く
     const link = await c.waitFor((e) => e.type === "auth" && e.phase === "url" && e.url, { ms: 30_000, from: mark });
     t.ok("agy が出したログインの URL を届ける", String(link.url).startsWith("https://"), String(link.url));
+    // ブラウザーでのログインを済ませる
+    await fs.writeFile(signedInBrowser, "ok");
 
     const done = await login;
     t.ok("ブラウザーでのログインが済むと自動で終わる", done.supported === true, JSON.stringify(done));
