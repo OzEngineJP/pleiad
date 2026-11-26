@@ -29,7 +29,7 @@
 .deck[data-deck=split] > .ch-thread::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:1px;background:var(--surface-2);pointer-events:none}
 
 /* ---- 流れの板（スレッドと並ぶとき）。見出しの目的は畳み、入力欄は押すまで 1 行（動いている間も畳んだまま） */
-.deck > .ch-feed > .top{flex:none;min-height:48px}
+.deck > .ch-feed > .top{flex:none}
 .deck:not([data-deck=feed]) > .ch-feed .ch-purpose{display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within){padding-bottom:6px}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint){display:none}
@@ -39,9 +39,9 @@
 .ch-feed .post[data-open]{background:var(--surface-sel)}
 .ch-feed .post[data-open] .thread-summary{background:var(--surface-paper);font-weight:600}
 
-/* ---- スレッドの見出し（Chats の頭と同じ高さ・並び） */
-.th-top{display:flex;align-items:center;gap:4px;flex:none;min-height:48px;padding:10px 12px 4px 18px}
-.th-crumb{flex:1;min-width:0;display:flex;align-items:baseline;gap:4px;font-size:var(--fs-l);font-weight:600;white-space:nowrap;overflow:hidden}
+/* ---- スレッドの見出し（Chats と同じ頭の行 .top。高さ・余白・≡ は style.css が持つ） */
+.th-top{flex:none}
+.th-crumb{flex:1;min-width:0;display:flex;align-items:baseline;gap:4px;font-size:var(--fs-title);font-weight:600;white-space:nowrap;overflow:hidden}
 .th-chan{display:none;flex:none;margin-left:-6px;padding:2px 6px;border-radius:var(--r-s);background:transparent;color:var(--ink-weak);font:inherit;cursor:pointer;
   transition:background-color var(--dur-fast) var(--ease-out)}
 .th-chan:hover{background:var(--surface-2);color:var(--ink)}
@@ -61,9 +61,8 @@
 .menu-glyph{display:inline-grid;place-items:center;font-size:13px;line-height:1;stroke:none}
 
 /* ---- 投稿の列 */
-/* 頭の ✦（題の候補）。考えている間は弱い字 */
-.th-wand{flex:none;width:28px;height:28px;font-size:13px;color:var(--ink-weak)}
-.th-wand.busy{opacity:.5}
+/* 頭の ✦（題の候補。Chats の #titleWand と同じ絵・同じ考え中の形。style.css） */
+.th-wand{flex:none;align-self:center}
 /* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
 .th-composer .crow > .chip > svg.i,.wk-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
 /* 送信待ち・`!` の行（ADR 0157）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
@@ -150,13 +149,17 @@
 /* ---- 狭い幅。スレッドだけが全画面（幅 900px 未満は solo）。見出しの入口は検索の虫眼鏡と ⋮ と ✕ だけ
    （ToDo・通話・題の候補 ✦ は ⋮ のメニューへ。ブラウザーは Chats と同じく狭い幅では出さない。ADR 0358） */
 @media (max-width:700px){
-  .th-top{padding-left:6px}
-  .th-crumb{font-size:var(--fs)}
+  /* 題は 2 行（Chats の狭い頭と同じ。1 行目がスレッドの題、2 行目が弱い字の「# チャンネル名」で押すと流れに戻る。承認済み（2026-11-26））。
+     DOM の並び（チャンネル名 › 題）は広い画面のまま、ここで順を入れ替える */
+  .th-crumb{flex-direction:column;align-items:stretch;justify-content:center;gap:0;padding:0 6px}
+  .th-crumb > :is(.th-title,.th-title-input){order:-1;line-height:24px}
+  .th-sep{display:none}
+  .th-chan{margin-left:0;padding:0;align-self:flex-start;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-meta);font-weight:400;line-height:20px}
   .th-browser,.th-entries .th-todo,.th-entries .vc-call,.th-top .th-wand{display:none}
   .th-more{display:inline-flex}
   .th-log,.th-frame > .th-log{padding:2px 22px 10px 6px}
   .th-sys{margin-left:44px}
   .th-perms{--gut:44px}
   .th-subs{margin:0 10px 2px}
-  .deck[data-deck=solo] .th-side{display:inline-flex;width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit);margin-left:2px}   /* 44px。頭の左の余白（6px）と合わせて左端から 8px（#openSidebar と同じ） */
+  .deck[data-deck=solo] .th-side{display:inline-flex}   /* 形・位置・印は全部の ≡ で同じ（style.css の .side-opener） */
 }

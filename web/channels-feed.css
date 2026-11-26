@@ -6,7 +6,8 @@
 .ch-feed{display:flex;flex-direction:column;min-width:0;min-height:0}
 #channelsBody > .ch-feed{position:absolute;inset:0}
 .ch-feed[hidden]{display:none}
-.ch-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
+/* 本文と入力欄は Chats と同じ 760px の列（--col。style.css）の中央。列より狭い幅では左右に最小の余白だけ */
+.ch-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px max(10px,calc((100% - var(--col)) / 2)) 12px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
 .ch-log:focus-visible{outline:none}
 .ch-day{display:flex;justify-content:center;margin:8px 0 2px}
 .ch-day span{font-size:var(--fs-xs);color:var(--ink-weak);padding:1px 10px;border-radius:var(--r-pill);background:var(--surface-1)}
@@ -22,8 +23,8 @@
 /* ---- 見出し（メインの頭 #channelsView > .top に出す）。# 名前・目的・メンバーのアイコン・⋯ */
 .top.ch-top h2{flex:none;max-width:45%}
 .ch-hash{margin-right:2px;color:var(--ink-weak);font-weight:600}
-/* DM の頭の名前は bot のページへの入口（押せる名前。ADR 0358） */
-.ch-nm{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;margin-left:-6px;padding:2px 6px;border:0;border-radius:var(--r-s);background:transparent;font:inherit;color:inherit;
+/* DM の頭の名前は bot のページへの入口（押せる名前。ADR 0358）。顔の分だけ行を高くしない（頭の行はチャンネルと同じ 48px。上下の余白は外へはみ出させる） */
+.ch-nm{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;margin:-2px 0 -2px -6px;padding:2px 6px;vertical-align:top;border:0;border-radius:var(--r-s);background:transparent;font:inherit;color:inherit;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .ch-nm:hover{background:var(--surface-hover)}
 .ch-nm:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
@@ -136,7 +137,7 @@
 }
 
 /* ---- 入力欄。1 つの角丸の箱（--surface-1・--r-l）。Chats の入力欄と同じ作り（チップは無い） */
-.ch-composer{position:relative;flex:none;padding:4px 16px 12px;min-width:0}
+.ch-composer{--ch-pad:max(16px,calc((100% - var(--col)) / 2));position:relative;flex:none;padding:4px var(--ch-pad) 12px;min-width:0}
 .ch-box{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0;cursor:text}
 .ch-composer.disabled .ch-box{opacity:.6;cursor:not-allowed}
 /* 字の欄の高さの上限は JS（ch-composer.mjs の fit）が --ch-input-max に入れる（マウス 10 行・タッチ 6 行・画面の 40%。Chats の fitPrompt と同じ決まり） */
@@ -166,7 +167,7 @@
 .ch-wake-count{flex:1;min-width:140px;font-weight:600}
 
 /* ---- @ の候補（web/style.css の .clist と同じ面。slash-skills の #skillList と同じ位置） */
-.mention-list{position:absolute;left:16px;bottom:calc(100% - 2px);z-index:20;min-width:260px;max-width:calc(100% - 32px);max-height:240px;overflow-y:auto;list-style:none;margin:0;padding:6px;
+.mention-list{position:absolute;left:var(--ch-pad,16px);bottom:calc(100% - 2px);z-index:20;min-width:260px;max-width:calc(100% - 2 * var(--ch-pad,16px));max-height:240px;overflow-y:auto;list-style:none;margin:0;padding:6px;
   background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s)}
 .mention-list[hidden]{display:none}
 .mention-list .head{padding:2px 10px 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;cursor:default}
@@ -256,10 +257,9 @@
   .post{grid-template-columns:28px minmax(0,1fr);gap:8px;padding:8px}
   .post-av{width:28px;height:28px;font-size:16px}
   .ch-purpose{display:none}
-  .top.ch-top{gap:4px}
   .top.ch-top h2{flex:1;max-width:none}
-  .ch-composer{padding:4px 10px 10px}
-  .mention-list{left:10px;max-width:calc(100% - 20px);min-width:0;right:10px}
+  .ch-composer{--ch-pad:var(--sp-1);padding-bottom:10px}   /* 左右は Chats の入力欄と同じ 4px（style.css の --cpad-l・--cpad-r） */
+  .mention-list{right:var(--ch-pad);min-width:0}
   .ch-settings{padding:16px}
 }
 @media (prefers-reduced-motion:reduce){.post.enter{animation:none}}

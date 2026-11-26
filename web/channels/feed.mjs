@@ -7,7 +7,8 @@
 // 合成の投稿には、会話に記録の無い操作（リアクション・編集・削除）を出さない。
 // スレッドを開く空間（W3）はここに無い。要約の行・「スレッドで返信」は host.openThread(channelId, threadId) を呼ぶだけ。
 // DM の頭には ToDo の入口を置く（Chats と同じ部品 web/session-todo.mjs。DM の会話 = Bot.dmSessionId のもの。会話ができるまでは隠す）。
-import { el, svgEl } from '../dom.mjs';
+import { el } from '../dom.mjs';
+import { moreIcon } from '../icons.mjs';
 import { TODO_ICON } from '../session-todo.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
@@ -205,9 +206,7 @@ export function createFeed(host) {
     more.type = 'button';
     more.title = t('channels:feed.settings.open');
     more.setAttribute('aria-label', t('channels:feed.settings.open'));
-    const dots = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-    for (const cy of [5, 12, 19]) dots.append(svgEl('circle', { cx: 12, cy, r: 1.4 }));   // 縦の 3 点（「…」の形）
-    more.append(dots);
+    more.innerHTML = moreIcon;   // 縦の 3 点（「…」の形。web/icons.mjs）
     more.onclick = () => openChannelSettings({ host, channel: ch, bots: [...S.bots.values()], returnTo: more });
     x(more);
     paintPlaceholder();

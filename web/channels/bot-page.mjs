@@ -16,6 +16,7 @@
 // 認証・1 日の上限・長い注記は出さない（接続先は、どれで動くかを選ぶ行だけ。登録・トークン・資格情報・互換の接続先は設定の各エージェントの「接続先」）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { moreIcon } from '../icons.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
@@ -92,7 +93,8 @@ export function createBotPage(host) {
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
   };
-  // メインの頭（#channelsView > .top）は、bot のページを見せている間は見出しを引っ込める（bot のページ自身の頭が見出し。汎用の「Channels」は出さない）。
+  // メインの頭（#channelsView > .top）は、ほかの面と同じ頭の行のまま使う。bot のページを見せている間は、題（汎用の「Channels」）の代わりに
+  // bot の名前の欄、右に ⋮ を置く（docs/design-system.md「メインの頭」。承認済み（2026-11-26））。h2 は読み上げにだけ残す。
   // 流れの部品が show/hide で見出しを替える順（流れ → 自分）の後に付け外しする。頭は流れの有無で置き場所が動くので、その都度引く
   const topEl = () => document.getElementById('channelsPageTitle')?.closest('.top') ?? null;
   const navigate = (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail }));
@@ -129,16 +131,31 @@ export function createBotPage(host) {
   nameIn.placeholder = t('channels:bot.namePlaceholder');
   const sub = el('div', 'bp-sub');
   const dmBtn = el('button', 'btn bp-dm');
-  const moreBtn = el('button', 'btn bp-more', '⋮');   // 「…」は縦の 3 点（docs/design-system.md「「…」の形」）
+  const moreBtn = el('button', 'btn btn-icon bp-more');
+  moreBtn.innerHTML = moreIcon;   // 「…」は縦の 3 点（docs/design-system.md「「…」の形」。web/icons.mjs）
   moreBtn.type = 'button';
+  moreBtn.title = t('channels:botDelete.more');
   moreBtn.setAttribute('aria-label', t('channels:botDelete.more'));
   moreBtn.setAttribute('aria-haspopup', 'menu');
   dmBtn.type = 'button';
   dmBtn.append(glyph(REPLY), t('channels:bot.openDm'));
   const idBox = el('div', 'bp-id');
-  idBox.append(nameIn, sub);
+  idBox.append(sub);
+  // ページの頭（顔・所属と状態・［DM を開く］）。名前と ⋮ はメインの頭の行に置く（show で移し、hide で外す）
   const head = el('div', 'bp-head');
-  head.append(av, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn);
+  head.append(av, idBox, el('span', 'bp-spacer'), dmBtn);
+  const placeInTop = () => {
+    const top = topEl();
+    if (!top) return;
+    top.classList.add('bot-top');
+    top.querySelector(':scope > h2')?.after(nameIn);
+    top.append(moreBtn);
+  };
+  const takeFromTop = () => {
+    topEl()?.classList.remove('bot-top');
+    nameIn.remove();
+    moreBtn.remove();
+  };
 
   // 作る 3 段（名前 → 色 → 人格）。右の面の中ほどに置く。段は点で示す（ADR 0362）
   const obFace = el('div', 'bp-ob-face');
@@ -583,7 +600,8 @@ export function createBotPage(host) {
     show(notice, S.gone);
     show(grid, !S.gone && !creating);
     show(head, !S.gone && !creating);
-    show(moreBtn, !S.bot?.plain);
+    show(nameIn, !S.gone && !creating);
+    show(moreBtn, !S.gone && !creating && !S.bot?.plain);
     if (creating) { memory.setBot(null); brain.setBot(null); paintOb(); return; }
     const cur = vm();
     if (cur && document.activeElement !== persona) persona.value = cur.persona ?? '';
@@ -938,11 +956,11 @@ export function createBotPage(host) {
     show(view) {
       if (view?.kind !== 'bot' || !view.id) { this.hide(); return; }
       root.hidden = false;
-      topEl()?.classList.add('bot-top');
+      placeInTop();
       open(view.id);
     },
     hide() {
-      topEl()?.classList.remove('bot-top');
+      takeFromTop();
       if (root.hidden) return;
       closePanels();
       root.hidden = true;
