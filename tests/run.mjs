@@ -1148,6 +1148,7 @@ const SUITES = [
   './unit/chrome-input.mjs',
   './unit/browser-unify-input.mjs',
   './unit/browser-unify-view-only.mjs',
+  './unit/browser-unify-other-session.mjs',
   // --- W3 映像の触り心地: 選択・コピー・右クリックのメニュー・カーソル ---
   './unit/browser-video-input.mjs',
   './unit/browser-handoff-ai-tab.mjs',
