@@ -78,7 +78,9 @@ const serverExit = async link => { await link.flush(); link.socket.destroy(); aw
       chrome.approve();
       await d;
       t.ok('縁が切れたまま: 許可で connected', c.conn.state().state === 'connected');
-      const pipeAlive = await new Promise(resolve => { const sk = net.connect(c.link.pipe); sk.on('connect', () => { sk.destroy(); resolve(true); }); sk.on('error', () => resolve(false)); });
+      // 接続の子は終わらせた後に止まる（connected と同時ではない）。パイプが閉じるまで待つ
+      const pipeOpen = () => new Promise(resolve => { const sk = net.connect(c.link.pipe); sk.on('connect', () => { sk.destroy(); resolve(true); }); sk.on('error', () => resolve(false)); });
+      const pipeAlive = await until(async () => !await pipeOpen(), 5000, 'link child exit').then(() => false, () => true);
       t.ok('縁が切れたまま: 内の ws に落ちるとき、接続の子は終わらせる（古い ws を持ったまま残らない）', !pipeAlive);
       await c.conn.close();
     }

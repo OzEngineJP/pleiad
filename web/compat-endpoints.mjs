@@ -1,6 +1,7 @@
 // 互換の接続先の設定（設定 › エージェント設定 › Claude Code / Codex の「接続先」。docs/design-system.md「互換の接続先の管理」）。
 //
-// 一覧（公式の行＋登録した互換の接続先。既定にする・接続を確認・編集・削除）と、追加・編集の 5 段の流れ
+// 一覧（登録した互換の接続先のカード。既定にする・接続を確認・編集・削除。公式・CLI のログインと［＋ 接続先を追加］は
+// web/client.mjs の接続先の面が持つ。ADR 0359）と、追加・編集の 5 段の流れ
 //   ① 種類（プリセット）→ ② 接続情報 → ③ 接続を確認 → ④ モデル → ⑤ 保存
 // 確認が通るまで保存は出さない（サーバーの受領証。URL・キー・認証を変えたら確認し直し。モデルの欄は変えても確認し直さない）。
 // キーは伏せ字で受け、保存後は表示しない（サーバーも返さない。hasKey と keyRef だけ）。
@@ -11,24 +12,24 @@
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
-import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
-import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, COMPAT_AGENTS, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
+import { modelCandidates, comboModelOptions, SHOW_LIMIT } from './compat-models.mjs';
+import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, COMPAT_AGENTS, KIND, KIND_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
+import { connCard, connConfirm } from './conn-card.mjs';
 import { keyFitsEndpoint, keyMatchesEndpoint } from './api-keys-model.mjs';
 import { apiKeyList, keySelect, notEncryptedNote, checkParts, manageLink } from './api-key-ui.mjs';
 
-const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok Build' };
 const STEPS = [t('compat.step.kind'), t('compat.step.connection'), t('compat.step.check'), t('compat.step.model'), t('compat.step.save')];
 
 // 月/日 時:分（ja は「9/23 14:05」）
 const when = (iso) => fmt.dateTime(iso, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, onChange = () => {}, officialLine = () => '' }) {
+// onAddEnd: 追加の欄を閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す。web/client.mjs）
+export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, onChange = () => {}, onAddEnd = () => {} }) {
   const panel = document.createElement('section');
   panel.className = 'mp-panel'; panel.id = 'compatEndpointsPanel'; panel.hidden = true;
-  panel.setAttribute('aria-labelledby', 'epTitle');
   document.getElementById('agentControls').append(panel);
 
-  let endpoints = [], defaults = Object.fromEntries(COMPAT_AGENTS.map((a) => [a, ''])), storage = null, loaded = null;
+  let endpoints = [], defaults = Object.fromEntries(COMPAT_AGENTS.map((a) => [a, ''])), loaded = null;
   /** 設定 › API キーの一覧（キーの欄で選ぶ）。取れなければ null（古い置き場の入力欄にする） */
   let keyData = null;
   let agent = 'claude', view = 'list', confirming = '', checking = '', message = '';
@@ -37,69 +38,45 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
 
   async function load(force = false) {
     if (!loaded || force) loaded = Promise.all([cmd('compatEndpoints'), apiKeyList(cmd).catch(() => null)])
-      .then(([r, keys]) => { endpoints = r.endpoints ?? []; defaults = r.defaults ?? defaults; storage = r.storage ?? null; keyData = keys; return endpoints; })
+      .then(([r, keys]) => { endpoints = r.endpoints ?? []; defaults = r.defaults ?? defaults; keyData = keys; return endpoints; })
       .catch(e => { loaded = null; throw e; });
     return loaded;
   }
   const button = (text, onclick, className = 'btn') => { const b = el('button', className, text); b.type = 'button'; b.onclick = onclick; return b; };
   const line = (text, cls = 'mp-ln') => el('span', cls, text);
-  const labelled = (label, ...text) => { const s = el('span', 'mp-ln'); s.append(el('b', null, label), ...text.flat()); return s; };
 
-  /** モデル ID の表示（web/compat-models.mjs の表示名＋「1M」の札。送る ID は title） */
-  function modelNode(id) {
-    if (!id) return document.createTextNode(t('compat.notSet'));
-    const { text, oneM } = compatModelLabel(id);
-    const s = el('span', 'mp-model', text); s.title = id;
-    if (oneM) { const b = el('span', 'cbadge', '1M'); b.title = ONE_M_TITLE; s.append(b); }
-    return s;
-  }
-  function checkLine(e) {
-    if (checking === e.id) return line(t('compat.checking'));
+  // 状態の 1 行の文字（種類 · ホスト · 確認の結果）。失敗は ⚠ で強める
+  function checkText(e) {
+    if (checking === e.id) return { text: t('compat.checking'), warn: false };
     const c = e.lastCheck;
-    if (!c) return line(t('compat.check.never'));
-    if (c.ok) return line(t('compat.check.ok', { when: when(c.at) }));
-    return line(t('compat.check.failed', { error: c.error, when: when(c.at) }), 'mp-ln mp-warn');
+    if (!c) return { text: t('compat.check.never'), warn: false };
+    if (c.ok) return { text: t('compat.check.ok', { when: when(c.at) }), warn: false };
+    return { text: t('compat.check.failed', { error: c.error, when: when(c.at) }), warn: true };
   }
+  const hostOf = (url) => { try { return new URL(url).host; } catch { return url ?? ''; } };
 
-  // ---------------------------------------------------------------- 一覧（画面 2）
+  // ---------------------------------------------------------------- 一覧（互換のカードだけ。公式・見出し・［＋ 追加］は接続先の一覧の面が持つ。ADR 0359）
+  // 1 枚 = 名前（· 新しい会話の既定）・「種類 · ホスト · 確認」の 1 行 |［接続を確認］（確かめていない・失敗のときだけ）［既定にする］［編集］［削除］
+  function listCards() {
+    return endpoints.filter(x => x.agent === agent).map((e) => {
+      const asking = confirming === e.id, c = checkText(e);
+      const unchecked = !e.lastCheck || !e.lastCheck.ok || checking === e.id;
+      return connCard({
+        name: e.name, isDefault: e.isDefault, warn: c.warn, dataset: { endpoint: e.id }, confirming: asking,
+        status: t('conn.compatLine', { kind: KIND_LABEL[e.kind ?? KIND[agent]] ?? '', host: hostOf(e.baseUrl), check: c.text }),
+        actions: asking ? [] : [
+          unchecked && { label: checking === e.id ? t('compat.checking') : t('conn.check'), quiet: true, onClick: () => recheck(e), disabled: checking === e.id },
+          !e.isDefault && { label: t('conn.makeDefault'), onClick: () => setDefault(e.id) },
+          { label: t('conn.edit'), onClick: () => startForm(e) },
+          { label: t('conn.delete'), onClick: () => { confirming = e.id; draw(); } },
+        ],
+        extra: [asking && connConfirm({ name: e.name, withKey: e.hasKey && !e.keyRef, onNo: () => { confirming = ''; draw(); }, onYes: () => remove(e) })],
+      });
+    });
+  }
   function drawList() {
-    const claude = agent === 'claude';
-    const out = [];
-    const head = el('div', 'mp-row');
-    head.append(el('h3', null, t('compat.list.title', { agent: AGENT_NAME[agent] })), button(t('compat.action.close'), close));
-    head.firstChild.id = 'epTitle';
-    out.push(head);
-    // 公式
-    const official = el('div', 'mp-card'); const orow = el('div', 'mp-row'); const oinfo = el('div', 'mp-card-info');
-    oinfo.append(el('strong', null, t('compat.list.official') + (!defaults[agent] ? ' · ' + t('compat.list.isDefault') : '')),
-      line(`${claude ? 'Anthropic' : 'OpenAI'}${officialLine(agent) ? ' · ' + officialLine(agent) : ''}`));
-    const oact = el('div', 'mp-card-actions');
-    if (defaults[agent]) oact.append(button(t('compat.action.makeDefault'), () => setDefault('')));
-    orow.append(oinfo, oact); official.append(orow); out.push(official);
-    // 互換
-    for (const e of endpoints.filter(x => x.agent === agent)) {
-      const card = el('div', 'mp-card'); const r = el('div', 'mp-row'); const info = el('div', 'mp-card-info');
-      info.append(el('strong', null, e.name + (e.isDefault ? ' · ' + t('compat.list.isDefault') : '')));
-      info.append(line(e.baseUrl), checkLine(e), labelled(claude ? t('compat.list.mainLabel') : t('compat.list.modelLabel'), modelNode(e.roles.main)));
-      const act = el('div', 'mp-card-actions');
-      act.hidden = confirming === e.id;
-      if (!e.isDefault) act.append(button(t('compat.action.makeDefault'), () => setDefault(e.id)));
-      const check = button(t('compat.step.check'), () => recheck(e)); check.disabled = checking === e.id;
-      act.append(check, button(t('compat.action.edit'), () => startForm(e)), button(t('compat.action.delete'), () => { confirming = e.id; draw(); }));
-      r.append(info, act); card.append(r);
-      if (confirming === e.id) {
-        const ask = el('div', 'mp-confirm');
-        ask.append(el('p', null, t('compat.list.confirmDelete', { name: e.name })));
-        const row = el('div', 'mp-card-actions');
-        row.append(button(t('compat.action.cancel'), () => { confirming = ''; draw(); }), button(t('compat.action.confirmDelete'), () => remove(e)));
-        ask.append(row); card.append(ask);
-      }
-      out.push(card);
-    }
-    out.push(button(t('compat.list.add'), () => startForm(null), 'btn mp-link'));
-    if (storage && !storage.encrypted) out.push(el('p', 'mp-note mp-warn', t('compat.list.notEncrypted')));
-    const state = el('p', 'mp-state', message); state.setAttribute('role', 'status'); out.push(state);
-    panel.replaceChildren(...out);
+    const state = el('p', 'mp-state', message); state.setAttribute('role', 'status');
+    panel.replaceChildren(...listCards(), state);
   }
 
   async function setDefault(id) {
@@ -132,9 +109,9 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
       key: '', keyRef: '', keyMode: 'registered', show: false, hasKey: false, phase: 'edit', result: null, models: [], modelInfo: {}, roles: { ...p.roles }, context: p.context ?? '',
       sendThinking: Boolean(p.thinking), saved: false, stale: false, error: '' };
   }
-  function startForm(e) {
+  function startForm(e, presetId = null) {
     confirming = ''; message = ''; view = 'form';
-    if (!e) form = blankForm('custom' === agent ? 'custom' : PRESETS[agent][0].id);
+    if (!e) form = blankForm(presetId ?? PRESETS[agent][0].id);
     else form = { id: e.id, preset: e.preset, name: e.name, baseUrl: e.baseUrl, authMode: e.authMode, key: '', keyRef: e.keyRef ?? '', keyMode: 'registered', show: false, hasKey: e.hasKey,
       phase: 'edit', result: null, models: e.models ?? [], modelInfo: e.modelInfo ?? {}, roles: { ...e.roles }, context: e.options?.contextTokens ? String(e.options.contextTokens) : '',
       sendThinking: Boolean(e.options?.sendThinking), saved: false, stale: false, error: '' };
@@ -158,7 +135,6 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     if (at?.[0] != null) again?.setSelectionRange?.(at[0], at[1]);
   }
   const field = (label, control, help) => { const f = el('label', 'mp-field'); f.append(el('span', null, label), control); if (help) f.append(help); return f; };
-  const step = (n, text) => { const s = el('div', 'mp-step'); s.append(`${n}. `, el('b', null, text)); return s; };
   function input() {
     const registered = pickedKey();
     return { agent, name: form.name, preset: form.preset, baseUrl: form.baseUrl, authMode: form.authMode,
@@ -259,37 +235,15 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
   function drawForm() {
     const claude = agent === 'claude'; const P = presetOf(agent, form.preset); const editing = Boolean(form.id);
     const out = [];
-    const head = el('div', 'mp-row');
-    head.append(el('h3', null, editing ? t('compat.form.editTitle', { name: form.name || t('compat.form.endpoint') }) : t('compat.form.addTitle', { agent: AGENT_NAME[agent] })), button(t('compat.action.close'), backToList));
-    head.firstChild.id = 'epTitle';
-    out.push(head);
-    const cur = form.saved ? 6 : form.phase === 'ok' ? 4 : form.phase === 'checking' || form.phase === 'fail' ? 3 : 2;
-    const steps = el('div', 'mp-steps');
-    STEPS.forEach((label, i) => steps.append(el('span', i + 1 < cur ? 'done' : i + 1 === cur ? 'cur' : '', (i + 1 < cur ? '✓ ' : `${i + 1}. `) + label)));
-    out.push(steps);
-    if (form.saved) {
-      const r = el('div', 'mp-result');
-      r.append(el('strong', null, t('compat.form.saved', { name: form.name })), line(t('compat.form.savedHint')));
-      out.push(r);
-      const a = el('div', 'mp-actions');
-      a.append(button(t('compat.form.addAnother'), () => startForm(null)), button(t('compat.form.backToList'), backToList, 'btn btn-primary'));
-      out.push(a);
-      panel.replaceChildren(...out);
-      return;
+    // 追加は一覧の末尾の白いカード（段の並び「✓ 種類 · 接続情報 · …」から。種類は一覧の「接続先の種類」で選んだもの）。
+    // 編集はそのカードの中で開く（段の並びは出さない）。見出しと［閉じる］は持たない（［やめる］が閉じる）
+    if (!editing) {
+      const cur = form.phase === 'ok' ? 4 : form.phase === 'checking' || form.phase === 'fail' ? 3 : 2;
+      const steps = el('div', 'mp-steps');
+      STEPS.forEach((label, i) => steps.append(el('span', i + 1 < cur ? 'done' : i + 1 === cur ? 'cur' : '', (i + 1 < cur ? '✓ ' : `${i + 1}. `) + (i ? label : `${label}（${P.name}）`))));
+      out.push(steps);
     }
-    // ① 種類
-    out.push(step(1, t('compat.form.kind')));
-    const grid = el('div', 'mp-presets'); grid.setAttribute('role', 'group'); grid.setAttribute('aria-label', t('compat.form.kind'));
-    for (const p of PRESETS[agent]) {
-      const b = el('button', 'mp-preset'); b.type = 'button'; b.setAttribute('aria-pressed', String(p.id === form.preset));
-      b.append(el('span', null, p.name), el('small', null, p.hint));
-      b.disabled = editing && p.id !== form.preset;
-      b.onclick = () => { if (editing || p.id === form.preset) return; form = blankForm(p.id); draw(); };
-      grid.append(b);
-    }
-    out.push(grid);
     // ② 接続情報
-    out.push(step(2, t('compat.step.connection')));
     const g = el('div', 'mp-grid');
     const name = el('input'); name.value = form.name; name.placeholder = t('compat.form.namePlaceholder'); name.maxLength = 60; name.autocomplete = 'off';
     name.oninput = () => { form.name = name.value; };
@@ -318,8 +272,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     const ad = el('details'); ad.open = form.authMode !== authDefault;
     ad.append(el('summary', null, t('compat.form.advanced')), authField);
     out.push(ad);
-    // ③ 確認
-    out.push(step(3, t('compat.step.check')));
+    // ③ 確認（段の見出しは置かない。上の段の並びが今どこかを示す）
     if (form.stale && form.phase === 'edit') out.push(el('p', 'mp-note mp-warn', t('compat.form.stale')));
     if (form.phase === 'checking') out.push(Object.assign(el('div', 'mp-result'), { textContent: t('compat.checking') }));
     if (form.result) {
@@ -331,7 +284,6 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     }
     // ④ モデル（確認が通ったあと。編集では保存済みの割り当てを最初から見せる）
     if (form.phase === 'ok' || editing) {
-      out.push(step(4, claude ? t('compat.form.roles') : t('compat.step.model')));
       if (claude) {
         const rg = el('div', 'mp-grid');
         for (const r of CLAUDE_ROLES) rg.append(field(r.label, modelCombo(form.roles[r.key] ?? '', v => { form.roles[r.key] = v; }, r.label)));
@@ -366,7 +318,23 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
       const c = button(form.phase === 'checking' ? t('compat.checking') : t('compat.step.check'), check, 'btn btn-primary'); c.disabled = form.phase === 'checking'; a.append(c);
     }
     out.push(a);
-    panel.replaceChildren(...out);
+    panel.replaceChildren(...compose(out));
+  }
+  /** 一覧のカードに、追加・編集の欄を差し込む（編集はそのカードの中、追加は末尾の白いカード） */
+  function compose(body) {
+    const cards = listCards();
+    const mine = form?.id ? cards.find(c => c.dataset.endpoint === form.id) : null;
+    if (mine) {
+      mine.classList.add('is-open');
+      mine.querySelector('.mp-card-actions').hidden = true;
+      mine.append(...body);
+    } else {
+      const stage = el('div', 'mp-card mp-acct cc is-open conn-stage');
+      stage.append(...body);
+      cards.push(stage);
+    }
+    const state = el('p', 'mp-state', message); state.setAttribute('role', 'status');
+    return [...cards, state];
   }
   async function check() {
     // フォーカス中の combo の値を確定させてから読む（blur で確定する）
@@ -392,12 +360,18 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     if (!form.name.trim()) { form.error = t('compat.form.nameRequired'); draw(); return; }
     try {
       await cmd('compatEndpointSave', { input: input(), receipt: form.receipt, ...(form.id ? { id: form.id } : {}) });
-      form.saved = true; form.key = '';
-      await load(true); onChange();
+      // 保存したら一覧へ戻る（足したカードが一覧に並ぶ。済んだことは状態の行に 1 行）
+      const adding = !form.id, name = form.name;
+      form.key = ''; view = 'list'; form = null;
+      await load(true).catch(() => {}); onChange();
+      message = t('compat.form.saved', { name });
+      draw();
+      if (adding) onAddEnd();
+      return;
     } catch (e) { form.error = e.message; }
     draw();
   }
-  function backToList() { view = 'list'; form = null; message = ''; draw(); }
+  function backToList() { const adding = Boolean(form && !form.id); view = 'list'; form = null; message = ''; draw(); if (adding) onAddEnd(); }
 
   function draw() {
     if (view === 'form' && form) drawForm(); else drawList();
@@ -423,14 +397,24 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     },
     /** 面を閉じる（エージェントのカードの「接続」を畳むとき） */
     close,
-    /** 設定の「接続先」ボタン。同じエージェントでもう一度押すと閉じる */
-    async open(which, { add = false } = {}) {
-      if (!panel.hidden && agent === which && !add) { close(); return; }
+    /** 接続先の一覧を開いたとき、そのエージェントの互換のカードを出す（開く・閉じるは web/client.mjs の接続先の面が決める） */
+    async open(which, { add = null } = {}) {
       openSettings(); agent = which; view = 'list'; form = null; confirming = ''; message = t('compat.loading');
       panel.hidden = false; onOpen(agent); drawList();
-      try { await load(true); message = ''; if (add) startForm(null); else draw(); panel.scrollIntoView({ block: 'nearest' }); }
+      try { await load(true); message = ''; if (add) startForm(null, add); else draw(); }
       catch (e) { message = e.message; draw(); }
     },
+    /** 一覧の「接続先の種類」で互換の種類（プリセット）を選んだ。② 接続情報から始める */
+    async startAdd(which, presetId) {
+      if (panel.hidden || agent !== which) { await this.open(which, { add: presetId }); return; }
+      await load().catch(() => {});
+      startForm(null, presetId);
+      panel.querySelector('.mp-grid input')?.focus();
+    },
+    /** 追加の欄が開いている */
+    get adding() { return !panel.hidden && view === 'form' && Boolean(form) && !form.id; },
+    /** 描き直す（既定が変わったとき） */
+    repaint() { if (!panel.hidden && !(view === 'form' && panel.contains(document.activeElement))) draw(); },
     /** どのエージェントの面が開いているか（設定の行のボタンの aria-expanded に使う） */
     onOpen(fn) { onOpen = fn; },
     get openAgent() { return panel.hidden ? '' : agent; },

@@ -8,7 +8,7 @@ Pleiad は各エージェントの CLI とログイン（またはサブスク�
 
 認証は Claude Code のログインをそのまま使う。`ANTHROPIC_API_KEY` が設定されているとそちら（従量課金）が優先されるので、サブスクリプションで動かすなら未設定にしておく。
 
-Claude のサブスクリプションを複数使い分けるなら、設定の「エージェント設定」→ Claude Code の「アカウント」でアカウントを足して claude.ai にログインすると（アカウントごとの専用の設定フォルダを使う。[ADR 0353](adr/0353-claude-single-login-remove-setup-token.md)）、会話ごとに入力欄（モデルの隣）でアカウントを選べる。選ばない会話はログイン中のアカウントで動く。モデルの一覧もアカウントごとに引くので、承認された組織のアカウントにだけ出るモデル（Claude Mythos など）は、そのアカウントを選んだときだけ並ぶ（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）。
+Claude のサブスクリプションを複数使い分けるなら、設定の「エージェント設定」→ Claude Code の［接続先］の［＋ 接続先を追加］で公式のアカウントを足して［ログインする］と（アカウントごとの専用の設定フォルダを使う。[ADR 0353](adr/0353-claude-single-login-remove-setup-token.md)）、会話ごとに入力欄（モデルの隣）の「接続先」で選べる（画面の「接続先」は CLI のログイン・登録したアカウント・互換の接続先の 1 つの一覧。[ADR 0359](adr/0359-connections-unify.md)）。選ばない会話は CLI のログインで動く（［既定にする］で新しい会話の既定を変えられる）。モデルの一覧もアカウントごとに引くので、承認された組織のアカウントにだけ出るモデル（Claude Mythos など）は、そのアカウントを選んだときだけ並ぶ（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）。
 トークンはブラウザーでログイン中の claude.ai のアカウントで発行されるので、発行前にそのアカウントへ切り替えておく（使用量の表示の認可と別のアカウントのトークンなら、一覧に警告が出る）。
 
 ログイン（OAuth）の期限が切れても `claude auth status` はログイン済みを返す。会話のターンが 401 で失敗すると、Pleiad はその失敗の行に「ログインの有効期限が切れています」と［ログインし直す］を出し、設定の Claude の行の下にも ⚠ の 1 行を出す（見分けは SDK の `authentication_failed`・`api_error_status: 401` と、例外の文面。覚えるのはサーバーのメモリだけ。[ADR 0212](adr/0212-claude-auth-expired.md)）。設定の行の名前の下に、Pleiad が使う `claude` の実行ファイルのパスを出す（Claude のデスクトップアプリに入っている別の Claude Code と取り違えないため。版はパスの説明に出す）。
@@ -21,7 +21,7 @@ Claude では会話のメタ情報の正本が `~/.claude`（SDK ネイティブ
 
 ログインはサイドバー下の「バックエンド認証」から行う（`~/.codex/auth.json` は codex が書く）。
 
-設定の Codex の「アカウント」から追加してログインすると、会話ごとに使うアカウントを選べる。選ばない会話は現在の CLI ログインを使う。登録したアカウントは認証と app-server を分け、CLI の設定・会話の記録・書き手のロックを共有する。Windows ではファイルのシンボリックリンクを作れる環境が必要。使用量の枠もアカウントごとに出る。
+設定の Codex の［接続先］から公式のアカウントを追加してログインすると、会話ごとに入力欄の「接続先」で選べる。選ばない会話は CLI のログインを使う。登録したアカウントは認証と app-server を分け、CLI の設定・会話の記録・書き手のロックを共有する。Windows ではファイルのシンボリックリンクを作れる環境が必要。使用量の枠もアカウントごとに出る。
 
 承認モードは「都度確認」「auto」「全部自動」「Bypass」「読むだけ」。
 
@@ -47,7 +47,7 @@ Antigravity 1.4.2 の複数アカウント切替は未対応。CLI とアプリ�
 OpenCode v2.0.32 以降の v2（`opencode`）の接続先をそのまま使う。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーの接続先は端末の
 `opencode auth login` でつなぐ（「ログイン」を押すとそのコマンドが出る。終わると表示が切り替わる）。外すのも端末の `opencode auth logout`。
 
-複数のログインを使う場合は、設定の OpenCode の「アカウント」から追加する。Pleiad が表示する専用のコマンドを、Pleiad が動いている PC の端末で実行してログインする。会話ごとにアカウントを選べ、切替時には保存した会話を引き継いで新しい実行区間を始める。既存の OpenCode のログインは書き換えない。
+複数のログインを使う場合は、設定の OpenCode の［接続先］から公式のアカウントを追加する。Pleiad が表示する専用のコマンドを、Pleiad が動いている PC の端末で実行してログインする。会話ごとに入力欄の「接続先」で選べ、切替時には保存した会話を引き継いで新しい実行区間を始める。既存の OpenCode のログインは書き換えない。
 
 使用枠は OpenCode Go・ChatGPT・GitHub Copilot の接続から読み取る。Go は既存の OpenCode OAuth access または API キーを Bearer として `GET https://opencode.ai/zen/go/v1/usage` に付け、5時間・週次・月次を取得する。`usage.{rolling,weekly,monthly}.percent` は百分率、`resetsAt` は絶対日時。月次を固定30日として扱わない。OpenRouter のキー別枠は照会・表示しない。
 
@@ -75,7 +75,7 @@ Pleiad を更新しても、共有サーバーで走っている OpenCode のタ
 
 v2.0.32 では、Bedrock の SigV4 で署名した圧縮要求に、Pleiad 担当として除外すべき古い指示が再び入る場合がある。この場合は送信を止めて理由を表示する。署名した本文を書き換えたり、担当外の指示を送信したりしない。新しい会話を始めるか、指示の担当を OpenCode に変えると再開できる。
 
-互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または v2 の `opencode.json` の `providers`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
+互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の互換の接続先（Claude Code・Codex だけ）ではなく OpenCode 自身のプロバイダーとしてつなぐ（`opencode auth login`、または v2 の `opencode.json` の `providers`）。つないだプロバイダーのモデルは、入力欄のモデルの一覧にそのまま出る。
 
 ## Devin CLI
 
@@ -131,7 +131,7 @@ Devin でも Pleiad のシェルツールと入力欄の `!` が使える。両�
 
 ## 互換の接続先
 
-Claude Code と Codex は、公式の接続先のほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して会話ごとに選べる。詳しくは [`design.md`](design.md) の「互換の接続先」。
+Claude Code と Codex は、CLI のログイン・登録したアカウントのほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して、同じ「接続先」の一覧から会話ごとに選べる（[ADR 0359](adr/0359-connections-unify.md)）。詳しくは [`design.md`](design.md) の「互換の接続先」。
 
 ## 使うときの注意
 

@@ -1,8 +1,9 @@
 // 画面のアカウントごとのモデル一覧・表示・選択（ADR 0329）:
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
-//   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、アカウント更新イベントで S.vocab 破棄。
+//   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、接続先の登録が変わったら（connChanged）S.vocab 破棄。
 //     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0362）
+//     互換の接続先（ADR 0359）: bot のページで選ぶと setAccount({endpoint})、語彙は接続先の段（account は渡さない）、見出しとチップに接続先の名前、消えた・使えない接続先は一文で知らせる
 //   - web/channels/thread-composer.mjs: 宛先・設定のチップを持たず、語彙を取りに行かない（ADR 0362）
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
@@ -23,6 +24,37 @@ export const name = 'web-account-models';
 export const title = '画面: 委譲設定・委譲表示・bot ページ・スレッド入力欄のアカウント別モデル一覧';
 
 const tick = () => new Promise((r) => setImmediate(r));
+
+/** web/client.mjs の connChoices と同じ形の取得口（CLI のログイン + アカウント 2 つ + 互換の接続先 1 つ。失敗している接続先 failed-ep も 1 つ） */
+function connChoicesFake() {
+  const EPS = [
+    { id: 'ep1', name: '社内 gateway', kind: 'anthropic', baseUrl: 'https://gw.example', ready: true, models: ['glm-5'], modelInfo: {}, roles: { main: 'glm-5' } },
+    { id: 'failed-ep', name: '壊れた接続先', kind: 'anthropic', baseUrl: 'https://bad.example', ready: false, models: [], modelInfo: {}, roles: {} },
+  ];
+  return {
+    load: async () => {},
+    accounts: (backend, value) => (backend !== 'claude' ? null : [
+      { value: '', label: 'CLI のログイン', hint: '公式', isDefault: true },
+      { value: 'verified', label: 'verified', hint: '公式' },
+      { value: 'plain', label: 'plain', hint: '公式' },
+      ...(value && !['verified', 'plain'].includes(value) ? [{ value, label: '削除された接続先', hint: '選び直してください', gone: true }] : []),
+    ]),
+    endpointView: (backend, selected) => {
+      if (backend !== 'claude') return null;
+      const row = EPS.find((e) => e.id === selected) ?? null;
+      return {
+        selected, row, lost: null, roleNames: [],
+        options: [
+          { value: '', label: 'CLI のログイン', sub: '公式', isDefault: true },
+          ...EPS.map((e) => ({ value: e.id, label: e.name, sub: e.baseUrl, warn: e.ready === false, isDefault: e.id === 'ep1' })),
+          ...(selected && !row ? [{ value: selected, label: '削除された接続先', sub: '選び直してください', gone: true }] : []),
+        ],
+        manage: null,
+      };
+    },
+    hasAccounts: (backend) => backend === 'claude',
+  };
+}
 
 export default async function (t) {
   const prevLang = lang;
@@ -176,7 +208,7 @@ export default async function (t) {
         chip.dispatchEvent({ type: 'click' });
         await tick();
         const pop = root.querySelector('.rt-picker');
-        pop.querySelectorAll('.prow').find(b => b.dataset.key === 'nav:account').onclick();
+        pop.querySelectorAll('.prow').find(b => b.dataset.key === 'nav:conn').onclick();
         const accounts = pop.querySelectorAll('.prow').map(b => b.dataset.key);
         assert.ok(accounts.includes('account:verified') && accounts.includes('account:dead'), accounts.join(','));
         assert.ok(!accounts.includes('account:plain') && !accounts.includes('account:'), accounts.join(','));
@@ -244,7 +276,7 @@ export default async function (t) {
       const pageHost = {
         state: {
           backend: 'claude', backendId: 'claude', cwd: '/w', account: '', sessions: [],
-          backends: [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token' } }],
+          backends: [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token', compatEndpoints: true } }],
         },
         vocab: async (backend, cwd, opts = {}) => {
           const account = opts?.account ?? '';
@@ -259,12 +291,13 @@ export default async function (t) {
         cmd: async (op, args = {}) => {
           if (op === 'modes') return { default: { label: '標準', scope: 'workspace', autonomy: 'ask' } };
           if (op === 'efforts') return { '': { label: '既定' }, high: { label: '高' } };
-          if (op === 'claudeAccounts') return { accounts: [{ id: 'verified', name: 'verified', hasToken: true }, { id: 'plain', name: 'plain', hasToken: true }] };
           if (op === 'models') return (await pageHost.vocab(args.backend, args.cwd, { account: args.account })).models;
           return {};
         },
         efforts: async () => ({ '': { label: '既定' }, high: { label: '高' } }),
-        backends: () => [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token' } }],
+        backends: () => [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token', compatEndpoints: true } }],
+        // 接続先の候補の取得口（web/client.mjs の connChoices と同じ形。入力欄と同じ部品が読む）
+        conn: connChoicesFake(),
         backendLabel: (id) => ({ claude: 'Claude' })[id] ?? id,
         accountsEnabled: (id) => id === 'claude',
         accountList: () => [{ id: 'verified', name: 'verified', ready: true }, { id: 'plain', name: 'plain', ready: true }],
@@ -289,13 +322,13 @@ export default async function (t) {
 
       const botView = body.querySelector('#botView');
       // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す。
-      // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、アカウントの行から一覧へ進む
+      // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、接続先の行から一覧へ進む
       const popButton = (key) => botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
       botView.querySelector('#botModelChip').click();
       await tick();
       await tick();
-      assert.ok(Boolean(popButton('nav:account')), 'bot ページのモデル面の上の段にアカウントの行が出る');
-      popButton('nav:account').click();
+      assert.ok(Boolean(popButton('nav:conn')), 'bot ページのモデル面の上の段に接続先の行が出る');
+      popButton('nav:conn').click();
       await tick();
       await tick();
       const acctBtn = popButton('account:verified');
@@ -313,11 +346,11 @@ export default async function (t) {
       for (let i = 0; i < 5; i++) await tick();
       assert.ok(invokeOrder.some(([op, a]) => op === 'bots.update' && a.model === 'claude-mythos-5-2'), JSON.stringify(invokeOrder));
 
-      // アカウント更新イベントで S.vocab を捨て、再取得する
+      // 接続先の登録が変わったら S.vocab を捨て、再取得する（web/client.mjs が一覧を取り直せる状態にしてから connChanged を呼ぶ）
       const vBefore = vocabCalls.length;
-      page.onEvent({ type: 'claudeAccountsChanged' });
+      page.connChanged();
       for (let i = 0; i < 5; i++) await tick();
-      assert.ok(vocabCalls.length > vBefore, 'claudeAccountsChanged で語彙を引き直す');
+      assert.ok(vocabCalls.length > vBefore, 'connChanged で語彙を引き直す');
       t.ok('bot-page: account ごとに語彙を引き直し、account は setAccount・model は update で保存する', true);
 
       // 作る 3 段: 名前 → 色 → 人格。エージェントは今の入力欄のもの、モデル・承認モードは既定。作ったら DM へ移る。
@@ -385,6 +418,88 @@ export default async function (t) {
       t.ok('bot-page: 作る 3 段（名前 → 色 → 人格）で bots.create を 1 回呼び、DM へ移る。落ちたら 3 段目に留まる', true);
     }
 
+    // ---- 3b. bot-page.mjs: 互換の接続先（ADR 0359）
+    {
+      const mount = () => {
+        const body = el('div'); body.id = 'channelsBody';
+        const title = el('div'); title.id = 'channelsPageTitle';
+        document.getElementById = (id) => ({ channelsBody: body, channelsPageTitle: title })[id] ?? null;
+        return body;
+      };
+      const botRow = (over = {}) => ({ id: 'b_ep', name: 'EpBot', icon: '', backend: 'claude', account: '', endpoint: '', model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [], ...over });
+      const makeHost = (initial) => {
+        let stored = initial;
+        const calls = [];
+        const cmds = [];
+        const backendRows = [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token', compatEndpoints: true } }];
+        const host = {
+          state: { backend: 'claude', cwd: '/w', account: '', sessions: [], backends: backendRows },
+          backends: () => backendRows,
+          backendLabel: (id) => ({ claude: 'Claude' })[id] ?? id,
+          conn: connChoicesFake(),
+          cmd: async (op, args = {}) => {
+            cmds.push([op, args]);
+            if (op === 'modes') return { default: { label: '標準', scope: 'workspace', autonomy: 'ask' } };
+            if (op === 'efforts') return { '': { label: '既定' }, high: { label: '高' } };
+            if (op === 'models') return { '': { label: '既定', resolvesTo: 'sonnet' }, sonnet: { label: 'Sonnet', note: '' } };
+            return {};
+          },
+          invoke: async (op, args) => {
+            calls.push([op, args]);
+            if (op === 'bots.list') return { bots: [stored] };
+            if (op === 'channels.list') return { channels: [] };
+            if (op === 'bots.get') return stored;
+            if (op === 'bots.create') { stored = botRow({ id: 'b_new_2', name: args.name }); return stored; }
+            if (op === 'bots.setAccount') { stored = botRow({ ...stored, account: args.account ?? '', endpoint: args.endpoint ?? '', model: '', effort: '' }); return stored; }
+            return {};
+          },
+        };
+        return { host, calls, cmds };
+      };
+      const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
+      const popBtn = (view, key) => view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
+
+      // (b) 互換で動く bot: 見出し・チップに接続先の名前。CLI のログインへ戻す／アカウントを選ぶ／互換へ戻すは bots.setAccount に {account, endpoint} で書く
+      {
+        const body = mount();
+        const { host, calls } = makeHost(botRow({ endpoint: 'ep1', model: 'glm-5' }));
+        const page = createBotPage(host);
+        page.show({ kind: 'bot', id: 'b_ep' });
+        await settle(8);
+        const view = body.querySelector('#botView');
+        assert.match(view.querySelector('#botModelChip').textContent, /社内 gateway/, '互換の bot のチップに接続先の名前');
+        assert.match(view.textContent, /社内 gateway/, '見出しの行にも接続先の名前');
+        assert.equal(view.querySelector('.bp-conn-warn').hidden, true, '使える接続先なら一文を出さない');
+        const write = async (key) => {
+          calls.length = 0;
+          view.querySelector('#botModelChip').click();
+          await settle(3);
+          popBtn(view, 'nav:conn').click();
+          await settle(3);
+          popBtn(view, key).click();
+          await settle(6);
+          return calls.filter(([op]) => op === 'bots.setAccount').map(([, a]) => a);
+        };
+        assert.deepEqual(await write('account:'), [{ botId: 'b_ep', account: '', endpoint: '' }], 'CLI のログインへ戻す = 互換を外す');
+        assert.deepEqual(await write('account:verified'), [{ botId: 'b_ep', account: 'verified', endpoint: '' }], 'アカウントを選ぶ = 互換を外して公式へ');
+        assert.deepEqual(await write('endpoint:ep1'), [{ botId: 'b_ep', account: 'verified', endpoint: 'ep1' }], '互換を選ぶ = アカウントの選びは別に覚えたまま');
+      }
+
+      // (c) 接続先が消えている／確認に失敗している: 入力欄と同じ一文を出す（読み終えるまでは出さない）
+      for (const [row, key] of [[{ endpoint: 'gone-ep' }, 'chat.endpoint.deletedWarning'], [{ endpoint: 'failed-ep' }, 'chat.endpoint.failedWarning']]) {
+        const body = mount();
+        const { host } = makeHost(botRow(row));
+        const page = createBotPage(host);
+        page.show({ kind: 'bot', id: 'b_ep' });
+        await settle(8);
+        const warn = body.querySelector('#botView').querySelector('.bp-conn-warn');
+        assert.equal(warn.hidden, false, `${row.endpoint}: 一文を出す`);
+        assert.equal(warn.textContent, tr(key, { name: '壊れた接続先' }), `${row.endpoint}: ${warn.textContent}`);
+      }
+      t.ok('bot-page: 互換の接続先 — 見出しとチップに名前・CLI/アカウント/互換の行き来・消えた/使えない接続先の一文', true);
+    }
+
+    // ---- 4. thread-composer.mjs: vocab / efforts に account を渡し、invalidateVocab で引き直す
     // ---- 4. thread-composer.mjs: 宛先と設定のチップを出さず、語彙もエフォートも取りに行かない（設定は bot のページだけ。ADR 0362）
     {
       const templateForm = el('form', 'composer');
@@ -438,6 +553,7 @@ export default async function (t) {
       } finally {
         tc.destroy();
       }
+
     }
 
     // ---- 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く（最後に読んだ別アカウントの一覧で引かない）

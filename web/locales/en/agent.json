@@ -293,21 +293,21 @@
     }
   },
   "bridge": {
-    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work). If you omit backend, Pleiad chooses the target (backend, model, agent account) from the kind, the difficulty, and quota usage, and explains the choice in the returned routing. Give backend ({{backends}}) only when a specific target is required. To choose the agent account as well, give account (the account value from ply_usage) together with backend. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
+    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work). If you omit backend, Pleiad chooses the target (backend, model, connection) from the kind, the difficulty, and quota usage, and explains the choice in the returned routing. Give backend ({{backends}}) only when a specific target is required. To choose the connection as well, give account (the value from ply_usage) together with backend. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
     "title": "A short name for the list and child conversation title, about 30 characters.",
     "tools": {
-      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind. If backend is omitted, Pleiad chooses the target from the kind, the difficulty, and quota usage, and explains it in routing (if no candidate is usable this fails; then retry with an explicit backend or ask the user). An explicit backend pins the target and allows model and effort (model and effort only with backend). account is allowed with a backend that supports accounts and pins the agent account the child runs on (the account value of that agent’s row in ply_usage: login or acct-...). An account that is not registered, has no credentials, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another account. For an agent with registered accounts, omitting account uses only accounts placed in the per-tier candidates of the delegation settings (if the inherited account is not placed, one of the placed accounts is chosen; if none is placed, this is an error). Automatic selection (backend omitted) also tries the tier candidates, each an agent, model and account, from the top. account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is remapped only when it matches a row exactly — an unmatched name is never shrunk to a family alias). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges.",
+      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind. If backend is omitted, Pleiad chooses the target from the kind, the difficulty, and quota usage, and explains it in routing (if no candidate is usable this fails; then retry with an explicit backend or ask the user). An explicit backend pins the target and allows model and effort (model and effort only with backend). account is allowed with a backend that supports registered connections and pins the connection the child runs on (the account value of that agent’s row in ply_usage: login (the CLI login) or acct-...). A connection that is not registered, has no credentials, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another connection. For an agent with registered connections, omitting account uses only connections placed in the per-tier candidates of the delegation settings (if the inherited connection is not placed, one of the placed connections is chosen; if none is placed, this is an error). Automatic selection (backend omitted) also tries the tier candidates, each an agent, model and connection, from the top. account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is remapped only when it matches a row exactly — an unmatched name is never shrunk to a family alias). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges. endpoint runs the child on a compatible connection (OpenRouter, Z.ai, and so on): the id or name from the endpoints rows of that agent in ply_usage. It cannot be combined with account or used with host. An endpoint that is not registered, belongs to another agent, failed its connection check, or whose key cannot be read is an error (Pleiad never silently falls back to the official connection). Compatible connections in the level candidates (\"backend@ep-…:model\") are also tried in order by automatic selection (their usage cannot be read, so they are not deferred, and are skipped only when their check failed or they returned 429 recently). A delegation to the same agent without endpoint or account inherits the requesting conversation's compatible connection.",
       "ply_task_status": "Read a Pleiad task and its result. Use nextOffset to read the remainder of a long result. status: waiting means the child is stopped on a human approval; the same card is also shown in this conversation, so tell the user where to approve.",
       "ply_task_wait": "Wait up to 30 seconds for a Pleiad task; returns immediately once the child is waiting for a human approval (status: waiting). A still-running result is not a failure; completion will also be delivered automatically. On waiting, stop waiting and tell the user which conversation holds the approval.",
-      "ply_task_send": "Queue an additional instruction for the same Pleiad child conversation, including after completion. backend, model, effort and account change the child's settings from its next turn; message may be omitted when only changing settings. account is for children whose agent supports accounts and takes the account value from ply_usage.",
+      "ply_task_send": "Queue an additional instruction for the same Pleiad child conversation, including after completion. backend, model, effort and account change the child's settings from its next turn; message may be omitted when only changing settings. account is for children whose agent supports registered connections and takes the account value from ply_usage.",
       "ply_task_cancel": "Send a stop signal to a Pleiad task and return at once (its descendant Pleiad tasks are stopped too). The return value only says the signal was sent and gives the current status. When the task stops, one end notice arrives, as for any other ending (if it finished before the signal arrived, the notice reports that ending). If it has already ended and its notice was delivered, this returns only \"already ended\"; if the notice was not delivered yet, that notice is delivered.",
       "ply_task_list": "List only the Pleiad tasks created by this conversation. Does not list native subagent jobs.",
-      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each agent account row is the name to give as account to ply_delegate and ply_task_send (login is the signed-in account). Rows with runnable: false have no token and cannot be chosen. Rows with inTiers: true are placed in the per-tier candidates of the delegation settings and may be used by automatic selection and by pinned delegation without account; rows with inTiers: false are used only when given as account. held lists slots stopped by a short-term rate limit right now (model, account, and until as the expected reset, null if unknown); they cannot be used even when daily and weekly usage is low, and ply_delegate without backend skips them."
+      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each agent connection row is the name to give as account to ply_delegate and ply_task_send (login is the CLI login). Rows with runnable: false have no token and cannot be chosen. Rows with inTiers: true are placed in the per-tier candidates of the delegation settings and may be used by automatic selection and by pinned delegation without account; rows with inTiers: false are used only when given as account. held lists slots stopped by a short-term rate limit right now (model, account, and until as the expected reset, null if unknown); they cannot be used even when daily and weekly usage is low, and ply_delegate without backend skips them. The endpoints rows are that agent's compatible connections (id, name, kind, models, ready, inTiers); write the id or name in ply_delegate's endpoint. usage: not_reported means usage cannot be read. ready: false means the connection check failed and it cannot be chosen. inTiers: true means it is in the level candidates of the delegation settings. held lists slots paused after a recent 429."
     },
     "routingOff": {
-      "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work) and backend ({{backends}}). Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails). To choose the agent account as well, give account (the account value from ply_usage) together with backend. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
-      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind and backend. Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails). model and effort may also be given. account is allowed with a backend that supports accounts and pins the agent account the child runs on (the account value of that agent’s row in ply_usage: login or acct-...). An account that is not registered, has no credentials, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another account. For an agent with registered accounts, omitting account uses only accounts placed in the per-tier candidates of the delegation settings (if the inherited account is not placed, one of the placed accounts is chosen; if none is placed, this is an error). account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is remapped only when it matches a row exactly — an unmatched name is never shrunk to a family alias). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges.",
-      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each agent account row is the name to give as account to ply_delegate and ply_task_send (login is the signed-in account). Rows with runnable: false have no token and cannot be chosen. Rows with inTiers: true are placed in the per-tier candidates of the delegation settings and may be used by delegation without account; rows with inTiers: false are used only when given as account. held lists slots stopped by a short-term rate limit right now (model, account, and until as the expected reset, null if unknown); they cannot be used even when daily and weekly usage is low."
+      "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work) and backend ({{backends}}). Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails). To choose the connection as well, give account (the value from ply_usage) together with backend. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
+      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind and backend. Automatic delegate selection is turned off in the settings, so Pleiad does not choose the target (ply_delegate without backend fails). model and effort may also be given. account is allowed with a backend that supports registered connections and pins the connection the child runs on (the account value of that agent’s row in ply_usage: login (the CLI login) or acct-...). A connection that is not registered, has no credentials, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another connection. For an agent with registered connections, omitting account uses only connections placed in the per-tier candidates of the delegation settings (if the inherited connection is not placed, one of the placed connections is chosen; if none is placed, this is an error). account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is remapped only when it matches a row exactly — an unmatched name is never shrunk to a family alias). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges. endpoint runs the child on a compatible connection (OpenRouter, Z.ai, and so on): the id or name from the endpoints rows of that agent in ply_usage. It cannot be combined with account or used with host. An endpoint that is not registered, belongs to another agent, failed its connection check, or whose key cannot be read is an error (Pleiad never silently falls back to the official connection). A delegation to the same agent without endpoint or account inherits the requesting conversation's compatible connection.",
+      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each agent connection row is the name to give as account to ply_delegate and ply_task_send (login is the CLI login). Rows with runnable: false have no token and cannot be chosen. Rows with inTiers: true are placed in the per-tier candidates of the delegation settings and may be used by delegation without account; rows with inTiers: false are used only when given as account. held lists slots stopped by a short-term rate limit right now (model, account, and until as the expected reset, null if unknown); they cannot be used even when daily and weekly usage is low. The endpoints rows are that agent's compatible connections (id, name, kind, models, ready, inTiers); write the id or name in ply_delegate's endpoint. usage: not_reported means usage cannot be read. ready: false means the connection check failed and it cannot be chosen. inTiers: true means it is in the level candidates of the delegation settings. held lists slots paused after a recent 429."
     },
     "hostOffline": "offline",
     "hosts": "Write a Pleiad host's name in host to hand the work to that host (its AI works on that host's PC). Available hosts: {{hosts}}. cwd and isolate are interpreted with the host's paths and rules (omit cwd for the host's home folder). Omit backend and the host chooses the agent. Approvals for the host's child also appear in this conversation (the user answers them; you cannot). A request to an offline host fails immediately. ply_task_status, ply_task_wait, ply_task_send and ply_task_cancel work on the host's task with the same taskId (send only a message to a host task). account is an agent account on this PC, so it cannot be combined with host. Omit host to run it on this PC.",
@@ -343,21 +343,29 @@
       "cancelPending": "The request to stop this task has not reached the host \"{{host}}\" yet (it is sent when the connection returns).",
       "hostOnlyApproval": "Waiting for an approval that has to be answered on the host \"{{host}}\" (such as a settings change). Ask the user to answer it on the host (or open the child conversation).",
       "settingsUnsupported": "Changing the settings of a task on a host (backend, model, effort, account) is not supported yet. Send only a message.",
-      "accountUnsupported": "account chooses an agent account on this PC, so it cannot be used when handing work to a host (host). Retry without account."
+      "accountUnsupported": "account chooses a registered connection on this PC, so it cannot be used when handing work to a host (host). Retry without account.",
+      "endpointUnsupported": "endpoint chooses a compatible connection on this PC, so it cannot be used when handing work to a host (host). Retry without endpoint."
     },
     "readOnly": "Pleiad child tasks cannot be started in read-only or plan mode.",
     "denied": "The delegation was not allowed.",
     "idPending": "The conversation ID is not determined yet.",
     "parentEnded": "The requesting conversation has ended.",
     "childDeleted": "The delegated child conversation has been deleted. To continue, delegate again.",
+    "worktreeRenewFailed": "The delegated child's worktree could not be recreated, so the task stopped instead of running in the original location. Check the original location and the git state.",
     "backendDisabled": "The specified backend is not enabled.",
     "modelUnknown": "model_unknown: The model {{model}} is not in the current {{backend}} model list (available: {{models}}). Fix or omit model and delegate again.",
-    "accountUnknown": "account_unknown: the agent account {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
-    "accountNoToken": "account_no_token: the agent account {{account}} isn't signed in to claude.ai, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
-    "accountNotInTiers": "account_not_in_tiers: no {{agent}} account is in the delegation settings. Only accounts placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Omit backend and let automatic selection choose. Nothing was changed.",
-    "accountNotInTiersRoutingOff": "account_not_in_tiers: no {{agent}} account is in the delegation settings. Only accounts placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Retry with another backend, or ask the user. Nothing was changed.",
+    "accountUnknown": "account_unknown: the connection {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
+    "accountNoToken": "account_no_token: the connection {{account}} isn't signed in, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
+    "accountNotInTiers": "account_not_in_tiers: no {{agent}} connection is in the delegation settings. Only connections placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Omit backend and let automatic selection choose. Nothing was changed.",
+    "accountNotInTiersRoutingOff": "account_not_in_tiers: no {{agent}} connection is in the delegation settings. Only connections placed in the per-tier candidates (Settings › Delegation › Advanced) can be used. Retry with another backend, or ask the user. Nothing was changed.",
     "cwdNotDirectory": "cwd must be a directory.",
-    "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
+    "endpointDeleted": "The connection of the requesting conversation has been deleted. Choose a connection again in the requesting conversation.",
+    "endpointUnknown": "endpoint_unknown: The connection \"{{name}}\" is not registered (write an id or name from the endpoints rows in ply_usage). Nothing was changed.",
+    "endpointAmbiguous": "endpoint_ambiguous: {{n}} connections match \"{{name}}\". Specify it by the id from the endpoints rows in ply_usage. Nothing was changed.",
+    "endpointOtherAgent": "endpoint_other_agent: The connection \"{{name}}\" belongs to {{agent}}. Write {{backend}} as backend, or omit backend, and retry. Nothing was changed.",
+    "endpointCheckFailed": "endpoint_check_failed: The connection \"{{name}}\" failed its connection check and cannot be used until the user checks it again in Settings › Agent settings. Omit endpoint or write another connection, and retry. Nothing was changed.",
+    "endpointKeyUnreadable": "endpoint_key_unreadable: The key of the connection \"{{name}}\" cannot be read, so the child cannot run (ask the user to check Settings › API keys). Nothing was changed.",
+    "endpointWithAccount": "endpoint and account cannot be written together (endpoint chooses a compatible connection, account chooses a registered account). Keep one of them and retry.",
     "aborted": "Aborted.",
     "noticeUnknown": "Could not confirm the completion notices of the child tasks. Check the child conversation.",
     "historyUnreadable": "Note: The child finished its work, but its history could not be read afterwards because of a temporary error ({{error}}). The result is the last reply received during the run and may be incomplete. Check the child conversation.",
@@ -441,7 +449,7 @@
     "stopping": "The task is stopping. Wait a moment.",
     "stopUnconfirmed": "Pleiad must confirm that the previous turn stopped before it can accept another instruction. Send it again after the child exits, or quit Pleiad, verify that the child process has exited, and reopen the app.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
-    "accountClaudeOnly": "This child’s agent ({{backend}}) does not support account selection. Omit account. Nothing was changed.",
+    "accountClaudeOnly": "This child’s agent ({{backend}}) does not support connection selection. Omit account. Nothing was changed.",
     "childStarting": "The child's turn is starting. Nothing was changed. Wait a moment and try again.",
     "settingsMoved": "While the approval was pending, the child's settings or the task's state changed. Nothing was changed. Check ply_task_status and try again.",
     "settingsFailed": "Could not change the child's settings ({{error}}). Nothing was changed.",
@@ -572,7 +580,7 @@
     "backendRequired": "Automatic delegate selection is turned off. Give backend ({{backends}}).",
     "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
     "accountPinOnly": "account can be used only together with backend. Omit account to let Pleiad choose.",
-    "accountClaudeOnly": "Agent {{backend}} does not support account selection. Omit account.",
+    "accountClaudeOnly": "Agent {{backend}} does not support connection selection. Omit account.",
     "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}, deferral threshold {{avoidPercent}}%). Candidate and account reasons:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
     "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
   },
@@ -670,7 +678,7 @@
       "ask": "Questions to the person"
     },
     "formerDelegateName": "How to delegate",
-    "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. When the user asks for a specific agent account, write backend: \"claude\" and account (the account value from ply_usage). If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
+    "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. When the user asks for a specific Claude connection (a registered account), write backend: \"claude\" and account (the account value from ply_usage). If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
     "commandLifetime": "Run commands with a time limit. Start persistent processes (servers and graphical apps) in the background, record their PIDs, and stop them yourself; do not wait indefinitely for exit with commands such as `Start-Process -Wait`. Ending your turn returns the task to the requester as complete. Finish waiting for work first with ply_shell `run` `timeoutMs` or `output` `waitMs`; if you cannot wait, say in the result that you are not waiting. When backgrounding with PowerShell `Start-Process`, do not add `-RedirectStandardOutput` or `-RedirectStandardError` (the started process keeps holding the shell's output and the command never returns). If you need a log, redirect inside the started process, for example `Start-Process cmd -ArgumentList '/c','<command> > <log> 2>&1'`.",
     "codexPolicy": "Even in Codex modes without approvals (full, Bypass), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on).",
     "ask": "Before you ask the person a question (with AskUserQuestion or another question tool), write one or two lines in your reply saying where things stand and what you need them to decide. Do not end a turn with only a question and no text (so the conversation still shows what you asked if the question closes without an answer).",
@@ -752,43 +760,43 @@
     },
     "accounts": {
       "list": {
-        "summary": "List registered accounts",
+        "summary": "List registered connections (Claude accounts)",
       "backend": "Agent ID"
       },
       "create": {
-        "summary": "Add an account",
+        "summary": "Add a connection (Claude account)",
       "backend": "Agent ID",
-      "name": "Display name for the account"
+      "name": "Display name for the connection"
       },
       "rename": {
-        "summary": "Rename an account",
-      "id": "Registered account ID",
-      "name": "Display name for the account"
+        "summary": "Rename a connection",
+      "id": "Registered connection ID",
+      "name": "Display name for the connection"
       },
       "remove": {
-        "summary": "Remove a registered account",
-      "id": "Registered account ID"
+        "summary": "Remove a registered connection",
+      "id": "Registered connection ID"
       },
       "login": {
-        "summary": "Sign in to a registered account",
+        "summary": "Sign in to a registered connection",
       "attempt": "Sign-in attempt ID, matched when cancelling",
-      "id": "Registered account ID",
+      "id": "Registered connection ID",
       "open": "Open sign-in in the browser on this PC"
       },
       "cancel": {
-        "summary": "Cancel account sign-in",
+        "summary": "Cancel connection sign-in",
       "attempt": "Sign-in attempt ID, matched when cancelling",
-      "id": "Registered account ID"
+      "id": "Registered connection ID"
       },
       "setConnectors": {
-        "summary": "Toggle claude.ai connectors for a registered Claude account",
-        "id": "Registered account ID",
+        "summary": "Toggle claude.ai connectors for a registered connection",
+        "id": "Registered connection ID",
         "enabled": "Whether connectors are enabled",
         "cwd": "Optional working directory for settings inspection"
       },
       "refreshConnectors": {
-        "summary": "Refresh the claude.ai connector list for a registered Claude account",
-        "id": "Registered account ID",
+        "summary": "Refresh the claude.ai connector list for a registered connection",
+        "id": "Registered connection ID",
         "cwd": "Optional working directory for settings inspection"
       }
     },
@@ -913,7 +921,7 @@
         "reasonKey": "A predefined reason key from the UI.", "reasonParams": "Values for the predefined reason.", "backend": "Conversation agent."
       },
       "new": {
-        "summary": "Create a new conversation (an unsent draft). It only creates it; a person sends the first message. The approval mode and the endpoint cannot be chosen (inherited or default).",
+        "summary": "Create a new conversation (an unsent draft). It only creates it; a person sends the first message. The approval mode and the connection cannot be chosen (inherited or default).",
         "sourceSessionId": "Id of the conversation to inherit settings from (agent, model, effort, approval mode).",
         "backend": "Agent id (an id from agents.list).",
         "model": "Model id. Omit to inherit or use the default.",
@@ -958,7 +966,7 @@
         "off": "true to turn it off, false to turn it on."
       },
       "setTurnSettings": {
-        "summary": "Reserve settings for the next turn (agent, model, thinking effort, working folder). Changing the working folder or the agent needs an approval card. The approval mode, account and endpoint are for a person only.",
+        "summary": "Reserve settings for the next turn (agent, model, thinking effort, working folder). Changing the working folder or the agent needs an approval card. The approval mode and connection are for a person only.",
         "sessionId": "Conversation id. Omit for your own.",
         "backend": "Agent id for the next turn. Changing it needs an approval card.",
         "model": "Model id for the next turn.",
@@ -967,7 +975,7 @@
         "cancel": "true cancels the reservation.",
         "worktreePending": "Cancel the remembered worktree plan. Only a person (the screen).",
         "mode": "Approval mode id. Only a person (the screen); an agent gets NEEDS_UI.",
-        "account": "agent account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "Registered connection id (a Claude account). Only a person (the screen); an agent gets NEEDS_UI.",
         "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
         "remember": "Remember the chosen value as the default. Only a person (the screen); an agent uses settings.set."
       },
@@ -976,7 +984,7 @@
         "sessionId": "Conversation id."
       },
       "suggestTitle": {
-        "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's account.",
+        "summary": "Ask for a short title from the conversation's contents. It does not change the conversation (sessions.setTitle sets it). One small call runs on the conversation's connection.",
         "sessionId": "Conversation id. Omit for your own."
       },
       "listMessages": {
@@ -1057,7 +1065,7 @@
       },
       "models": {
         "summary": "List an agent's models (id, name, note).",
-        "account": "Registered account ID; omit for the signed-in account",
+        "account": "Registered connection ID; omit for the CLI login",
         "backend": "Agent id. Omit for the default agent.",
         "cwd": "Working folder (when the model list depends on the place).",
         "limit": "How many to return (default 30, max 100).",
@@ -1069,7 +1077,7 @@
       },
       "efforts": {
         "summary": "List the thinking-effort values an agent offers (id, name, note).",
-        "account": "Registered account ID; omit for the signed-in account",
+        "account": "Registered connection ID; omit for the CLI login",
         "backend": "Agent id. Omit for the default agent.",
         "model": "Model id (the steps depend on the model).",
         "cwd": "Working folder.",
@@ -1224,10 +1232,10 @@
         "failed": "could not change the settings"
       },
       "endpointDelete": {
-        "target": "deleting the endpoint",
-        "done": "deleted the endpoint",
-        "notDone": "has not deleted the endpoint",
-        "failed": "could not delete the endpoint"
+        "target": "deleting the connection",
+        "done": "deleted the connection",
+        "notDone": "has not deleted the connection",
+        "failed": "could not delete the connection"
       },
       "sessionDelete": {
         "target": "deleting the unsent conversation",
@@ -1378,7 +1386,7 @@
         "summary": "Return the state of the API keys in Settings › Secrets and variables (each registered key's name, provider, check result and where it is used, plus the keys chosen for voice calls and automatic delegate selection). Never returns key values."
       },
       "check": {
-        "summary": "Send a registered key to its own provider to see whether it is accepted, and record the result (free; separate from an endpoint check).",
+        "summary": "Send a registered key to its own provider to see whether it is accepted, and record the result (free; separate from a connection check).",
         "id": "Key id (keys[].id from apiKeys.list)"
       }
     },
@@ -1422,11 +1430,11 @@
         "taskId": "The task id.",
         "offset": "Where to start reading the result (nextOffset from the previous result)."
       },
-      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one).", "host": "Name of the host (another PC's Pleiad connected remotely) to hand the work to. Omit to run on this PC.", "account": "agent account to run the child on (the account value from ply_usage; only with backend claude)." },
+      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one).", "host": "Name of the host (another PC's Pleiad connected remotely) to hand the work to. Omit to run on this PC.", "account": "connection to run the child on (the account value from ply_usage; only for agents that can have registered connections).", "endpoint": "Compatible connection to run the child on (the id or name from the endpoints rows in ply_usage; cannot be combined with account)." },
       "taskStatus": { "summary": "Read the status and result of your child task.", "taskId": "Child task id.", "offset": "Result offset." },
       "taskWait": { "summary": "Wait up to 30 seconds for your child task.", "taskId": "Child task id.", "seconds": "Seconds to wait, at most 30." },
       "taskSend": { "summary": "Send another instruction to your child task, or change its agent, model or thinking effort.", "taskId": "Child task id.", "message": "Additional instruction. Omit it to change settings only.",
-        "backend": "Switch the child's agent (the conversation is handed over; from the next turn).", "model": "Change the child's model.", "effort": "Change the child's thinking effort.", "account": "Change the child's agent account (the account value from ply_usage; from the next turn)." },
+        "backend": "Switch the child's agent (the conversation is handed over; from the next turn).", "model": "Change the child's model.", "effort": "Change the child's thinking effort.", "account": "Change the child's connection (the account value from ply_usage; from the next turn)." },
       "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
       "taskList": { "summary": "List your child tasks." },
       "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." },
@@ -1448,7 +1456,7 @@
         "taskId": "Id of the task to redo.",
         "candidate": "The candidate (<agent>:<model>). Pick one from the candidates of delegation.routing.",
         "stop": "Whether to stop the original task if it is running (required then).",
-        "account": "agent account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "Registered connection id (a Claude account). Only a person (the screen); an agent gets NEEDS_UI.",
         "approved": "Whether the stronger-approval-mode confirmation was done. Only a person (the screen); an agent gets NEEDS_UI."
       },
       "routing": {
@@ -1883,9 +1891,10 @@
         "mode": "Approval mode id (from the agent's list)."
       },
       "setAccount": {
-        "summary": "Change the account a bot runs on (one registered for the bot's agent; screen only; AI cannot call it). Empty = the signed-in account.",
+        "summary": "Change the connection a bot runs on (the CLI sign-in, a registered account or a compatible endpoint; screen only; AI cannot call it). An empty account = the CLI sign-in.",
         "botId": "The bot id.",
-        "account": "The id of a usable account registered for the bot's agent. Empty = the signed-in account."
+        "account": "The id of a usable account registered for the bot's agent. Empty = the CLI sign-in.",
+        "endpoint": "The id of a compatible endpoint registered for the bot's agent. A chosen endpoint is used ahead of the account. Empty = official (the CLI sign-in or the account). Omit to keep it. Changing it resets the model and effort to the default."
       },
       "delete": {
         "summary": "Delete a bot. Its conversations stay and return to the Chats list; its DM channel is archived. Needs approval.",
@@ -2168,7 +2177,7 @@
     "dryRunNote": "This is a trial run of a routine. Do not post to any channel; answer in this conversation with what you would do and the result (you are running in a read-only mode)."
   },
   "settings": {
-    "account": "Default registered account per agent (human only)",
+    "account": "Default connection per agent for new chats (a registered account; human only)",
     "locale": "Display language (auto follows the OS).",
     "plus": "Shown-once state for Pleiad Plus screens (dismissed notices).",
     "voice": "Call mode settings (speech-to-text and text-to-speech models and voice, language, per-call and per-day call length limits, echo cancellation). Only the fields you pass are overlaid; a null field returns to its default. Raising the limits needs the user's approval. The OpenRouter key is not handled here.",
@@ -2188,7 +2197,7 @@
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
-    "claudeAccount": "The default agent account (an id; no token. Only a human changes it).",
+    "claudeAccount": "The default Claude connection (a registered account id; no token. Only a human changes it).",
     "repoDefaults": "Defaults remembered for each repository when a message is sent (read only).",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."

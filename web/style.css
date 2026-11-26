@@ -451,11 +451,7 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-meta .path{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 /* 「アカウントと接続先」の節。管理の面（.mp-panel）を節ごとの枠に入れるので、面側の地と見出し・閉じる・冒頭の説明は脱ぐ */
 .agent-conn{margin:12px 0 2px;padding:4px 0 2px 28px}
-.conn-sec + .conn-sec{margin-top:22px}
-.conn-sec > h4{margin:2px 0 8px;font-size:var(--fs-s);font-weight:600}
 .conn-sec .mp-panel{margin-top:0;padding:0;background:transparent;border-radius:0}
-.conn-sec .mp-panel > .mp-row{display:none}
-.conn-sec .mp-panel .mp-intro{display:none}
 /* 「状態を再確認」は一覧の右端に寄せる */
 #refreshAgents{display:flex;width:fit-content;margin:14px 0 0 auto}
 .agent-card > .auth-note{margin:6px 0 0 28px;padding:0}
@@ -2197,7 +2193,9 @@ main.dropping #log{background:var(--surface-1)}
   :root.desktop body.settings #sidebar header{height:auto;-webkit-app-region:no-drag}
   /* エージェントのカードは操作を名前行の下へ回し、ロゴの分だけ下げる */
   .agent-card{padding:11px 12px}
-  .agent-actions{flex-basis:100%;margin-left:0;padding-left:28px;justify-content:flex-start}
+  .agent-card .ar2{grid-template-columns:18px minmax(0,1fr)}
+  .agent-card .ar2-a{grid-column:2;justify-content:flex-start;flex-wrap:wrap}
+  .agent-card .ar2-w{grid-column:2}
   .agent-conn{padding:4px 0 2px 0}
 }
 /* 送った発言の吹き出しの下の一行（web/conversation-view.mjs・web/outbox.mjs。docs/design-system.md「送信の表示」）。

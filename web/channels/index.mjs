@@ -95,6 +95,8 @@ export function setupChannels(host) {
       showing = true; try { tabs.set('channels'); } finally { showing = false; } each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },
     sideTabChanged(tab) { each('sideTabChanged', tab); },
+    /** 接続先の登録が変わった（アカウント・互換の接続先。web/client.mjs が一覧を取り直せる状態にしてから呼ぶ。bot のページの行。web/channels/bot-page.mjs） */
+    connChanged() { each('connChanged'); },
     /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
     schedulesChanged() { each('schedulesChanged'); },
     /** WS が戻った（スレッド・DM の ToDo を読み直す。web/channels/thread.mjs・feed.mjs） */

@@ -6,20 +6,22 @@
 //   名前・色（顔を押すと 8 色の面）・人格（自由文）… 離れたときに bots.update。前の版の絵文字・画像は保存に残すが読まない（ADR 0362）
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
-//   アカウント … モデルの面の最後の節（入力欄と同じ行・週の使用量つき）。bots.setAccount（人だけ。ADR 0224）
-//     そのエージェントがアカウントを使え（capabilities.accounts。Claude はトークン・Codex などは資格情報。ADR 0222）、
-//     登録があるか bot が選んでいるときだけ出す
+//   接続先 … モデルの面の「接続先」の行（入力欄と同じ 1 つの一覧: CLI のログイン → 登録したアカウント → 互換の接続先。週の使用量は公式の枠の行だけ）。
+//     bots.setAccount（人だけ。ADR 0224・0359）。そのエージェントが接続先を選べ（capabilities.accounts・compatEndpoints。
+//     Claude はトークン・Codex などは資格情報。ADR 0222）、登録があるか bot が選んでいるときだけ出す。「既定」の札は新しい会話の既定の印なので出さない
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の Bypass・Codex の Bypass・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
 //   他の会話に送る … スイッチ（既定 ON）。bots.update の sendToOthers
 // 右に思考の流れ（brain-panel.mjs。心拍の入り切り・欲求・気がかり。ADR 0126）、記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
-// 認証・1 日の上限・長い注記は出さない（アカウントは、どれで動くかを選ぶ節だけ。登録・トークン・資格情報は設定の各エージェントのアカウント）。
+// 認証・1 日の上限・長い注記は出さない（接続先は、どれで動くかを選ぶ行だけ。登録・トークン・資格情報・互換の接続先は設定の各エージェントの「接続先」）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
-import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel } from '../composer-controls.mjs';
+import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel, effortStops, connShown } from '../composer-controls.mjs';
+import { endpointChipLabel } from '../composer-labels.mjs';
+import { compatModelLabel } from '../compat-models.mjs';
 import { weekUsage } from '../header-usage.mjs';
 import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
@@ -84,8 +86,8 @@ export function createBotPage(host) {
     channels: new Map(),  // id → Channel
     sessions: () => new Map((host.state?.sessions ?? []).map((s) => [s.id, s])),
     gone: false,
-    accounts: new Map(),  // backend → 登録したアカウント [{ id, name, ready }]（web/client.mjs の accountList と同じ形）。無い = まだ読んでいない
-    accountsAsked: new Set(),// 登録したアカウントを読んでいる最中の backend（一覧のほかのエージェントの棒の判定用。読み終えたら外す）
+    connAsked: new Set(), // 接続先の候補（アカウント・互換）を読み始めた backend（host.conn.load。登録が変わったら捨てる）
+    connDone: new Set(),  // 読み終えた backend（読み終えるまでは「削除された接続先」と見せない）
     quotaAsked: new Set(),// 面を開いている間に使用量を頼んだ backend（閉じたら忘れ、次に開いたとき読み直す）
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
@@ -154,10 +156,10 @@ export function createBotPage(host) {
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
   err.hidden = true;
-  // 選んだアカウントが消えた・トークンが無い（入力欄の上の一文と同じ文。保存の失敗とは別に、直すまで出したままにする）
-  const accountWarn = el('p', 'bp-err bp-acct-warn');
-  accountWarn.setAttribute('role', 'status');
-  accountWarn.hidden = true;
+  // 選んだ接続先が消えた・使えない（入力欄の上の一文と同じ文。保存の失敗とは別に、直すまで出したままにする）
+  const connWarn = el('p', 'bp-err bp-conn-warn');
+  connWarn.setAttribute('role', 'status');
+  connWarn.hidden = true;
   const notice = el('p', 'bp-gone');
   notice.tabIndex = -1;
   notice.hidden = true;
@@ -266,7 +268,7 @@ export function createBotPage(host) {
   right.append(foldBlk, memBlk);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
-  root.append(head, ob, err, accountWarn, notice, grid, modelPop, modePop, addPop, colorPop);
+  root.append(head, ob, err, connWarn, notice, grid, modelPop, modePop, addPop, colorPop);
   body.append(root);
 
   // ---------------------------------------------------------------- 浮く面（入力欄と同じ。チップは画面の途中にあるので、広い方（なるべく下）に置き直す）
@@ -289,7 +291,7 @@ export function createBotPage(host) {
   // 使用量はホストの 1 本の取得口（usageSource）を購読する。新しい値が届いたら開いている面を描き直す
   host.onUsage?.(() => { if (modelPanel.open) { modelPanel.render(); modelPanel.place(); } });
   const modelPanel = place(panel(modelChip, modelPop, { width: 360, onHide: () => S.quotaAsked.clear(),
-    render: () => { askQuota(); askAccounts(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
+    render: () => { askQuota(); askConn(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
   const colorPanel = place(panel(av, colorPop, { width: 212, initialFocus: '[aria-pressed="true"]', render: () => {
@@ -300,19 +302,21 @@ export function createBotPage(host) {
   // ---------------------------------------------------------------- 語彙（バックエンドごとの承認モード・モデル・エフォート）
   /** bot が走る作業場所（最初のフォルダー。core/bots/sessions.mjs の pickCwd）。モデルの一覧・段はその場所のプロジェクト設定で変わる */
   const botCwd = (b) => b?.folders?.[0]?.path ?? '';
-  async function vocabOf(backend, model = '', cwd = '', account = '') {
-    const key = JSON.stringify([backend, account, cwd]);
+  async function vocabOf(backend, model = '', cwd = '', account = '', endpoint = '') {
+    // 互換の接続先で動く bot はアカウントを使わない（サーバーは接続先を先に見る）。モデルの一覧は接続先の行（面の compatModelView）が持つので取らない。段は接続先の段
+    const acct = endpoint ? '' : account;
+    const key = JSON.stringify([backend, acct, cwd, endpoint]);
     let v = S.vocab.get(key);
     if (!v) {
       const [modes, models] = await Promise.all([
         host.cmd('modes', { backend }).catch(() => ({})),
-        host.cmd('models', { backend, ...(account ? { account } : {}), ...(cwd ? { cwd } : {}) }).catch(() => ({})),
+        endpoint ? {} : host.cmd('models', { backend, ...(acct ? { account: acct } : {}), ...(cwd ? { cwd } : {}) }).catch(() => ({})),
       ]);
       v = { modes: modes ?? {}, models: models ?? {}, efforts: new Map() };
-      if (Object.keys(v.modes).length && Object.keys(v.models).length) S.vocab.set(key, v);
+      if (Object.keys(v.modes).length && (endpoint || Object.keys(v.models).length)) S.vocab.set(key, v);
     }
     if (!v.efforts.has(model)) {
-      const efforts = await host.cmd('efforts', { backend, model, cwd: cwd || undefined, ...(account ? { account } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
+      const efforts = await host.cmd('efforts', { backend, model, cwd: cwd || undefined, ...(endpoint ? { endpoint } : acct ? { account: acct } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
       v.efforts.set(model, efforts ?? {});
     }
     return { modes: v.modes, models: v.models, efforts: v.efforts.get(model) };
@@ -322,7 +326,7 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur) return;
     const seq = ++S.seq;
-    const v = await vocabOf(cur.backend, cur.model ?? '', botCwd(cur), cur.account ?? '');
+    const v = await vocabOf(cur.backend, cur.model ?? '', botCwd(cur), cur.account ?? '', cur.endpoint ?? '');
     if (seq !== S.seq) return;
     S.v = v;
     paintRun();
@@ -330,56 +334,73 @@ export function createBotPage(host) {
   const backends = () => host.state?.backends ?? [];
   const backendLabel = (id) => backends().find((b) => b.id === id)?.label ?? id;
 
-  // ---------------------------------------------------------------- bot のアカウント（ADR 0224）
-  /** アカウントの種類（'token' = Claude のトークン・'agent' = Codex などの資格情報・false = 持てない。ADR 0222） */
-  const accountKind = (backend) => backends().find((b) => b.id === backend)?.capabilities?.accounts || false;
-  const takesAccount = (backend) => Boolean(accountKind(backend));
-  /** その bot のエージェントの一覧（読む前は null） */
-  const accountsOf = (backend) => S.accounts.get(backend) ?? null;
-  /** 登録したアカウントを読み直す（claudeAccountsChanged・agentAccountsChanged）。読めなければ、前の一覧のまま */
-  let accountsLoading = null;
-  async function loadAccounts(backend = vm()?.backend) {
-    const kind = accountKind(backend);
-    if (!kind) return;
-    try {
-      const list = kind === 'token'
-        ? ((await host.cmd('claudeAccounts'))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.usageLogin) }))
-        : ((await host.invoke('accounts.list', { backend }))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
-      S.accounts.set(backend, list);
-    } catch { if (!S.accounts.has(backend)) S.accounts.set(backend, []); }
-    if (vm()) paintRun();
-    // 面を開いた後に届いたら、節を足して描き直す（使用量が届いたときと同じ）
-    if (modelPanel.open && vm()) { modelPanel.render(); modelPanel.place(); }
+  // ---------------------------------------------------------------- bot の接続先（ADR 0224・0359）
+  // 入力欄・子の会話のモーダルと同じ部品（web/composer-controls.mjs の「接続先」の行と一覧）。候補はホストの 1 つの取得口（host.conn）から読む
+  const caps = (backend) => backends().find((b) => b.id === backend)?.capabilities ?? {};
+  /** 接続先を選べるエージェントか（アカウントを使える・互換の接続先を持てる） */
+  const takesConn = (backend) => Boolean(caps(backend).accounts || caps(backend).compatEndpoints);
+  /** そのエージェントの接続先の候補（アカウント・互換）を読む。読み終えたら描き直す（開いている面も）。読んでいる最中・読み終えたものは読まない */
+  function connLoad(backend) {
+    if (!host.conn || !backend || !takesConn(backend) || S.connAsked.has(backend)) return;
+    S.connAsked.add(backend);
+    Promise.resolve(host.conn.load(backend)).catch(() => {}).finally(() => {
+      S.connDone.add(backend);
+      if (!vm()) return;
+      if (vm().backend === backend) paintRun();
+      // 面を開いた後に届いたら、行を足して描き直す（使用量が届いたときと同じ）
+      if (modelPanel.open) { modelPanel.render(); modelPanel.place(); }
+    });
   }
-  /** アカウントを使えるエージェントの bot を描くとき、まだ読んでいなければ 1 度だけ読む */
-  function ensureAccounts() {
-    const backend = vm()?.backend;
-    if (S.accounts.has(backend) || accountsLoading || !takesAccount(backend)) return;
-    accountsLoading = loadAccounts(backend).finally(() => { accountsLoading = null; });
-  }
-  /** モデルの面にアカウントの節を出すか。入力欄と同じ: 使えるエージェントで、登録があるか、この bot が選んでいる（web/client.mjs の syncAccount） */
-  function accountShown() {
+  /** モデルの面を描くとき、一覧のほかのエージェントの登録も読んでおく（棒を出すかの判定） */
+  function askConn() { for (const b of backends()) connLoad(b.id); }
+  /**
+   * 今の bot（か下書き）の接続先の見え方。入力欄の面と同じ 2 つの口（アカウントの候補・互換の接続先の値）。bot なし（組み込み）には出さない。
+   * 「既定」の札は新しい会話の既定の印なので外す。互換を選んでいる間は、アカウントの選び（別に覚えている）を見せない
+   */
+  function connView() {
     const cur = vm();
-    return Boolean(cur) && !cur.plain && takesAccount(cur.backend) && ((accountsOf(cur.backend)?.length ?? 0) > 0 || Boolean(cur.account));
+    if (!cur || cur.plain || !host.conn) return { accounts: null, endpoint: null };
+    const plain = (o) => ({ ...o, isDefault: false });
+    const accounts = host.conn.accounts(cur.backend, cur.endpoint ? '' : cur.account ?? '');
+    const endpoint = host.conn.endpointView(cur.backend, cur.endpoint ?? '');
+    return { accounts: accounts ? accounts.map(plain) : null, endpoint: endpoint ? { ...endpoint, options: endpoint.options.map(plain) } : null };
   }
-  /** チップと名前の下に出すアカウントの名前。ログイン中（''）とアカウントを使わないエージェントは出さない。読む前も出さない */
-  function accountName() {
-    const id = vm()?.account ?? '';
-    const list = id ? accountsOf(vm().backend) : null;
-    if (!list || !takesAccount(vm().backend)) return '';
-    return list.find((a) => a.id === id)?.name ?? t('chat.account.deleted');
-  }
-  /** 入力欄と同じ候補（web/client.mjs の accountOptions）。使えるアカウントの行には週の使用量 */
-  function accountOptions() {
+  const connDone = () => S.connDone.has(vm()?.backend);
+  /** チップと見出しに添える接続先の名前（CLI のログイン＝既定と、まだ読んでいないときは出さない） */
+  function connName() {
     const cur = vm();
-    const value = cur.account ?? '';
-    const list = accountsOf(cur.backend) ?? [];
-    const quota = host.usageOf?.(cur.backend)?.quota;
-    return [
-      { value: '', label: t('chat.account.signedIn'), hint: t('chat.account.signedInAccount'), usage: weekUsage(quota, '') },
-      ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? '' : t('chat.account.noToken'), usage: a.ready ? weekUsage(quota, a.id) : null })),
-      ...(value && !list.some((a) => a.id === value) ? [{ value, label: t('chat.account.deleted'), hint: t('chat.account.chooseAgain') }] : []),
-    ];
+    if (!cur || cur.plain || !connDone()) return '';
+    const view = connView();
+    if (cur.endpoint) return view.endpoint?.row?.name ?? t('chat.endpoint.deleted');
+    if (!cur.account || !view.accounts) return '';
+    const chosen = view.accounts.find((a) => a.value === cur.account);
+    return chosen && !chosen.gone ? chosen.label : t('chat.endpoint.deleted');
+  }
+  /** 選んだ接続先が消えた・使えない（アカウントのトークン・資格情報が無い・互換の確認に失敗）ときの一文（入力欄と同じ文） */
+  function connWarning() {
+    const cur = vm();
+    if (!cur || cur.plain || !connDone()) return '';
+    const view = connView();
+    if (cur.endpoint) {
+      const row = view.endpoint?.row;
+      return !row ? t('chat.endpoint.deletedWarning') : row.ready === false ? t('chat.endpoint.failedWarning', { name: row.name }) : '';
+    }
+    if (!cur.account || !view.accounts) return '';
+    const chosen = view.accounts.find((a) => a.value === cur.account);
+    return !chosen || chosen.gone ? t('chat.endpoint.deletedWarning') : chosen.warn ? t('chat.account.noTokenWarning', { name: chosen.label }) : '';
+  }
+  function paintConnWarn() {
+    const text = connWarning();
+    connWarn.textContent = text;
+    show(connWarn, Boolean(text) && !S.gone);
+  }
+  /** 互換の接続先で動く bot の行（読む前・消えているときは null） */
+  const endpointRowOf = () => (vm()?.endpoint ? connView().endpoint?.row ?? null : null);
+  /** モデルの表示名（互換は接続先の表示名。web/compat-models.mjs） */
+  function modelText(cur) {
+    const row = endpointRowOf();
+    if (row) return compatModelLabel(cur.model || row.roles?.main || '').text;
+    return S.v ? resolvedModel(S.v.models, cur.model ?? '').label : '';
   }
   /** モデルの面を開いている間に 1 度ずつ、エージェントの使用量を読みに行く（アカウントの行とエージェントの行の週の使用量。結果は host.onUsage の購読で届き、面を描き直す） */
   function askQuota() {
@@ -389,27 +410,6 @@ export function createBotPage(host) {
       S.quotaAsked.add(b.id);
       Promise.resolve(host.quota(b.id)).catch(() => {});
     }
-  }
-  /** モデルの面を描くとき、一覧のほかのエージェントの登録も読んでおく（棒を出すかの判定。読んでいない・読んでいる最中のものだけ） */
-  function askAccounts() {
-    for (const b of backends()) {
-      if (S.accounts.has(b.id) || S.accountsAsked.has(b.id) || !takesAccount(b.id)) continue;
-      S.accountsAsked.add(b.id);
-      loadAccounts(b.id).finally(() => S.accountsAsked.delete(b.id));
-    }
-  }
-  /** 選んだアカウントが消えた・使えない（トークン・資格情報が無い）ときの一文（入力欄と同じ文） */
-  function paintAccountWarn() {
-    const cur = vm();
-    const id = cur?.account ?? '';
-    const list = cur ? accountsOf(cur.backend) : null;
-    let text = '';
-    if (accountShown() && id && list) {
-      const chosen = list.find((a) => a.id === id);
-      text = !chosen ? t('chat.account.deletedWarning') : !chosen.ready ? t('chat.account.noTokenWarning', { name: chosen.name }) : '';
-    }
-    accountWarn.textContent = text;
-    show(accountWarn, Boolean(text) && !S.gone);
   }
 
   // ---------------------------------------------------------------- 描画
@@ -422,11 +422,11 @@ export function createBotPage(host) {
     const parts = [];
     if (cur.backend) {
       parts.push(backendLogo(cur.backend, backendLabel(cur.backend)));
-      const model = S.v ? resolvedModel(S.v.models, cur.model ?? '').label : '';
+      const model = modelText(cur);
       parts.push(document.createTextNode(`${backendLabel(cur.backend)}${model ? ` · ${model}` : ''}`));
-      // ログイン中でないアカウントで動くなら、その名前（「Claude Code · Opus 5.5 · OZ · 待機」）
-      const account = accountName();
-      if (account) parts.push(document.createTextNode(' · '), el('span', 'acct-sub', account));
+      // CLI のログインでない接続先（アカウント・互換）で動くなら、その名前（「Claude Code · Opus 5.5 · OZ · 待機」）
+      const conn = connName();
+      if (conn) parts.push(document.createTextNode(' · '), el('span', 'conn-sub', conn));
     }
     if (!S.draft && S.bot) {
       parts.push(el('span', 'dot', '·'));
@@ -448,18 +448,26 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur) return;
     const v = S.v;
-    const label = v ? modelChipLabel(v.models, cur.model ?? '', v.efforts, cur.effort ?? '') : cur.model || '…';
-    const { head: h, tail } = splitChipLabel(label);
-    // ログイン中でないアカウントは、チップの末尾に名前（「Opus 5.5 · high · OZ」）。読み上げと title にも入れる
-    const account = accountName();
+    // 互換の接続先は入力欄と同じ「接続先 · モデル · 段」。CLI のログインでないアカウントは、チップの末尾に名前（「Opus 5.5 · high · OZ」）。読み上げと title にも入れる
+    const row = endpointRowOf();
+    let head, tail, full, conn = '';
+    if (row) {
+      const m = compatModelLabel(cur.model || row.roles?.main || '');
+      ({ head, tail, full } = endpointChipLabel({ connection: row.name, model: m.text, fullModel: m.id, effort: effortStops(v?.efforts, cur.effort ?? '').current }));
+    } else {
+      const label = v ? modelChipLabel(v.models, cur.model ?? '', v.efforts, cur.effort ?? '') : cur.model || '…';
+      ({ head, tail } = splitChipLabel(label));
+      conn = connName();
+      full = conn ? `${label} · ${conn}` : label;
+    }
     modelName.classList.add('split');
-    modelName.replaceChildren(el('span', 'mn', h), ...(tail ? [el('span', 'ef', tail)] : []), ...(account ? [el('span', 'ef acct-chip', ` · ${account}`)] : []));
-    const full = account ? `${label} · ${account}` : label;
+    modelName.replaceChildren(el('span', 'mn', head), ...(tail ? [el('span', 'ef', tail)] : []), ...(conn ? [el('span', 'ef conn-chip', ` · ${conn}`)] : []));
     modelChip.title = t('composer.model.chipTitle', { label: full });
     modelChip.setAttribute('aria-label', t('composer.model.chipAria', { label: full }));
-    // アカウントも人だけが変えられる（bots.setAccount）。節を出しているときだけ注記に足す
-    lockText.data = accountShown() ? t('channels:bot.modeAccountHumanOnly') : t('channels:bot.modeHumanOnly');
-    paintAccountWarn();
+    // 接続先も人だけが変えられる（bots.setAccount）。行を出しているときだけ注記に足す
+    const view = connView();
+    lockText.data = connShown({ accounts: view.accounts, account: cur.account ?? '', endpoint: view.endpoint }) ? t('channels:bot.modeAccountHumanOnly') : t('channels:bot.modeHumanOnly');
+    paintConnWarn();
     modelChip.dataset.value = cur.model ?? '';
     modelChip.dataset.backend = cur.backend ?? '';
     const m = v?.modes?.[cur.mode];
@@ -560,7 +568,7 @@ export function createBotPage(host) {
   }
 
   function paintRun() {
-    ensureAccounts();
+    connLoad(vm()?.backend);
     paintChips();
     paintHead();
     paintFolders();
@@ -637,14 +645,17 @@ export function createBotPage(host) {
     });
   }
 
-  /** bot のアカウントを変える（人だけ。bots.setAccount）。'' はログイン中のアカウント */
-  async function setAccount(account) {
+  /**
+   * bot の接続先を変える（人だけ。bots.setAccount）。互換の接続先を選ぶ（endpoint）か、CLI のログイン（account ''）・アカウント（endpoint '' で公式へ戻す）。
+   * 接続先を変えるとモデル・エフォートは既定へ戻る（サーバーと同じ。互換のモデルは公式では通らない）。作る 3 段には接続先の欄が無い（作った後に bot のページで選ぶ。ADR 0362）
+   */
+  async function setConn({ endpoint = '', account = '' }) {
     if (S.draft) return;
     const botId = S.id;
     setError('');
     await queue(async () => {
       try {
-        const bot = await host.invoke('bots.setAccount', { botId, account });
+        const bot = await host.invoke('bots.setAccount', { botId, account, endpoint });
         if (S.id === botId) applyBot(bot);
       } catch (e) {
         if (S.id === botId) { setError(t('channels:bot.saveFailed', { error: message(e) })); paintAll(); }
@@ -749,20 +760,24 @@ export function createBotPage(host) {
     backend: (id) => update({ backend: id }),
     model: (id) => update({ model: id }),
     effort: (v) => update({ effort: v }),
-    account: (id) => setAccount(id),
+    // 互換の接続先を選ぶ（アカウントの選びは別に覚えたまま）／CLI のログイン・アカウントを選ぶ（互換は外れて公式へ戻る）
+    endpoint: (id) => setConn({ endpoint: id, account: vm()?.account ?? '' }),
+    conn: ({ endpoint, account }) => setConn({ endpoint, account }),
   };
   function modelTarget() {
     const cur = vm();
     const v = S.v ?? { modes: {}, models: {}, efforts: {} };
+    const view = connView();
     return {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
       backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
-      // 一覧のほかのエージェントがアカウントを登録しているか（今のエージェントは accounts で決まる。composer-labels.mjs の agentRowUsage）
-      backendHasAccounts: (id) => (accountsOf(id)?.length ?? 0) > 0,
+      // 一覧のほかのエージェントがアカウントを登録しているか（今のエージェントは accounts・endpoint で決まる。composer-labels.mjs の agentRowUsage）
+      backendHasAccounts: (id) => Boolean(host.conn?.hasAccounts(id)),
       agentView: (id) => host.agentView?.(id) ?? null,
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
-      ...(accountShown() ? { accounts: accountOptions(), account: cur.account ?? '' } : {}),
+      ...(view.accounts ? { accounts: view.accounts, account: cur.account ?? '' } : {}),
+      ...(view.endpoint ? { endpoint: view.endpoint } : {}),
     };
   }
   function paintModePop() {
@@ -951,20 +966,16 @@ export function createBotPage(host) {
         case 'channelsChanged':
           if (!root.hidden) loadChannels();
           return;
-        case 'claudeAccountsChanged':
-        case 'agentAccountsChanged': {
-          // 登録・削除・トークンや資格情報の変更。そのエージェントの一覧を忘れ、見えていれば今の bot のエージェントの一覧を読み直す
-          const kind = ev.type === 'claudeAccountsChanged' ? 'token' : 'agent';
-          for (const backend of [...S.accounts.keys()]) if (accountKind(backend) === kind && (kind === 'token' || !ev.backend || ev.backend === backend)) S.accounts.delete(backend);
-          for (const key of [...S.vocab.keys()]) {
-            const [backend] = JSON.parse(key);
-            if (accountKind(backend) === kind && (kind === 'token' || !ev.backend || ev.backend === backend)) S.vocab.delete(key);
-          }
-          if (!root.hidden && accountKind(vm()?.backend) === kind) { loadAccounts(); loadVocab(); }
-          return;
-        }
         default:
       }
+    },
+    /**
+     * 接続先の登録が変わった（アカウント・互換の接続先。web/client.mjs が一覧を取り直せる状態にしてから呼ぶ）。
+     * 候補と語彙を忘れ、見えていれば今の bot の分を読み直す
+     */
+    connChanged() {
+      S.connAsked.clear(); S.connDone.clear(); S.vocab.clear();
+      if (!root.hidden && vm()) { connLoad(vm().backend); loadVocab(); }
     },
   };
 }

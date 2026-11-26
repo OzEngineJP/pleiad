@@ -98,6 +98,9 @@ export function normalizeBot(raw, now = Date.now()) {
     backend: str(raw.backend), model: str(raw.model), effort: str(raw.effort), mode: str(raw.mode),
     // bot のエージェントのアカウントの id（'' = ログイン中のアカウント）。人だけが bots.setAccount で変える。capabilities.accounts を持たない backend では使わない
     account: str(raw.account),
+    // bot のエージェントの互換の接続先の id（'' = 公式）。account と同じく人だけが bots.setAccount で変える。接続先を選べない backend では使わない。
+    // 古い bots.json には無いので、足りなければ ''（ADR 0224 の account と同じく版は上げない。ADR 0359）
+    endpoint: str(raw.endpoint),
     folders: normalizeFolders(raw.folders),
     sendToOthers: raw.sendToOthers !== false,
     sendTargets: [...new Set((Array.isArray(raw.sendTargets) ? raw.sendTargets : []).filter((s) => typeof s === 'string' && s))].slice(0, SEND_TARGETS_MAX),

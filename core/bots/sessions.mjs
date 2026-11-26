@@ -12,6 +12,11 @@
 //   Codex・OpenCode（accounts: 'agent'）の送った会話は、ネイティブの会話がアカウントごとなので、claudeAccount を直に替えず次のターンの予約
 //   （host.reserveAccount。入力欄でアカウントを替えたのと同じ）にする。スレッドごとの上書きは無い
 //
+// 互換の接続先: bot の `endpoint`（'' = 公式。ADR 0359）を会話の記録の compatEndpoint に写す（capabilities.compatEndpoints を持つ backend の会話だけ）。
+//   ターンの始め（server の prepareTurn）が compatEndpoint を引くので、会話・ルーティン・学習・委譲の子（親の接続先を継ぐ）は同じ接続先で走る。
+//   選んでいる間はアカウントを使わない（接続先のキーで送る）ので、アカウントの写しは触らない。消した・確認に失敗した接続先でも写し、ターンの始めで止める
+//   （黙って公式で走らせない）。モデル・エフォートは接続先の語彙で決める（モデルは形だけ・段は接続先の行）
+//
 // フォルダー: bot の `folders`（先頭が既定の作業場所）を、バックエンドごとに次のように渡す。
 //   Claude        cwd 以外の全部を Agent SDK の additionalDirectories。ro は readOnlyRoots にして、Edit（Write・NotebookEdit を含む）の deny ルールで書き換えを断る
 //                 （acceptEdits は cwd と追加フォルダーの編集を聞かずに通すため）。シェルの rm・mv・sed などは断れない（acceptEdits の自動承認の対象）
@@ -101,6 +106,8 @@ const clip = (s, n) => { const a = [...String(s ?? '').replace(/\s+/g, ' ').trim
 
 /** その backend の会話に bot のアカウントを写すか（アカウントを選べる backend だけ。capabilities.accounts は 'token' | 'agent' | false） */
 const takesAccount = (backend) => Boolean(backend?.capabilities?.accounts);
+/** その backend の会話に bot の互換の接続先を写すか（接続先を選べる backend だけ。capabilities.compatEndpoints） */
+const takesEndpoint = (backend) => Boolean(backend?.capabilities?.compatEndpoints);
 
 /** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」、DM のスレッドは「🦉 Owl › <根の投稿の頭>」） */
 export function sessionTitle(bot, channel, rootText) {
@@ -126,22 +133,25 @@ export function createBotSessions({ host, now = Date.now } = {}) {
     // backendHint: 会話を作るときに選んだ backend（組み込みの bot だけ）
     const base = host.getBackend((bot.plain && backendHint) || bot.backend);
     if (!base) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
+    // 互換の接続先を選んでいれば、モデル・エフォートは接続先の語彙で決める（アカウントの一覧は引かない）
+    const endpoint = !bot.plain && takesEndpoint(base) ? bot.endpoint ?? '' : '';
+    const row = endpoint && typeof host.endpointRow === 'function' ? await host.endpointRow(endpoint) : null;
     // bot のアカウントの一覧で、モデル・エフォートを決める。アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、
     // host.accountBackend が使えないバックエンドを返す（下の resolveModel が引けなかった理由で断る。会話は作らない）
-    const backend = !bot.plain && takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
+    const backend = !bot.plain && !endpoint && takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
       ? await host.accountBackend(base, bot.account)
       : base;
     const modes = backend.modes();
     const mode = modes[bot.mode] ? bot.mode : defaultMode(modes);
     const cwd = cwdHint ?? pickCwd(bot, channel, modes[mode]);
-    const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
-    const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
-    return { backend, mode, cwd, model, effort };
+    const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, endpoint);
+    const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, row);
+    return { backend, mode, cwd, model, effort, endpoint };
   }
 
   return {
     async create({ bot, channel = null, threadId = null, kind, routineId, rootText = '', cwd: cwdHint = null, backend: backendHint = null }) {
-      const { backend, mode, cwd, model, effort } = await resolve(bot, channel, cwdHint, backendHint);
+      const { backend, mode, cwd, model, effort, endpoint } = await resolve(bot, channel, cwdHint, backendHint);
       const info = { title: sessionTitle(bot, channel, rootText), cwd, createdAt: now(), lastModified: now() };
       const sessionId = await host.createConversation(backend, info);
       const sidecar = {
@@ -156,6 +166,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
         await store.setSessionData(sessionId, 'effort', effort);
         await store.setSessionData(sessionId, 'agentLocale', lang());
         if (takesAccount(backend) && bot.account) await store.setSessionData(sessionId, 'claudeAccount', bot.account);
+        if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
         await store.setSessionData(sessionId, 'bot', sidecar, { durable: true });
       } catch (e) {
         // 作りかけの会話を残さない（委譲の prepare と同じ片付け）
@@ -172,8 +183,11 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const base = host.getBackend(bot.backend);
       const meta = await host.store.get(sessionId);
       if (!base || meta.backend !== base.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
+      // 互換の接続先を選んでいれば、モデル・エフォートは接続先の語彙で決める（アカウントの一覧は引かない）
+      const endpoint = takesEndpoint(base) ? bot.endpoint ?? '' : '';
+      const row = endpoint && typeof host.endpointRow === 'function' ? await host.endpointRow(endpoint) : null;
       // アカウントを引けないとき（消した等）は、別の一覧でモデルを書き換えない（下の resolveModel が断り、syncSessions が記録する。承認モードは先に揃う）
-      const backend = takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
+      const backend = !endpoint && takesAccount(base) && bot.account && typeof host.accountBackend === 'function'
         ? await host.accountBackend(base, bot.account)
         : base;
       const modes = backend.modes();
@@ -182,12 +196,16 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       // スレッドごとの上書き（以前の sidecar の overrides）は読まない。どのスレッドの会話も bot の設定に揃える（ADR 0362）
       if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
-      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
+      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, endpoint);
       if (meta.model !== model) await host.store.setModel(sessionId, model);
-      const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
+      const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, row);
       if (meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
-      // アカウントは次のターンから効く（ターンの始めに server の accountResolve が引く）。スレッドごとの上書きは無いので、どの会話も bot に揃える
-      if (takesAccount(backend)) {
+      // 互換の接続先は次のターンから効く（ターンの始めに server の prepareTurn が compatEndpoint を引く。接続先を替えても会話の記録は替えない）。
+      // 先に書く（公式に戻すとき、下のアカウントの予約が前の接続先のままで組まれないように）
+      if (takesEndpoint(base) && (meta.compatEndpoint ?? '') !== endpoint) await host.store.setSessionData(sessionId, 'compatEndpoint', endpoint);
+      // アカウントは次のターンから効く（ターンの始めに server の accountResolve が引く）。スレッドごとの上書きは無いので、どの会話も bot に揃える。
+      // 互換の接続先を選んでいる間は使わない（接続先のキーで送る）ので触らない。公式へ戻したとき、bot のアカウントに揃える
+      if (!endpoint && takesAccount(backend)) {
         const account = bot.account ?? '';
         const reserve = backend.capabilities.accounts === 'agent' && !meta.unsent && typeof host.reserveAccount === 'function';
         if (reserve && (meta.nextSettings?.account ?? meta.claudeAccount ?? '') !== account) await host.reserveAccount(sessionId, account);

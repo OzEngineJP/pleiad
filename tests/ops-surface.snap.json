@@ -540,7 +540,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "05f09a4477c3"
+      "input": "348bfd875ed1"
     },
     {
       "id": "bots.setMode",
@@ -2134,7 +2134,7 @@
         "cli": true
       },
       "legacyCommand": null,
-      "input": "88fa8d5542d2"
+      "input": "65eb130b7805"
     },
     {
       "id": "delegation.hostView",

@@ -377,7 +377,8 @@ try {
     seedSdk(s.dataDir);
     await page.evaluate(() => document.getElementById('settings')?.click());
     await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
+    // 状態が読み直され、行が「使える」になるまで（ログインの操作は、ログイン済みなら出ない）
+    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => document.querySelector('#authSec [data-agent="claude"] .arow')?.dataset.sig === 'ok/ready');
     await backToChat(page);
     await page.waitForSelector('.outbox-fix [data-fix="resend"]', { timeout: 20_000 });
     check(true, '直ると［再送する］が出る');
@@ -419,7 +420,7 @@ try {
     s.login();
     await page.evaluate(() => document.getElementById('settings')?.click());
     await page.waitForSelector('#refreshAgents', { timeout: 10_000 });
-    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => Boolean(document.querySelector('body.settings [data-act="login"]')));
+    await retryUntil(page, () => document.getElementById('refreshAgents').click(), () => document.querySelector('#authSec [data-agent="claude"] .arow')?.dataset.sig === 'ok/ready');
     await backToChat(page);
     await page.waitForSelector('.outbox-fix [data-fix="resend"]', { timeout: 20_000 });
     await page.click('.outbox-fix [data-fix="resend"]');
@@ -743,7 +744,7 @@ try {
     // ログインしたら 5 秒以内に見つける
     s.login();
     const t0 = Date.now();
-    await s.page.waitForFunction(() => /ログイン中|ログイン済み/.test(document.querySelector('#authSec [data-agent="claude"]')?.innerText ?? ''), null, { timeout: 8000 }).catch(() => {});
+    await s.page.waitForFunction(() => document.querySelector('#authSec [data-agent="claude"] .arow')?.dataset.sig === 'ok/ready', null, { timeout: 8000 }).catch(() => {});
     const took = Date.now() - t0;
     check(took <= 5000, 'ログインしたのを 5 秒以内に見つける', took);
   }]);

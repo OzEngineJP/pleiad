@@ -19,9 +19,11 @@
 //                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
-//   setAccount({ botId, account }, author): Promise<Bot>           … bot のエージェントのアカウント（'' = ログイン中）。human-only の操作から（ADR 0224）。
-//                                                   登録の無い id・使えないアカウントは断る（host.accountList）。既存の会話（capabilities.accounts を持つ backend）も揃える。
-//                                                   update で backend を替えると '' に戻る（アカウントはエージェントごと）
+//   setAccount({ botId, account, endpoint? }, author): Promise<Bot> … bot の接続先（'' = CLI のログイン。ADR 0224・0359）。human-only の操作から。
+//                                                   account は登録の無い id・使えないアカウントを断る（host.accountList）。endpoint は互換の接続先の id（'' = 公式。
+//                                                   渡さなければ今のまま）で、そのエージェントに登録の無い id・接続先を選べない backend は断る（host.endpointHas）。
+//                                                   接続先が変わるとモデルとエフォートは既定（''）に戻す（公式のモデル名を互換の先へ送らない）。既存の会話も揃える。
+//                                                   update で backend を替えると account・endpoint とも '' に戻る（接続先はエージェントごと）
 //   remove({ botId }, author): Promise<void>      … DM は archive。会話は閲覧用として Chats に残す。専用情報の片付け後に本体を消す（ADR 0293）
 //   overview({ botId? }): Promise<(Bot & { state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
 //   --- S4（dispatch）・host が使う口
@@ -142,20 +144,22 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   }
 
   /** モデル・エフォートの検査（明示したものだけ。無効なら INVALID）。host が無ければ形だけ */
-  async function checkModelEffort(backendId, model, effort, cwd, account = '') {
+  async function checkModelEffort(backendId, model, effort, cwd, account = '', endpoint = '') {
     const raw = backendOf(backendId);
     if (!host || !raw) return;
     let backend = raw;
-    if (account && typeof host.backendForAccount === 'function') {
+    // 互換の接続先は、接続先のモデル（形だけ見る）・段で確かめる。アカウントの一覧は引かない（接続先が優先）
+    const row = endpoint && typeof host.endpointRow === 'function' ? await host.endpointRow(endpoint) : null;
+    if (!endpoint && account && typeof host.backendForAccount === 'function') {
       try { backend = await host.backendForAccount(raw, account); }
       catch (e) { throw invalid(`account: ${String(e?.message ?? e)}`); }
     }
     if (model) {
-      const resolved = await host.resolveModel(null, model, backend, cwd, '').catch(() => null);
+      const resolved = await host.resolveModel(null, model, backend, cwd, endpoint).catch(() => null);
       if (resolved !== model) throw invalid(`model: unknown for ${backendId}: ${model}`);
     }
     if (effort) {
-      try { await host.resolveEffort(null, effort, backend, model || '', cwd, null); }
+      try { await host.resolveEffort(null, effort, backend, model || '', cwd, row); }
       catch (e) { throw invalid(`effort: ${String(e?.message ?? e)}`); }
     }
   }
@@ -244,7 +248,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         const backend = backendOf(backendId);
         const t = now();
         const bot = await store.put({
-          id: newId('bot', t), plain: true, name: 'Agent', icon: '✦', iconImage: '', persona: '', backend: backendId, model: '', effort: '', account: '',
+          id: newId('bot', t), plain: true, name: 'Agent', icon: '✦', iconImage: '', persona: '', backend: backendId, model: '', effort: '', account: '', endpoint: '',
           mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
           dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
         });
@@ -323,7 +327,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const iconImage = input?.iconImage ? await makeIcon(input.iconImage, id) : '';
       let bot;
       try { bot = await store.put({
-        id, name, icon, iconImage, persona, color, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '',
+        id, name, icon, iconImage, persona, color, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '', endpoint: '',
         mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
         dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
       });
@@ -377,6 +381,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         next.model = ''; next.effort = '';
         // アカウントはエージェントごと（id はエージェントをまたいで重ならない。ADR 0222）。替えた先ではログイン中のアカウントに戻す
         if (bot.account) { next.account = ''; row('account', bot.account, ''); }
+        if (bot.endpoint) { next.endpoint = ''; row('endpoint', bot.endpoint, ''); }
         const modes = backend?.modes?.();
         if (modes && !modes[bot.mode]) next.mode = defaultMode(modes);
         row('backend', bot.backend, next.backend);
@@ -389,7 +394,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       if (input.model !== undefined && input.model !== next.model) { next.model = input.model; row('model', bot.model, next.model); }
       if (input.effort !== undefined && input.effort !== next.effort) { next.effort = input.effort; row('effort', bot.effort, next.effort); }
       if (input.model !== undefined || input.effort !== undefined || input.backend !== undefined) {
-        await checkModelEffort(next.backend, next.model, next.effort, bot.folders[0]?.path ?? os.homedir(), next.account);
+        await checkModelEffort(next.backend, next.model, next.effort, bot.folders[0]?.path ?? os.homedir(), next.account, next.endpoint);
       }
       if (input.folders !== undefined) {
         next.folders = await checkFolders(input.folders);
@@ -431,7 +436,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       return {
         bot, next, rows, reasons, loosens: reasons.length > 0, changed: rows.length > 0,
         // 受領証の元（承認のあとに読み直して、承認した変更と同じか確かめる）
-        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, color: bot.color, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode, account: bot.account,
+        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, color: bot.color, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode, account: bot.account, endpoint: bot.endpoint,
           folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets, pulse: bot.pulse },
       };
     },
@@ -474,21 +479,31 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       return next;
     },
 
-    async setAccount({ botId, account }, _author) {
+    async setAccount({ botId, account, endpoint }, _author) {
       requireStore();
       const bot = getBot(botId);
-      if (bot.plain) throw invalid('the built-in agent has no account of its own; choose it in each thread');
+      if (bot.plain) throw invalid('the built-in agent has no connection of its own; choose it in each thread');
       const id = typeof account === 'string' ? account : '';
-      // '' （ログイン中のアカウント）はいつでも選べる。登録のアカウントは、bot のエージェントに今あって使えるもの
-      // （Claude はトークン、ほかはログインして資格情報をしまった）だけ（使えないアカウント・ほかのエージェントのアカウントを選ばせない）
-      if (id) {
+      // 互換の接続先（'' = 公式。渡さなければ今のまま）。そのエージェントに登録のある id だけ（接続先を選べない backend・ほかのエージェントの接続先を選ばせない）。
+      // 消した・確認に失敗した接続先を選び続けている bot が、アカウントだけ替えるのは止めない（今のままなら調べない）
+      const wanted = endpoint === undefined ? bot.endpoint : typeof endpoint === 'string' ? endpoint : '';
+      const endpointChanged = wanted !== bot.endpoint;
+      if (wanted && endpointChanged) {
+        if (!backendOf(bot.backend)?.capabilities?.compatEndpoints) throw invalid(`endpoint: not available for ${bot.backend}`);
+        if (typeof host?.endpointHas !== 'function' || !(await host.endpointHas(bot.backend, wanted))) throw invalid(`endpoint: not registered: ${wanted}`);
+      }
+      // '' （CLI のログイン）はいつでも選べる。登録のアカウントは、bot のエージェントに今あって使えるもの
+      // （Claude はトークン、ほかはログインして資格情報をしまった）だけ（使えないアカウント・ほかのエージェントのアカウントを選ばせない）。
+      // 互換の接続先を選んでいる間は account を使わないので、今のままなら調べない
+      if (id && (id !== bot.account || !wanted)) {
         if (typeof host?.accountList !== 'function') throw invalid(`account: not registered: ${id}`);
         const row = (await host.accountList(bot.backend)).find((a) => a.id === id);
         if (!row) throw invalid(`account: not registered: ${id}`);
         if (!row.ready) throw invalid(`account: not ready: ${id}`);
       }
-      if (id === bot.account) return bot;
-      const next = await store.update(botId, (b) => ({ ...b, account: id, updatedAt: now() }));
+      if (id === bot.account && !endpointChanged) return bot;
+      // 接続先が変わると、モデルとエフォートは前の接続先の語彙なので既定に戻す（アカウントだけの変更は今までどおり保つ。ADR 0329）
+      const next = await store.update(botId, (b) => ({ ...b, account: id, endpoint: wanted, ...(endpointChanged ? { model: '', effort: '' } : {}), updatedAt: now() }));
       send({ type: 'botsChanged', bot: next });
       await syncSessions(next);
       return next;

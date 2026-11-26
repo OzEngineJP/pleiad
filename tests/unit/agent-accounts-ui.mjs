@@ -42,7 +42,7 @@ export default async function test(t) {
   const $ = id => nodes.get(id);
   const account = (id, name = id) => ({ id, name, hasCredential: false });
   const calls = [];
-  let autoLists = true, rows = new Map();
+  let autoLists = true, rows = new Map(), currentUi = null;
   const changes = [];
   const cmd = (name, { op, args }) => {
     assert.equal(name, 'invoke');
@@ -55,7 +55,8 @@ export default async function test(t) {
     nodes.clear(); popups.length = 0; calls.length = 0; changes.length = 0;
     const controls = new Node('div'); controls.id = 'agentControls';
     autoLists = true; rows = new Map([['codex', [account('A'), account('B'), account('C')]], ['opencode', [account('O')]]]);
-    return setupAgentAccounts({ cmd, openSettings() {}, labelOf: id => id, onChange: id => changes.push(id) });
+    currentUi = setupAgentAccounts({ cmd, openSettings() {}, labelOf: id => id, onChange: id => changes.push(id) });
+    return currentUi;
   };
   const requests = verb => calls.filter(c => c.verb === verb);
   const login = id => {
@@ -64,7 +65,7 @@ export default async function test(t) {
     return card.querySelectorAll('button')[0].onclick();
   };
   const cancel = () => $('aaFlowBody').querySelectorAll('button').find(b => b.textContent === tr('agentAccounts.cancel')).onclick();
-  const beginForm = value => { $('aaAdd').onclick(); $('aaName').value = value; };
+  const beginForm = value => { currentUi.add(); $('aaName').value = value; };
   const submit = () => $('aaForm').onsubmit({ preventDefault() {} });
   const check = label => t.ok(label, true);
 
@@ -89,7 +90,8 @@ export default async function test(t) {
       ui.authEvent({ backend: 'codex', accountId: 'A', loginId: current.args.attempt, phase: 'url', url: 'https://auth.example.invalid/current' });
       assert.ok(currentPopup.location.href.endsWith('/current'));
       current.resolve({ label: 'new identity' }); await tick();
-      assert.ok($('aaFlowBody').textContent.includes('new identity'));
+      // 済んだ流れは「ログインしました」の一言だけ。ログインした名前（メール）はカードの状態の行に出る（ADR 0359）
+      assert.ok($('aaFlowBody').textContent.includes(tr('conn.loggedInNote')));
       check('cancel and same-ID retry serialize; old results and missing/wrong nonce events cannot repaint or close the new popup');
     }
     {
@@ -113,7 +115,7 @@ export default async function test(t) {
       assert.equal(requests('login').length, 1);
       requests('cancel')[0].resolve({ cancelled: true }); await next;
       old.resolve({ label: 'old backend identity' }); await tick();
-      assert.ok($('aaTitle').textContent.includes('opencode')); assert.ok($('aaFlowTitle').textContent.includes('O'));
+      assert.equal(ui.openAgent, 'opencode'); assert.ok($('aaFlowTitle').textContent.includes('O'));
       assert.equal(popups[1].closed, 0); assert.equal(requests('list').at(-1).args.backend, 'codex');
       const current = requests('login')[1];
       ui.authEvent({ backend: 'codex', accountId: 'O', loginId: current.args.attempt, phase: 'url', url: 'https://auth.example.invalid/wrong-backend' });
@@ -137,7 +139,7 @@ export default async function test(t) {
       requests('list')[1].resolve({ accounts: [account('O')] }); await openingB;
       beginForm('keep B form');
       requests('list')[0].resolve({ accounts: [account('A')] }); await openingA;
-      assert.ok($('aaTitle').textContent.includes('opencode'));
+      assert.equal(ui.openAgent, 'opencode');
       assert.equal($('aaName').value, 'keep B form'); assert.equal($('aaForm').hidden, false);
       assert.equal($('aaList').querySelector('strong').textContent, 'O');
       check('older panel-open response cannot repaint or reset another backend view');
@@ -240,9 +242,9 @@ export default async function test(t) {
         loadVocab: async (backend, account) => { vocabReads.push({ backend, account }); return { modes: { default: {} }, models: { '': {} } }; },
         cmd: effortCmd,
         loadAccounts: backend => { const response = deferred(); accountReads.push({ backend, ...response }); return response.promise; },
-        compatEndpoints: { load: async () => [] }, accountWarning: '', endpointWarning: '',
+        compatEndpoints: { load: async () => [] }, connWarnings: { account: '', endpoint: '' }, connWarning: '',
       });
-      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'syncEndpoint', 'syncAccount', 'vocabCwd', 'effortSelection', 'adoptEfforts', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
+      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'paintConnWarning', 'syncEndpoint', 'syncAccount', 'vocabCwd', 'effortSelection', 'adoptEfforts', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
       const old = sandbox.syncTopbar(); await tick();
       assert.equal(accountReads.length, 1);
       state.prefs.backends.codex.account = 'default-B';

@@ -61,7 +61,7 @@ textarea.bp-ob-in{height:96px;padding:9px 12px;resize:none;line-height:1.55}
 .bp-sub .row-be{flex:none}
 .bp-sub .wait{color:var(--ink-mark);font-weight:600}
 /* ログイン中でないアカウントで動くときの名前（ADR 0224） */
-.bp-sub .acct-sub{font-weight:600}
+.bp-sub .conn-sub{font-weight:600}
 .bp-err{margin:0 0 12px;padding:8px 12px;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink-strong);font-size:var(--fs-s);overflow-wrap:anywhere}
 .bp-err[hidden]{display:none}
 .bp-gone{margin:32px 4px;color:var(--ink-weak);font-size:var(--fs-s);text-align:center}

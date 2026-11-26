@@ -2,6 +2,7 @@
 // 委譲先は偽の agy（tests/lib/fake-agy.mjs: limit-no-reply は返事の前に上限で断る・error-body は本文を書いてから失敗・
 // limit-after-reply は返事を終えてから上限なので、返事は結果として残る）と手元の偽物（fail・fail-auth tool）。
 // 本物の自動選択のサービス・LLM へは送らない
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,12 +12,29 @@ import { open, sleep } from '../lib/ws-client.mjs';
 export const name = 'server-delegation-reroute';
 export const title = '委譲の再振り分け: 上限なら同じ子で継続し、仕事前のエラーなら次の候補で再試行する';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
+const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true }).trim();
+const slash = p => String(p ?? '').replaceAll('\\', '/');
+// Windows では裏の git（状態の読み取り）が .git を一瞬掴み、名前の付け替えが EPERM / EBUSY になる。少し待って付け替え直す
+const renameRetry = async (from, to) => {
+  for (let i = 0; ; i++) {
+    try { return await fs.rename(from, to); }
+    catch (e) { if (i >= 50 || !['EPERM', 'EBUSY', 'EACCES'].includes(e?.code)) throw e; await sleep(100); }
+  }
+};
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-reroute-'));
+  const repo = path.join(scratch, 'repo');
+  const gateDir = path.join(scratch, 'gates');
+  await fs.mkdir(repo, { recursive: true });
+  await fs.mkdir(gateDir, { recursive: true });
+  sh(repo, 'init', '-q', '-b', 'main');
+  await fs.writeFile(path.join(repo, 'base.txt'), 'base\n');
+  sh(repo, 'add', '.'); sh(repo, 'commit', '-q', '-m', 'first');
   const server = await startServer({ dataDir: scratch, env: {
     AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`,
-    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-turbo-high',
+    AGENT_HOST_FAKE_GATE_DIR: gateDir, AGENT_HOST_WORKTREES: 'on', AGENT_HOST_WORKTREE_GRACE_MS: '0',
+    FAKE_AGY_EXTRA_MODELS: 'gemini-3.8-flash-high,gemini-3.8-pro-high,gemini-3.8-mini-high,gemini-3.8-nano-high,gemini-3.8-turbo-high,gemini-3.8-iso-high,gemini-3.8-keep-high',
     AGENT_HOST_ROUTING_USAGE: 'on' } });
   // antigravity の子は親より強い（yolo）ので、委譲のたびに親の会話で 1 回聞かれる。ここでは許す
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, api) => {
@@ -89,6 +107,129 @@ export default async function (t) {
     const notice = await noticeOf(sid, limited.data.taskId);
     t.ok('上限での切り替えを一行だけ知らせる',
       notice.split('\n').filter(line => /^使用量の上限のため .+ · fast に切り替えて続けています。$/.test(line)).length === 1, notice.slice(0, 500));
+
+    // ---- isolate の子が上限で切り替わっても、同じ worktree のまま続ける。終わったら決まりどおり片付く
+    const isoParent = (await c.cmd('newSession', { backend: 'fake', cwd: repo })).sessionId;
+    // 上の節で上限になった flash-high は recently_limited で飛ばされるので、この節だけで使うモデルを先頭に置く
+    await setTiers(['antigravity:gemini-3.8-iso-high', 'fake:fast']);
+    const isoFrom = c.mark();
+    const iso = await delegate(isoParent, { kind: 'trivial', task: 'limit-no-reply\nHOLD_TURN:iso-switch', isolate: true });
+    const wt0 = iso.data?.worktree;
+    t.ok('（準備）isolate の子に worktree ができ、最初の委譲先は agy', Boolean(wt0?.id && wt0.path && wt0.branch) && iso.data?.backend === 'antigravity',
+      JSON.stringify({ wt0, backend: iso.data?.backend, model: iso.data?.model }));
+    let isoMid;
+    for (let i = 0; i < 1200 && !(isoMid?.backend === 'fake' && isoMid.status === 'running'); i++) { isoMid = await rowOf(iso.data.taskId); await sleep(50); }
+    const isoMidStatus = await call(isoParent, 'ply_task_status', { taskId: iso.data.taskId });
+    const isoMidChild = await sessionMeta(iso.data.sessionId);
+    t.ok('切り替えの間も ply_task_status は同じ worktree を「片付け済み」でなく返し、2 つ目の委譲先はその場所で動く',
+      isoMid?.worktree?.id === wt0.id && slash(isoMid.cwd) === slash(wt0.path) && slash(isoMidChild?.cwd) === slash(wt0.path)
+      && isoMidStatus.data?.workspace?.state && isoMidStatus.data.workspace.state !== 'gone'
+      && slash(isoMidStatus.data.workspace.path) === slash(wt0.path),
+      JSON.stringify({ row: isoMid && { worktree: isoMid.worktree, cwd: isoMid.cwd }, childCwd: isoMidChild?.cwd, workspace: isoMidStatus.data?.workspace }));
+    const isoBeforeRelease = c.mark();
+    await fs.writeFile(path.join(gateDir, 'iso-switch'), '');
+    const isoDone = await settle(iso.data.taskId);
+    const isoEvents = c.since(isoFrom);
+    const isoPreReleaseEvents = isoEvents.slice(0, isoBeforeRelease - isoFrom);
+    const isoPathExists = wt0?.path ? await fs.stat(wt0.path).then(s => s.isDirectory(), () => false) : false;
+    const isoBranches = wt0 ? sh(repo, 'branch', '--list', wt0.branch) : '';
+    t.ok('切り替えの後もタスクの worktree と cwd は最初の場所のまま',
+      isoDone?.status === 'completed' && isoDone.sessionId === iso.data.sessionId && isoDone.backend === 'fake'
+      && (isoDone.routing?.attempts ?? []).some(a => a.outcome === 'limited' && a.continued)
+      && isoDone.worktree?.id === wt0.id && slash(isoDone.worktree?.path) === slash(wt0.path) && slash(isoDone.cwd) === slash(wt0.path),
+      JSON.stringify({ status: isoDone?.status, worktree: isoDone?.worktree, cwd: isoDone?.cwd, wt0 }));
+    t.ok('切り替えで子の会話の cwd を元の場所へ戻さない（worktreeBack が無い）',
+      !isoPreReleaseEvents.some(e => e.type === 'cwd' && e.sessionId === iso.data.sessionId && e.reasonKey === 'worktreeBack'),
+      JSON.stringify(isoPreReleaseEvents.filter(e => e.type === 'cwd' && e.sessionId === iso.data.sessionId)));
+    t.ok('次の委譲先に渡した指示は、タスクの今の worktree を指す',
+      Boolean(isoDone?.result && isoDone.worktree?.path && isoDone.result.includes(isoDone.worktree.path)), String(isoDone?.result ?? '').slice(0, 500));
+    t.ok('変わっていなければ、完了の片付けでフォルダーとブランチが消える',
+      isoDone?.workspace?.removed === true && !isoPathExists && !isoBranches.includes(wt0.branch),
+      JSON.stringify({ workspace: isoDone?.workspace, isoPathExists, isoBranches }));
+
+    // ---- 切り替えの後に worktree を変えた子は、完了しても残って「未取り込み」になる
+    await setTiers(['antigravity:gemini-3.8-keep-high', 'fake:fast']);
+    const keep = await delegate(isoParent, { kind: 'trivial', task: 'limit-no-reply\nHOLD_TURN:iso-keep', isolate: true });
+    const wt1 = keep.data?.worktree;
+    t.ok('（準備）2 つ目の isolate の子も agy から始まる', Boolean(wt1?.id) && keep.data?.backend === 'antigravity', JSON.stringify({ wt1, backend: keep.data?.backend }));
+    let keepMid;
+    for (let i = 0; i < 1200 && !(keepMid?.backend === 'fake' && keepMid.status === 'running'); i++) { keepMid = await rowOf(keep.data.taskId); await sleep(50); }
+    if (wt1?.path) await fs.writeFile(path.join(wt1.path, 'changed.txt'), 'changed\n');
+    await fs.writeFile(path.join(gateDir, 'iso-keep'), '');
+    const keepDone = await settle(keep.data.taskId);
+    const keepStatus = await call(isoParent, 'ply_task_status', { taskId: keep.data.taskId });
+    const keepExists = wt1?.path ? await fs.stat(wt1.path).then(s => s.isDirectory(), () => false) : false;
+    t.ok('変わっていれば、完了しても同じ worktree が残り「未取り込み」になる',
+      keepDone?.status === 'completed' && keepDone.backend === 'fake' && keepDone.worktree?.id === wt1?.id
+      && (keepDone.routing?.attempts ?? []).some(a => a.outcome === 'limited' && a.continued) && slash(keepDone.cwd) === slash(wt1?.path)
+      && keepDone.workspace?.state === 'unmerged' && keepDone.workspace.removed === false && keepExists
+      && sh(repo, 'branch', '--list', wt1.branch).includes(wt1.branch)
+      && keepStatus.data?.workspace?.state === 'unmerged' && slash(keepStatus.data.workspace.path) === slash(wt1.path),
+      JSON.stringify({ status: keepDone?.status, worktree: keepDone?.worktree, cwd: keepDone?.cwd, workspace: keepDone?.workspace, keepExists, statusWs: keepStatus.data?.workspace }));
+
+    // ---- 仕事前のエラーで新しい子の会話へ任せ直しても（run.reroute）、同じ worktree を使い、終わったら前の子の会話の分も外して片付ける
+    await setTiers(['fake:fast', 'fake:smart']);
+    const isoFail = await delegate(isoParent, { kind: 'trivial', task: 'fail', isolate: true });
+    const wt2 = isoFail.data?.worktree;
+    const isoFailRow = await settle(isoFail.data.taskId);
+    const firstChild = await sessionMeta(isoFail.data.sessionId);
+    const wt2Exists = wt2?.path ? await fs.stat(wt2.path).then(s => s.isDirectory(), () => false) : false;
+    t.ok('任せ直した子も同じ worktree で動き、終わったら前の子の会話を元の場所へ戻して消す',
+      Boolean(wt2?.id) && isoFailRow?.status === 'failed' && isoFailRow.sessionId !== isoFail.data.sessionId
+      && isoFailRow.routing?.attempts?.length === 1 && isoFailRow.worktree?.id === wt2.id && slash(isoFailRow.cwd) === slash(wt2.path)
+      && isoFailRow.workspace?.removed === true && !wt2Exists && slash(firstChild?.cwd) === slash(repo),
+      JSON.stringify({ status: isoFailRow?.status, worktree: isoFailRow?.worktree, cwd: isoFailRow?.cwd, workspace: isoFailRow?.workspace, wt2Exists, firstCwd: firstChild?.cwd }));
+
+    // ---- 片付いた作業場所を作り直せないときは、元の場所で走らせず失敗で返す
+    await renameRetry(path.join(repo, '.git'), path.join(repo, 'git-disabled'));
+    const renewSend = await call(isoParent, 'ply_task_send', { taskId: iso.data.taskId, message: 'echo:should-not-run' });
+    t.ok('（準備）片付け済みの子へ追加の指示を積める', !renewSend.isError, renewSend.text.slice(0, 300));
+    const renewRow = await settle(iso.data.taskId);
+    t.ok('作業場所を作り直せない追加の指示は失敗になり、子の返事は走らない',
+      renewRow?.status === 'failed' && /worktree.*作り直せなかった/.test(renewRow.error ?? '') && !String(renewRow.result ?? '').includes('should-not-run'),
+      JSON.stringify({ status: renewRow?.status, error: renewRow?.error, result: renewRow?.result }));
+
+    // ---- 片付いた子へ人が直接送ったとき（外から起きたターン。ADR 0355）も、作り直せなければ元の場所で走らせない。
+    // 発言は送信待ちに「送れなかった」で残り、作り直せなかった理由と次にすることが出る。タスクの行は起こす前のまま
+    const isoChild = iso.data.sessionId;
+    // 上の失敗の知らせが依頼元へ届くのを待ってから比べる（届く途中だと通知の状態が並行して動く）
+    await noticeOf(isoParent, iso.data.taskId);
+    const humanRowBefore = await rowOf(iso.data.taskId);
+    const humanFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: isoChild, messageId: 'renew-human-0001', prompt: 'echo:human-after-fix' });
+    let humanItem;
+    for (let i = 0; i < 400 && !['failed', 'sent', 'unknown'].includes(humanItem?.status); i++) {
+      humanItem = (await c.cmd('listMessages', { sessionId: isoChild })).find(m => m.id === 'renew-human-0001');
+      await sleep(50);
+    }
+    for (let i = 0; i < 100 && (await c.cmd('running')).turns.some(x => x.sessionId === isoChild); i++) await sleep(50);
+    const humanEvents = c.since(humanFrom).filter(e => e.sessionId === isoChild);
+    const humanReplied = (await c.cmd('loadSession', { sessionId: isoChild })).messages.some(m => m.role === 'assistant' && String(m.text ?? '').includes('human-after-fix'));
+    const humanRowAfter = await rowOf(iso.data.taskId);
+    t.ok('作業場所を作り直せないとき、人の発言のターンは元の場所で走らない',
+      !humanReplied && !humanEvents.some(e => ['text.delta', 'turnEnd'].includes(e.type)),
+      JSON.stringify({ humanReplied, events: humanEvents.map(e => e.type).slice(0, 20), childCwd: (await sessionMeta(isoChild))?.cwd }));
+    t.ok('発言は送信待ちに「送れなかった」で残り、作り直せなかった理由（git でない）と次にすることが出る',
+      humanItem?.status === 'failed' && humanItem.args?.prompt === 'echo:human-after-fix'
+      && /作り直せなかった/.test(humanItem.error ?? '') && /git のリポジトリではない/.test(humanItem.error ?? '') && /再送/.test(humanItem.error ?? ''),
+      JSON.stringify(humanItem));
+    t.ok('始まらなかったので、タスクの行（状態・通知・出来事）は起こす前のまま',
+      humanRowAfter?.status === humanRowBefore?.status && humanRowAfter?.notification === humanRowBefore?.notification
+      && (humanRowAfter?.events ?? []).length === (humanRowBefore?.events ?? []).length && humanRowAfter?.worktree?.id === humanRowBefore?.worktree?.id,
+      JSON.stringify({ before: { s: humanRowBefore?.status, n: humanRowBefore?.notification, e: humanRowBefore?.events?.length }, after: { s: humanRowAfter?.status, n: humanRowAfter?.notification, e: humanRowAfter?.events?.length } }));
+    await renameRetry(path.join(repo, 'git-disabled'), path.join(repo, '.git'));
+
+    // ---- 直してから［再送する］と、今までどおり作業場所を作り直してから走り、タスクが動いて終わる
+    const retryFrom = c.mark();
+    await c.cmd('messageAction', { sessionId: isoChild, messageId: 'renew-human-0001', action: 'retry' });
+    let retried;
+    for (let i = 0; i < 1200 && !(retried?.status === 'completed' && String(retried.result ?? '').includes('human-after-fix')); i++) { retried = await rowOf(iso.data.taskId); await sleep(50); }
+    const retriedCwd = c.since(retryFrom).find(e => e.type === 'cwd' && e.sessionId === isoChild && e.reasonKey === 'worktreeSplit')?.cwd ?? null;
+    const retriedItem = (await c.cmd('listMessages', { sessionId: isoChild })).find(m => m.id === 'renew-human-0001');
+    t.ok('作り直せるようになって再送すると、新しい worktree を作ってから走り、タスクが完了する',
+      retried?.status === 'completed' && Boolean(retriedCwd) && slash(retriedCwd) !== slash(repo) && slash(retriedCwd) !== slash(wt0.path)
+      && retried.worktree?.id && retried.worktree.id !== wt0.id && slash(retried.cwd) === slash(retriedCwd) && (!retriedItem || retriedItem.status === 'sent'),
+      JSON.stringify({ status: retried?.status, cwd: retried?.cwd, worktree: retried?.worktree, retriedCwd, item: retriedItem?.status }));
 
     // ---- 返事を書いてから失敗した子は任せ直さない（痕跡があるので、同じ仕事を 2 箇所で走らせない）
     await setTiers(['antigravity:gemini-3.8-pro-high', 'fake:fast']);
@@ -214,6 +355,6 @@ export default async function (t) {
     for (const task of await c.cmd('agentTasks')) if (['queued', 'running'].includes(task.status)) await c.cmd('cancelAgentTask', { taskId: task.taskId }).catch(() => {});
   } finally {
     c.close(); await server.stop();
-    await fs.rm(scratch, { recursive: true, force: true });
+    await fs.rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }

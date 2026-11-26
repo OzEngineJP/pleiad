@@ -4,6 +4,7 @@
 // 面と部品は設定の管理の面（web/manage-panel.css の .mp-*）を使う。Claude のアカウントは web/claude-accounts.mjs。
 import { el } from './dom.mjs';
 import { t, applyDom } from './i18n.mjs';
+import { connCard, connConfirm } from './conn-card.mjs';
 
 // Invalidation also retires pending requests, including their error handlers.
 export function createAccountRequestCache({ read, cache = new Map(), accept = () => true }) {
@@ -47,18 +48,17 @@ export function composerAccount({ backend, session = null, draft = null, prefs =
   return prefs.backends?.[backend]?.account ?? (kind === 'token' ? prefs.claudeAccount : null) ?? '';
 }
 
-export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, onChange = () => {} }) {
+// isDefault(backend, id) / makeDefault(backend, id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0359）。
+// onAddEnd: 追加の欄を閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す）。見出し・説明・［＋ 追加］は持たない（接続先の一覧の面が持つ）
+export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, onChange = () => {}, isDefault = () => false, makeDefault = null, onAddEnd = () => {} }) {
   const accountCmd = (operation, args) => cmd('invoke', { op: `accounts.${operation}`, args });
   const panel = document.createElement('section');
   // 面の中の要素は面の中で探す。面はカードの枠へ移り、カードの描き直しで文書から外れることがある（そのときも例外で止めない）
   const $ = (id) => panel.querySelector(`#${id}`);
   panel.className = 'mp-panel'; panel.id = 'agentAccountsPanel'; panel.hidden = true;
-  panel.setAttribute('aria-labelledby', 'aaTitle');
-  panel.innerHTML = `<div class="mp-row"><h3 id="aaTitle"></h3><button type="button" class="btn" id="aaClose" data-i18n="agentAccounts.close"></button></div>
-  <p class="mp-note mp-intro" id="aaIntro"></p>
-  <div id="aaList"></div><button type="button" class="btn" id="aaAdd" data-i18n="agentAccounts.add"></button>
+  panel.innerHTML = `<div id="aaList"></div>
   <section class="mp-card" id="aaFlow" hidden aria-live="polite"><h3 id="aaFlowTitle"></h3><div id="aaFlowBody"></div></section>
-  <form id="aaForm" hidden><h3 id="aaFormTitle"></h3>
+  <form id="aaForm" class="mp-card" hidden><h3 id="aaFormTitle"></h3>
   <label class="mp-field"><span data-i18n="agentAccounts.form.name"></span><input id="aaName" required maxlength="60" data-i18n-placeholder="agentAccounts.form.namePlaceholder" autocomplete="off"></label>
   <div class="mp-actions"><button type="button" class="btn" id="aaCancel" data-i18n="agentAccounts.cancel"></button><button type="submit" class="btn btn-primary" id="aaSubmit"></button></div>
   <p class="mp-state" id="aaFormState" role="status"></p></form>
@@ -80,32 +80,25 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     return (await lists.get(id, { force })) ?? [];
   }
   const button = (text, onclick, className = 'btn') => { const b = el('button', className, text); b.type = 'button'; b.onclick = onclick; return b; };
-  const status = (a) => (a.hasCredential ? (a.label ? t('agentAccounts.status.signedInAs', { label: a.label }) : t('agentAccounts.status.signedIn')) : t('agentAccounts.status.signedOut'));
+  const status = (a) => (a.hasCredential ? (a.label ? t('conn.officialAs', { email: a.label }) : t('conn.signedIn')) : t('conn.signedOut'));
 
+  // 1 枚 = 名前（· 新しい会話の既定）・状態の 1 行 |［ログインする］（ログインしていないときだけ）［既定にする］（既定でないときだけ）［編集］［削除］（web/conn-card.mjs）
   function draw() {
     const drawnView = view;
     const accounts = cache.get(backend) ?? [];
     $('aaList').replaceChildren(...accounts.map((a) => {
-      const card = el('div', 'mp-card');
-      card.dataset.account = a.id;
-      const top = el('div', 'mp-row'), info = el('div', 'mp-card-info');
-      info.append(el('strong', null, a.name), el('small', null, status(a)));
-      const actions = el('div', 'mp-card-actions');
-      actions.hidden = confirming === a.id;
-      actions.append(
-        button(a.hasCredential ? t('agentAccounts.relogin') : t('agentAccounts.login'), () => startLogin(a, drawnView)),
-        button(t('agentAccounts.edit'), () => edit(a, drawnView)), button(t('agentAccounts.delete'), () => { if (showing(drawnView)) { confirming = a.id; draw(); } }));
-      top.append(info, actions); card.append(top);
-      if (confirming === a.id) {
-        const ask = el('div', 'mp-confirm');
-        ask.append(el('p', null, t('agentAccounts.confirmDelete', { name: a.name })));
-        const row = el('div', 'mp-card-actions');
-        row.append(button(t('agentAccounts.cancel'), () => { confirming = ''; draw(); }), button(t('agentAccounts.confirmDeleteButton'), () => remove(a, drawnView)));
-        ask.append(row); card.append(ask);
-      }
-      return card;
+      const def = isDefault(backend, a.id), asking = confirming === a.id;
+      return connCard({
+        name: a.name, isDefault: def, status: status(a), warn: !a.hasCredential, dataset: { account: a.id }, confirming: asking,
+        actions: asking ? [] : [
+          !a.hasCredential && { label: t('conn.login'), quiet: true, onClick: () => startLogin(a, drawnView) },
+          !def && makeDefault && { label: t('conn.makeDefault'), onClick: () => makeDefault(backend, a.id) },
+          { label: t('conn.edit'), onClick: () => edit(a, drawnView) },
+          { label: t('conn.delete'), onClick: () => { if (showing(drawnView)) { confirming = a.id; draw(); } } },
+        ],
+        extra: [asking && connConfirm({ name: a.name, onNo: () => { confirming = ''; draw(); }, onYes: () => remove(a, drawnView) })],
+      });
     }));
-    if (!accounts.length) $('aaList').replaceChildren(el('p', 'mp-note', t('agentAccounts.empty')));
   }
 
   // ---------------------------------------------------------------- ログインの進み具合
@@ -144,7 +137,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
         break;
       }
       case 'done':
-        body.push(el('p', null, flow.label ? t('agentAccounts.flow.doneAs', { label: flow.label }) : t('agentAccounts.flow.done')),
+        body.push(el('p', null, t('conn.loggedInNote')),
           actions(button(t('agentAccounts.close'), close)));
         break;
       case 'error':
@@ -262,9 +255,13 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     finally { if (sameForm()) $('aaSubmit').disabled = false; }
   };
   const close = () => { panel.hidden = true; view = null; $('aaForm').hidden = true; resetForm(); void cancelFlow(); };
-  $('aaClose').onclick = close;
-  $('aaAdd').onclick = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
-  $('aaCancel').onclick = () => { $('aaForm').hidden = true; resetForm(); };
+  const add = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
+  $('aaCancel').onclick = () => {
+    const was = editingId, adding = !was;
+    $('aaForm').hidden = true; resetForm();
+    if (adding) onAddEnd(); else $('aaList').querySelector(`[data-account="${CSS.escape(was)}"] .mp-card-actions button`)?.focus();
+  };
+  $('aaForm').onkeydown = (e) => { if (e.key !== 'Escape' || e.isComposing) return; e.preventDefault(); e.stopPropagation(); $('aaCancel').click(); };
 
   // focus: そのアカウントの行の［ログインし直す］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   async function open(id, { focus } = {}) {
@@ -273,8 +270,6 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     view = capturedView;
     openSettings(); backend = id; panel.hidden = false; onOpen(id);
     $('aaForm').hidden = true; resetForm(); confirming = ''; draw(); drawFlow();
-    $('aaTitle').textContent = t('agentAccounts.title', { agent: labelOf(id) });
-    $('aaIntro').textContent = t('agentAccounts.intro', { agent: labelOf(id) });
     $('aaState').textContent = t('agentAccounts.loading');
     try {
       await load(id, true); if (!showing(capturedView)) return; draw(); drawFlow(); $('aaState').textContent = ''; panel.scrollIntoView({ block: 'nearest' });
@@ -284,6 +279,12 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   }
   return {
     open, load, authEvent, close,
+    /** 追加の欄（名前 →［足してログインする］）を開く（一覧の［＋ 接続先を追加］→ 公式） */
+    add,
+    /** 追加の欄が開いている・追加のログインが走っている */
+    get adding() { return !panel.hidden && ((!$('aaForm').hidden && !editingId) || Boolean(flow && !flow.settled)); },
+    /** 既定の印・［既定にする］を描き直す */
+    repaint: () => { if (!panel.hidden) draw(); },
     /** 管理の面（web/client.mjs がカードの枠へ移し、描き直しの前に元の置き場へ戻す） */
     panel,
     /** 開いている面のエージェント（閉じていれば ''。設定のカードの再描画で使う） */

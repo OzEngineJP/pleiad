@@ -313,7 +313,7 @@ export const EVENTS = new Set([
   // ---- セッションとメタ情報
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）
   "backend",      // { backend } 会話の実行先が変わった
-  "nextSettings",
+  "nextSettings", // { sessionId, nextSettings, worktreePending?, applied? }。applied: true は予約を今のターンへ効かせて消した印（送った・［今すぐ変える］）。今の値に戻した・取り消しには付かない
   "worktreesChanged", // worktree が増えた・消えた（sessionId は null）。右パネルの「残っている worktree」を取り直す
   "agentTaskChanged", // { taskId } 依頼元が委譲の子の設定を替えた（sessionId は null。ADR 0134）。画面はその行を読み直す
   // ---- チャンネル・bot・記憶・ルーティン（docs/channels.md「WS の出来事」。どれも sessionId は null で全接続へ。リモートの端末にも届く）
