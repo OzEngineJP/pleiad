@@ -556,13 +556,20 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return sec;
   }
 
-  function buildPlaces(wanted) {
-    // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを新しい順。作成中の新しい会話は先頭
+  /**
+   * 一時チャットの行（状態の見出しを作る行）。会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを
+   * 新しい順。作成中の新しい会話は先頭。match は表示の絞り込み（状態の候補 statusChoices は絞り込まずに同じ行を見る）
+   */
+  function homeRowsOf(match = () => true) {
     const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
-    if (!filtering()) putExtra(wanted, "routines");
-    const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
-      ...[...last.sessions.filter((s) => !s.bot && matchesFilter(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && matchesFilter(s))]
+    return [...(last.pendingNew ? [last.pendingNew] : []),
+      ...[...last.sessions.filter((s) => !s.bot && match(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && match(s))]
         .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
+  }
+
+  function buildPlaces(wanted) {
+    if (!filtering()) putExtra(wanted, "routines");
+    const homeRows = homeRowsOf(matchesFilter);
     wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
       onAdd: newChat, addLabel: t("channels:side.newChat") }));
     if (!filtering()) putExtra(wanted, "channels");
@@ -1714,6 +1721,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     newChat,
     /** この画面で作った、まだ誰も付いていない状態を一覧に出す */
     keep(status) { if (status) made.add(status); },
+    /**
+     * 「状態を変更」「グループを移動」の候補。絞り込まないときに一時チャットに出る状態の見出しと同じもの・同じ順
+     * （groupOrder。付いている状態と、人が作って残している器・この画面で作ったもの）。「状態なし」は含めない。
+     * 子や bot の会話・一時チャットでないチャンネルのスレッドにしか付いていない状態は、見出しに出ないので候補にもしない
+     */
+    statusChoices() { return groupOrder(homeRowsOf()).filter((k) => k != null); },
     get filter() { return { ...filter }; },
     /**
      * 直前の操作を取り消す一行。状態が黙って動く操作（グループの出入り・移動）でだけ出す。
