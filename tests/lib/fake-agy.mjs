@@ -82,10 +82,32 @@ if (has('--version')) {
 // 身代わりは印のファイルで同じことをする（`agy models` や `--print` は別プロセスで走るので、
 // ここが無いと「ログインしたのに次の確認で未ログイン」になってしまう）。残りの宣言は下の「未ログインの再現」
 const authFile = process.env.FAKE_AGY_AUTH_FILE || null;
-const signedIn = () => Boolean(authFile && fs.existsSync(authFile));
+// 複数アカウント（Ph3）: `--app-data-dir <相対>` は USERPROFILE/.gemini から数える（本物は ~/.gemini から。絶対パスは断る）。
+// env AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1 のとき、資格情報は鍵束（authFile）ではなく <appData>/antigravity-oauth-token に置く。
+// FAKE_AGY_NO_FILE_MARKER=1 は「この env を知らない古い版」のふり（印のログを書かず、資格情報も鍵束のまま）
+const homeDir = () => process.env.USERPROFILE ?? process.env.HOME ?? '.';
+const appDataFlag = (() => { const at = argv.indexOf('--app-data-dir'); return at >= 0 ? argv[at + 1] : null; })();
+if (appDataFlag && path.isAbsolute(appDataFlag)) { process.stderr.write('Error: app data dir must not be absolute' + NL); process.exit(1); }
+const appDataDir = appDataFlag ? path.resolve(homeDir(), '.gemini', appDataFlag) : null;
+const fileStorage = process.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE === '1' && process.env.FAKE_AGY_NO_FILE_MARKER !== '1';
+const tokenFile = fileStorage ? path.join(appDataDir ?? path.join(homeDir(), '.gemini', 'antigravity-cli'), 'antigravity-oauth-token') : null;
+const signedIn = () => Boolean(tokenFile ? fs.existsSync(tokenFile) : authFile && fs.existsSync(authFile));
+const authRequired = () => (process.env.FAKE_AGY_NEEDS_AUTH === '1' || Boolean(tokenFile)) && !signedIn();
+/** token のファイルの `remaining`（0〜1）。アカウントごとに使用量を変える試験用（無ければ既定の .9） */
+const tokenRemaining = () => { try { const v = JSON.parse(fs.readFileSync(tokenFile, 'utf8')).remaining; return typeof v === 'number' ? v : .9; } catch { return .9; } };
+let markerWritten = false;
+/** 本物が ログへ書く印（composite_token_storage.go）。env があり、古い版のふり（FAKE_AGY_NO_FILE_MARKER）でないときだけ書く */
+function writeFileMarker() {
+  if (markerWritten || !fileStorage) return;
+  markerWritten = true;
+  const logFile = flag('--log-file');
+  if (!logFile) return;
+  try { fs.appendFileSync(logFile, 'I0923 03:02:52.462073       1 composite_token_storage.go:42] Using file-based token storage because AGY_CLI_FORCE_FILE_TOKEN_STORAGE is set' + NL); } catch {}
+}
 
 if (flag('--print') === '/usage') {
-  if (process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn()) {
+  writeFileMarker();
+  if (authRequired()) {
     // 公式の headless 保証の形: 端末の無い環境で未認証なら「authentication required」で落ちる（OAuth を始めない）
     process.stderr.write("Error: authentication required. Run agy to sign in." + NL);
     process.exit(1);
@@ -93,7 +115,7 @@ if (flag('--print') === '/usage') {
   if (process.env.FAKE_AGY_USAGE_DELAY_MS) await new Promise(r => setTimeout(r, Number(process.env.FAKE_AGY_USAGE_DELAY_MS)));
   console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
     { name: 'Gemini Models', buckets: [
-      { window: 'weekly', remaining_fraction: .9, reset_time: '2030-09-23T06:31:30Z' },
+      { window: 'weekly', remaining_fraction: tokenFile ? tokenRemaining() : .9, reset_time: '2030-09-23T06:31:30Z' },
       { window: '5h', remaining_fraction: 1, reset_time: '2030-09-17T19:59:24Z' },
     ] },
     { name: 'Claude and GPT models', buckets: [{ window: '5h', remaining_fraction: 0 }] },
@@ -102,7 +124,7 @@ if (flag('--print') === '/usage') {
 }
 
 // 未ログインの再現（後半: authFile・signedIn は上の `/usage` 分岐より前に宣言してある）
-const needsAuth = process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn();
+const needsAuth = authRequired();
 let authorized = !needsAuth;
 
 // 身代わりのモデル（id と表示名）。`agy models` の一覧と、ACP の session/new が返す選択肢の元。
@@ -135,7 +157,7 @@ if (argv.includes("models")) {
     process.stderr.write("Error: agy internal failure while listing models https://accounts.example.invalid/" + NL);
     process.exit(1);
   }
-  if (process.env.FAKE_AGY_NEEDS_AUTH === "1" && !signedIn()) {
+  if (authRequired()) {
     process.stderr.write("Error: Please sign in to view available models. Launch the CLI without arguments to sign in." + NL);
     process.exit(1);
   }
@@ -143,6 +165,7 @@ if (argv.includes("models")) {
   const TAB = String.fromCharCode(9);
   process.stdout.write(["Fetching available models...", ...MODEL_ROWS().map(([id, name]) => id + TAB + name)].join(NL) + NL);
   writeDefaultLabelLog();
+  writeFileMarker();
   process.exit(0);
 }
 
@@ -366,9 +389,9 @@ const ACP_MODES = [
 const ACP_THOUGHT_LEVELS = ["low", "medium", "high"];
 const ACP_AUTH_METHODS = [
   { id: "oauth-personal", name: "Log in with Google", description: "Sign in with a Google account" },
+  { id: "oauth-business", name: "Log in with Google (Workspace)", description: "Sign in with a Google Workspace account" },
   { id: "gemini-api-key", name: "Gemini API key", description: "Use a Gemini API key" },
-  { id: "vertex-ai", name: "Vertex AI", description: "Use Vertex AI credentials" },
-  { id: "compute-default-credentials", name: "Application default credentials", description: "Use application default credentials" },
+  { id: "agent-platform", name: "Agent platform", description: "Use agent platform credentials" },
 ];
 const ACP_WINDOW = 1_000_000;
 const SIGNATURE_ERROR = "INVALID_ARGUMENT (code 400): Invalid thought signature.";
@@ -711,17 +734,27 @@ async function runAcp() {
     }),
     authenticate: async (params) => {
       if (!ACP_AUTH_METHODS.some((m) => m.id === params.methodId)) throw acpError(-32602, `Unknown auth method: ${params.methodId}`);
+      // ブラウザーでのログインを待つ再現（本物は開けなかったとき stderr に URL を出す）。FAKE_AGY_AUTH_HOLD_MS ミリ秒止まる
+      if (process.env.FAKE_AGY_AUTH_HOLD_MS) {
+        process.stderr.write('Could not open the browser. Please visit https://accounts.example.invalid/o/oauth2/auth?state=fake to sign in' + NL);
+        await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_AUTH_HOLD_MS)));
+      }
       authorized = true;
+      writeFileMarker();
+      // ファイル保存の資格情報（本物は暗号化されない JSON）。複数アカウントのログインはここへ残る
+      if (tokenFile) { try { fs.mkdirSync(path.dirname(tokenFile), { recursive: true }); fs.writeFileSync(tokenFile, JSON.stringify({ fake: true, method: params.methodId })); } catch {} }
       // 資格情報が残った、の印。次に起きるプロセス（`agy models` など）から見える
-      if (authFile) { try { fs.mkdirSync(path.dirname(authFile), { recursive: true }); fs.writeFileSync(authFile, "ok"); } catch {} }
+      else if (authFile) { try { fs.mkdirSync(path.dirname(authFile), { recursive: true }); fs.writeFileSync(authFile, "ok"); } catch {} }
       return {};
     },
     logout: async () => {
+      if (tokenFile) fs.rmSync(tokenFile, { force: true });
       if (authFile) fs.rmSync(authFile, { force: true });
       authorized = false;
       return {};
     },
     "session/new": async (params, ctx) => {
+      writeFileMarker();   // 本物は session/new を受けたところで印を書く（未ログインの -32000 でも書く）
       requireAuth();
       // 一覧が取れない agy の再現（本物は session/new の返事にモデルの一覧を載せる）
       if (process.env.FAKE_AGY_MODELS_FAIL === "1") throw acpError(-32603, "agy internal failure while listing models");

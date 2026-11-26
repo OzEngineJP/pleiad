@@ -929,6 +929,7 @@ const SUITES = [
   './unit/opencode-adopt.mjs',
   './unit/server-agent-account-restart.mjs',
   './unit/antigravity-accounts.mjs',
+  './unit/antigravity-account-login.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
   // 同じ設定の画面の差し替え（web/dom-patch.mjs）を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/dom-patch.mjs）
