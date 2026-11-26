@@ -480,7 +480,7 @@ button.conn-lost:hover{color:var(--ink)}
    歯車を押すと、脇のセッション一覧が設定メニューに、会話が選んだページに入れ替わる。
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
-body.settings > #sidebar > :is(.search,.botstrip,.fchips,.filter-outside,.res-head,.groups,#authNeed),
+body.settings > #sidebar > :is(.side-face,.search,.fchips,.filter-outside,.res-head,.groups,#authNeed),
 body.settings #notifBell,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。

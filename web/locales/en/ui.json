@@ -3868,7 +3868,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Quick chats › {{title}}",
+      "chat": "Chats › {{title}}",
       "remote": "Settings › Remote",
       "plus": "Settings › Pleiad Plus"
     },

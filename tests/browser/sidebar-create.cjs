@@ -1,10 +1,10 @@
 // playwright-cli -s=sidebar-create run-code --filename=tests/browser/sidebar-create.cjs
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7434・トークン sidebar-create）を開いてから実行する。
-// 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288）:
+// 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288・0359）:
 //   「チャンネル ＋」の ＋ で名前の欄が出て、Enter で本物の channels.create が作り、木に出てそのチャンネルが開く・同じ名前は欄の下に理由が出て字が残る・Esc で閉じて ＋ へ戻る・
 //   見出しの文字を押しても欄が出る・打った名前は絞り込みを掛けて外しても残る・欄の中でも Ctrl+Shift+O が効く・
 //   木のキーボードで「チャンネル」の見出しに来て Enter でも欄が出る・
-//   一時チャットの見出しの ＋（#newSession）は触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める・
+//   チャットの見出しの ＋（#newSession）は触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める・
 //   どちらも絞り込みの条件（エージェントが 1 つ・状態・作業場所）を newSession に引き継ぐ・入力中の字（IME の変換中）では始めない。
 async page => {
   const URL = 'http://127.0.0.1:7434/?token=sidebar-create';
@@ -40,6 +40,9 @@ async page => {
   await page.reload();
   await page.locator('#closeOnboarding').click({ timeout: 2000 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
+  // 「チャンネル ＋」は bot の面、新しいチャットの ＋ はチャットの面にある（ADR 0359）
+  const face = async which => { await page.locator(which === 'bot' ? '#faceChannels' : '#faceChats').click(); };
+  await face('bot');
   await page.locator('#csChannelsLabel').waitFor();
   const sent = command => page.evaluate(c => window.__sent.filter(m => m.command === c || m.args?.op === c), command);
 
@@ -90,10 +93,11 @@ async page => {
   await input.press('Escape');
 
   // ---- 新しいチャット: 見出しの ＋ と Ctrl+Shift+O。どちらも絞り込みを引き継ぐ
+  await face('chat');
   const newChat = page.locator('#newSession');
   await page.mouse.move(900, 400);
   const shownNew = await page.waitForFunction(() => { const n = document.getElementById('newSession'); return n?.closest('[data-side-key="chsec:home"]') && getComputedStyle(n).opacity === '1'; }, null, { timeout: 2000 }).then(() => true, () => false);
-  check(shownNew, '新しいチャットの ＋ は一時チャットの見出しにあり、触れなくても見える');
+  check(shownNew, '新しいチャットの ＋ はチャットの見出しにあり、触れなくても見える');
   check(await newChat.getAttribute('aria-keyshortcuts') === 'Control+Shift+O' && (await newChat.getAttribute('title')).includes('Ctrl+Shift+O'), '＋ の名前に近道 Ctrl+Shift+O が出る');
   check(await page.locator('#sidebar header #newSession').count() === 0, '頭の行にはもう ＋ が無い');
   const waitNew = async (before) => {
@@ -118,6 +122,7 @@ async page => {
   check((await sent('newSession')).length === before, '変換中の Ctrl+Shift+O では始めない');
 
   // 「チャンネル」の見出しは文字を押しても欄が出る。打った名前は絞り込みを掛けて外しても残り、欄の中でも Ctrl+Shift+O は効く
+  await face('bot');
   await label.locator('.cs-label-t').click();
   await input.waitFor();
   check(await input.evaluate(n => n === document.activeElement), '「チャンネル」の見出しの文字を押しても名前の欄が出る');
@@ -140,6 +145,7 @@ async page => {
   await page.evaluate(h => localStorage.setItem('agent-host-side', JSON.stringify({ filter: { backends: ['fake'], dir: h, status: '進行中' } })), home);
   await page.reload();
   await page.locator('#closeOnboarding').click({ timeout: 1000 }).catch(() => {});
+  await face('chat');
   await page.locator('#newSession').waitFor();
   check(await page.locator('#fchips .fchip').count() === 3, '絞り込みの札が 3 つ出る');
   check(await page.locator('#groups .cs-sec').count() === 0, '絞っている間はルーティンと「チャンネル ＋」を出さない');
@@ -159,9 +165,12 @@ async page => {
   await page.setViewportSize({ width: 360, height: 760 });
   await page.reload();
   await page.locator('#closeOnboarding').click({ timeout: 1000 }).catch(() => {});
-  if (!await page.locator('#csChannelsLabel').isVisible()) await page.locator('#openSidebar:visible, #chOpenSidebar:visible').first().click();
+  const drawer = async () => { if (!await page.locator('#sideFace').isVisible()) await page.locator('#openSidebar:visible, #chOpenSidebar:visible').first().click(); };
+  await drawer();
+  await face('bot');
+  await drawer();
   await page.locator('#csChannelsLabel').waitFor({ state: 'visible' });
-  check(await page.evaluate(() => { const s = document.getElementById('sidebar'); return s.scrollWidth <= s.clientWidth + 1 && document.getElementById('botStrip').scrollWidth <= document.getElementById('botStrip').clientWidth + 1; }), '360 幅でも脇と Bots の帯が横にはみ出さない');
+  check(await page.evaluate(() => { const s = document.getElementById('sidebar'); const f = document.getElementById('sideFace'); return s.scrollWidth <= s.clientWidth + 1 && f.scrollWidth <= f.clientWidth + 1; }), '360 幅でも脇と面の切り替えが横にはみ出さない');
   await shot('04-360');
   return { passed: true, results };
 }

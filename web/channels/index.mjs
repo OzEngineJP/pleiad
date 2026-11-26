@@ -57,7 +57,8 @@ export function setupChannels(host) {
   // ---- 部品の一覧。1 行 = 1 パッケージ。足すのは自分の行だけ（行の間を空けてあるのは、並列の変更が競合しないため）
 
   // W1 脇（タブはこの一覧の後で作るので、関数で渡す）
-  parts.push(createSidebar(host, () => tabs));
+  const sidebar = createSidebar(host, () => tabs);
+  parts.push(sidebar);
 
   // W2 チャンネルの流れ
   parts.push(createFeed(host));
@@ -72,9 +73,12 @@ export function setupChannels(host) {
   parts.push(createRoutineSheet(host));
 
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
+  // 面を切り替えたら、メインはその面で最後に開いたものへ戻る（ADR 0359）。bot の面で何も開いていなければ最初の bot の DM か初めての bot の段
+  let showing = false;   // show() の中の切り替え（開く先はその show が決める）
   const tabs = createSideTabs({ onChange: (tab) => {
     each('sideTabChanged', tab);
-    if (tab === 'channels') { if (lastView) host.noteView(lastView); } else host.noteChats?.();
+    if (tab === 'channels') { if (lastView) host.noteView(lastView); else if (!showing) sidebar.openDefault?.(); }
+    else host.noteChats?.();
   } });
   // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）
   document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
@@ -85,7 +89,7 @@ export function setupChannels(host) {
       each('onEvent', ev, replay);
       return CHANNEL_EVENTS.has(ev?.type);
     },
-    show(view) { tabs.set('channels'); each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
+    show(view) { showing = true; try { tabs.set('channels'); } finally { showing = false; } each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },
     sideTabChanged(tab) { each('sideTabChanged', tab); },
     /** 会話が増えた・動いた（一時チャットの流れを読み直す。web/channels/feed.mjs） */

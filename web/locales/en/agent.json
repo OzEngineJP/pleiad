@@ -843,7 +843,7 @@
       "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
       "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
       "sentMessages": { "summary": "Sent messages that Up recalls in the message box: the given conversation's first, then other conversations' (no bot or delegated ones), each newest first. The same text appears once, at its newest.", "sessionId": "The conversation to put first.", "shell": "When true, return the commands sent with !.", "limit": "How many to return (default 100, max 200)." },
-      "roots": { "summary": "Quick chats feed: conversations (no bot, delegated or unsent ones) newest first, each with its first message of yours and the message count.", "before": "Start from conversations that changed before this time (ms). The previous page's nextBefore.", "limit": "How many to return (default 30, max 100)." },
+      "roots": { "summary": "Chats feed:conversations (no bot, delegated or unsent ones) newest first, each with its first message of yours and the message count.", "before": "Start from conversations that changed before this time (ms). The previous page's nextBefore.", "limit": "How many to return (default 30, max 100)." },
       "search": {
         "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
         "query": "Search words. Spaces mean AND (each word may match the title, status, place or any message). A \"quoted\" phrase is one word and is case- and width-sensitive. Empty returns the filtered list.",

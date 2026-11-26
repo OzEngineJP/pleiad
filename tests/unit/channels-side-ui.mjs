@@ -36,12 +36,14 @@ export default function (t) {
   // ---- タブの点（見ていない側にだけ）
   const dots = (o) => tabDots({ channels: [], botStates: [], chats: {}, ...o });
   t.ok('Chats を見ていて bot があなた待ち → Channels に mark', dots({ tab: 'chats', botStates: ['idle', 'waiting'] }).channels === 'mark');
-  t.ok('あなた宛ての投稿も mark。未読だけなら unread', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark' && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === 'unread');
+  t.ok('あなた宛ての投稿も mark。作業中の bot は working、未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
+    && dots({ tab: 'chats', botStates: ['working'] }).channels === 'working' && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
   t.ok('アーカイブしたチャンネルの未読は数えない', dots({ tab: 'chats', channels: [{ unread: 3, mentions: 1, archivedAt: 1 }] }).channels === null);
   t.ok('見ている側には点を付けない', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === null
     && dots({ tab: 'channels', chats: { waiting: true } }).chats === 'mark');
-  t.ok('Chats 側: あなた待ちが先、未読だけなら unread、無ければ null', dots({ tab: 'channels', chats: { waiting: true, unread: true } }).chats === 'mark'
-    && dots({ tab: 'channels', chats: { unread: true } }).chats === 'unread' && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === null);
+  t.ok('チャット側: あなた待ちが先、作業中なら working、無ければ null', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
+    && dots({ tab: 'channels', chats: { running: true } }).chats === 'working' && dots({ tab: 'channels', chats: { unread: true } }).chats === null
+    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === null);
 
   // ---- 検索の行
   const rows = channelNameRows(channels, parseTerms('check'));
@@ -66,7 +68,7 @@ export default function (t) {
 
   // ---- 配線（文字列で）
   const index = read('web/channels/index.mjs');
-  t.ok('部品の一覧に脇が入っている（タブは関数で渡す。一覧の後で作られるため）', /parts\.push\(createSidebar\(host, \(\) => tabs\)\)/.test(index) && /from '\.\/sidebar\.mjs'/.test(index));
+  t.ok('部品の一覧に脇が入っている（タブは関数で渡す。一覧の後で作られるため）', /const sidebar = createSidebar\(host, \(\) => tabs\);\s*parts\.push\(sidebar\)/.test(index) && /from '\.\/sidebar\.mjs'/.test(index));
   const sidebar = read('web/channels/sidebar.mjs');
   t.ok('読むのは channels.list・bots.list・channels.search、作るのは channels.create（invoke だけ。新しい WS コマンドは足さない）',
     ['channels.list', 'bots.list', 'channels.search', 'channels.create'].every((op) => sidebar.includes(`invoke('${op}'`)) && !/host\.cmd\(/.test(sidebar));

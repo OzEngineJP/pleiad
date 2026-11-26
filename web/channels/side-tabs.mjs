@@ -8,6 +8,9 @@ export function createSideTabs({ onChange = () => {} } = {}) {
   const root = document.documentElement;
   const side = document.getElementById('channelsSide');
   const view = document.getElementById('channelsView');
+  const faceButtons = [...(document.getElementById('sideFace')?.querySelectorAll('[data-face]') ?? [])];
+  const marks = { chats: document.getElementById('faceChatsMark'), channels: document.getElementById('faceChannelsMark') };
+  const dotState = { chats: null, channels: null };
   // 会話の頭・筋・入力欄。Channels を見ている間はキーボードと読み上げを届かせない（設定の画面と同じ手。web/onboarding.mjs）
   const covered = () => [...(document.querySelector('body > main')?.children ?? [])].filter((n) => n.matches('.top, #logFrame, .composer'));
   let tab = 'chats';
@@ -21,6 +24,14 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     // 一時チャットの 2 枚並び（body.home-split）の間は、流れの右に会話の面が見えている（覆わない）
     for (const node of covered()) node.inert = on && !document.body.classList.contains('home-split');
     if (view) view.inert = !on;
+    for (const b of faceButtons) b.setAttribute('aria-pressed', String(b.dataset.face === tab));
+    for (const [name, mark] of Object.entries(marks)) {
+      if (!mark) continue;
+      const kind = name === tab ? null : dotState[name];
+      mark.hidden = !kind;
+      mark.className = `face-mark${kind ? ` ${kind}` : ''}`;
+      mark.textContent = kind === 'mark' ? '◆' : kind === 'working' ? '◌' : '';
+    }
   }
 
   function set(next) {
@@ -34,6 +45,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     }
   }
 
+  for (const b of faceButtons) b.addEventListener('click', () => set(b.dataset.face));
   // 新しい会話（web/client.mjs の onNew）・会話を開く・設定は Chats の側の操作で、それぞれが set('chats') で戻す
   paint();
 
@@ -42,7 +54,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     set,
     /** 塗り直す（一時チャットの 2 枚並びの出入りで、覆う範囲が替わったとき） */
     paint,
-    /** 札の点（札をやめたので何もしない。あなた待ち・未読は脇の行と通知の一覧が示す） */
-    setDot() {},
+    /** 見ていない面の印（kind: 'mark' = あなた待ち、'working' = 作業中、'unread' は今は区別しない） */
+    setDot(name, kind) { if (name in dotState) { dotState[name] = kind === 'mark' ? 'mark' : kind ? 'working' : null; paint(); } },
   };
 }

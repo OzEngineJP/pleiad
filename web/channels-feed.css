@@ -213,6 +213,8 @@
 }
 @media (prefers-reduced-motion:reduce){.post.enter{animation:none}}
 .bot-face-icon{background:transparent}
+/* 置き場の大きさの決まりが無い所では、形の大きさ（16・20・32。bot-icon.mjs が --face-px に置く）。:where で、置き場の幅の決まりが勝つ */
+:where(.bot-face-icon){flex:none;display:inline-grid;place-items:center;width:var(--face-px,20px);height:var(--face-px,20px)}
 .bot-face-svg{display:block;width:100%;height:100%}
 .bot-icon-image{display:block;width:100%;height:100%;max-width:256px;max-height:256px;object-fit:cover;border-radius:inherit}
 .bot-icon-initial{color:var(--ink-weak);font-weight:500}

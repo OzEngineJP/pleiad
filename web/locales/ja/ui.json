@@ -3765,7 +3765,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}",
+      "chat": "チャット › {{title}}",
       "remote": "設定 › リモート",
       "plus": "設定 › Pleiad Plus"
     },

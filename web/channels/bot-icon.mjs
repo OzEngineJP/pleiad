@@ -28,7 +28,7 @@ export const botColorVar = (bot) => `var(--bc${botColorIndex(bot)})`;
 
 const inferVariant = (className) => {
   const c = String(className ?? '');
-  if (/\bmention-av\b|\bav xs\b|\bts-bot-icon\b|\bsrc-bot-icon\b|\bbt-menu-av\b|\bth-band-icon\b/.test(c)) return 16;
+  if (/\bmention-av\b|\bav xs\b|\bts-bot-icon\b|\bsrc-bot-icon\b|\bth-band-icon\b/.test(c)) return 16;
   if (/\bbot-row-icon\b|\bch-av\b|\bch-hash\b/.test(c)) return 20;
   return 32;
 };
@@ -38,7 +38,9 @@ export function botIcon(bot, className, variant = null) {
   const root = el('span', className);
   root.classList.add('bot-face-icon');
   root.style.setProperty('--bot-color', botColorVar(bot));
-  const face = FACES[variant ?? inferVariant(className)] ?? FACES[32];
+  const size = FACES[variant] ? variant : inferVariant(className);
+  const face = FACES[size];
+  root.style.setProperty('--face-px', `${size}px`);
   const svg = svgEl('svg', { class: 'bot-face-svg', viewBox: face.viewBox, 'aria-hidden': 'true', focusable: 'false' });
   svg.append(
     svgEl('path', { fill: 'var(--bot-color, #5665CD)', d: face.body }),
