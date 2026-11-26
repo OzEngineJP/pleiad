@@ -23,23 +23,6 @@ export function modeAfterBackend(modes, current) {
   return validMode(modes, current);
 }
 
-/** トークン数の短い書き方: 1.42M・312k・980 */
-export function tokensText(n) {
-  const v = Number(n) || 0;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2).replace(/0$/, '')}M`;
-  if (v >= 10_000) return `${Math.round(v / 1000)}k`;
-  if (v >= 1000) return `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(Math.round(v));
-}
-
-/** 今週の使用量の行の材料。cacheRatio は 0〜1 か null（読み出しが無い・分からない）。9 割を切ったら注意（提案 2.4） */
-export function usageView(usage) {
-  const tokens = Number(usage?.weekTokens) || 0;
-  const ratio = usage?.cacheRatio;
-  const cache = typeof ratio === 'number' && Number.isFinite(ratio) ? Math.round(ratio * 100) : null;
-  return { tokens: tokensText(tokens), cache, warn: cache != null && cache < 90, empty: tokens === 0 };
-}
-
 /** 「M/D」。今日は null を返す（呼び出し側が「今日」と書く） */
 export function shortDate(at, now = Date.now()) {
   const d = new Date(at);

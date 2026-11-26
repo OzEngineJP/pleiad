@@ -3193,7 +3193,7 @@ async function usageAccounts(backendId = 'claude') {
 }
 
 /**
- * プロバイダーの使用枠。設定の画面（providerUsage）・エージェント（ply_usage）・委譲の監視・チャンネルの予算が
+ * プロバイダーの使用枠。設定の画面（providerUsage）・エージェント（ply_usage）・委譲の監視が
  * 同じ quotaStore を通すので、どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
  */
 async function providerQuota(backend, { force = false } = {}) {
@@ -8975,8 +8975,6 @@ botHost = createBotHost({
     await store.removeSession(id);
     return true;
   },
-  // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaStore を通す
-  readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
   // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
   accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
   // bot の互換の接続先（bots.setAccount。ADR 0359）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
@@ -9880,7 +9878,6 @@ function heldTurnCard(ctx) {
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null,
     botLiveSteers: botHost?.liveSteersFor?.(turn.info.sessionId) ?? [],
     botItemIds: botHost?.itemIdsFor?.(turn.info.sessionId) ?? [],
-    botCredited: botHost?.creditedFor?.(turn.info.sessionId) ?? null,
     botCallers: botHost?.callersFor?.(turn.info.sessionId) ?? [] });
 }
 

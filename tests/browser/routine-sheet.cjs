@@ -313,15 +313,19 @@ async page => {
   await sheet.waitFor({ state: 'hidden' });
   check(await page.locator('#groups .cs-row', { hasText: '夜の失敗の見回り' }).count() === 0, '別の所で消されたら、開いているシートも閉じて脇からも消える');
 
-  // ---- bot のページの「ルーティン」の節
+  // ---- bot のページの畳んだ行「ルーティン」（ADR 0358。説明文は置かず、右に「なし」「n 件」）
   await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'b_lynx' } })));
   await page.waitForSelector('#botView:not([hidden]) #botRoutines:not([hidden])');
   const botRows = await page.locator('#botRoutines .bp-rt .bp-rt-name').allTextContents();
-  check(botRows.join() === '', 'bot のページには、その bot のルーティンだけ（今は Lynx のものは作っていない）→ 空の案内');
+  check(botRows.join() === '', 'bot のページには、その bot のルーティンだけ（今は Lynx のものは作っていない）');
+  check(await page.locator('#botRoutines').evaluate(d => d.tagName === 'DETAILS' && !d.open && d.parentElement.id === 'botRoutinesSlot') && await page.locator('#botRoutines .bp-frow-v').textContent() === 'なし', 'ルーティンは畳んだ行（閉じていて右に「なし」）');
   await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'b_owl' } })));
   await page.waitForFunction(() => document.querySelectorAll('#botRoutines .bp-rt').length >= 2);
   const owlRows = await page.locator('#botRoutines .bp-rt .bp-rt-name').allTextContents();
   check(owlRows.includes('週次のまとめ') && owlRows.includes('依存の更新'), 'Owl のページに Owl のルーティンが並ぶ');
+  check(await page.locator('#botRoutines .bp-frow-v').textContent() === `${owlRows.length} 件` && await page.locator('#botRoutines').evaluate(d => !d.open), '閉じた行の右に件数が出る');
+  await page.locator('#botRoutines > summary').click();
+  check(await page.locator('#botRoutines .bp-rt').first().isVisible(), '行を開くとルーティンの一覧が出る');
   await shot('09-bot-page');
   await page.locator('#botRoutines .bp-rt', { hasText: '週次のまとめ' }).click();
   await sheet.waitFor({ state: 'visible' });
@@ -335,7 +339,7 @@ async page => {
   await sheet.waitFor({ state: 'hidden' });
   await page.evaluate(() => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id: 'new' } })));
   await page.waitForSelector('#botView.is-new');
-  check(await page.locator('#botRoutines').isHidden(), '作る画面（bot がまだ無い）にはルーティンの節を出さない');
+  check(await page.locator('#botRoutines').isHidden(), '作る画面（bot がまだ無い）にはルーティンの行を出さない');
   // 同じチャンネルへ戻る前に別のチャンネルを挟む（同じチャンネルへ戻ると見出しが空のままになる既知の挙動は feed.mjs の持ち主へ）
   const other = await rpc('channels.create', { name: 'other' + String(Date.now()).slice(-5) });
   await showChannel(other.id);

@@ -9,7 +9,7 @@
 //       heardTo = 聞こえた投稿が誰との話の続きか（bot の id。包みに to="<bot の名前>"。heard のときだけ。ADR 0128 の追記）
 //       reaction = bot の投稿（postId）に付いたリアクション { emoji, by: Author, byKey, at, quiet? }。quiet なら配らず、次に起きたときに一緒に渡す（ADR 0109 の追記）
 //       caller = 起こした投稿を書いた bot の id（その会話のターンが終わったとき返事を返す相手）、reply = 呼んだ bot への返事として届ける投稿を書いた bot の id、
-//       inner = 自分の心拍から起きた出来事（postId は null。{ why, text, actSeq?, homeChannelId, taint? }。途中送信せず、新しいターンで <pleiad-inner> として渡す。ADR 0126）
+//       inner = 自分の心拍から起きた出来事（postId は null。{ why, text, actSeq?, taint? }。途中送信せず、新しいターンで <pleiad-inner> として渡す。ADR 0126）
 //     list({ sessionId?, status?, channelId?, threadId? }): Promise<InboxItem[]>      … 保存順
 //     mark(ids, status, extra?): Promise<InboxItem[]>                                  … 変わったもの
 //     remove(ids): Promise<number>

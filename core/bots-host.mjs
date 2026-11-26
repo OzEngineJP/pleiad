@@ -6,7 +6,6 @@
 //     store, dataDir, usageStore, sessionSearch, runtime（走っているターンの表）, outbox（人の送信待ち）,
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
-//     readQuota(backendId)（使用枠。チャンネルの予算が使う。ADR 0119）、
 //     accountList(backendId)（そのエージェントに登録したアカウント [{ id, name, ready }]。bots.setAccount の検査が使う。ADR 0224）、
 //     endpointHas(backendId, id)（そのエージェントに登録した互換の接続先か。bots.setAccount の検査）・endpointRow(id)（一覧の行。キー無し。段の確かめ）・
 //     endpointResolve(id, backendId)（キー付きで引く。引けなければ投げる。心拍の内部呼出しが使う）（ADR 0359）、
@@ -15,7 +14,7 @@
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //
 //   BotHost（server.mjs のつなぎ目。どれも例外を外へ出さない。bot の会話でなければ何もしない）:
-//     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, wakes, routines, botOfSession, wake, threadBudget }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
+//     opsDeps(): { channels, bots, memory, memoryLearner, brain, pulse, wakes, routines, botOfSession, wake }   … opsDeps() に足す。ops の handler が ctx.channels などで呼ぶ。
 //                       brain は bot の頭の中の保存（思考の流れ・気がかり。core/brain/store.mjs）、pulse は心拍（core/brain/pulse.mjs。ADR 0126）、
 //                       wakes は bot が自分で決めた時刻に起きる予約（core/brain/wakes.mjs。ADR 0140）
 //                       memoryLearner は夜の整理（core/memory/learn.mjs）。memory.learnStatus が status() を呼ぶ
@@ -117,12 +116,12 @@ export function createBotHost(deps) {
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）
   learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
   // ---- 心拍（bot ごとの設定で既定は OFF。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS・AGENT_HOST_PULSE_EVERY_MS は開発中の確かめ用で、間隔の下限・確かめる間隔・既定の間隔を縮める。docs/dev-verification.md）
-  pulse = createPulse({ dataDir, brain, channels, bots, host, budget: dispatch.budget, dispatch, memory, clock: routinesClock,
+  pulse = createPulse({ dataDir, brain, channels, bots, host, dispatch, memory, clock: routinesClock,
     ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
   // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0140）
-  wakes = createWakes({ dataDir, channels, bots, dispatch, budget: dispatch.budget, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  wakes = createWakes({ dataDir, channels, bots, dispatch, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
   host.botRoutines = () => routines.list();
@@ -153,7 +152,7 @@ export function createBotHost(deps) {
   return {
     withPost,
     acquireBot: (botId) => bots.acquire(botId),
-    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }), threadBudget: guard('threadBudget', (args) => dispatch.threadBudget(args), null),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }),
       // スレッドの bot の会話の設定（channels.threadSettings）。失敗は呼び出し側へ返す（画面が理由を出す）
       threadSettings: (args) => withPost(args, { kind: 'human' }, () => dispatch.threadSettings(args)),
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
@@ -175,7 +174,6 @@ export function createBotHost(deps) {
     restoreTurn: guard('restoreTurn', (turn, card) => dispatch.restoreTurn(turn, card), false),
     liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
     itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
-    creditedFor: (sessionId) => dispatch.creditedFor(sessionId),
     callersFor: (sessionId) => dispatch.callersFor(sessionId),
     onTurnEvent: guard('onTurnEvent', (turn, event, options) => dispatch.onTurnEvent(turn, event, options)),
     onTurnReplayEnd: guard('onTurnReplayEnd', (turn) => dispatch.onTurnReplayEnd(turn)),

@@ -2,6 +2,7 @@
 
 - 状態: 提案
 - [ADR 0126](0126-bot-pulse-and-stream.md)（心拍）の「予約した時刻」を、心拍を入れていない bot にも使える 1 回きりの予約として外に出す。起こし方は [ADR 0126](0126-bot-pulse-and-stream.md) の引き継ぎ、予算は [ADR 0119](0119-channel-budget-and-resting.md)、取りこぼしの決まりは [ADR 0112](0112-routines.md) に合わせる
+- 改めた: [0357](0357-remove-bot-usage-mechanism.md)（予約の予算。使用量の仕組みごと無くなった）
 
 ## 状況
 

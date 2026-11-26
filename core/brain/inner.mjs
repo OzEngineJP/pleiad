@@ -5,7 +5,7 @@
 //   innerTail({ locale, now, stream, loops, maxTokens }) → string | null
 //       … 呼ばれたターンの末尾に足す文（`<pleiad-inner kind="tail">` の中身）。流れの末尾（新しい行から TAIL_TOKENS まで）と、開いている気がかり。空なら null
 //   handoffText({ locale, now, why, stream, loops, taintOnly }) → string   … 賢いモデルへの引き継ぎ（`<pleiad-inner kind="pulse">` の中身）
-//   beatPrompt({ bot, locale, now, gate, drives, events, stream, loops, budget, related, minMin, maxMin }) → string
+//   beatPrompt({ bot, locale, now, gate, drives, events, stream, loops, related, minMin, maxMin }) → string
 //       … 安いモデルへ聞く束（英語の指示 + JSON だけを返させる）。作業記憶 3〜4k トークンに収める
 //   findLeaks(rows, text, min) → rows   … 思考の流れの行のうち、text（投稿）に min 字以上そのまま写っているもの。朝の突き合わせ
 import { agentT } from '../i18n.mjs';
@@ -114,7 +114,7 @@ const eventLine = (e, now) => `- [${whenOf(e.at, now)}] ${e.channelName ? `#${e.
   + `${Number.isFinite(e.answeredAt) ? ` (answered by you at ${whenOf(e.answeredAt, now)})` : ''}${e.taint ? ' (untrusted: from outside)' : ''}: ${clip(e.text, 160)}`;
 
 /** 安いモデルへ聞く束。指示は英語（夜の整理と同じ。返事は JSON だけ・道具は使わない）。活動の要約は bot の言語 */
-export function beatPrompt({ bot, locale, now, gate, drives, events = [], stream = [], loops = [], budget = null, related = [], minMin = 5, maxMin = 60 }) {
+export function beatPrompt({ bot, locale, now, gate, drives, events = [], stream = [], loops = [], related = [], minMin = 5, maxMin = 60 }) {
   ({ stream, loops } = workNotesContext({ stream, loops }));
   const lines = [
     '<pleiad-pulse>',
@@ -128,7 +128,6 @@ export function beatPrompt({ bot, locale, now, gate, drives, events = [], stream
     `Now: ${whenOf(now, now)} (${new Date(now).toISOString()}). Why you woke: ${gate.reason}${gate.detail ? ` (${gate.detail})` : ''}.`,
     `Drives (0-1, computed by code): curiosity ${pct(drives.curiosity)}, anxiety ${pct(drives.anxiety)}, loneliness ${pct(drives.loneliness)}, fatigue ${pct(drives.fatigue)}.`,
   ];
-  if (budget) lines.push(`Budget: ${budget.known === false ? 'unknown' : `${pct(budget.channel)}% of today's channel budget left`}. Wake the smart model only when it is worth it.`);
   const head = lines.join('\n');
   // 材料は新しい方から入れる。束に収まらなければ古いものを捨てる
   let left = BUNDLE_TOKENS - estimateTokens(head);

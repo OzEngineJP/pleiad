@@ -80,9 +80,16 @@ export function badgeState({ unread = 0, waiting = 0 } = {}, t) {
   return { text, wait, label, show: Boolean(n || wait) };
 }
 
-/** 行を押したときに開く先。設定 › Pleiad Plus の通知は、届いた変更（syncInbox）だけ「届いた変更」の面（pane: 'inbox'）、ほかは Plus の面 */
+/**
+ * 行を押したときに開く先。設定 › Pleiad Plus の通知は、届いた変更（syncInbox）だけ「届いた変更」の面（pane: 'inbox'）、ほかは Plus の面。
+ * bot の返事の失敗は、bot の中の会話（sessionId）でなく、失敗した返事のあるスレッド・DM（channelId・threadId・postId）を開く
+ */
 export function notificationTarget(n) {
   const target = n?.target ?? {};
+  if (n?.kind === 'failed' && target.channelId && target.channelId !== 'home') {
+    const { sessionId, uuid, ...place } = target;
+    return place;
+  }
   return target.settings === 'plus' && n.ask === 'syncInbox' ? { ...target, pane: 'inbox' } : target;
 }
 

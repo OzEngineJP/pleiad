@@ -32,7 +32,7 @@ import { modePosition, scopeRank } from '../modes.mjs';
 import { folderKey } from './store.mjs';
 import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
-/** bot の名前・本人の人格・操作の要点・予算の残りの届き方。区切りは空行 1 つ、末尾の改行なし */
+/** bot の名前・本人の人格・操作の要点。区切りは空行 1 つ、末尾の改行なし */
 export function botInstructions(bot, locale) {
   const persona = bot?.plain ? '' : String(bot?.persona ?? '').replace(/\r\n/g, '\n').trim();
   return [
@@ -41,8 +41,6 @@ export function botInstructions(bot, locale) {
     persona || null,
     // 組み込みの bot（bot なし）は記憶・予約を持たない（memory.write・brain.* を断る）。道具の文もそれを書かない
     bot?.plain ? agentT(locale, 'guide.bot.plainTools') : agentT(locale, 'guide.bot.tools'),
-    // 黙る自由（ADR 0119）: 文章を書かずに終えたターンは投稿を残さない（core/bots/dispatch.mjs の finalizePost）
-    agentT(locale, 'guide.bot.quiet'),
     // @ の無い人の投稿は、スレッドのほかの bot にも聞こえた投稿として届く（ADR 0128）。答えるかは bot が決める
     agentT(locale, 'guide.bot.heard'),
     // 黙るときの書き方（ADR 0119 の追記）: 文章なしか、印 [[no-reply]] だけ。印・括弧だけの一言は投稿しない（core/bots/silence.mjs）
@@ -111,11 +109,12 @@ const takesAccount = (backend) => Boolean(backend?.capabilities?.accounts);
 /** その backend の会話に bot の互換の接続先を写すか（接続先を選べる backend だけ。capabilities.compatEndpoints） */
 const takesEndpoint = (backend) => Boolean(backend?.capabilities?.compatEndpoints);
 
-/** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」） */
+/** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」、DM のスレッドは「🦉 Owl › <根の投稿の頭>」） */
 export function sessionTitle(bot, channel, rootText) {
   const who = bot.icon ? `${bot.icon} ${bot.name}` : bot.name;
-  if (!channel || channel.kind === 'dm') return who;
+  if (!channel) return who;
   const head = clip(rootText, 40);
+  if (channel.kind === 'dm') return head ? `${who} › ${head}` : who;   // DM の会話は題が bot の名前だけ。DM のスレッドの会話は根の投稿の頭を付けて見分ける
   return `${who} · #${channel.name}${head ? ` › ${head}` : ''}`;
 }
 

@@ -16,6 +16,7 @@
 //     showMenu(x, y, items, title)  … 右クリックのメニュー（web/context-menu.mjs と同じ見え方）
 //     renderAssistantMarkdown(text, refs?)・renderPresent(ev)  … web/render.mjs
 //     side                          … web/side.mjs の返り（Chats の脇。行の描き方・バックエンドのロゴ）
+//     todo(o)                       … ToDo の部品（web/session-todo.mjs の createSessionTodo を client.mjs の道具つきで作る）。o = { host, header, entry, narrow, openTask, moreButton? }。スレッドと DM の頭が使う
 //     t                             … 訳（'channels:feed.empty' のように名前空間を付ける）
 //
 //   部品（part）: { onEvent?(ev, replay): void, show?(view): void, hide?(): void, sideTabChanged?(tab): void, contextForPanel?(anchor): { sessionId, at } | null,
@@ -67,7 +68,7 @@ export function setupChannels(host) {
   // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
   parts.push(createBotPage(host));
 
-  // W5 ルーティンの編集（P2。document の channels:routine で開く。bot のページに「ルーティン」の節を足す）
+  // W5 ルーティンの編集（P2。document の channels:routine で開く。bot のページに畳んだ行「ルーティン」を足す）
   parts.push(createRoutineSheet(host));
 
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
@@ -93,6 +94,8 @@ export function setupChannels(host) {
     connChanged() { each('connChanged'); },
     /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
     schedulesChanged() { each('schedulesChanged'); },
+    /** WS が戻った（スレッド・DM の ToDo を読み直す。web/channels/thread.mjs・feed.mjs） */
+    reconnected() { each('reconnected'); },
     /** 脇のルーティンの見出しを開く（閉じたレールの時計から。web/channels/sidebar.mjs） */
     openRoutines() { each('openRoutines'); },
     /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */

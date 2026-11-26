@@ -4,7 +4,7 @@
 // 操作はすべて routines.* を host.invoke で呼ぶ（新しい WS コマンドは足さない）。一覧は routine-store.mjs。出来事 routinesChanged で脇・見出し・bot のページが更新される。
 //
 // 開く入口: document の channels:routine（detail: { routineId } で編集 / { channelId?, botId? } で新規）。入口の部品は routine-entry.mjs。
-// 部品の口（web/channels/index.mjs）: onEvent(ev)・show(view)。show は bot のページへ「ルーティン」の節を差し込む（bot-page.mjs には触らない）。
+// 部品の口（web/channels/index.mjs）: onEvent(ev)・show(view)。show は bot のページの畳んだ行の置き場（#botRoutinesSlot）へ「ルーティン」の行を差し込む。
 //
 // ［試しに動かす］は保存してある内容で走る（routines.run { dryRun: true } は routineId を取る）。新しい下書きは、一時停止のまま作ってから走らせ、
 // 取り消すと消す（作るを押したら再開）。保存済みのルーティンは、直した内容を先に保存してから走らせる。
@@ -57,13 +57,13 @@ export function createRoutineSheet(host) {
   }
   document.addEventListener('channels:routine', (e) => open(e.detail ?? {}));
 
-  // ---- bot のページに「ルーティン」の節を差し込む（bot-page.mjs が持つ #botView の左の列の末尾）
+  // ---- bot のページに畳んだ行「ルーティン」を差し込む（bot-page.mjs が畳んだ行の並びの 2 番目に用意した置き場 #botRoutinesSlot）
   const block = botBlock(host);
   let channelsById = new Map();
   async function mountBlock(botId) {
-    const left = document.querySelector('#botView .bp-grid > .bp-col');
-    if (!left) return;
-    if (block.el.parentNode !== left) left.append(block.el);
+    const slot = document.getElementById('botRoutinesSlot');
+    if (!slot) return;
+    if (block.el.parentNode !== slot) slot.append(block.el);
     block.setBot(botId === 'new' ? null : botId, channelsById);
     try {
       const r = await host.invoke('channels.list', {});

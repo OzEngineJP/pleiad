@@ -8849,12 +8849,22 @@ const channelsUi = setupChannels({
     watch: (ids) => watchSessions(ids),
     items: (scope) => backgroundItems(scope).filter(i => i.group === 'agent'),
     subscribe: (fn) => { watched.listeners.add(fn); return () => watched.listeners.delete(fn); },
-    open: (scope) => openWork(undefined, scope),
+    open: (scope, key) => openWork(key, scope),
     link: (card, input, result, ctx) => linkDelegateCard(card, input, result, ctx),
     mount: (root, scope) => { channelRoots.set(root, scope); },
     paint: () => paintDelegateCards(),
   },
   openSidebar: () => setSidebar(true),
+  // ToDo（スレッド・DM の頭。web/channels/thread.mjs・feed.mjs）: Chats の会話と同じ部品を、頭・面・入口だけ替えて作る。道具は後から読む（この下の定義より先に呼ばれるので、関数で包む）
+  todo: (o) => {
+    const inst = createSessionTodo({
+      ...o,
+      cmd: (command, args) => cmd(command, args), notify: (text) => notify(text), labelOf: (backend) => labelOf(backend), logo: (backend) => backendLogo(backend, ''),
+      openLink: (link) => (link.kind === 'url' ? openExternalLink(link.url) : filePreview.open({ path: link.path, line: null }, null)),
+      linkMenu: (x, y, link, missing) => filePreview.menu(x, y, { path: link.path, kind: link.kind === 'dir' ? 'directory' : 'file', sessionId: inst.sessionId(), missing }),
+    });
+    return inst;
+  },
   // スレッドの `!` の行（宛先の bot の会話のシェル）。Chats の行と同じ部品で、出力・終わりは onShellEvent が描き直す
   shellRow: (m) => commandMsg(m),
   showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
@@ -11232,6 +11242,7 @@ function connect() {
       notificationInbox.reconnected();
       // 同じ会話を開いたままでも、切れたときに受け取れなかった ToDo の一覧を取り直す
       sessionTodo.reconnected();
+      channelsUi.reconnected();   // スレッド・DM の ToDo も同じ
       presenceReporter.reset();
       presenceReporter.report(true);
       modalPresence.reset();

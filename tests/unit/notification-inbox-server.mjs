@@ -121,6 +121,14 @@ export default async function (t) {
     await call('channels.markRead', { channelId: dev.id, at: Date.now() });
     t.ok('チャンネルを既読にすると、その通知も既読になる', (await until(async () => (await list({ filter: 'mention' })).items.find((x) => x.id === mention.id && x.unread === false), { label: '既読' })) !== null);
 
+    // ---- bot の返事の失敗（ADR 0358）: 通知は、bot の中の会話でなく、失敗した返事のあるスレッドと返事の投稿を指す
+    const rootFail = await call('channels.post', { channelId: dev.id, text: '@Owl fail' });
+    const botFail = await until(async () => (await list()).items.find((x) => x.kind === 'failed' && x.target.channelId === dev.id), { ms: 20_000, label: 'bot の失敗の通知' });
+    const failedPosts = (await call('channels.read', { channelId: dev.id, threadId: rootFail.id })).posts.filter((p) => p.state === 'failed' && p.turn);
+    t.ok('bot の返事の失敗の通知は、元のスレッドと失敗した返事の投稿を指す（書いた bot つき・未読）',
+      botFail.target.threadId === rootFail.id && failedPosts.length === 1 && botFail.target.postId === failedPosts[0].id && botFail.actor?.name === 'Owl' && botFail.unread === true,
+      JSON.stringify([botFail, failedPosts.map((p) => p.id)]));
+
     // ---- 再起動
     const ids = (await list({ limit: 100 })).items.map((x) => x.id).join();
     await server.stop();

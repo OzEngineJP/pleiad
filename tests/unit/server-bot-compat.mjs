@@ -99,8 +99,9 @@ export default async function (t) {
     await call('channels.post', { channelId: owl.dmChannelId, text: 'after delete' });
     await sleep(1500);
     const afterDelete = await turnsAfter(before);
-    const refusal = (await readChannel(owl.dmChannelId)).posts.filter((p) => p.author.kind === 'system').at(-1)?.text ?? '';
-    t.ok('接続先を消した bot の会話は、公式へ黙って戻さず送信を止め、選び直しを求める', afterDelete.length === 0 && refusal.includes('削除されています'), `${afterDelete.length} turns / ${refusal}`);
+    const failedPost = (await readChannel(owl.dmChannelId)).posts.filter((p) => p.state === 'failed').at(-1);
+    const refusal = failedPost?.failure ?? failedPost?.text ?? '';
+    t.ok('接続先を消した bot の会話は、公式へ黙って戻さず送信を止め、選び直しを求める', afterDelete.length === 0 && failedPost?.author.kind === 'bot' && refusal.includes('削除されています'), `${afterDelete.length} turns / ${refusal}`);
     before = (await turns()).length;
     const failedRun = await call('routines.run', { routineId: routine.id }).catch((e) => ({ state: 'failed', error: e.message }));
     await sleep(1000);

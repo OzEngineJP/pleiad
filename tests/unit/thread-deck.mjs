@@ -1,12 +1,12 @@
-// スレッドと空間モデル（W3）の、画面を持たない判定: 窓の状態（feed・split・solo）・スレッドの題とトークンの文言・道具の呼び出しを引く範囲・配線。
+// スレッドと空間モデル（W3）の、画面を持たない判定: 窓の状態（feed・split・solo）・スレッドの題の文言・道具の呼び出しを引く範囲・配線。
 // 描画・動き・スクロールと下書きの保持・承認のカードは tests/browser/thread-deck.cjs（実ブラウザー）。
 import { readFileSync } from 'node:fs';
 import { deckState, SOLO_BELOW } from '../../web/channels/deck.mjs';
-import { titleOf, tokensText } from '../../web/channels/thread.mjs';
+import { titleOf } from '../../web/channels/thread.mjs';
 import { turnWindows, callsInWindow, logInWindow, signatureOf } from '../../web/channels/thread-tools.mjs';
 
 export const name = 'thread-deck';
-export const title = 'スレッドと空間モデル: 窓の状態の判定（右パネル・幅）・題とトークンの文言・道具の呼び出しの範囲・配線';
+export const title = 'スレッドと空間モデル: 窓の状態の判定（右パネル・幅）・題の文言・道具の呼び出しの範囲・配線';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
@@ -20,13 +20,11 @@ export default function (t) {
   t.ok('メインの幅が 900px 未満なら、右パネルが閉じていても solo（スレッドだけ全幅）', SOLO_BELOW === 900
     && deckState({ hasThread: true, panelOpen: false, width: 899 }) === 'solo' && deckState({ hasThread: true, panelOpen: false, width: 360 }) === 'solo');
 
-  // ---- スレッドの題・トークンの数
+  // ---- スレッドの題
   t.ok('題は根の投稿の最初の行。先頭の @ の呼びかけは外す', titleOf({ text: '@Owl v2.14.0 から p95 が上がってる\n詳しくは…' }) === 'v2.14.0 から p95 が上がってる'
     && titleOf({ text: '\n\n@Owl @Lynx 二人で見て' }) === '二人で見て');
   t.ok('@ だけの投稿は @ のまま（空にしない）・長い題は 120 字まで・投稿が無ければ空', titleOf({ text: '@Owl' }) === '@Owl'
     && titleOf({ text: 'あ'.repeat(300) }).length === 120 && titleOf(undefined) === '');
-  t.ok('トークンは 1000 未満はそのまま、以上は k（小数 1 桁。100k からは整数）', tokensText(0) === '0' && tokensText(999) === '999' && tokensText(1200) === '1.2k'
-    && tokensText(12345) === '12.3k' && tokensText(1000) === '1k' && tokensText(123456) === '123k' && tokensText(-5) === '0' && tokensText(undefined) === '0');
 
   // ---- 道具の呼び出しを引く範囲: 同じ会話の次のターンの投稿の at まで
   const turn = (id, sessionId, at, extra = {}) => ({ id, threadId: 'p_root', author: { kind: 'bot', botId: 'b_1' }, text: '…', at, turn: { botId: 'b_1', sessionId }, ...extra });

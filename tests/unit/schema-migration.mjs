@@ -285,9 +285,9 @@ export default async function (t) {
       const threads = createThreadStore({ dir: path.join(dir, 'channels') });
       try {
         const listed = await threads.list('c_aaaaaaaa');
-        t.ok('移行したスレッドの状態を、今のスレッドの部品（createThreadStore）が読める（会話・トークン・止めた印・起こした元が残る）', listed.length === 2
+        t.ok('移行したスレッドの状態を、今のスレッドの部品（createThreadStore）が読める（会話・起こした回数・止めた印・起こした元が残る）', listed.length === 2
           && listed.find(th => th.threadId === 'p_11111111')?.sessions.b_lynx === 's-lynx-1' && listed.find(th => th.threadId === 'p_22222222')?.stopped?.at === 1790000001000
-          && listed.find(th => th.threadId === 'p_22222222')?.origin?.threadId === 'p_11111111' && (await threads.get('c_aaaaaaaa', 'p_11111111')).tokens.input === 1200);
+          && listed.find(th => th.threadId === 'p_22222222')?.origin?.threadId === 'p_11111111' && (await threads.get('c_aaaaaaaa', 'p_11111111')).calls === 4);
       } finally { await threads.close(); }
       t.ok('2 回目の起動では移行しない（写しも増えない）', (await ensureDataSchema(dir)) === null && (await backups(dir)).length === 1);
 

@@ -2,6 +2,7 @@
 
 - 状態: 提案
 - [ADR 0109](0109-bot-and-dispatch.md)（bot を起こす道）と [ADR 0110](0110-bot-memory.md)（記憶）に足す。[ADR 0119](0119-channel-budget-and-resting.md)（予算）を、自発の分にも広げる
+- 改めた: [0357](0357-remove-bot-usage-mechanism.md)（心拍の予算と bot ごとの 1 日のトークンの上限。使用量の仕組みごと無くなった）
 
 ## 状況
 

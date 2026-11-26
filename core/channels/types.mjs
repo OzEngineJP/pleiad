@@ -26,7 +26,6 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   purpose: string, cwd: string|null,                    // 既定の作業フォルダー
  *   members: string[],                                    // botId の並び（あなたは常に居る）
  *   memo: string,                                         // 「ここでの決まり」
- *   budget?: { daily: number|null, perThread: number },   // 予算（ADR 0119。core/channels/budget.mjs）。無ければ既定。daily = 1 日の予算（週の使用枠に対する %。null は予算なし）、perThread = 1 スレッドの配分（daily に対する %）
  *   botId?: string,                                       // dm のときだけ
  *   createdAt: number, archivedAt?: number, lastPostAt: number }} Channel */
 
@@ -60,9 +59,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   sessions: { [botId: string]: string },                // スレッドごと・bot ごとの会話（ADR 0109）
  *   state: 'idle'|'working'|'waiting'|'failed',
  *   live?: { [botId: string]: 'working'|'waiting' },       // いま動いている bot ごとの状態（state はスレッド全体の集計なので、どの bot かはここで持つ。流れの要約の行が名前を出す）
- *   tokens: { input: number, output: number, cached: number },  // このスレッドの bot の会話の合計（usage の出来事から）
- *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
- *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）
+ *   calls: number,                                        // bot が起こされた回数（数えるだけ。上限には使わず、画面にも出さない）
  *   digest?: { [botId: string]: { text: string, at: number, lastAt: number, fingerprint: string } }, // bot ごとのエピソード要約（ADR 0125）
  *   deletedBot?: { id: string, name: string },            // 削除した bot の由来。ほかの生存 bot の会話・投稿は制限しない（ADR 0293）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
@@ -84,7 +81,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
  *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0114）
  *   sendTargetSources?: { [sessionId: string]: 'shown'|'created'|'manual' }, // 外しても残し、自動で戻さない。入力では受け取らない
- *   pulse: { on: boolean, everyMin: number, backend: string, model: string, channelId: string },   // 心拍（ADR 0126）。既定は on: false。everyMin = 既定の間隔（5〜60 分）、backend・model = 安いモデル（空なら memoryLearnBackend）、channelId = 予算を引く「家」のチャンネル（空なら入っている最初のチャンネル）
+ *   pulse: { on: boolean, everyMin: number, backend: string, model: string, channelId: string },   // 心拍（ADR 0126）。既定は on: false。everyMin = 既定の間隔（5〜60 分）、backend・model = 安いモデル（空なら memoryLearnBackend）、channelId = 自律の行き先の「家」のチャンネル（空なら入っている最初のチャンネル）
  *   dmChannelId: string, dmSessionId: string|null,
  *   deletionPending?: boolean,                           // 削除途中の再試行用。新しい活動は受け付けない（ADR 0293）
  *   createdAt: number, updatedAt: number }} Bot */
