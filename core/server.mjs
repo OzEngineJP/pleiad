@@ -8205,14 +8205,14 @@ async function steerInstruction(task, instruction) {
 }
 /** 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）。作り直したら公開の形を返す */
 async function renewTaskWorktree(task) {
-  if (!task.worktree || await worktreeHost.worktrees.get(task.worktree.id)) return null;
-  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return null;
+  if (!task.worktree || await worktreeHost.worktrees.get(task.worktree.id)) return { needed: false, ok: true, worktree: null };
+  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return { needed: true, ok: false, worktree: null };
   const made = await worktreeHost.createForTask({ cwd: task.worktree.origin, owner: task.parentSessionId, taskId: task.taskId, sessionId: task.sessionId });
-  if (!made.ok) return null;
+  if (!made.ok) return { needed: true, ok: false, worktree: null };
   const current = (await store.get(task.sessionId)).cwd ?? null;
   await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
   emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
-  return publicWorktree(made.entry);
+  return { needed: true, ok: true, worktree: publicWorktree(made.entry) };
 }
 
 /**
@@ -8296,10 +8296,9 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   const text = last;
   // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）
   const rejections = execution.rejections.map(peerRejection);
-  // 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。通知に載せる状態は片付ける前のもの
-  const workspace = await worktreeHost.taskDone({ ...task, worktree: renewed ?? task.worktree }).catch(() => null);
+  // 子の worktree の状態。片付けは agentTasks が、切り替えを含む回全体が終わったときに 1 回だけ行う
+  const workspace = await worktreeHost.taskState(renewed ?? task.worktree).catch(() => null);
   const extra = { ...(workspace ? { workspace } : {}), ...(renewed ? { worktree: renewed } : {}) };
-  worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
   if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, touched: Boolean(execution.touched), ...extra };
   // 上限で止まった（limited）は、解除時刻・枠と、止まった委譲先（エージェント・モデル・アカウント）を結果に添える
@@ -8463,6 +8462,12 @@ agentTasks = await createAgentTasks({
   },
   // 子の worktree の今の状態（ply_task_status・ply_task_wait の workspaceSummary）
   workspaceState: task => worktreeHost.taskState(task.worktree),
+  // 子の回が終わったときの worktree の片付け。agentTasks が回ごとに 1 回だけ呼ぶ
+  settleWorkspace: async (task, options) => {
+    const workspace = await worktreeHost.taskDone(task, options).catch(() => null);
+    worktreeSweepSoon();
+    return workspace;
+  },
   prepare: async (owner, args, taskId, signal) => {
     const parent = runtime.turns.get(owner);
     // 端末の AI から任された委譲（remoteAgentInvoke が付ける。docs/remote.md §4.5）。依頼元の会話はホストに無く、言語と承認モードは端末が送ってきたもの
@@ -8674,7 +8679,7 @@ agentTasks = await createAgentTasks({
     return { sessionId, backend: backend.id, model, effort, cwd, mode, routing };
   },
   execute: async (task, prompt, signal, meta = {}) => {
-    if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
+    if (signal.aborted) return { outcome: 'aborted' };
     // 外から起きたターン（meta.external。ADR 0355）は送信待ちが始めるターンなので、忙しいかは runTurn が見る（requeue で送信待ちへ戻る）
     if (!meta.external && sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
@@ -8683,7 +8688,9 @@ agentTasks = await createAgentTasks({
     const release = trackChild(task, signal, execution);
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
-      const renewed = await renewTaskWorktree(task).catch(() => null);
+      const renewal = await renewTaskWorktree(task).catch(() => ({ needed: true, ok: false, worktree: null }));
+      if (renewal.needed && !renewal.ok) return { outcome: 'error', text: '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.worktreeRenewFailed') };
+      const renewed = renewal.worktree;
       // 外から起きたターン: 作業場所を作り直した後で、送信待ちのターンを走らせる（人の発言なので onAccepted で指示を配送済みにしない）
       if (meta.external) {
         const outcome = await meta.external.turn({ signal, taskId: task.taskId });
