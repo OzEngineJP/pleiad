@@ -32,6 +32,7 @@
     "cap:liveMode": "agents",
     "cap:liveModel": "agents",
     "cap:login": "agents",
+    "cap:logout": "agents",
     "cap:mcpApproval": "agents",
     "cap:nativeShellOff": "agents",
     "cap:plyAgents": "agents",

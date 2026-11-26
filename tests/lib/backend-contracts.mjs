@@ -51,6 +51,7 @@ export const CAPABILITY_CONTRACTS = {
   alwaysAllow: { suites: ['server-fake', 'grok-backend', 'server-devin'] },
   mcpApproval: { suites: ['server-codex', 'server-devin'] },
   login: { suites: ['server-codex', 'server-fake'] },
+  logout: { suites: ['agent-logout-mark', 'devin-grok-auth'] },
   accounts: { suites: ['server-claude-accounts', 'agent-accounts', 'codex-accounts', 'opencode-accounts', 'server-agent-accounts', 'server-agent-account-restart'] },
   compatEndpoints: { suites: ['compat-endpoints'], agents: { grok: 'backend-delivery' } },
   compact: { suites: ['server-compaction', 'server-codex-compaction'] },
