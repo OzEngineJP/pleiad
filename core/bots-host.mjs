@@ -151,8 +151,6 @@ export function createBotHost(deps) {
     withPost,
     acquireBot: (botId) => bots.acquire(botId),
     opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }),
-      // スレッドの bot の会話の設定（channels.threadSettings）。失敗は呼び出し側へ返す（画面が理由を出す）
-      threadSettings: (args) => withPost(args, { kind: 'human' }, () => dispatch.threadSettings(args)),
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
       branchThread: (args) => withPost(args, { kind: 'human' }, () => dispatch.branchThread(args)),
       // スレッドの投稿を送り直す（channels.resend）

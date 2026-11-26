@@ -8464,8 +8464,6 @@ const channelsUi = setupChannels({
     viewAddress.note(view);
     renderSessions();
   },
-  // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
-  vocab: (backend, cwd = '', account = '') => loadVocab(backend, account, cwd),
   quota: (backend) => usageSource.load(backend),
   usageOf: (backend) => usageSource.get(backend),
   agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
@@ -8479,7 +8477,6 @@ const channelsUi = setupChannels({
     const resident = status?.resident;
     return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
   },
-  efforts: (args) => cmd('efforts', args),
   noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {

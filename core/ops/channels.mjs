@@ -199,39 +199,6 @@ export const channelOps = [
     handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
   }),
   defineOp({
-    // スレッドの bot の会話の設定を、このスレッドだけ変える（入力欄の宛先の bot のチップ。ADR 0157）。承認モードは人だけ（bots.setMode と同じ）
-    id: 'channels.threadSettings', summary: D('threadSettings', 'summary'), risk: 'write',
-    riskReason: 'Changes how one bot runs in one thread (model, effort, approval mode, working folder) from its next turn. The bot\'s defaults are not changed. The approval mode is human-only like bots.setMode, and the working folder must be one the bot may use',
-    input: z.object({
-      channelId: channelId('threadSettings'), threadId: postId('threadSettings', 'threadId'),
-      botId: z.string().min(1).describe(D('threadSettings', 'botId')),
-      backend: z.string().max(40).optional().describe(D('threadSettings', 'backend')),
-      model: z.string().max(200).optional().describe(D('threadSettings', 'model')),
-      effort: z.string().max(40).optional().describe(D('threadSettings', 'effort')),
-      mode: z.string().max(40).optional().describe(D('threadSettings', 'mode')),
-      cwd: z.string().max(LIMITS.cwd).optional().describe(D('threadSettings', 'cwd')),
-    }),
-    output: z.object({ sessionId: z.string(), backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(), cwd: z.string() }),
-    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'thread-settings'], positional: ['channelId', 'threadId', 'botId'] } },
-    handler: async (ctx, input) => run(ctx, async () => {
-      await refuseHidden(ctx);
-      humanOnlyFields(ctx, input, ['mode']);
-      const args = { ...input, botId: await plainId(ctx, input.botId) };
-      const plain = Boolean((await ctx.bots.get({ botId: args.botId }))?.plain);
-      // backend を選べるのは組み込みの bot だけ（会話を作るときの 1 回。人の bot は bot の backend のまま）。作業場所も人だけが選ぶ（フォルダーを持たない）
-      if (args.backend !== undefined && !plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'backend can only be chosen for the built-in agent' }));
-      if (plain) humanOnlyFields(ctx, args, ['backend', 'cwd']);
-      if (args.cwd !== undefined && !plain) {
-        const bot = await ctx.bots.get({ botId: args.botId });
-        const channel = await ctx.channels.get({ channelId: args.channelId });
-        const allowed = [...(bot?.folders ?? []).map((f) => f.path), ...(channel?.cwd ? [channel.cwd] : [])];
-        const norm = (p) => String(p ?? '').split(String.fromCharCode(92)).join('/').replace(/[/]+$/, '').toLowerCase();
-        if (allowed.length && !allowed.some((p) => norm(p) === norm(args.cwd))) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'cwd must be one of the bot\'s folders or the channel folder' }));
-      }
-      return ctx.threadSettings(args);
-    }),
-  }),
-  defineOp({
     // bot へ届く前の人の投稿（送信待ちの行。ADR 0157 の F12）。画面の道具
     id: 'channels.pending', summary: D('pending', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('pending'), threadId: postId('pending', 'threadId') }),

@@ -123,7 +123,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
   const lang = () => host.currentLocale?.() ?? 'ja';
 
   async function resolve(bot, channel, cwdHint, backendHint = null) {
-    // backendHint: スレッドで選んだ backend（組み込みの bot だけ。channels.threadSettings の backend）
+    // backendHint: 会話を作るときに選んだ backend（組み込みの bot だけ）
     const base = host.getBackend((bot.plain && backendHint) || bot.backend);
     if (!base) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
     // bot のアカウントの一覧で、モデル・エフォートを決める。アカウントを引けない（消した等）ときは、ログイン中の一覧へ落とさず、
@@ -179,14 +179,13 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
-      // このスレッドだけで変えた欄（sidecar の overrides。channels.threadSettings）は、bot の既定を変えても上書きしない（ADR 0157）
-      const own = meta.bot?.overrides ?? {};
-      if (!own.mode && modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
+      // スレッドごとの上書き（以前の sidecar の overrides）は読まない。どのスレッドの会話も bot の設定に揃える（ADR 0359）
+      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
-      const model = own.model ? meta.model : await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
-      if (!own.model && meta.model !== model) await host.store.setModel(sessionId, model);
+      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');
+      if (meta.model !== model) await host.store.setModel(sessionId, model);
       const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
-      if (!own.effort && meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
+      if (meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
       // アカウントは次のターンから効く（ターンの始めに server の accountResolve が引く）。スレッドごとの上書きは無いので、どの会話も bot に揃える
       if (takesAccount(backend)) {
         const account = bot.account ?? '';

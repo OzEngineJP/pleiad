@@ -3277,13 +3277,10 @@
   },
   "composer": {
     "destination": {
-      "title": "Bot",
       "sentAria": "モデル: {{backend}} · {{model}}{{effort}}",
       "botAria": "Bot とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
       "plainAria": "Bot とモデル: なし · {{backend}} · {{model}}{{effort}}",
-      "optionAria": "{{name}}（{{backend}}{{state}}）",
-      "changedAria": "このスレッドだけ変更あり",
-      "resetBot": "bot の既定に戻す"
+      "changedAria": "このスレッドだけ変更あり"
     },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",

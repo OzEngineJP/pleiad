@@ -3,7 +3,7 @@
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
 //   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、アカウント更新イベントで S.vocab 破棄。
 //     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0359）
-//   - web/channels/thread-composer.mjs: host.vocab / host.efforts へ account を渡し、invalidateVocab() で取り直す
+//   - web/channels/thread-composer.mjs: 宛先・設定のチップを持たず、語彙を取りに行かない（ADR 0359）
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -385,7 +385,7 @@ export default async function (t) {
       t.ok('bot-page: 作る 3 段（名前 → 色 → 人格）で bots.create を 1 回呼び、DM へ移る。落ちたら 3 段目に留まる', true);
     }
 
-    // ---- 4. thread-composer.mjs: vocab / efforts に account を渡し、invalidateVocab で引き直す
+    // ---- 4. thread-composer.mjs: 宛先と設定のチップを出さず、語彙もエフォートも取りに行かない（設定は bot のページだけ。ADR 0359）
     {
       const templateForm = el('form', 'composer');
       templateForm.id = 'composer';
@@ -408,59 +408,33 @@ export default async function (t) {
       templateForm.append(cbox);
       rememberComposerTemplate(templateForm);
 
-      const vocabSeen = [];
-      const effortsSeen = [];
-      let currentAccount = 'verified';
+      const asked = [];
       const compHost = {
         state: { backend: 'claude', cwd: '/w', sessions: [] },
-        vocab: async (backend, cwd = '', account = '') => {
-          vocabSeen.push({ backend, cwd, account });
-          return { modes: { default: { label: '標準', scope: 'workspace', autonomy: 'ask' } }, models: { sonnet: { label: 'Sonnet' }, ...(account === 'verified' ? { 'claude-mythos-5-2': { label: 'Mythos 5.2' } } : {}) }, efforts: {} };
-        },
-        efforts: async (args) => {
-          effortsSeen.push(args);
-          return { '': { label: '既定' }, high: { label: '高' } };
-        },
-        backends: () => [{ id: 'claude', label: 'Claude', capabilities: { accounts: 'token' } }],
-        backendLabel: (id) => ({ claude: 'Claude' })[id] ?? id,
-        accountsEnabled: (id) => id === 'claude',
-        accountList: () => [{ id: 'verified', name: 'verified', ready: true }, { id: 'plain', name: 'plain', ready: true }],
-        accountName: (id) => ({ verified: 'verified', plain: 'plain' })[id] ?? id,
-        quotaOf: () => null,
-        cmd: async () => ({}),
+        vocab: async (...args) => { asked.push(['vocab', args]); return {}; },
+        efforts: async (args) => { asked.push(['efforts', args]); return {}; },
+        backends: () => [{ id: 'claude', label: 'Claude' }],
+        backendLabel: (id) => id,
+        cmd: async (name, args) => { asked.push([name, args]); return {}; },
         showMenu() {},
       };
+      const bot = { id: 'b1', name: 'B1', backend: 'claude', color: 'blue' };
       const tc = createThreadComposer({
         host: compHost,
         candidates: () => [],
         backendLabel: (b) => b,
         onSend: async () => {},
-        dest: () => ({ inThread: [{ id: 'b1', name: 'B1', icon: '🤖', state: 'idle', account: currentAccount }], others: [], fallback: 'b1' }),
-        settings: () => ({
-          backend: 'claude', account: currentAccount,
-          values: { model: currentAccount === 'verified' ? 'claude-mythos-5-2' : 'sonnet', effort: 'high', mode: 'default', cwd: '/w' },
-          defaults: { model: '', effort: '', mode: 'default' },
-          folders: ['/w'],
-        }),
+        receiver: () => bot,
+        session: () => ({ sessionId: 's1', cwd: '/w' }),
       });
       try {
         tc.refresh();
         await tick();
-        const destChipEl = tc.el.querySelector('.dest');
-        assert.ok(Boolean(destChipEl), 'スレッド入力欄の宛先チップが存在する');
-        destChipEl.click();
-        await tick();
-        assert.ok(vocabSeen.some((v) => v.backend === 'claude' && v.account === 'verified'), JSON.stringify(vocabSeen));
-        assert.ok(effortsSeen.some((e) => e.backend === 'claude' && e.model === 'claude-mythos-5-2' && e.account === 'verified'), JSON.stringify(effortsSeen));
-
-        // invalidateVocab + アカウント切り替えで新しい account 向けに再取得される
-        const beforePlain = vocabSeen.length;
-        currentAccount = 'plain';
-        tc.invalidateVocab();
-        await tick();
-        assert.ok(vocabSeen.length > beforePlain && vocabSeen.at(-1).account === 'plain', JSON.stringify(vocabSeen));
-        assert.ok(effortsSeen.some((e) => e.backend === 'claude' && e.model === 'sonnet' && e.account === 'plain'), JSON.stringify(effortsSeen));
-        t.ok('thread-composer: host.vocab / host.efforts に account を渡し、invalidateVocab で引き直す', true);
+        assert.equal(tc.el.querySelector('.dest'), null, '宛先のチップは無い');
+        const shown = [...tc.el.querySelectorAll('.crow > *')].filter((n) => !n.hidden).map((n) => n.id);
+        assert.ok(!shown.some((id) => /cwdChip|modelChip|modeChip/.test(id)), JSON.stringify(shown));
+        assert.ok(!asked.some(([name]) => ['vocab', 'efforts', 'agentModes', 'agentModels'].includes(name)), JSON.stringify(asked));
+        t.ok('thread-composer: 宛先・設定のチップを出さず、語彙もエフォートも取りに行かない（ADR 0359）', true);
       } finally {
         tc.destroy();
       }
