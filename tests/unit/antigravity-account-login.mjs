@@ -14,9 +14,9 @@ export default async function run(t) {
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agy-login-'));
   const home = path.join(data, 'home');
   await fs.mkdir(home);
-  const keys = ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'USERPROFILE', 'HOME', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ACP_LOG', 'FAKE_AGY_NO_FILE_MARKER', 'FAKE_AGY_PID_FILE', 'FAKE_AGY_AUTH_HOLD_MS'];
+  const keys = ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'USERPROFILE', 'HOME', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ACP_LOG', 'FAKE_AGY_NO_FILE_MARKER', 'FAKE_AGY_PID_FILE', 'FAKE_AGY_AUTH_HOLD_MS', 'FAKE_AGY_AUTH_REFUSE'];
   const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
-  const made = ['acct-0123456789ab', 'acct-aaaaaaaaaaaa', 'acct-bbbbbbbbbbbb', 'acct-cccccccccccc'];
+  const made = ['acct-0123456789ab', 'acct-aaaaaaaaaaaa', 'acct-bbbbbbbbbbbb', 'acct-cccccccccccc', 'acct-dddddddddddd'];
   const keychain = path.join(data, 'keychain-marker');
   try {
     Object.assign(process.env, {
@@ -142,6 +142,21 @@ export default async function run(t) {
     assert.equal(await fs.stat(keychain).catch(() => null), null);
     delete process.env.FAKE_AGY_NO_FILE_MARKER;
     t.ok('Without the marker the login stops with AGY_FILE_STORAGE_UNSUPPORTED and never sends authenticate', true);
+
+    // ---- agy がログインを断る（実機 1.5.17 の oauth-business・Enterprise の契約なし）: 理由がログインの段の文に出て、トークンは残らない
+    const refused = { id: 'acct-dddddddddddd', name: 'D', dir: path.join(root, 'accounts', 'antigravity', 'acct-dddddddddddd') };
+    process.env.FAKE_AGY_AUTH_REFUSE = "Couldn't sign in: no Gemini Enterprise license found for this account; configure gcp.project and gcp.location in settings.json\n\tsee https://example.invalid/docs?token=abc";
+    await assert.rejects(accounts.loginAgyAccount({ account: refused, dataDir: root, method: 'oauth-business' }), e => {
+      assert.equal(e.code, 'AGY_LOGIN_REFUSED');
+      assert.match(e.message, /no Gemini Enterprise license found/);
+      assert.ok(!/[\n\t]/.test(e.message) && !e.message.includes('token=abc'), 'one line, no URL query');
+      return true;
+    });
+    assert.equal(await accounts.hasAgyToken(refused, root), false);
+    delete process.env.FAKE_AGY_AUTH_REFUSE;
+    const { authRefusalReason } = acp;
+    assert.equal(authRefusalReason('x'.repeat(10) + ' ' + 'y'.repeat(400)).length <= 300, true);
+    t.ok('When agy refuses the sign-in, its reason reaches the login step as one short line and no token is kept', true);
 
     // ---- 取消: ブラウザー待ちの途中で止める。URL は agy が stderr に出したときだけ流す
     const third = { id: 'acct-bbbbbbbbbbbb', name: 'C', dir: path.join(root, 'accounts', 'antigravity', 'acct-bbbbbbbbbbbb') };

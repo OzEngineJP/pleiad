@@ -111,6 +111,8 @@ export async function loginAgyAccount({ account, dataDir, signal, emit, method =
       catch (error) {
         check();
         if (error?.code === -32001) throw loginTimeoutError(t('antigravity.auth.loginTimeout'));
+        // agy が断った理由（会社のアカウントを oauth-business で入れたときの Enterprise の契約が無い、など）をログインの段に出す
+        if (typeof error?.authRefused === 'string') throw Object.assign(new Error(t('antigravity.accounts.loginRefused', { reason: error.authRefused })), { code: 'AGY_LOGIN_REFUSED' });
         throw error;
       }
     }

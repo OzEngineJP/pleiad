@@ -1,6 +1,6 @@
 # 0366 Antigravity の 2 つ目以降のアカウントを、トークンのファイル保存で分ける
 
-- 状態: 承認（2026-11-26）。実装済み（Ph3 の P3-1〜P3-5）。実機の確認は**未実施（人が確認中）**。結果は末尾の「実機確認の結果」に追記する
+- 状態: 承認（2026-11-26）。実装済み（Ph3 の P3-1〜P3-5）。実機の確認は 2026-11-26 に済んだ（1 時間後のトークンの更新だけ確認中）。結果と、それを受けた決定は末尾の「実機確認の結果」
 - 関係: [0222](0222-agent-accounts-and-provider-quota.md)（アカウントの分離。「Antigravity は持てない」を置き換え）・[0224](0224-bot-account.md)（bot のアカウント。Antigravity だけ `''` を撤回）・[0359](0359-connections-unify.md)（接続先。§7 の「Antigravity の頭の行は変えない」を撤回）・[0365](0365-antigravity-on-acp.md)（Antigravity の口は ACP）・[0364](0364-consolidate-backend-leak-guards.md)（能力の印の宣言）・[0264](0264-delegation-account-scope.md)（委譲の候補はアカウントの単位）
 
 ## 状況
@@ -41,7 +41,8 @@ agy 1.5.17 の実測（ログインはしていない）で次が分かった。
 
 ### 4. ログインの流れ
 
-- `accountLogin({ account, signal, emit, method = 'oauth-personal' })`。`method` の通り道だけを作り、画面には**まだ選ぶ欄を出さない**（個人用と会社用の方式の選択は実機の確認待ち。下記）。
+- `accountLogin({ account, signal, emit, method = 'oauth-personal' })`。`method` の通り道だけを作り、画面には**選ぶ欄を出さない**（会社の Workspace アカウントも `oauth-personal` で入れることを実機で確かめた。末尾の「実機確認の結果」）。
+- agy が `authenticate` を断ったとき（実機の -32603 など）は、agy の文を 1 行・300 字までに整え（制御文字を外し、URL の問い合わせ部分と長い符号を伏せる）、ログインの段に「Antigravity がログインを断りました: 〈理由〉」（`antigravity.accounts.loginRefused`、ja・en。code は `AGY_LOGIN_REFUSED`）として出す。ACP の部品は wire の message を外へ出さない決まりなので、`authenticate` の断りだけを印 `authRefused` として載せる例外にする（本人が自分で始めたログインの理由で、本人の画面にしか出ない）。
 - ACP の `authenticate` がブラウザーを開く。URL が agy の標準エラーに出たときだけ画面へ https の URL を渡し、それまでは「ブラウザーで Google にログインしてください」のメッセージだけを出す（画面のログインの段は、URL もコマンドも無いメッセージだけの表示を持つ。どのエージェントにも効く）。
 - 取消・タイムアウトで子のプロセスを止める。1 つ目の端末でのログイン（`agy models` の 10 分ポーリング）は 1 つ目にだけ残す。
 
@@ -55,6 +56,7 @@ agy 1.5.17 の実測（ログインはしていない）で次が分かった。
 ### 6. 候補として載せるだけのもの
 
 - 偽の `SSH_CONNECTION` を渡して agy をファイル保存に倒す道（T3 Code が使う）は、環境変数の名前が公開の仕様でないため実装しない。env が効かなくなった版が出たときの代案として、ここに書くだけにする。
+- `oauth-business`（Gemini Enterprise（Google Cloud）を契約したアカウント向けの方式。`gcp.project`・`gcp.location` の設定が要る）を画面で選ばせる欄。求めがあれば足す。通り道（`accountLogin` の `method`）はもうある。
 
 ### 7. 変えるもの
 
@@ -68,12 +70,19 @@ agy 1.5.17 の実測（ログインはしていない）で次が分かった。
 
 ## 実機確認の結果
 
-**未実施（人が確認中）。** 確かめる項目と、結果を書く欄:
+2026-11-26、Windows、agy 1.5.17。人が実機で確かめた。
 
-| 項目 | 結果 |
+| 確認 | 結果 |
 |---|---|
-| ACP の `authenticate` でブラウザーが開くか | （未） |
-| 一番上のコマンド（`models`・`/usage`）を `USERPROFILE` で切り替えて同じトークンを読むか | （未） |
-| 一番上のコマンドのログにも印が出るか | （未） |
-| 1 時間後の更新がファイルに書かれ、鍵束が変わらないか | （未） |
-| 会社のアカウントが `oauth-personal` で通るか（通らなければ方式の選択を画面に足す） | （未） |
+| 個人の Google アカウントを `oauth-personal` で（2 つ目として） | agy が既定のブラウザー（Chrome）を自分で開いた。`authenticate` は ok。トークンのファイルがアカウントのフォルダーにできた（586 B）。権限は本人のユーザーだけ（保護したフォルダーから継承）。 |
+| 会社の Workspace アカウントを `oauth-business` で | `-32603 Couldn't sign in: no Gemini Enterprise license found for this account; configure gcp.project and gcp.location in settings.json…`。`oauth-business` は Gemini Enterprise（Google Cloud）を契約したアカウント向けの方式。トークンのファイルはできなかった。 |
+| 同じ会社の Workspace アカウントを `oauth-personal` で | `authenticate` は ok。トークンのファイル 587 B。モデル一覧が個人用と違った（個人用は Gemini 4 Neon、会社用は Gemini 4 Hydrogen）→ アカウントごとのモデル一覧が要ること、保存が本当に分かれていることを確かめた。 |
+| 一番上の `agy models` と `agy --print /usage --output-format json` を `USERPROFILE=HOME=<アカウントのフォルダー>` と env で | どちらも動き、どちらのログにもファイル保存の印が出た → 使用量とモデル一覧のガードで止まらない。 |
+| 1 つ目のアカウント（何も付けない） | `agy models` が今までどおり動く。OS の資格情報 `gemini:antigravity` は確認の前後で更新時刻・大きさが同じ（14:28:57・565 B）。 |
+| 1 時間後のトークンの更新 | 確認中（15:45 ごろ）。結果は後で追記する。 |
+
+これを受けた決定:
+
+- 画面で個人用と会社用の方式を選ばせる欄は作らない。会社の Workspace アカウントも `oauth-personal` で入れるため。`accountLogin` の `method` の既定は `oauth-personal` のまま。
+- Gemini Enterprise を契約したアカウント向けの `oauth-business` は、求めがあれば足す候補にする（§6）。
+- agy がログインを断ったときは、その理由をログインの段に出す（§4。上の -32603 を、利用者が「なぜ入れないか」を分かる形で見せるため）。

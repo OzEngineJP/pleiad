@@ -739,6 +739,8 @@ async function runAcp() {
         process.stderr.write('Could not open the browser. Please visit https://accounts.example.invalid/o/oauth2/auth?state=fake to sign in' + NL);
         await new Promise((r) => setTimeout(r, Number(process.env.FAKE_AGY_AUTH_HOLD_MS)));
       }
+      // agy がログインを断る再現（実機 1.5.17: 会社のアカウントを oauth-business で入れると -32603 で Enterprise の契約が無いと返す）
+      if (process.env.FAKE_AGY_AUTH_REFUSE) throw acpError(-32603, process.env.FAKE_AGY_AUTH_REFUSE);
       authorized = true;
       writeFileMarker();
       // ファイル保存の資格情報（本物は暗号化されない JSON）。複数アカウントのログインはここへ残る

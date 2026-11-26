@@ -109,6 +109,13 @@ export async function tooOldAcp(options) {
 /** agy の thought signature の失敗（会話の歴史にネイティブ側の署名が合わない）。再送しても直らないので、ネイティブの会話を使えない印にする */
 export const SIGNATURE_RE = /invalid thought signature/i;
 
+/** authenticate を断った agy の文を、画面に出せる 1 行にする（制御文字を外し、空白を詰め、URL の問い合わせ部分と長い符号を伏せ、300 字まで） */
+export function authRefusalReason(text) {
+  let s = String(text ?? '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  s = s.replace(/(https?:\/\/[^\s?#]+)[?#]\S*/gi, '$1').replace(/[A-Za-z0-9_\-.+/=]{40,}/g, '…');
+  return s.length > 300 ? `${s.slice(0, 299)}…` : s;
+}
+
 /** `agy acp` の引数。restricted は Skills・MCP を止める会話（agent 定義 ply-context を使う） */
 export function agyAcpArgs({ cwd, home, extraDirs = [], restricted = false, skipPermissions = false, profile = agyLaunchProfile() } = {}) {
   return ['acp',
@@ -143,6 +150,12 @@ export class AgyAcp extends AcpClient {
         }
         // 会話が見つからない（resume・load の失敗の見分け）
         if (error?.code === -32002) reject.notFound = true;
+        // ログイン（authenticate）を agy が断った理由（例: -32603 no Gemini Enterprise license…）。ログインの段で本人に見せる
+        // ためだけに、1 行・300 字までに整えて載せる（ほかの依頼の wire の message は今までどおり外へ出さない。ADR 0366）
+        if (method === 'authenticate' && error?.code !== -32001) {
+          const reason = authRefusalReason(text);
+          if (reason) reject.authRefused = reason;
+        }
       },
     });
   }
