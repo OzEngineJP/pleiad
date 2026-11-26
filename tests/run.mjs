@@ -733,6 +733,10 @@ const SUITES = [
   './unit/server-read.mjs',
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
+  // スレッドの書きかけの流し（ADR 0367）: 3 つ目の窓口 thread。開いているスレッドの接続だけに届く・流し直し・伏せ・外せる・ほかの接続は増えない
+  './unit/server-thread-stream.mjs',
+  // スレッドの書きかけの組み立て（ADR 0367）: 写しの切り出し（core）と、画面の純粋な部品（出来事の取り込み・確定前の分の切り出し・黙る印の写し）
+  './unit/thread-stream-model.mjs',
   './unit/desktop-port.mjs',
   // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
   './unit/desktop-runtime.mjs',
@@ -1152,6 +1156,7 @@ const SUITES = [
   './unit/chrome-input.mjs',
   './unit/browser-unify-input.mjs',
   './unit/browser-unify-view-only.mjs',
+  './unit/browser-unify-other-session.mjs',
   // --- W3 映像の触り心地: 選択・コピー・右クリックのメニュー・カーソル ---
   './unit/browser-video-input.mjs',
   './unit/browser-handoff-ai-tab.mjs',
@@ -1190,7 +1195,7 @@ const SUITES = [
   './unit/memory-tier.mjs',
   // 約束は記憶に書かない（AI・夜の整理は MEMORY_REJECTED。ToDo か気がかりへ）・既存の約束は起動で保存だけへ（AI なし・戻せる）・保存だけは配送・検索・夜の整理に出ない（ADR 0363）
   './unit/memory-promise.mjs',
-  // 一度きりの振り分け（人が始めたときだけ・約束は先に保存だけ・50 件 / 8000 トークンの束・壊れた返りは段なしのまま・作業場所が決まらなければ保存だけ・止める/再開・取り消しは人の直しを残す。ADR 0363）
+  // 夜の整理の最後の振り分け（約束は先に保存だけ・50 件 / 8000 トークンの束・壊れた返りは段なしのまま・作業場所が決まらなければ保存だけ・止める/再開・取り消しは人の直しを残す。ADR 0363）
   './unit/memory-sort.mjs',
   // 夜の整理は増やすから選び直すへ（選んだ記憶だけを渡す・保存だけ/約束/忘れた記憶は渡さない・重みを使わない・12,000 / 40,000 トークンの上限・段の付け直しはコードが決めて 20 件まで・人の記憶と約束と人が選んだ段は触らず記録に残る・全件で重複を調べる。ADR 0363）
   './unit/memory-nightly.mjs',
@@ -1199,6 +1204,8 @@ const SUITES = [
   './unit/bot-dispatch.mjs',
   // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は DM では起こさない・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
   './unit/bot-reactions-silence.mjs',
+  // 人の途中送信で bot のターンの投稿を分ける細かい場合（今の投稿を本文のまま確定・続きは新しい投稿。bot・AI・聞こえた投稿・リアクションは分けない・止める・失敗・返事の @・呼んだ bot への返事。ADR 0117 の追記）と、実サーバーの並び・channelPost
+  './unit/bot-steer-split.mjs',
   // @ の無い投稿の宛先と、聞こえた投稿の手がかり（引用した bot が宛先・無ければ最後に話した bot。宛先の名前を包みの to に付ける。ADR 0128 の追記）
   './unit/bot-heard-addressee.mjs',
   // 流れの要約の「作業中の bot」の選び方（bot 専用の使用量の仕組みは ADR 0357 でやめた）
@@ -1242,7 +1249,11 @@ const SUITES = [
   './unit/channels-composer-ui.mjs',
   // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
   './unit/bot-page-model.mjs',
-  // 記憶の自動整理の状態（web/memory-model.mjs）: 実効の入切（欠損は OFF）・確定の未ログインと受動の未確認・停止/失敗を未確認で隠さない優先順・導線の短い状態
+  // 作業場所の判定（web/work-place.mjs）: 中か外かのパス比較（Windows・UNC・`..`）・理由・core の pickCwd と web の「各 bot の動く場所」が同じ答え・既定のモードの選び方が core と同じ
+  './unit/work-place.mjs',
+  // 流れの入力欄の「/」候補（web/channels/feed-skills.mjs）: 宛先の bot（@ か呼べるメンバー）・動く場所ごとの取得と名前でのまとめ・見出しと行頭の顔・印の安定
+  './unit/feed-skills.mjs',
+  // 毎晩の整理の状態（web/memory-model.mjs）: 実効の入切（欠損は OFF）・確定の未ログインと受動の未確認・停止/失敗を未確認で隠さない優先順・導線の短い状態
   './unit/memory-model.mjs',
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
   './unit/thread-deck.mjs',
@@ -1255,6 +1266,7 @@ const SUITES = [
   './unit/ops-routines.mjs',
   // ルーティンをサーバー越しに: 毎分の実行のスレッド（テストの時計）・取りこぼしは起動時に 1 回・一時停止と再開・イベントのトリガ・承認の期限・試しの実行
   './unit/routines-server.mjs',
+  './unit/bot-update.mjs',
   // ルーティンの編集 (W5): 検査・保存する欄・cron の見積もり・脇の並べ方・一覧の写し・入口の配線。画面の打鍵は tests/browser/routine-sheet.cjs
   './unit/routine-sheet-model.mjs',
   // --- memory-learn・sessions-send・webhook (L1・X1・H1、P3) ---

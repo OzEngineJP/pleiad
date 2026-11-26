@@ -389,7 +389,7 @@ export function setupChromePanel({ cmd, preview, session = () => null, windows =
   function open(element = null, { target = null } = {}) {
     const current = session();
     const id = target ?? current;
-    if (!current || !id || (!unifiedHeader && !windows.has(id))) return;
+    if (!id || (!unifiedHeader && !windows.has(id))) return;
     if (isOpen() && owner === current) {
       // 同じ会話のパネルが開いていて、別の会話を指したら映す会話だけ替える
       if (target != null && target !== sessionId) { retarget(target); return; }

@@ -2,7 +2,10 @@
 // 描画・キー操作は tests/browser/session-list-keys.cjs（Chats の一覧）と目視（temporary/screenshots/bots-w1-side-*）。
 import { readFileSync } from 'node:fs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from '../../web/channels/side-model.mjs';
+import { createSideTabs } from '../../web/channels/side-tabs.mjs';
+import { setReducedMotion } from '../../web/motion.mjs';
 import { parseTerms } from '../../web/session-find.mjs';
+import { N, installDomStub } from '../lib/dom-stub.mjs';
 
 export const name = 'channels-side-ui';
 export const title = '脇の Channels: 並べ方・bot の状態・タブの点・検索の行・開く先・配線';
@@ -33,17 +36,17 @@ export default function (t) {
   t.ok('使用量の上限で休んでいれば休憩中。作業中・あなた待ちが先、解除の時刻を過ぎたら待機（ADR 0119）', botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 1000 }) === 'resting'
     && botState({ ...owl, restingUntil: 2000 }, { sessions, runningIds: new Set(['s1']), now: 1000 }) === 'working' && botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 3000 }) === 'idle');
 
-  // ---- タブの点（見ていない側にだけ）
+  // ---- タブの点（05-2: 作業中 ◌ は出さない。05-3: あなた待ちの点は見ている側でも片付くまで残す）
   const dots = (o) => tabDots({ channels: [], botStates: [], chats: {}, ...o });
   t.ok('Chats を見ていて bot があなた待ち → Channels に mark', dots({ tab: 'chats', botStates: ['idle', 'waiting'] }).channels === 'mark');
-  t.ok('あなた宛ての投稿も mark。作業中の bot は working、未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
-    && dots({ tab: 'chats', botStates: ['working'] }).channels === 'working' && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
+  t.ok('あなた宛ての投稿も mark。作業中の bot や未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
+    && dots({ tab: 'chats', botStates: ['working'] }).channels === null && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
   t.ok('アーカイブしたチャンネルの未読は数えない', dots({ tab: 'chats', channels: [{ unread: 3, mentions: 1, archivedAt: 1 }] }).channels === null);
-  t.ok('見ている側には点を付けない', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === null
+  t.ok('見ている側でもあなた待ちが残っている間は mark を残す', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === 'mark'
     && dots({ tab: 'channels', chats: { waiting: true } }).chats === 'mark');
-  t.ok('チャット側: あなた待ちが先、作業中なら working、無ければ null', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
-    && dots({ tab: 'channels', chats: { running: true } }).chats === 'working' && dots({ tab: 'channels', chats: { unread: true } }).chats === null
-    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === null);
+  t.ok('チャット側: あなた待ちなら mark、作業中や未読だけでは null（見ている側でも残す）', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
+    && dots({ tab: 'channels', chats: { running: true } }).chats === null && dots({ tab: 'channels', chats: { unread: true } }).chats === null
+    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === 'mark');
 
   // ---- 検索の行
   const rows = channelNameRows(channels, parseTerms('check'));
@@ -80,4 +83,76 @@ export default function (t) {
   t.ok('bot の会話の印: 一覧が無くても会話の題からチャンネル名を取り、id は出さない', /botTitleParts\(s\)\.channel/.test(side) && !/s\.bot\.channelId \?\? |#\$\{s\.bot\.channelId/.test(side));
   t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く（スレッドの行は状態を持つので落とせる）', /if \(!interactive \|\| \(s\.bot && !s\.thread\)\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
   t.ok('検索: チャンネルの当たりを混ぜ、出どころを添える', /connectChannels\(link\)/.test(side) && /channelsLink\.matchNames/.test(side) && /"row-src"/.test(side));
+
+  // ---- 脇の切り替え（節 05・11: 板 1 枚・アイコン・まばたき/弾む・reducedMotion・あなた待ちの点・新しいチャット）
+  const html = read('web/index.html');
+  t.ok('index.html の切り替え行に板 1 枚・アイコン・#newSession がある',
+    /id="sideFace"[^>]*data-on="chats"/.test(html) && html.includes('class="side-face-plate"')
+    && /id="faceChats"[\s\S]*?side-face-chat/.test(html) && /id="faceChannels"[\s\S]*?side-face-bot/.test(html)
+    && /side-face-row[\s\S]*id="newSession"/.test(html));
+  const prevDoc = globalThis.document, prevLoc = globalThis.location, prevStorage = globalThis.localStorage;
+  try {
+    installDomStub();
+    const store = new Map();
+    globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+    const mk = (tag, id, cls = '') => { const n = new N(tag); if (id) n.id = id; if (cls) n.className = cls; return n; };
+    document.documentElement = mk('html');
+    document.body = mk('body');
+    document.querySelector = () => null;
+    const faceGroup = mk('div', 'sideFace', 'side-face');
+    const faceChats = mk('button', 'faceChats'); faceChats.dataset.face = 'chats';
+    const chatWrap = mk('span', 'faceChatsWrap', 'side-face-ico-wrap');
+    const chatIco = mk('svg', '', 'side-face-ico side-face-chat');
+    chatWrap.append(chatIco);
+    faceChats.append(chatWrap);
+    const faceChannels = mk('button', 'faceChannels'); faceChannels.dataset.face = 'channels';
+    const botWrap = mk('span', 'faceChannelsWrap', 'side-face-ico-wrap');
+    const botIco = mk('svg', '', 'side-face-ico side-face-bot');
+    botWrap.append(botIco);
+    faceChannels.append(botWrap);
+    faceGroup.append(faceChats, faceChannels);
+    faceGroup.querySelectorAll = (sel) => (sel === '[data-face]' ? [faceChats, faceChannels] : N.prototype.querySelectorAll.call(faceGroup, sel));
+    const byId = new Map([['sideFace', faceGroup], ['faceChatsWrap', chatWrap], ['faceChannelsWrap', botWrap]]);
+    document.getElementById = (id) => byId.get(id) ?? null;
+
+    setReducedMotion(false);
+    const tabs = createSideTabs();
+    t.ok('初期表示では data-on が chats で、アイコンは動かない（play が付かない）',
+      faceGroup.dataset.on === 'chats' && faceChats.getAttribute('aria-pressed') === 'true'
+      && !chatIco.classList.contains('play') && !botIco.classList.contains('play'));
+
+    tabs.set('channels');
+    t.ok('bot へ切り替えると data-on が channels になり、bot 側だけに play が付く',
+      faceGroup.dataset.on === 'channels' && faceChannels.getAttribute('aria-pressed') === 'true'
+      && botIco.classList.contains('play') && !chatIco.classList.contains('play'));
+
+    tabs.set('chats');
+    t.ok('チャットへ戻すと data-on が chats になり、チャット側だけに play が付く',
+      faceGroup.dataset.on === 'chats' && chatIco.classList.contains('play') && !botIco.classList.contains('play'));
+
+    setReducedMotion(true);
+    tabs.set('channels');
+    t.ok('reducedMotion では切り替えても play が付かない',
+      faceGroup.dataset.on === 'channels' && !botIco.classList.contains('play') && !chatIco.classList.contains('play'));
+
+    tabs.setDot('chats', 'mark');
+    t.ok('あなた待ちはアイコン右上の点（has-wait）と読み上げ名・title を付ける',
+      chatWrap.classList.contains('has-wait')
+      && faceChats.getAttribute('aria-label') === 'チャット · あなたを待っている会話があります' && faceChats.attrs.title?.length > 0);
+    tabs.set('chats');
+    t.ok('今いる側へ切り替えても、あなた待ちが残っている間は点が消えない',
+      chatWrap.classList.contains('has-wait') && faceChats.getAttribute('aria-label') === 'チャット · あなたを待っている会話があります');
+    tabs.setDot('chats', 'working');
+    t.ok('作業中（working）は点を出さず、ラベルも外す',
+      !chatWrap.classList.contains('has-wait') && !faceChats.hasAttribute('aria-label') && !faceChats.hasAttribute('title'));
+    tabs.setDot('channels', 'mark');
+    tabs.setDot('channels', null);
+    t.ok('印が消えたら点と aria-label と title を外す',
+      !botWrap.classList.contains('has-wait') && !faceChannels.hasAttribute('aria-label') && !faceChannels.hasAttribute('title'));
+  } finally {
+    setReducedMotion(null);
+    globalThis.document = prevDoc;
+    globalThis.location = prevLoc;
+    if (prevStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = prevStorage;
+  }
 }

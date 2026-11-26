@@ -10,15 +10,16 @@ async (page, { url = page.url() } = {}) => {
   await page.goto(url);
   await page.locator('#closeOnboarding').click({ timeout: 1500 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
-  await page.locator('#groups .chsec').first().waitFor();
+  await page.locator('#groups [data-side-key^="group:"]').first().waitFor();
   check(await page.locator('#sideOrder').count() === 0, 'one tree without the order switch');
   // The side has two faces (ADR 0362). The chat face shows only chats: no bots, no routines, no channels.
   check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true', 'the chat face is shown first');
-  const home = page.locator('[data-side-key="chsec:home"]');
-  const chatHeadings = await page.locator('#groups > .chsec > .grp-head .chsec-name').allTextContents();
-  check(chatHeadings.join() === 'チャット' && await page.locator('#groups .botsec, #groups [data-sec="routines"], #groups [data-sec="channels"]').count() === 0, 'the chat face has only the チャット section');
+  // 「チャット」の見出しは無い（ADR 0362・11）。状態ごとのフォルダーが一番上の段
+  const groups = page.locator('#groups');
+  check(await page.locator('#groups .chsec').count() === 0, 'the chat face has no チャット heading (11)');
+  check(await page.locator('#groups .botsec, #groups [data-sec="routines"], #groups [data-sec="channels"]').count() === 0, 'the chat face has no bots, routines or channels');
   check(await page.locator('#botStrip').count() === 0, 'there is no Bots strip');
-  check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
+  check(await groups.locator(':scope > .grp .row[data-session]').count() > 0, 'status folders are the top level, rows inside them');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 
   // No section is trimmed by count (ADR 0260): there is no "N more" / "show less" row anywhere.
@@ -45,44 +46,44 @@ async (page, { url = page.url() } = {}) => {
   await review.locator(`.row[data-session="${id}"]`).dragTo(inProgress.locator(':scope > .grp-head'));
   await inProgress.locator(`.row[data-session="${id}"]`).waitFor();
 
-  // Keyboard nesting: home -> status -> row, then back to both parent headings.
+  // Keyboard: the status folders are the top level (level 1), their rows are level 2. Home -> first folder -> rows -> back.
   await page.locator('#groups').focus();
   await page.keyboard.press('Home');
-  check(await page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key) === 'c:home', 'Home reaches the チャット heading first');
-  await page.keyboard.press('ArrowRight');
+  const activeKey = () => page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key ?? '');
   const activeLevel = () => page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.getAttribute('aria-level'));
-  check(await activeLevel() === '2', 'right arrow enters the home status headings');
-  await page.keyboard.press('ArrowLeft'); // collapse status
-  await page.keyboard.press('ArrowLeft'); // parent home
-  check(await activeLevel() === '1', 'left arrow from a collapsed status reaches home');
+  check((await activeKey()).startsWith('g:'), 'Home reaches the first status folder first');
+  check(await activeLevel() === '1', 'the first status folder is level 1');
   await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
-  check(await activeLevel() === '3', 'right arrow reaches the quick chat row');
+  check(await activeLevel() === '2', 'right arrow enters the folder rows (level 2)');
+  await page.keyboard.press('ArrowLeft'); // from a row: back to its folder
+  check(await activeLevel() === '1', 'left arrow from a row reaches its folder');
+  await page.keyboard.press('ArrowLeft'); // open folder: collapse it
+  check(await activeLevel() === '1', 'left arrow on an open folder collapses it, focus stays on it');
+  await page.keyboard.press('ArrowRight'); // closed folder: open it
+  await page.keyboard.press('ArrowRight'); // open folder: first row
+  check(await activeLevel() === '2', 'right arrow reopens the folder and reaches its first row');
 
-  // Fold a status and its parent independently; reopening the parent preserves the child's state.
+  // Each status folder folds on its own (there is no parent heading to fold any more).
   await inProgress.locator('.grp-name').click();
   check(await inProgress.locator(':scope > .rows').isHidden(), 'status header collapses');
-  await home.locator(':scope > .grp-head .chsec-chev').click();
-  await home.locator(':scope > .grp-head .chsec-chev').click();
-  check(await inProgress.locator(':scope > .rows').isHidden() && await review.locator(':scope > .rows').isVisible(), 'reopening home preserves each status fold');
+  check(await review.locator(':scope > .rows').isVisible(), 'the other status folder stays open');
   await inProgress.locator('.grp-name').click();
 
   await page.locator('#filterBtn').click();
   await page.locator('#filterPop .li', { hasText: '進行中' }).click();
-  check(await home.locator('.grp').count() === 1 && await page.locator('#groups .cs-sec').count() === 0, 'status filter keeps matching statuses');
+  check(await groups.locator('.grp').count() === 1 && await page.locator('#groups .cs-sec').count() === 0, 'status filter keeps matching statuses');
   await page.locator('#fchips .x').first().click();
   await page.locator('#filterBtn').click();
   await page.locator('#filterPop [data-backend="fake"]').click();
   await page.keyboard.press('Escape');
-  check(await page.locator('#groups > .chsec').count() === 1, 'agent filter hides threads which do not have that value');
+  check(await page.locator('#groups .chsec').count() === 0 && await page.locator('#groups > .grp').count() >= 1, 'agent filter keeps the status folders at the top (no チャット heading)');
   await page.locator('#fchips .x').first().click();
 
   await page.locator('#q').fill('サイドバー');
   await page.locator('#groups .row.res').first().waitFor();
   check(await page.locator('#groups .grp').count() === 0, 'search stays flat');
   await page.locator('#q').fill('');
-  await home.waitFor();
+  await groups.waitFor();
   // Real fake-backend approval: reading the notification must not clear its waiting mark.
   await page.evaluate(async () => {
     const ws = new WebSocket(`${location.origin.replace('http', 'ws')}/ws${location.search}`);
@@ -109,9 +110,6 @@ async (page, { url = page.url() } = {}) => {
   check(await inProgress.locator('.wait').count() > 0, 'waiting chat stays in its own status');
   await inProgress.locator('.grp-name').click();
   check(await inProgress.locator(':scope > .grp-head .wait').count() === 1, 'collapsed status shows waiting diamond');
-  await home.locator(':scope > .grp-head .chsec-chev').click();
-  check(await home.locator(':scope > .grp-head .wait').count() === 1, 'collapsed home shows waiting diamond');
-  await home.locator(':scope > .grp-head .chsec-chev').click();
   await inProgress.locator('.grp-name').click();
   await page.locator('#notifBell').click();
   await page.locator('#notifPanel .nrow', { hasText: '承認を待っています' }).click();
@@ -127,7 +125,7 @@ async (page, { url = page.url() } = {}) => {
   // The bot face: routines → 「Bots ＋」 → one row per bot (20px face, name, state) → 「チャンネル ＋」 → channels by name.
   await page.locator('#faceChannels').click();
   await page.locator('#groups .botsec').first().waitFor();
-  check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true' && await home.count() === 0, 'the bot face hides the チャット section');
+  check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true' && await page.locator('#groups [data-side-key^="group:"]').count() === 0, 'the bot face hides the status folders of the チャット face');
   const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
   const firstBot = order.findIndex(k => k?.startsWith('chsec:bot:'));
   check(order[0] === 'routines' && order[1] === 'bots-head' && firstBot === 2 && order.indexOf('channels') > firstBot, 'routines, Bots, bot rows, then channels (ADR 0362)');
@@ -144,11 +142,11 @@ async (page, { url = page.url() } = {}) => {
   await page.keyboard.press('Escape');
   check(true, 'thread status is available from its menu');
   await page.locator('#faceChats').click();
-  await home.waitFor();
+  await groups.waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
-  if (!await home.isVisible()) await page.locator('#openSidebar').click();
-  check(await home.isVisible() && await home.locator('.grp').count() >= 2, '390px drawer uses the same tree');
+  if (!await groups.isVisible()) await page.locator('#openSidebar').click();
+  check(await groups.isVisible() && await groups.locator('.grp').count() >= 2, '390px drawer uses the same tree');
   check(await page.locator('#sideFace').isVisible(), '390px drawer has the same face switch');
   return { passed: true, results };
 }

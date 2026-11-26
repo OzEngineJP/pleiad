@@ -3476,21 +3476,6 @@
       "input": "730dd7ff714a"
     },
     {
-      "id": "memory.sortStart",
-      "risk": "guarded",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
       "id": "memory.sortStatus",
       "risk": "read",
       "riskOf": false,
@@ -3506,21 +3491,6 @@
             "sort-status"
           ]
         }
-      },
-      "legacyCommand": null,
-      "input": "25c7d85c859a"
-    },
-    {
-      "id": "memory.sortStop",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": false,
-        "cli": false
       },
       "legacyCommand": null,
       "input": "25c7d85c859a"

@@ -90,11 +90,13 @@ export default async function (t) {
         row.lastModified = Math.max(row.lastModified + 1, Date.now());
         sessions.set(sessionId, row);
       };
-      const prompts = [];
+      const prompts = [];       // 夜の整理の呼び出し（learner）だけ
+      const sortPrompts = [];   // 夜の整理の最後の振り分けの呼び出し（kind = sort。ここでは何も決めない答えを返す。振り分けは memory-sort の検査）
       const host = {
         store: { getAll: async () => ({}), get: async (id) => (CWDS[id] ? { cwd: CWDS[id] } : {}), getPrefs: async () => prefs, setMeta: async () => {}, setMode: async () => {}, setModel: async () => {}, setSessionData: async () => {} },
         getBackend: (id) => (id === 'fake' ? fake : null), listBackends: () => [fake], resolveModel: async () => '', resolveEffort: async () => '',
         internalCall: async (req) => {
+          if (req.kind === 'sort') { sortPrompts.push(req.prompt); return { text: '{"items":[]}', usage: null, callId: `sort-${sortPrompts.length}` }; }
           prompts.push(req.prompt);
           const answer = call ? await call(req.prompt, prompts.length) : { memories: [] };
           return { text: JSON.stringify(answer), usage: null, callId: `call-${prompts.length}` };
@@ -107,7 +109,7 @@ export default async function (t) {
       const add = (text, extra = {}) => memory.store.add({ layer: 'user', text, by: LEARNER, ...extra }).then((r) => r.entry);
       const byId = async (id) => (await memory.list({})).find((x) => x.id === id);
       const sentOf = (prompt) => JSON.parse(line(prompt, 'Existing memories: ') ?? '[]');
-      return { dir, memory, learner, prompts, say, add, byId, sentOf };
+      return { dir, memory, learner, prompts, sortPrompts, say, add, byId, sentOf };
     }
 
     // ---- 1 回の流れ: 選んだ分だけ渡す・段を付け直す・人の記憶と約束は触らない・全件で重複を調べる
@@ -156,8 +158,11 @@ export default async function (t) {
     t.ok('段を付け直した件数は 2（作業場所へ・保存だけへ）。結果にも残る', run1.retiered === 2 && (await a.learner.status()).lastResult.retiered === 2, JSON.stringify(run1));
     t.ok('「この作業場所で」へ付けた記憶には、出どころの会話から決めた正規の作業場所が付く', after.l2.tier === 'workspace' && after.l2.workspace === '/repo/alpha');
     t.ok('保存だけへ付け直した', after.l3.tier === 'archive');
-    t.ok('人が書いた記憶・今と同じ段・渡していない記憶・約束は動かない',
-      after.h.tier === 'always' && after.l1.tier === 'always' && after.archived.tier === 'archive' && after.promise.tier === undefined && after.promise.kind === 'promise');
+    t.ok('人が書いた記憶・今と同じ段・渡していない記憶は動かない。約束は AI へ渡さず、夜の整理の最後の振り分けが先に保存だけへ寄せる（内容は変えない）',
+      after.h.tier === 'always' && after.l1.tier === 'always' && after.archived.tier === 'archive' && after.promise.tier === 'archive' && after.promise.kind === 'promise' && after.promise.text === promise.text
+      && !a.prompts.some((p) => p.includes('ZZPROMISEZZ')));
+    t.ok('最後の振り分けは、段の無い記憶（約束は含めない）だけを 1 束で別の呼び出しへ渡す。夜の整理の呼び出しには数えない',
+      a.sortPrompts.length === 1 && a.sortPrompts[0].includes('ZZUNTIEREDZZ') && !a.sortPrompts[0].includes('ZZPROMISEZZ'), JSON.stringify(a.sortPrompts.length));
     t.ok('本文・by・updatedAt は付け直しで動かない（AI が書いた行のまま）',
       [[l2, after.l2], [l3, after.l3]].every(([before, now]) => now.text === before.text && now.updatedAt === before.updatedAt && now.by.kind === 'bot' && now.by.botId === 'b_learner'));
     t.ok('新しい記憶は 1 件だけ書く（同じ文・忘れた記憶は全件の検査で断る。渡していなくても重複にならない）',

@@ -56,7 +56,7 @@
       "remote": "Remote",
       "plus": "Pleiad Plus",      "about": "About & updates",
       "delegation": "Delegation",
-      "memory": "Memory",
+      "memory": "Bots",
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
       "computer": "Computer use"
@@ -79,15 +79,16 @@
       "refresh": "Refresh"
     },
     "memory": {
-      "general": "General",
-      "bot": "Bots",
-      "autoLearn": "Automatic memory organization",
-      "learnAt": "Organize at",
-      "episodeSummary": "Summarize and hand off bot conversations",
-      "episodeSummaryNote": "Only runs while automatic organization is on. The switch is kept even if you turn organization off",
+      "title": "Memory",
+      "autoLearn": "Relearn from conversations every night",
+      "learnAt": "Time",
+      "autoLearnNote": "Reads what you said and adds what each bot should know from now on. It also keeps deciding, a little each night, when each memory should be given",
+      "episodeSummary": "Carry a thread's story into the next thread",
+      "episodeSummaryNote": "Briefly sums up a thread that has gone quiet and hands it over at the start of the same bot's next thread",
       "status": {
         "off": "Off",
         "offSub": "Saved memories stay available",
+        "offSubUntiered": "Saved memories stay available. The {{n}} with no set time to be given are passed only when they relate to the topic",
         "running": "Organizing",
         "authWait": "Waiting for sign-in",
         "authWaitSub": "Resumes when you sign in to {{agent}}",
@@ -99,56 +100,30 @@
         "failed": "Failed",
         "retryAt": "Retrying at {{when}}",
         "waiting": "On",
-        "fit": "Didn't fit at the start of a conversation: {{tiers}} (passed when they relate to the topic)",
-        "fitTier": {
-          "untiered": "{{n}} untiered",
-          "always": "{{n}} always",
-          "workspace": "{{n}} in this workspace"
-        },
+        "moreDeferred": "Messages it couldn't finish reading, and {{n}} busy conversations, are left for the next run",
         "loadFailed": "Couldn't load status"
+      },
+      "sort": {
+        "untiered": "{{n}} memories with no set time to be given",
+        "none": "Every memory has a set time to be given",
+        "nightly": "Deciding {{perNight}} each night (about {{nights}} more nights)",
+        "placed": "Decided {{n}}: every time {{always}} · only in this folder {{workspace}} · not given {{archive}}",
+        "running": "Deciding now",
+        "failed": "Last night didn't go well. It continues from where it left off tonight",
+        "undone": "Undone ({{restored}} restored · {{kept}} kept because you changed them). It won't decide again until you turn the nightly organizing back on"
       },
       "act": {
         "now": "Organize now",
         "retry": "Try again",
         "login": "Sign in",
         "check": "Check connection",
-        "skipped": "Skipped — automatic organization is off",
+        "undo": "Undo what was decided",
+        "skipped": "Skipped — nightly organizing is off",
         "skippedRunning": "Already organizing",
         "failed": "Couldn't complete the action",
         "saveFailed": "Couldn't save"
       },
-      "sort": {
-        "title": "Memory sorting",
-        "note": "Asks the AI once to sort memories that have no tier into Always, In this workspace or Stored only. It only runs when you press Start, even if automatic organization is off. Memory text is never rewritten, and you can undo it afterwards",
-        "status": {
-          "none": "Not sorted yet",
-          "running": "Sorting",
-          "stopping": "Stopping",
-          "stopped": "Stopped",
-          "done": "Sorted",
-          "failed": "Stopped after failures",
-          "undone": "Undone"
-        },
-        "sub": {
-          "untiered": "{{n}} without a tier",
-          "processed": "{{n}} processed",
-          "tiers": "Always {{always}} · In this workspace {{workspace}} · Stored only {{archive}}",
-          "unknown": "{{n}} stored only because the workspace was unknown",
-          "left": "{{n}} left without a tier",
-          "changed": "{{n}} skipped because you changed them first",
-          "failures": "{{n}} failures",
-          "undone": "{{restored}} restored · {{kept}} kept because you changed them"
-        },
-        "act": {
-          "start": "Start sorting",
-          "resume": "Continue",
-          "redo": "Run again",
-          "stop": "Stop",
-          "undo": "Undo",
-          "skippedRunning": "Already sorting",
-          "failed": "Couldn't complete the action"
-        }
-      }
+      "bots": "See memories"
     },
     "agents": {
       "recheck": "Recheck status",
@@ -4680,12 +4655,10 @@
     "saveFailed": "Could not save auto compaction settings: {{error}}"
   },
   "contextRebuild": {
-    "name": "Rebuild context from records at conversation boundaries",
-    "description": "Instead of a summary, hands over your messages, an index, and recent exchanges. The change applies from the next boundary",
+    "name": "Rebuild context from records at conversation boundaries, without summarizing",
+    "description": "Applies to every conversation. Instead of a summary, hands over your messages, an index, and recent exchanges. While it is on, idle conversations are not compacted automatically. The change applies from the next boundary",
     "saved": "Saved",
     "saveFailed": "Could not save: {{error}}",
-    "autoCompactionOff": "Idle auto compaction is stopped while \"Rebuild context from records at conversation boundaries\" is on",
-    "openMemory": "Open memory settings",
     "running": "Rebuilding context from records…",
     "done": "Rebuilt context from records",
     "recovered": "Couldn't continue the previous conversation, so its record moved to a new one and the message was sent again",

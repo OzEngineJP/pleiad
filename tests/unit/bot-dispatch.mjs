@@ -71,8 +71,8 @@ export default async function (t) {
     // ================================================================ 途中送信の形ごとの扱い（身代わりのサービス・バックエンド）
     {
       let worlds = 0;
-      const world = (steerKind, { realStart = false, more = false, modes = null, episodes = null, memoryNotes = [] } = {}) => {
-        let dRef = null;
+      const world = (steerKind, { realStart = false, more = false, modes = null, episodes = null, memoryNotes = [], brain = null } = {}) => {
+        let dRef = null, postSeq = 0;
         const posts = [
           { id: 'p_root', channelId: 'c_1', threadId: null, author: { kind: 'human' }, text: '根', mentions: ['b_1'], at: 1000, reactions: {} },
           { id: 'p_2', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 2', mentions: [], at: 2000, reactions: {} },
@@ -90,9 +90,11 @@ export default async function (t) {
           dir: path.join(tmp, `stub-${steerKind}-${++worlds}`),
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
-          post: async (a, by) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
+          post: async (a, by) => { const post = { id: `p_t${++postSeq}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
           edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }, typeof a.failure === 'string' && { failure: a.failure }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
+          // 取り下げた投稿は流れから外れる（本物の store の snapshot と同じ）
+          withdraw: async ({ postIds }) => { for (const id of postIds) { const i = posts.findIndex((x) => x.id === id); if (i >= 0) posts.splice(i, 1); } },
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
             update: async (c, th, patch) => {
@@ -112,7 +114,8 @@ export default async function (t) {
           runTurn: async (args, _onStarted, hooks) => { started.push({ args, hooks }); if (realStart) await dRef.turnExtras({ info: { sessionId: args.sessionId }, agentLocale: 'ja', stream: {} }); return 'ok'; },
           lastReply: async () => '終わり',
         };
-        const BOT_LIST = more ? [{ id: 'b_1', name: 'Owl', icon: '🦉' }, { id: 'b_2', name: 'Lynx', icon: '🐺' }, { id: 'b_3', name: 'Fox', icon: '🦊' }] : [{ id: 'b_1', name: 'Owl', icon: '🦉' }];
+        const BOT_LIST = (more ? [{ id: 'b_1', name: 'Owl', icon: '🦉' }, { id: 'b_2', name: 'Lynx', icon: '🐺' }, { id: 'b_3', name: 'Fox', icon: '🦊' }] : [{ id: 'b_1', name: 'Owl', icon: '🦉' }])
+          .map((b) => (brain ? { ...b, pulse: { on: true } } : b));
         const bots = {
           get: async ({ botId }) => BOT_LIST.find((b) => b.id === botId) ?? null, list: async () => BOT_LIST,
           ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
@@ -120,14 +123,15 @@ export default async function (t) {
         };
         const memoryCalls = [];   // memory.turnContext に渡った引数（作業場所 cwd の受け渡しを見る）
         const memory = { turnContext: async (args) => { memoryCalls.push(args); return { notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }; } };
-        const d = createDispatcher({ channels, bots, memory, episodes, host });
+        const d = createDispatcher({ channels, bots, memory, episodes, host, ...(brain ? { brain } : {}) });
         dRef = d;
         return { d, memoryCalls, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
 
-      // 途中送信を挟んでも、そのターンの assistant の文は一つの投稿にまとめる。
+      // 人の途中送信を受けたら、そのターンの今の投稿をそこまでの本文で確定し、続きは新しい投稿に出す（ADR 0117 の追記。節 12）。
+      // 分け方の細かい場合（分けない途中送信・止める・失敗・リアクション・channelPost）は tests/unit/bot-steer-split.mjs。
       {
         const w = world('confirm');
         w.host.lastReply = async () => '二つ目の返事';
@@ -139,13 +143,17 @@ export default async function (t) {
         await w.d.onPosted(w.posts[1], w.channel);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
         await tick();
-        t.ok('途中送信の受領でも投稿を分けず、画像を保つ', w.posts.filter((p) => p.turn).length === 1, JSON.stringify(w.posts));
+        t.ok('人の途中送信で今の投稿を確定する（書いている印を外し、画像を保つ）。続きの文ができるまで新しい投稿は作らない',
+          w.posts.filter((p) => p.turn).length === 1 && first.text === '最初の返事' && first.presents?.length === 1 && first.state === 'done', JSON.stringify(w.posts));
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '二つ目の返事' });
         w.d.onTurnEvent(w.turn, { type: 'text.end' });
         w.turns.delete('s1');
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
-        t.ok('途中送信の前後の文章と画像が一つの投稿に残る', first.text === '最初の返事\n\n二つ目の返事' && first.presents?.length === 1
-          && first.state === 'done', JSON.stringify(w.posts));
+        const replies = w.posts.filter((p) => p.turn);
+        t.ok('途中送信の前の文章と画像は確定した投稿に残り、後の文章は新しい投稿に入る', replies.length === 2 && replies[0] === first
+          && first.text === '最初の返事' && first.presents?.length === 1 && first.state === 'done'
+          && replies[1].text === '二つ目の返事' && !replies[1].presents && replies[1].state === 'done'
+          && replies[1].turn.sessionId === 's1', JSON.stringify(w.posts));
       }
       {
         const w = world('confirm');
@@ -160,8 +168,10 @@ export default async function (t) {
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '三つ目の返事' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
         const replies = w.posts.filter((p) => p.turn);
-        t.ok('連続した途中送信でも一つの投稿に文章を順番どおり残す', replies.length === 1
-          && replies[0].text === '最初二つ目三つ目の返事' && replies[0].state === 'done', JSON.stringify(replies));
+        // 新しい投稿ができる前（見せる文が無い間）に次の途中送信が届いても、確定する投稿は無い。その間に書いた文は新しい投稿に順番どおり入る
+        t.ok('連続した途中送信: 最初の分を確定し、続きの文は新しい投稿に順番どおり残す', replies.length === 2
+          && replies[0].text === '最初' && replies[0].state === 'done'
+          && replies[1].text === '二つ目三つ目の返事' && replies[1].state === 'done', JSON.stringify(replies));
       }
       {
         const w = world('confirm');
@@ -175,27 +185,33 @@ export default async function (t) {
         const next = w.d.claimPost(mine);
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
         const replies = w.posts.filter((p) => p.turn);
-        t.ok('明示的な channels.post も途中送信でターン投稿を分けない',
+        // 人の途中送信の後の channels.post は、確定した投稿を書き換えず新しい投稿にする（postId なし = ChannelService が追加する）
+        t.ok('明示的な channels.post の後に人の途中送信が届いたら、確定した投稿に書いた本文はそのまま残り、次の channels.post は新しい投稿になる',
           next.postId === null && replies.length === 1 && replies[0].text === '投稿で書いた先の返事'
           && replies[0].state === 'done', JSON.stringify(replies));
       }
       {
         const w = world('confirm');
         w.host.lastReply = async () => '追加の投稿への返事';
+        const removed = [];
+        const withdraw = w.d.channels.withdraw;
+        w.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };   // 空の投稿の取り下げを見る
         await w.d.turnExtras(w.turn);
+        const empty = w.posts.find((p) => p.turn);
         await w.d.onPosted(w.posts[1], w.channel);
         w.d.onTurnEvent(w.turn, { type: 'userMessage.delivered', messageId: w.steers[0].id });
         const visible = '最初の返事には画像が入っています。![図](image.png) これを残して、次の依頼を読みます。';
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: visible });
         await tick();
-        const first = w.posts.find((p) => p.turn);
-        t.ok('返事より先に途中送信が届いても、道具の前には最初の返事が表示される', first.text === visible, JSON.stringify(first));
+        const second = w.posts.filter((p) => p.turn).at(-1);
+        // 人の途中送信の時点で何も書いていなければ、空の投稿は残さず、見せる文ができた時点で新しい投稿に出す
+        t.ok('返事より先に途中送信が届いたら、空の投稿は取り下げ、道具の前の返事は新しい投稿に表示される',
+          removed.includes(empty.id) && second.id !== empty.id && second.text === visible, JSON.stringify({ removed, posts: w.posts }));
         w.d.onTurnEvent(w.turn, { type: 'tool.start', id: 't1', name: 'Read', input: {} });
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '追加の投稿への返事' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
-        const replies = w.posts.filter((p) => p.turn);
-        t.ok('途中送信後に表示済みの返事は、次の道具を呼んでも同じ投稿に残る', replies.length === 1
-          && replies[0].text === `${visible}\n\n追加の投稿への返事` && replies[0].state === 'done', JSON.stringify(replies));
+        t.ok('新しい投稿の返事は、次の道具を呼んでも同じ投稿に残る', second.text === `${visible}\n\n追加の投稿への返事` && second.state === 'done'
+          && w.posts.filter((p) => p.turn && p !== empty).length === 1, JSON.stringify(w.posts));
       }
       {
         let requested = 0;
@@ -936,7 +952,8 @@ export default async function (t) {
         {
           const q = mkWorld();
           const removed = [];
-          q.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = q.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+          const withdraw = q.d.channels.withdraw;
+          q.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };
           await callOwl(q);
           await tick();
           const lynxPost = q.posts.find((p) => p.turn?.sessionId === 's_new_b_2');
@@ -963,9 +980,11 @@ export default async function (t) {
 
       // 使用量の上限（ADR 0119）: 何も書けずに上限で終わったターンは作業中の投稿を消し、Pleiad のお知らせを出して休憩中にする。休憩中の @ は配らず、場所ごとに 1 回だけ知らせる
       {
-        const w = world('plain');
+        const lines = [];
+        const w = world('plain', { brain: { append: (botId, line) => lines.push(line), tail: () => [], loops: () => [] } });
         const removed = [];
-        w.d.channels.remove = async ({ postId }) => { removed.push(postId); const p = w.posts.find((x) => x.id === postId); if (p) p.deletedAt = 1; };
+        const withdraw = w.d.channels.withdraw;
+        w.d.channels.withdraw = async (a) => { removed.push(...a.postIds); await withdraw(a); };
         await w.d.turnExtras(w.turn);
         const turnPost = w.posts.find((p) => p.turn);
         const resetsAt = Date.now() + 3 * 3600_000;
@@ -974,6 +993,9 @@ export default async function (t) {
         await tick();
         const notes = w.posts.filter((p) => String(p.text).includes('使用量の上限'));
         t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「中断しました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|中断しました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
+        const result = lines.find((l) => l.kind === 'result');
+        t.ok('上限: 活動メモの結果の行は上限で終わったと書く（「止められた」と書かない。人が［止める］を押したように読めないように）',
+          result?.text.includes('使用量の上限') && !result.text.includes('止められた') && result.meta?.state === 'limited', JSON.stringify(lines));
         t.ok('上限: 同じスレッドに Pleiad のお知らせを 1 回出す（解除の時刻つき）', notes.length === 1 && notes[0].threadId === 'p_root' && notes[0].text.includes('休みます'), JSON.stringify(notes));
         const owl = await w.d.bots.get({ botId: 'b_1' });
         t.ok('上限: その bot は解除の時刻まで休憩中（bots.overview の restingUntil の元）', w.d.restingUntil(owl) === resetsAt);

@@ -319,6 +319,20 @@ export default async function(t) {
     const famWatch = await fam.handle({ command:'pageWatch', args:{ sessionId:'one/child', path:file, kind:'file' }, client:famClient }).catch(e => e.code);
     t.ok('見ている会話の子孫へのページの操作も受け付ける', famWatch?.removed === true);
     fam.close();
+    // 開いているスレッドの bot の会話（watchingThread）のファイルは開ける。見ていない会話は今までどおり INVALID（再現: 以前は thread 枠が許可範囲に無く INVALID）
+    const threadClient = { readyState:1, OPEN:1, send:() => {} };
+    let threadSessions = ['bot-a'];
+    const threadWs = createBrowserUnifyWs({ clients:() => new Set([threadClient]), watching:() => null, watchingThread:() => threadSessions,
+      cwd:() => work, access:() => ({ dataDir }), ports:() => ({ pages:12345, isolated:23456 }), htmlKeys, secret,
+      pageWatch:{ add:() => {}, remove:() => {}, removeClient:() => {} } });
+    const threadOpen = await threadWs.handle({ command:'pageOpen', args:{ sessionId:'bot-a', kind:'file', path:file }, client:threadClient }).then(value => ({ value }), error => ({ code:error.code }));
+    t.ok('スレッドの枠の bot 会話のファイルは pageOpen で開ける', threadOpen.value?.kind === 'file', JSON.stringify(threadOpen));
+    const otherOpen = await threadWs.handle({ command:'pageOpen', args:{ sessionId:'bot-z', kind:'file', path:file }, client:threadClient }).then(value => ({ value }), error => ({ code:error.code }));
+    t.ok('スレッドの枠に無い会話は今までどおり INVALID で断る', otherOpen.value === undefined && otherOpen.code === 'INVALID', JSON.stringify(otherOpen));
+    threadSessions = [];
+    const closedOpen = await threadWs.handle({ command:'pageOpen', args:{ sessionId:'bot-a', kind:'file', path:file }, client:threadClient }).then(value => ({ value }), error => ({ code:error.code }));
+    t.ok('スレッドを閉じた後は同じ会話も断る', closedOpen.value === undefined && closedOpen.code === 'INVALID', JSON.stringify(closedOpen));
+    threadWs.close();
     ws.close(); t.ok('relay subscription can be removed', emit === null);
     {
       const server = await startServer({dataDir:path.join(root, 'server'), env:{AGENT_HOST_BACKENDS:'fake'}});

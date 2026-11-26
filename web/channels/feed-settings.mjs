@@ -3,6 +3,7 @@
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { botIcon } from './bot-icon.mjs';
+import { createCwdField } from './cwd-field.mjs';
 
 const field = (label, control, hint) => {
   const wrap = el('label', 'cs-field');
@@ -38,22 +39,22 @@ export function openChannelSettings({ host, channel, bots, onSaved = () => {}, r
   const isDm = channel.kind === 'dm';
   const name = textInput(channel.name, 60);
   const purpose = textInput(channel.purpose, 300);
-  const cwd = textInput(channel.cwd ?? '', 1000);
   const memo = el('textarea', 'cs-input cs-memo');
   memo.rows = 5;
   memo.maxLength = 4000;
   memo.value = channel.memo ?? '';
   const members = new Set(channel.members ?? []);
+  // 既定の作業フォルダー: パスの表示・選ぶ面・各 bot の動く場所（web/channels/cwd-field.mjs。メンバーの増減で「動く場所」を描き直す）
+  const cwd = isDm ? null : createCwdField({ host, value: channel.cwd ?? '', bots, members });
   if (!isDm) {
-    form.append(field(t('channels:feed.settings.name'), name), field(t('channels:feed.settings.purpose'), purpose),
-      field(t('channels:feed.settings.cwd'), cwd, t('channels:feed.settings.cwdHint')));
+    form.append(field(t('channels:feed.settings.name'), name), field(t('channels:feed.settings.purpose'), purpose), cwd.field);
     const list = el('div', 'cs-members');
     for (const bot of bots) {
       const row = el('label', 'cs-member');
       const box = el('input');
       box.type = 'checkbox';
       box.checked = members.has(bot.id);
-      box.onchange = () => (box.checked ? members.add(bot.id) : members.delete(bot.id));
+      box.onchange = () => { if (box.checked) members.add(bot.id); else members.delete(bot.id); cwd.refreshWhere(); };
       row.append(box, botIcon(bot, 'cs-member-icon'), el('span', 'cs-member-name', bot.name));
       list.append(row);
     }
@@ -80,7 +81,12 @@ export function openChannelSettings({ host, channel, bots, onSaved = () => {}, r
 
   const close = () => { dlg.close(); };
   dlg.addEventListener('close', () => { dlg.remove(); returnTo?.focus?.({ preventScroll: true }); });
-  dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });   // 背後の押下
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) { close(); return; }   // 背後の押下
+    if (cwd?.popOpen() && !cwd.owns(e)) cwd.closePop();   // 作業フォルダーの面の外の押下は、その面だけ閉じる
+  });
+  // Esc は、作業フォルダーの面が開いていればその面だけ閉じる（ダイアログは閉じない）
+  dlg.addEventListener('cancel', (e) => { if (cwd?.popOpen()) { e.preventDefault(); cwd.closePop(true); } });
   cancel.onclick = close;
 
   const run = async (fn) => {
@@ -95,7 +101,7 @@ export function openChannelSettings({ host, channel, bots, onSaved = () => {}, r
     e.preventDefault();
     const args = { channelId: channel.id, memo: memo.value };
     if (!isDm) {
-      Object.assign(args, { name: name.value.trim() || channel.name, purpose: purpose.value, cwd: cwd.value.trim() || null, members: [...members] });
+      Object.assign(args, { name: name.value.trim() || channel.name, purpose: purpose.value, cwd: cwd.value() || null, members: [...members] });
     }
     run(() => host.invoke('channels.update', args));
   };

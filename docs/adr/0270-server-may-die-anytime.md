@@ -151,7 +151,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 ### Devin・Grok の ACP（`core/backends/acp-held.mjs`）
 
-- 載せるか（`heldAcpPlan`）: `AGENT_HOST_DEVIN_HOLDER`・`AGENT_HOST_GROK_HOLDER`。`on` は載せる・`off` は載せない。**無ければ、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるときだけ載せる**（2a の `!` の行・ply_shell と同じ既定）。bot の会話は載せない（`restoreTurn` が付け直さない）。`.cmd` は包みの中身に解いてから載せる（解けなければ今の流れ）
+- 載せるか（`heldAcpPlan`）: `AGENT_HOST_DEVIN_HOLDER`・`AGENT_HOST_GROK_HOLDER`。`on` は載せる・`off` は載せない。**無ければ、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるときだけ載せる**（2a の `!` の行・ply_shell と同じ既定）。この段階では bot の会話を対象外とした。bot の復元は「段 4a の実装」を参照。`.cmd` は包みの中身に解いてから載せる（解けなければ今の流れ）
 - 子は policy `jsonrpc`（1 ターン 1 プロセス。id は `acp-…`）。`createHeldAcp` が ChildProcess の最小の写し（stdin・stdout・stderr・kill・exit）を返し、`DevinAcp`・`GrokAcp` は `spawnCli` の代わりにこれを使う
 - 印（`turn`）は `session/prompt` を書く直前に打つ。札はサーバーのターンの札（`core/turn-card.mjs`）をそのまま置く。札を先に置いて 1 tick 待ち、印を打ってから書く（落ちた瞬間に印だけあって札が無い、を減らす）
 - 札のバックエンドの欄（`backendCard`）は `{ held: true, devin|grok: { promptId, sessionId, sent, shown, prompts } }`。`promptId` は走っている `session/prompt` の id（付け直した側が応答を拾い直す）、`prompts` は走っている途中送信の id（本文の応答の後に届く返答を、閉じる前に待つ）、`sent`・`shown` は写しのエコー合わせ（16 KB を超えるときは入れない＝人が書いた分で組み立てる）
@@ -347,6 +347,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 - bot の通常ターンは、起動復元でチャンネルの既存投稿と sidecar、待ち受け中の inbox、ターン札に保存した投稿 ID・使用量・呼び出し元から進捗役を作り直す。保持役の記録を replay して本文・使用量・承認状態を再構成し、replay 中はチャンネル通知を再送しない。配達済みフラグの修復は同じ inbox 行への冪等な更新にする。`bot-dispatch` の通常再起動場面が、承認待ちの投稿と再起動中に届いた出来事を確かめる。
 - pulse bot は通常のターン投稿を持たないため、既存の短い会話として復元役だけを登録する。保持役に残る圧縮ターンは通常の復元で続け、保持役に無い圧縮ターンは `compacting` 印から新しいサーバーで再試行する。圧縮は冪等なので再試行の方を選び、復元できた会話は再試行対象から外す。開始失敗時は `compacting` 印を消して次回起動でも再試行できるようにする。
+- 起動時に bot の設定を読み、保持役が持つターンとルーティンの実行を記録の再生より先に付け直す。更新のリース中に時刻を迎えた予約と未送の出来事の扱いは [ADR 0109 の改訂](0109-bot-and-dispatch.md) を参照。
 
 ### 試験の対応と 4b へ回すもの
 

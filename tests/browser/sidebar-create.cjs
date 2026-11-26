@@ -4,7 +4,8 @@
 //   「チャンネル ＋」の ＋ で名前の欄が出て、Enter で本物の channels.create が作り、木に出てそのチャンネルが開く・同じ名前は欄の下に理由が出て字が残る・Esc で閉じて ＋ へ戻る・
 //   見出しの文字を押しても欄が出る・打った名前は絞り込みを掛けて外しても残る・欄の中でも Ctrl+Shift+O が効く・
 //   木のキーボードで「チャンネル」の見出しに来て Enter でも欄が出る・
-//   チャットの見出しの ＋（#newSession）は触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める・
+//   新しいチャットの「書く」（#newSession。切り替えの行の右）は両方の面で触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める。
+//   bot の面で押すとチャットの面に移って始める（11）・
 //   どちらも絞り込みの条件（エージェントが 1 つ・状態・作業場所）を newSession に引き継ぐ・入力中の字（IME の変換中）では始めない。
 async page => {
   const URL = 'http://127.0.0.1:7434/?token=sidebar-create';
@@ -96,8 +97,8 @@ async page => {
   await face('chat');
   const newChat = page.locator('#newSession');
   await page.mouse.move(900, 400);
-  const shownNew = await page.waitForFunction(() => { const n = document.getElementById('newSession'); return n?.closest('[data-side-key="chsec:home"]') && getComputedStyle(n).opacity === '1'; }, null, { timeout: 2000 }).then(() => true, () => false);
-  check(shownNew, '新しいチャットの ＋ はチャットの見出しにあり、触れなくても見える');
+  const shownNew = await page.waitForFunction(() => { const n = document.getElementById('newSession'); return n?.closest('.side-face-row') && getComputedStyle(n).opacity === '1'; }, null, { timeout: 2000 }).then(() => true, () => false);
+  check(shownNew, '新しいチャットの「書く」は切り替えの行の右にあり、触れなくても見える（11）');
   check(await newChat.getAttribute('aria-keyshortcuts') === 'Control+Shift+O' && (await newChat.getAttribute('title')).includes('Ctrl+Shift+O'), '＋ の名前に近道 Ctrl+Shift+O が出る');
   check(await page.locator('#sidebar header #newSession').count() === 0, '頭の行にはもう ＋ が無い');
   const waitNew = async (before) => {
@@ -158,6 +159,13 @@ async page => {
   await page.keyboard.press('Control+Shift+O');
   args = await waitNew(before);
   check(args.backend === 'fake' && args.status === '進行中' && args.cwd === home, 'Ctrl+Shift+O も同じく引き継ぐ');
+  // 11: bot の面で押すと、チャットの面に移って新しいチャットを始める
+  await face('bot');
+  check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true', 'the bot face is shown before the new-chat press');
+  before = (await sent('newSession')).length;
+  await page.locator('#newSession').click();
+  args = await waitNew(before);
+  check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true' && args.backend === 'fake', 'on the bot face, the new-chat button moves to the チャット face and starts a chat');
   await shot('03-filtered');
   await page.evaluate(() => localStorage.removeItem('agent-host-side'));
 

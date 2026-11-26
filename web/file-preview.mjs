@@ -34,6 +34,22 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
   return b;
 };
 
+// i18n-dynamic: tabs:address.reasons.
+const RAW_ERROR_CODE = /^[A-Za-z0-9_-]+$/;
+const MISSING_REASON = '__PLY_MISSING_REASON__';
+/** ファイル・可視化操作の失敗をトースト用の文に直す。生の検査コード（INVALID 等）はそのまま出さず辞書へ引く */
+export function fileActionErrorMessage(error) {
+  const code = typeof error?.code === 'string' && error.code ? error.code : null;
+  const raw = typeof error === 'string' ? error : (typeof error?.message === 'string' ? error.message : '');
+  const key = code || (RAW_ERROR_CODE.test(raw) ? raw : null);
+  if (key) {
+    const translated = t(`tabs:address.reasons.${key}`, { defaultValue: MISSING_REASON });
+    if (translated && translated !== MISSING_REASON) return translated;
+  }
+  if (raw && (!code || raw !== code) && !RAW_ERROR_CODE.test(raw)) return raw;
+  return t('files.actionFailed');
+}
+
 /**
  * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）。
@@ -621,7 +637,7 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
     const sessionId = target.sessionId ?? ctx.sessionId;
     return { path:target.path, ...(sessionId ? { sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
   };
-  const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
+  const failed = error => notify(fileActionErrorMessage(error));
   /** ファイルを開く入口（リンク・パスのチップ・ツリー・ファイルのカード・添付・コンテキストの「開く」）。Pleiad のページで開く（ページの口がまだ無ければ右パネル） */
   function activate(ref, element, base) {
     if (unifiedEnabled()) return openPage(ref, whereFrom({ path:ref.path, element, base }), element).catch(failed);

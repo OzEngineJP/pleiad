@@ -83,7 +83,8 @@
       "protected-data": "The Pleiad data folder cannot be opened.",
       "not-file": "Choose a file or folder.",
       "NO_WINDOW": "This tab was closed. Choose another tab.",
-      "UNSUPPORTED": "Connect to Chrome to open this address."
+      "UNSUPPORTED": "Connect to Chrome to open this address.",
+      "INVALID": "Could not open from this conversation. Reopen it and try again."
     }
   }
 }

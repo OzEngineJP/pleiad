@@ -152,7 +152,7 @@ export default async function (t) {
 
   // ---- 件数で絞らずに全部（ADR 0260）・手動の畳みの印。最後の好みは前の版の「ほか n 件」を開いた区画（chMore・statusMore）が残っているもの
   const rows = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, title: `chat ${i}`, status: 'A', backend: 'fake', cwd: '/work', lastModified: 10000 - i }));
-  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }, { chMore: ['a'], statusMore: ['A'] }]) {
+  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }, { chMore: ['a'], statusMore: ['A'], chCollapsed: ['home', 'c1'] }]) {
     const d = installDom(prefs);
     try {
       const routinesSec = new N('section'); routinesSec.dataset.sec = 'routines';
@@ -167,14 +167,13 @@ export default async function (t) {
       find(sectionOf(root, 'A'), n => n.dataset.key === 'g:A').treeExpand(false);
       if ('chMore' in prefs) {
         const saved = JSON.parse(localStorage.getItem('agent-host-side'));
-        t.ok('前の版の chMore・statusMore は読まず、次の保存で消える', !('chMore' in saved) && !('statusMore' in saved) && saved.collapsed.includes('A'), JSON.stringify(saved));
+        t.ok('前の版の chMore・statusMore・"home" の畳みは読まず、次の保存で消える',
+          !('chMore' in saved) && !('statusMore' in saved) && !saved.chCollapsed.includes('home') && saved.chCollapsed.includes('c1') && saved.collapsed.includes('A'), JSON.stringify(saved));
       }
       t.ok('畳んだ状態の見出しに待ちの印', sectionOf(root, 'A').classList.contains('collapsed') && !!find(sectionOf(root, 'A').children[0], n => n.classList.contains('wait')));
-      const home = find(root, n => n.dataset.sideKey === 'chsec:home');
-      home.children[0].treeExpand(false);
-      t.ok('チャットも畳むと待ちの印', !!find(find(root, n => n.dataset.sideKey === 'chsec:home').children[0], n => n.classList.contains('wait')));
       t.ok('あなたを待っている区画は無い', !find(root, n => n.classList.contains('bot-waits')));
-      t.ok('チャットの面はチャットの見出しだけ（ルーティン・チャンネルは bot の面。ADR 0362）', root.children.map(n => n.dataset.sec ?? n.dataset.sideKey).join() === 'chsec:home');
+      t.ok('チャットの面は状態ごとのフォルダーだけ（「チャット」見出し・ルーティン・チャンネルは無い）',
+        !find(root, n => n.dataset.sideKey === 'chsec:home') && root.children.every(n => String(n.dataset.sideKey ?? '').startsWith('group:')));
       side.setFace('channels');
       const channel = find(root, n => n.dataset.sideKey === 'chsec:a');
       if (prefs.filter?.dir || prefs.filter?.backends) {
@@ -198,7 +197,7 @@ export default async function (t) {
     const child = { id: 'child', title: 'child', status: 'A', lastModified: 9989, parent: { sessionId: 'parent' } };
     side.render([...rows, parent, child], { statuses: [{ status: 'A' }], currentId: 'child' });
     t.ok('多くの会話の後ろの開いている枝も、fork の器ごと出る', !!find(root, n => n.dataset.sideKey === 'family:parent') && !!rowOf(root, 'parent') && !!rowOf(root, 'child'));
-    t.ok('fork の器の中の行は level 4', rowOf(root, 'child')?.getAttribute('aria-level') === '4');
+    t.ok('fork の器の中の行は level 3', rowOf(root, 'child')?.getAttribute('aria-level') === '3');
   } finally { familyDom.restore(); }
 
   // ---- 並びは新しい順だけ。状態が長く動いていない会話も浮かせず、印（◌ と日数）も出さない（docs/design-system.md §4.1「行」）
@@ -323,8 +322,8 @@ export default async function (t) {
       if (!prefs.filter) {
         const root = d.els.get('groups');
         const heads = [];
-        walk(find(root, (n) => n.dataset.sideKey === 'chsec:home'), (n) => { const k = n.dataset.sideKey; if (k?.startsWith('group:') && k !== 'group:') heads.push(k.slice(6)); });
-        t.ok('候補と一時チャットの見出しが一致する', JSON.stringify(heads) === JSON.stringify(want), JSON.stringify(heads));
+        walk(root, (n) => { const k = n.dataset.sideKey; if (k?.startsWith('group:') && k !== 'group:') heads.push(k.slice(6)); });
+        t.ok('候補とチャットの面の見出しが一致する', JSON.stringify(heads) === JSON.stringify(want), JSON.stringify(heads));
       }
     } finally { d.restore(); }
   }

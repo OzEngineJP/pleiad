@@ -209,6 +209,13 @@ export function paintChecklist(body, working) {
  */
 export const isTurnFailure = (post) => post.state === 'failed' && Boolean(post.turn) && !post.failedWithBody && typeof post.failure === 'string' && !post.deletedAt;
 
+/**
+ * 画面に出さない、消えた bot のターンの投稿か（黙って終えたターンが「…」の投稿を作ってから消したもの）。
+ * 消すとき作業中・あなた待ちの印は落ちる（core/channels/store.mjs の delete）ので、state が無い。
+ * 書き終えてから消した bot の投稿（state が残る）と、人の投稿は「削除された投稿」のまま出す
+ */
+export const vanishedTurnPost = (post) => Boolean(post?.deletedAt && post.turn && post.author?.kind === 'bot' && !post.state);
+
 /** 返事の文章があるか（書き出す前の待ちの印「…」だけではない） */
 const hasText = (post) => { const s = String(post.text ?? '').trim(); return s !== '' && s !== '…'; };
 
@@ -229,7 +236,7 @@ function watchClock(node) {
 }
 
 /** 状態の行（bot のターンの投稿・ルーティンの実行の根）。成功を緑の ✓ で見せない（終了は文字だけ） */
-function stateLine(post) {
+function stateLine(post, ctx) {
   const state = post.state;
   if (!state) return null;
   if (state === 'done' && !post.routine) return null;
@@ -239,7 +246,7 @@ function stateLine(post) {
     const clock = el('span', 'post-state-clock');
     clock.dataset.since = String(post.at);
     clock.textContent = durationText((Date.now() - post.at) / 1000);
-    row.append(runMark(t('channels:feed.state.working')), el('span', 'post-state-text', t(hasText(post) ? 'channels:feed.state.writing' : 'channels:feed.state.thinking')), el('span', 'post-state-dot', '·'), clock);
+    row.append(runMark(t('channels:feed.state.working')), el('span', 'post-state-text', t(hasText(post) || ctx?.streaming?.(post) ? 'channels:feed.state.writing' : 'channels:feed.state.thinking')), el('span', 'post-state-dot', '·'), clock);
     watchClock(clock);
     return row;
   }
@@ -388,7 +395,7 @@ export function fillPost(root, post, ctx) {
   }
 
   if (!post.deletedAt) {
-    const state = stateLine(post);
+    const state = stateLine(post, ctx);
     if (state) main.append(state);
     // 返事のない失敗: 返事の場所に［やり直す］（最後の投稿のときだけ。ctx.actions.retry が持ち主）
     if (isTurnFailure(post) && ctx.actions.canRetry?.(post)) {

@@ -390,16 +390,23 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 }
 @media (prefers-reduced-motion:reduce) { .rm-spin, .rm-skel { animation:none; } .rm-todo .rm-n { transition:none; } }
 
-/* 設定 › 記憶 › bot（web/memory-settings.mjs）。自動整理が OFF の間は、従う設定（時刻・要約）を薄くして押せなくする。
-   状態の 1 行は太字の状態＋注記＋操作（今すぐ整理・もう一度・ログイン・接続を確認）。生のエラー文は出さない */
-.memory-learn-dependent{transition:opacity var(--dur-fast) var(--ease-out)}
-.memory-learn-dependent.off-part{opacity:.55}
-.memory-learn-dependent.off-part .rm-switch,.memory-learn-dependent.off-part .mp-note{pointer-events:none}
+/* 設定 › bot（web/memory-settings.mjs）。毎晩の整理が OFF の間は、従う行（時刻・引き継ぎ。.learn-dep）を薄くして押せなくする（.off-part は compaction.css）。
+   状態は太字の見出し＋注記を 2 かたまり（前回の整理・渡す場面が決まっていない記憶）と、操作（今すぐ整理・決めた分を取り消す・もう一度・ログイン・接続を確認）。
+   その下に、記憶を持つ bot ごとの入口。生のエラー文・記憶の本文は出さない */
+.learn-dep{transition:opacity var(--dur-fast) var(--ease-out)}
 .mem-time{max-width:125px;min-height:36px;background:var(--surface-1);border:0;border-radius:var(--r-s);padding:4px 8px;font:400 13px/1 var(--font);color:var(--ink)}
 .mem-status{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+.mem-status:empty{display:none}
+.mem-status strong:not(:first-child){margin-top:8px}
 .mem-status.warn strong{color:var(--ink-strong)}
 .mem-status .mp-note{margin-top:0}
 .mem-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.mem-bots{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:var(--fs-s);color:var(--ink-weak)}
+.mem-bots[hidden]{display:none}
+.mem-bot-list{display:contents}
+.mem-bot{display:inline-flex;align-items:center;gap:6px;min-height:var(--hit,30px);padding:0 10px 0 6px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink);font:600 var(--fs-s)/1 var(--font);cursor:pointer}
+.mem-bot:hover{background:var(--surface-3)}
+.mem-bot .bot-face-icon{flex:none}
 
 /* ---- Claude のアカウント: その場で開くカード（docs/design-system.md「Claude のアカウント」）。動きの値はトークンだけ */
 .mp-fold{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}

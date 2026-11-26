@@ -30,7 +30,7 @@
     "openBot": "Open bot page",
     "dm": "DM",
     "home": "Chats",
-    "face": { "label": "List to show", "chats": "Chats", "channels": "Bots" },
+    "face": { "label": "List to show", "chats": "Chats", "channels": "Bots", "waitingChats": "Chats · Conversations waiting for you", "waitingChannels": "Bots · Waiting for you", "waitingTip": "Waiting for you" },
     "newChat": "New chat",
     "newChatTitle": "New chat ({{key}})",
     "newInChannel": "New thread in {{name}}",
@@ -100,9 +100,9 @@
     },
     "composer": {
       "label": "Post text",
-      "placeholder": "Post to #{{name}} · @ to call a bot",
+      "placeholder": "Post to #{{name}} · @ to call a bot · / for skills",
       "shortPlaceholder": "Post to #{{name}}",
-      "dm": "Message {{name}}",
+      "dm": "Message {{name}} · / for skills",
       "send": "Post ({{sendKeys}})",
       "sendKeys": "{{sendKeys}} to send",
       "failed": "Couldn't post: {{error}}"
@@ -128,13 +128,25 @@
       "nobody": "Nobody is mentioned, so no bot will respond",
       "call": "Call @{{name}}"
     },
+    "skills": {
+      "one": "{{name}}'s skills",
+      "some": "Skills of {{names}}",
+      "members": "Members' skills"
+    },
     "settings": {
       "open": "Notes and settings",
       "title": "Notes and settings for {{name}}",
       "name": "Name",
       "purpose": "Purpose",
       "cwd": "Default working folder",
-      "cwdHint": "If empty, each bot uses its own working folder.",
+      "cwdHint": "A bot works here only when this folder is inside its own folders. If it's outside, or empty, each bot works in its own folder.",
+      "cwdNone": "Not set",
+      "cwdRecent": "Recent",
+      "cwdBrowse": "Open another folder…",
+      "cwdPicker": "Working folder choices",
+      "where": "Where each bot works",
+      "whereHome": "Home folder",
+      "whereOutside": "This folder is outside {{name}}'s working places, so {{name}} works in its own folder",
       "members": "Members",
       "membersHint": "Members are the bots listed here. To wake a bot, @ it in a post.",
       "noBots": "No bots yet.",
@@ -286,11 +298,11 @@
   },
   "memory": {
     "route": {
-      "open": "Auto-organize ›",
-      "off": "Auto-organize: off ›",
-      "running": "Auto-organize: running ›",
-      "failed": "Auto-organize: failed ›",
-      "next": "Auto-organize: next {{at}} ›"
+      "open": "Nightly organizing ›",
+      "off": "Nightly organizing: off ›",
+      "running": "Nightly organizing: running ›",
+      "failed": "Nightly organizing: failed ›",
+      "next": "Nightly organizing: next {{at}} ›"
     },
     "new": "Newly learned",
     "faded": "Faded",
@@ -305,10 +317,10 @@
       "note": "Note"
     },
     "tier": {
-      "none": "Unsorted",
-      "always": "Always",
-      "workspace": "In this workspace",
-      "archive": "Stored only"
+      "none": "Not decided yet",
+      "always": "Every time",
+      "workspace": "Only in this folder",
+      "archive": "Not given"
     },
     "tierLabel": "Given when",
     "workspaceLabel": "Workspace",
@@ -316,16 +328,16 @@
     "learn": {
       "label": "Nightly organizing",
       "running": "organizing now",
-      "ran": "learned {{n}} at {{when}}",
-      "ranNone": "ran at {{when}} (nothing new)",
-      "retiered": "changed the tier of {{n}}",
-      "never": "has not run yet",
-      "more": "the rest is left for the next run",
-      "deferred": "{{n}} busy conversations left for the next run",
+      "ran": "Last: {{when}} · added {{n}}",
+      "ranNone": "Last: {{when}} · nothing new added",
+      "retiered": "re-decided when to give {{n}}",
+      "never": "Hasn't run yet",
+      "more": "Messages it couldn't finish reading are left for the next run",
+      "deferred": "{{n}} busy conversations are left for the next run",
       "failed": "failed ({{error}})",
       "skipped": "skipped {{n}} scheduled runs ({{reason}})",
       "reason": {
-        "off": "organization off",
+        "off": "nightly organizing off",
         "halted": "stopped after failures",
         "paused": "paused",
         "failed": "waiting after a failure"

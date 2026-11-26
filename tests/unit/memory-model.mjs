@@ -1,6 +1,6 @@
-// 記憶の自動整理の状態の決まり（web/memory-model.mjs。DOM に触れない）:
-// 実効の入切・確定の未ログイン・受動の未確認と、設定 › 記憶 › bot の状態の優先順・bot ページの導線の短い状態。
-import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, learnRouteView, coreFitView, sortPanelView } from '../../web/memory-model.mjs';
+// 毎晩の整理の状態の決まり（web/memory-model.mjs。DOM に触れない）:
+// 実効の入切・確定の未ログイン・受動の未確認と、設定 › bot の状態の優先順・bot ページの導線の短い状態・「渡す場面が決まっていない記憶」の欄（毎晩の整理が少しずつ決める分）。
+import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, learnRouteView, sortPanelView } from '../../web/memory-model.mjs';
 
 export const name = 'memory-model';
 export const title = '記憶の自動整理: 実効の入切・認証の確かさ・状態の優先順（停止・失敗は未確認で隠さない）';
@@ -69,50 +69,38 @@ export default async function (t) {
     return v.key === 'next' && typeof v.params.at === 'string' && v.params.at.length > 0;
   })());
 
-  // ---- 会話の始まりに入りきらない記憶（memory.coreFit。設定 › 記憶の 1 行）
-  t.ok('入りきらない記憶が無ければ行を出さない（null）', coreFitView({ omitted: { untiered: 0, always: 0, workspace: 0 }, total: 0 }) === null && coreFitView(null) === null && coreFitView({}) === null && coreFitView({ omitted: 'x' }) === null);
-  t.ok('段の順（段なし・いつも・この作業場所で）で、0 の段は出さない', (() => {
-    const v = coreFitView({ omitted: { workspace: 2, always: 0, untiered: 5 }, total: 7 });
-    return v.parts.map((p) => `${p.tier}:${p.n}`).join() === 'untiered:5,workspace:2' && v.total === 7;
-  })());
-  t.ok('数でない値・負の値・小数は 0 か整数に直す（形が壊れても落ちない）', (() => {
-    const v = coreFitView({ omitted: { untiered: 'x', always: -3, workspace: 2.9 } });
-    return v.parts.length === 1 && v.parts[0].tier === 'workspace' && v.parts[0].n === 2 && v.total === 2;
-  })());
-
-  // ---- 一度きりの振り分け（memory.sortStatus。設定 › 記憶 › 振り分け。数・内訳・失敗の数だけ）
-  const sortOf = (over = {}) => ({ status: 'none', running: false, stopping: false, untiered: 0, processed: 0, left: 0, failures: 0, changed: 0, unknown: 0,
+  // ---- 渡す場面が決まっていない記憶（memory.sortStatus。設定 › bot の 2 つ目のかたまり。数・内訳だけで、始める・止める操作は無い）
+  const sortOf = (over = {}) => ({ status: 'none', running: false, untiered: 0, nights: 0, perNight: 500, processed: 0, left: 0, failures: 0, changed: 0, unknown: 0,
     tiers: { always: 0, workspace: 0, archive: 0 }, startedAt: null, updatedAt: null, undone: null, ...over });
-  const keys = (v) => v.parts.map((p) => p.key).join();
   t.ok('様子が読めなければ欄を出さない（null）', sortPanelView(null) === null && sortPanelView(undefined) === null && sortPanelView('x') === null);
-  t.ok('まだ走っていなければ［始める］だけ（段なしの件数は出す）', (() => {
-    const v = sortPanelView(sortOf({ untiered: 12 }));
-    return v.mode === 'none' && v.actions.join() === 'start' && keys(v) === 'untiered' && v.parts[0].params.n === 12 && !v.poll && !v.warn;
+  t.ok('決まっていない記憶があれば欄を出す。何晩で終わるか・1 晩の件数・件数は数のまま持つ。取り消すものは無い', (() => {
+    const v = sortPanelView(sortOf({ untiered: 1440, nights: 3 }));
+    return v.show === true && v.mode === 'none' && v.untiered === 1440 && v.nights === 3 && v.perNight === 500 && v.placed === 0 && v.undo === false;
   })());
-  t.ok('走っている間は［止める］だけ・読み直す（poll）。止めている間は操作なし・読み直す', (() => {
-    const run = sortPanelView(sortOf({ status: 'running', running: true, untiered: 30, processed: 50, tiers: { always: 40, workspace: 5, archive: 5 } }));
-    const stopping = sortPanelView(sortOf({ status: 'running', running: true, stopping: true }));
-    return run.mode === 'running' && run.actions.join() === 'stop' && run.poll === true && stopping.mode === 'stopping' && stopping.actions.length === 0 && stopping.poll === true;
+  t.ok('決まっていない記憶も決めた分も無ければ欄を出さない', sortPanelView(sortOf()).show === false);
+  t.ok('決めた分があれば、内訳を持ち［決めた分を取り消す］を出す（決まっていない記憶が 0 でも）', (() => {
+    const v = sortPanelView(sortOf({ status: 'done', tiers: { always: 10, workspace: 36, archive: 4 } }));
+    return v.show === true && v.mode === 'done' && v.placed === 50 && v.tiers.always === 10 && v.tiers.workspace === 36 && v.tiers.archive === 4 && v.undo === true;
   })());
-  t.ok('走っている間は取り消せない（［取り消す］を出さない）', !sortPanelView(sortOf({ status: 'running', running: true, tiers: { always: 3, workspace: 0, archive: 0 } })).actions.includes('undo'));
-  t.ok('止まった・失敗で止まったときは［続ける］と、付けたものがあれば［取り消す］。失敗は warn', (() => {
-    const stopped = sortPanelView(sortOf({ status: 'stopped', untiered: 10, processed: 50, tiers: { always: 50, workspace: 0, archive: 0 } }));
-    const failed = sortPanelView(sortOf({ status: 'failed', untiered: 160, failures: 3 }));
-    return stopped.mode === 'stopped' && stopped.actions.join() === 'resume,undo' && !stopped.warn && !stopped.poll
-      && failed.mode === 'failed' && failed.warn === true && failed.actions.join() === 'resume' && keys(failed) === 'untiered,failures';
+  t.ok('走っている間は取り消せない（毎晩の整理の最中に外れる分と取り違えない）', (() => {
+    const v = sortPanelView(sortOf({ status: 'going', running: true, untiered: 900, nights: 2, tiers: { always: 3, workspace: 0, archive: 0 } }));
+    return v.mode === 'running' && v.undo === false && v.show === true;
   })());
-  t.ok('終わったときは、段なしが残っていれば［もう一度］・付けたものがあれば［取り消す］。内訳・作業場所不明・段なしのまま・人が先に変えた数も数だけで出す', (() => {
-    const all = sortPanelView(sortOf({ status: 'done', untiered: 1, processed: 5, left: 1, unknown: 1, changed: 2, tiers: { always: 1, workspace: 1, archive: 2 } }));
-    const clean = sortPanelView(sortOf({ status: 'done', processed: 4, tiers: { always: 4, workspace: 0, archive: 0 } }));
-    return all.mode === 'done' && all.actions.join() === 'redo,undo' && keys(all) === 'untiered,processed,tiers,unknown,left,changed' && all.parts.find((p) => p.key === 'tiers').params.archive === 2
-      && clean.actions.join() === 'undo' && keys(clean) === 'processed,tiers';
+  t.ok('毎晩続けている途中（going）は取り消せる', (() => {
+    const v = sortPanelView(sortOf({ status: 'going', untiered: 900, nights: 2, tiers: { always: 3, workspace: 0, archive: 0 } }));
+    return v.mode === 'going' && v.undo === true;
   })());
-  t.ok('取り消した後は［始める］（内訳・処理済みは出さず、戻した数と残した数だけ）', (() => {
-    const v = sortPanelView(sortOf({ status: 'undone', untiered: 4, processed: 6, left: 2, tiers: { always: 0, workspace: 0, archive: 0 }, undone: { restored: 3, kept: 1 } }));
-    return v.mode === 'undone' && v.actions.join() === 'start' && keys(v) === 'untiered,left,undone' && v.parts.at(-1).params.restored === 3 && v.parts.at(-1).params.kept === 1;
+  t.ok('前の晩の失敗は failed（毎晩の整理の失敗にはしない）。決めた分があれば取り消せる', (() => {
+    const v = sortPanelView(sortOf({ status: 'failed', untiered: 160, failures: 3, tiers: { always: 2, workspace: 0, archive: 0 } }));
+    return v.mode === 'failed' && v.undo === true && v.untiered === 160;
   })());
+  t.ok('取り消した後は、戻した数と残した数だけ出す。もう一度取り消すことはできない・決まっていない記憶が 0 でも記録は出す', (() => {
+    const v = sortPanelView(sortOf({ status: 'undone', untiered: 0, tiers: { always: 0, workspace: 0, archive: 0 }, undone: { restored: 3, kept: 1 } }));
+    return v.mode === 'undone' && v.undo === false && v.show === true && v.undone.restored === 3 && v.undone.kept === 1;
+  })());
+  t.ok('取り消した記録が無ければ undone は null（status だけ undone の壊れた形でも落ちない）', sortPanelView(sortOf({ status: 'undone' })).undone === null);
   t.ok('知らない状態・壊れた数は none・0 に直す（形が壊れても落ちない。本文のような文字列は持たない）', (() => {
-    const v = sortPanelView({ status: 'weird', untiered: 'x', tiers: { always: -2, workspace: 'y' }, processed: 3.7, memoryText: '秘密の本文' });
-    return v.mode === 'none' && v.actions.join() === 'start' && v.parts.length === 0 && !JSON.stringify(v).includes('秘密');
+    const v = sortPanelView({ status: 'weird', untiered: 'x', nights: -4, tiers: { always: -2, workspace: 'y' }, processed: 3.7, memoryText: '秘密の本文' });
+    return v.mode === 'none' && v.untiered === 0 && v.nights === 0 && v.placed === 0 && v.show === false && !JSON.stringify(v).includes('秘密');
   })());
 }

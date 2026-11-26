@@ -11,10 +11,11 @@ import { el, svgEl } from '../dom.mjs';
 import { TODO_ICON } from '../session-todo.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
-import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
+import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom, vanishedTurnPost } from './post.mjs';
 import { retrySource, retryFailed } from './retry.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
+import { createFeedSkills } from './feed-skills.mjs';
 import { feedDraftKey } from './ch-attach-model.mjs';
 import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
@@ -51,6 +52,13 @@ export function createFeed(host) {
   const jump = el('button', 'ch-jump', t('channels:feed.newer'));
   jump.type = 'button';
   jump.hidden = true;
+  // 「/」のスキル候補: 宛先の bot（@ した bot。居なければ呼べるメンバー。DM は DM の bot）が動く場所のスキル（web/channels/feed-skills.mjs）
+  const feedSkills = createFeedSkills({
+    host,
+    allBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
+    fallback: () => (S.channel?.kind === 'dm' ? memberBots() : callableBots()),
+    channelCwd: () => S.channel?.cwd ?? null,
+  });
   const composer = createChComposer({
     id: 'chFeedComposer',
     host,
@@ -58,6 +66,7 @@ export function createFeed(host) {
     candidates: () => candidates(),
     blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
+    skills: feedSkills,
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.id, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => post(draft),
@@ -93,6 +102,7 @@ export function createFeed(host) {
     try {
       const got = await host.invoke('bots.list');
       S.bots = new Map((got?.bots ?? []).map((b) => [b.id, shownBot(b, t)]));
+      feedSkills.warm();
     } catch { /* bot の操作がまだ無い・失敗しても投稿は読める。発言者は名前を持たない扱い */ }
   }
 
@@ -269,6 +279,8 @@ export function createFeed(host) {
 
   // ---------------------------------------------------------------- 読み込み
   const isHere = (channelId) => channelId === S.id;
+  // 黙って終えたターンの消えた投稿（DM の会話など、流れに直接並ぶもの）は並べない。返信のスレッドを持つものは残す
+  const shown = (p, summaries) => !vanishedTurnPost(p) || Boolean(summaries?.[p.id]?.count);
 
   async function load(id) {
     const seq = ++S.seq;
@@ -279,7 +291,7 @@ export function createFeed(host) {
       const [channel, page] = await Promise.all([host.invoke('channels.get', { channelId: id }), host.invoke('channels.read', { channelId: id, limit: PAGE }), loadBots()]);
       if (seq !== S.seq) return;
       S.channel = channel;
-      S.posts = page.posts ?? [];
+      S.posts = (page.posts ?? []).filter((p) => shown(p, page.summaries));
       S.index = new Map(S.posts.map((p) => [p.id, p]));
       S.summaries = page.summaries ?? {};
       S.threads = Object.fromEntries((page.threads ?? []).map((th) => [th.threadId, th]));
@@ -308,7 +320,7 @@ export function createFeed(host) {
     try {
       const page = await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
       if (seq !== S.seq) return;
-      const older = (page.posts ?? []).filter((p) => !S.index.has(p.id));
+      const older = (page.posts ?? []).filter((p) => !S.index.has(p.id) && shown(p, page.summaries));
       const before = log.scrollHeight - log.scrollTop;
       S.posts = [...older, ...S.posts];
       for (const p of older) S.index.set(p.id, p);
@@ -424,11 +436,23 @@ export function createFeed(host) {
     repaint(p.threadId);
   }
 
+  /** 流れから投稿を外す（「削除された投稿」の行も残さない） */
+  function dropPost(id) {
+    const cur = S.index.get(id);
+    if (!cur) return;
+    postEls.get(id)?.remove();
+    postEls.delete(id);
+    S.posts.splice(S.posts.indexOf(cur), 1);
+    S.index.delete(id);
+    syncRetry();
+  }
+
   function onPost(ev) {
     const { op, post: p } = ev;
     if (!p) return;
-    // 取り下げた返信（スレッドの送り直し）は、要約の行の件数から外す（数え直しは次の読み込み）
-    if (op === 'withdraw') { if (p.threadId) onReply('delete', p); return; }
+    // 取り下げた返信（スレッドの送り直し）は、要約の行の件数から外す（数え直しは次の読み込み）。
+    // 流れに直接並ぶ投稿（DM の bot が黙って終えたターンの「…」・送り直した投稿）は列から外す
+    if (op === 'withdraw') { if (p.threadId) onReply('delete', p); else dropPost(p.id); return; }
     if (p.threadId) return onReply(op, p);
     if (op === 'add') {
       if (S.index.has(p.id)) { Object.assign(S.index.get(p.id), p); repaint(p.id); return; }
@@ -442,6 +466,7 @@ export function createFeed(host) {
     }
     const cur = S.index.get(p.id);
     if (!cur) return;
+    if (op === 'delete' && !shown(p, S.summaries)) return dropPost(p.id);
     if (op === 'delete') Object.assign(cur, p, { deletedAt: p.deletedAt ?? Date.now() });
     else Object.assign(cur, p);
     repaint(p.id);
