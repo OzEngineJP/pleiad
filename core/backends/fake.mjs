@@ -1203,7 +1203,7 @@ export const backend = {
         return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
       }) }), usage };
     }
-    // 一度きりの振り分け（<pleiad-memory-sort>）: 本文の言葉だけで決める固定の台本（保存だけ → 保存だけ / この作業場所 → 作業場所 / それ以外 → いつも）。
+    // 段の無い記憶の振り分け（<pleiad-memory-sort>）: 本文の言葉だけで決める固定の台本（保存だけ → 保存だけ / この作業場所 → 作業場所 / それ以外 → いつも）。
     // 本文に「判断不能」とあれば答えを返さない（段なしのままになる）
     if (p.startsWith('<pleiad-memory-sort>')) {
       const line = p.split('\n').find((part) => part.startsWith('Memories: '));

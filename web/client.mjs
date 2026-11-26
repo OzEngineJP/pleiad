@@ -1050,15 +1050,15 @@ function paintAutoCompactionSettings() {
   paintAutoCompactionOff();
 }
 /**
- * 「会話の区切りで、記録から組み立て直す」が入っている間は、放置後の圧縮の面（全体の入切・最小サイズ・エージェントごとの行・決まり）を
- * 止まった見た目にして触れなくし、理由と設定 › 記憶への入口を出す（ADR 0287）。委譲の子の自動圧縮の設定は別の仕組みなので触れるまま
+ * 「会話の区切りで、要約せず記録から組み立て直す」（ADR 0287。すべての会話に効く設定で、記憶とは関係ない）は自動圧縮のページの先頭にある。
+ * 入っている間は、放置後の圧縮の面（全体の入切・最小サイズ・エージェントごとの行・決まり）を止まった見た目にして触れなくする
+ * （理由は、すぐ上のスイッチの説明に書いてある）。委譲の子の自動圧縮の設定は別の仕組みなので触れるまま
  */
 function paintAutoCompactionOff() {
   const off = state.prefs.contextRebuild === true;
-  const note = $('autoCompactionOffNote');
-  note.hidden = !off;
+  $('contextRebuildEnabled').setAttribute('aria-checked', String(off));
   $('autoCompactionEnabled').disabled = off;
-  if (off) $('autoCompactionEnabled').setAttribute('aria-describedby', 'autoCompactionOffNote');
+  if (off) $('autoCompactionEnabled').setAttribute('aria-describedby', 'contextRebuildNote');
   else $('autoCompactionEnabled').removeAttribute('aria-describedby');
   $('autoCompactionEnabled').closest('.rm-switch').classList.toggle('off-part', off);
   for (const part of $('autoCompactionPanel').querySelectorAll('.auto-compaction-minimum')) {
@@ -1072,15 +1072,10 @@ function paintAutoCompactionOff() {
   for (const input of agents.querySelectorAll('input,button')) input.disabled = off;
   $('autoCompactionRules').classList.toggle('off-part', off);
 }
-// 設定 › 記憶 のページ（全般 = 「試験的な機能」から移した設定・bot = web/memory-settings.mjs）
+// 設定 › bot のページ（毎晩の整理。web/memory-settings.mjs。ページの内部名は memory）
 let memorySettings = null;
 
-/** 設定 › 記憶 › 全般（ADR 0287。「試験的な機能」から移設。スイッチは prefs.contextRebuild を映す） */
-function paintMemoryGeneral() {
-  $('contextRebuildEnabled').setAttribute('aria-checked', String(state.prefs.contextRebuild === true));
-}
-
-/** 設定 › 記憶 を開く（bot の記憶欄の導線・自動圧縮の注記から）。状態は開くたびに読み直す */
+/** 設定 › bot を開く（bot の記憶欄の導線から）。状態は開くたびに読み直す */
 function openMemorySettings() {
   onboarding.open('memory');
   memorySettings?.refresh();
@@ -3462,7 +3457,7 @@ function onEvent(ev, replay = false) {
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   // 作業のダイアログが子の会話の実例で開いているなら、その会話の出来事は実例が描く（主が同じ会話を開いているときは主が描く）
   if (!replay && modalChild && routeModalChild(ev)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; if (connPrefsSig() !== connPrefsSeen) { connPrefsSeen = connPrefsSig(); repaintConn(); } applyLocale(ev.locale); paintAutoCompactionSettings(); paintMemoryGeneral(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; if (connPrefsSig() !== connPrefsSeen) { connPrefsSeen = connPrefsSig(); repaintConn(); } applyLocale(ev.locale); paintAutoCompactionSettings(); memorySettings?.refresh(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -8772,7 +8767,7 @@ const channelsUi = setupChannels({
   agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
   onUsage: (fn) => usageSource.onResult(fn),
   openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
-  // bot の記憶欄の「自動整理: …」から、全 bot 共通の 設定 › 記憶 へ
+  // bot の記憶欄の「自動整理: …」から、全 bot 共通の 設定 › bot へ
   openMemory: () => openMemorySettings(),
   // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
   scheduleEnvironment: async () => {
@@ -10046,7 +10041,6 @@ async function runRefresh(listed) {
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
-  paintMemoryGeneral();
   browserSettings.paint();
   computerSettings.paint();
   refreshPreviewConfirmation();
@@ -11464,11 +11458,12 @@ document.addEventListener('keydown', event => {
 $('autoCompactionPanel').addEventListener('change', (event) => { if (event.target.matches('input')) saveAutoCompactionSettings(); });
 $('autoCompactionPanel').addEventListener('click', (event) => {
   const button = event.target.closest('.cx-sw');
-  if (!button) return;
+  if (!button || button.id === 'contextRebuildEnabled') return;   // 組み立て直しの入切は下の別の口（prefs.contextRebuild）
   button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
   saveAutoCompactionSettings();
 });
-// 設定 › 記憶 › 全般 の入切（ADR 0287。旧「試験的な機能」から移設）。次の区切りから効く。自動圧縮のページの理由の文からの入口
+// 自動圧縮のページの先頭の「会話の区切りで、要約せず記録から組み立て直す」の入切（ADR 0287。旧「試験的な機能」から移設）。次の区切りから効く。
+// 入れると下の放置後の圧縮が止まるので、保存したらすぐ見た目を映す
 $('contextRebuildEnabled').onclick = async () => {
   const next = $('contextRebuildEnabled').getAttribute('aria-checked') !== 'true';
   $('contextRebuildEnabled').setAttribute('aria-checked', String(next));
@@ -11480,8 +11475,7 @@ $('contextRebuildEnabled').onclick = async () => {
     $('contextRebuildSaved').textContent = t('contextRebuild.saveFailed', { error: String(error?.message ?? error) });
   }
 };
-$('autoCompactionOpenMemory').onclick = () => openMemorySettings();
-// 記憶のページを開いたら状態を読み直す（札の切り替え自体は onboarding の page() が受け持つ）
+// bot のページ（毎晩の整理）を開いたら状態を読み直す（札の切り替え自体は onboarding の page() が受け持つ）
 $('memoryTab').addEventListener('click', () => memorySettings?.refresh());
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
 $("abort").onclick = () => {
@@ -11683,13 +11677,15 @@ const agentRecheck = createRecheck({
   // 読み直しが 1 巡した回数の印（見た目には使わない。実画面の試験が、始まっていた確かめの終わりを待つ）
   check: () => refreshAuth({ unsettled: true }).finally(() => { const d = document.documentElement.dataset; d.agentRechecks = String((Number(d.agentRechecks) || 0) + 1); }),
 });
-// 設定 › 記憶 › bot（web/memory-settings.mjs。自動整理の入切・時刻・要約と、状態・明示操作。［ログイン］はエージェント設定へ移す）
+// 設定 › bot（web/memory-settings.mjs。毎晩の整理の入切・時刻・引き継ぎと、状態・明示操作・bot ごとの記憶への入口。［ログイン］はエージェント設定へ移す）
 memorySettings = setupMemorySettings({
   cmd: (command, args) => cmd(command, args),
   invoke: (op, args = {}) => cmd('invoke', { op, args }),
   getPrefs: () => state.prefs,
   getAuth: (id) => state.auth.get(id),
   setAuth: (id, st) => { if (id) { state.auth.set(id, st); renderAuth(); } },
+  // 設定を閉じて、その bot のページへ（記憶の欄がそこにある）
+  openBot: (id) => { onboarding.close(); document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })); },
   // 記憶の整理に使うエージェント（memoryLearnBackend は心拍と共用。core の learn.mjs と同じ解決順: 空なら会話の既定、それも無ければ先頭。
   // 明示の id が残って消えた（stale）ときは core もそこで失敗するので、別のエージェントの認証を当てない = null）
   learnBackend: () => {

@@ -16,7 +16,7 @@
 //   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 8 件・各 150 トークン・合計 1200 トークンまで。layer 省略なら layers（無ければ全層）。保存だけ（tier = archive）は出さない（list には出る）。
 //       ほかの作業場所の記憶は引ける（会話へ自動で渡すものとは違う）
 //   coreFit({ layer?, workspace? }): Promise<{ layer, workspace, omitted: { untiered, always, workspace }, total, inactiveWorkspace }>
-//       … 会話の始まりに入りきらない記憶の件数（設定 › 記憶用）。layer は user（既定。user だけ）か bot の id（その bot と user を合わせて）。
+//       … 会話の始まりに入りきらない記憶の件数（MCP・CLI 用。設定画面は出さない）。layer は user（既定。user だけ）か bot の id（その bot と user を合わせて）。
 //         workspace を省くと、作業場所ごとに見て入りきらなかった数の合計
 //   write({ layer, text, why?, sources, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
 //       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0118）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
@@ -30,12 +30,12 @@
 //         段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
 //         （archiveLegacyPromises。AI なし・updatedAt 据え置き・記録に migration を残す・段を外しても再度は行わない）
 //   place({ id, tier?, workspace?, reason?, migration?, expect?, by?, unlessHumanPlaced? }): Promise<{ placed, entry?, reason? }>
-//       … コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。core/memory/learn.mjs の sortStart・sortUndo）。null・省略で外す。
+//       … コードが段・作業場所だけを付け替える（夜の整理の最後の振り分けとその取り消し。core/memory/learn.mjs の sortNight・sortUndo）。null・省略で外す。
 //         本文・出どころ・強さ・updatedAt には触れず、by は既定でシステム。expect（今の { tier?, workspace? }）を渡すと、今もそのままのときだけ直す（人が後から直した記憶を上書きしない）。
 //         unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人の記憶には触れない（夜の整理が使う）。
 //         返りの reason は notFound / changed / human / same。migration・reason は変更記録に残る
 //   archiveLegacyPromises(): Promise<string[]>・placements(migration): Promise<{ id, from, to }[]>
-//       … 前者は上の約束の移行を今すぐもう一度行う（何度でも同じ。一度きりの振り分けの最初に呼ぶ）。後者は一括移行が変えた段・作業場所の前後（取り消しの材料）
+//       … 前者は上の約束の移行を今すぐもう一度行う（何度でも同じ。振り分けの最初に呼ぶ）。後者は一括移行が変えた段・作業場所の前後（取り消しの材料）
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, sessionId?, incomingText, cwd?, now?, locale? }):
 //       Promise<{ notes: string[], memRev: number, delivered: string[], snapshotDue: boolean, omitted?: { untiered, always, workspace } }>
@@ -242,7 +242,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     },
 
     /**
-     * 会話の始まりに入りきらない記憶の件数（設定 › 記憶用）。layer は bot の id（その bot と user を合わせて見る）か user（user だけ。既定）。
+     * 会話の始まりに入りきらない記憶の件数（MCP・CLI 用。設定画面は出さない）。layer は bot の id（その bot と user を合わせて見る）か user（user だけ。既定）。
      * workspace を省くと、作業場所ごとに見て入りきらなかった数の合計。返りは tail.mjs の coreFitCounts の形に layer・workspace を足したもの
      */
     async coreFit({ layer = USER_LAYER, workspace = null } = {}) {
@@ -309,7 +309,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     },
 
     /**
-     * コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。本文・出どころ・強さには触れず、updatedAt も進めない）。
+     * コードが段・作業場所だけを付け替える（夜の整理の振り分けとその取り消し。本文・出どころ・強さには触れず、updatedAt も進めない）。
      * tier・workspace は null か省略で外す。expect（{ tier?, workspace? }）を渡すと、今がその段・作業場所のままのときだけ直す
      * （振り分けの途中・後に人が直した記憶を上書きしないため）。by は既定でシステム。migration・reason は変更記録に残る。
      * unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人（画面の選び直し）の記憶には触れない（夜の整理が人の選んだ段を戻さないため）。
@@ -338,7 +338,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return [...store.migrations(migration)].map(([id, { from, to }]) => ({ id, from, to }));
     },
 
-    /** 段の無い既存の約束を保存だけにする移行（冒頭の archiveLegacy）。起動の最初の読み込みで済んでいるが、一度きりの振り分けの最初にもう一度呼ぶ（何度呼んでも同じ）。変えた層の配列 */
+    /** 段の無い既存の約束を保存だけにする移行（冒頭の archiveLegacy）。起動の最初の読み込みで済んでいるが、振り分けの最初にもう一度呼ぶ（何度呼んでも同じ）。変えた層の配列 */
     async archiveLegacyPromises() {
       await catchUp();
       const moved = await archiveLegacy();

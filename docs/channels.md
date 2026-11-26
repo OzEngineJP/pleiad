@@ -116,9 +116,9 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `memory.forget` | guarded | 消す操作。墓石を残す。見えない記憶（ほかの bot の層）は `MEMORY_NOT_FOUND` |
 | `memory.unforget` | write（画面・AI・CLI のすべてに出す） | 忘れた直後の「元に戻す」（W4）。出どころごと戻し、墓石を外す。誰が戻したかは `log.jsonl` の `by`。bot は見える層（`user` と自分の層）のものだけ（それ以外は `MEMORY_NOT_FOUND`）。束縛されない AI は `NEEDS_UI`。CLI は `pleiad memory unforget <id>`。全機能は AI も使える決定のため。人が忘れさせた記憶を AI が戻せることになるが、戻した主体が記録に残る |
 | `memory.learnStatus` | read（画面・MCP・CLI `pleiad memory learn-status`） | 夜の整理の様子: `{ at, paused, running, lastRunAt, nextAt, lastResult, skip, failure }`。`lastResult` は `{ at, read, changed, retiered?, deferred, more?, scoped? }`（`retiered` は段を付け直した件数。下の「夜の記憶の整理」）、`skip` は `{ reason, count, at }`、`failure` は `{ message, count, at, retryAt }`（無いときはどれも null）。`skip.reason` は `paused`（止めていた）か `failed`（失敗の後の待ち）。`count` は飛ばした予定の回の数 |
-| `memory.coreFit` | read（画面・MCP・CLI `pleiad memory core-fit`） | `{ layer?, workspace? }`。会話の始まりに入りきらない記憶の件数を段ごとに返す（段なし・いつも・この作業場所で）。設定 › 記憶が「始まりに入りきらない記憶」として出す。件数だけで本文は返さない。bot に束縛された主体は `user` と自分の層だけ（[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)） |
-| `memory.sortStatus` | read（画面・MCP・CLI `pleiad memory sort-status`） | 一度きりの振り分けの様子: `{ status, running, stopping, untiered, processed, left, failures, changed, unknown, tiers, startedAt, updatedAt, undone }`。`status` は `none`・`running`・`stopped`・`done`・`failed`・`undone`。数・内訳・失敗の数だけで、記憶の本文・失敗の文は返さない |
-| `memory.sortStart` / `sortStop` / `sortUndo` | guarded / write / guarded（画面だけ。MCP・CLI には出さない） | 設定 › 記憶の「記憶の振り分け」から人が押したときだけ走る（自動では始まらず、自動整理がオフでも始められる）。`sortStart` は段の無い記憶を振り分け始める、または止まった所から続ける（走っていれば `skipped: 'running'`）。`sortStop` は走っている振り分けを、今の小分けを保存してから止める。`sortUndo` は最後の振り分けが付けた段を外す（その後に人が段を変えた件は戻さず `kept` に数える）。仕組みは下の「一度きりの振り分け」 |
+| `memory.coreFit` | read（MCP・CLI `pleiad memory core-fit`） | `{ layer?, workspace? }`。会話の始まりに入りきらない記憶の件数を段ごとに返す（段なし・いつも・この作業場所で）。件数だけで本文は返さない。bot に束縛された主体は `user` と自分の層だけ。設定画面は出さない（2026-11-26 に外した。同じ「段なし」を `memory.sortStatus` の `untiered` と 2 通りに数えて食い違うため。[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)） |
+| `memory.sortStatus` | read（画面・MCP・CLI `pleiad memory sort-status`） | 夜の整理の最後の振り分けの様子: `{ status, running, untiered, nights, perNight, processed, left, failures, changed, unknown, tiers, startedAt, updatedAt, undone }`。`status` は `none`・`running`・`going`（毎晩続けている途中）・`done`・`failed`（前の晩に束が続けて失敗した）・`undone`。`untiered` は今の段なしの件数、`nights` は 1 晩 `perNight`（500）件ずつ決めたときの残りの晩数。数・内訳・失敗の数だけで、記憶の本文・失敗の文は返さない |
+| `memory.sortUndo` | guarded（画面だけ。MCP・CLI には出さない） | 設定 › bot の［決めた分を取り消す］から人が押したときだけ走る。最後の振り分けが付けた段を外す（その後に人が段を変えた件は戻さず `kept` に数える）。夜の整理が切れていても使える。取り消した後は、夜の整理のスイッチを入れ直す（世代が変わる）まで決め直さない。始める・止める・続ける操作（`sortStart`・`sortStop`）は無い（2026-11-26 に削除。振り分けは夜の整理が進める）。仕組みは下の「段の無い記憶の振り分け」 |
 | `routines.list` / `get` | read | 定義に `nextAt`（次の実行の時刻。一時停止・出来事・webhook は `null`）・`last`（最後の実行）を付ける |
 | `routines.create` | write（AI は guarded） | `{ name, botId, channelId, prompt, trigger, mode?, approvalTimeoutMin?, paused?, reason? }`。`mode` を省くと bot の今の承認モード。承認カードに名前・トリガ・モード・指示を出し、弱くないモードなら `loosens`。チャンネルは DM 不可 |
 | `routines.update` | write（広げる向きと、AI が指示を変えるときだけ guarded） | 広げる向き = 頻度を上げる（1 週間の発火の回数が増える。時刻のトリガから出来事・webhook に変えるのも）・モードを強くする・出来事の対象（`scope`）を広げる。AI が `prompt` を変えるのも guarded（無人で動く指示は人格と同じ重さ。外から来た文に書き換えられる足場にしない）。トリガを変えたら予定を数え始める基準を今にする |
@@ -328,16 +328,17 @@ Chats が `tool.result.images` に描く生成画像は、bot のターンでは
 
 内部呼出しは既定の bot と同じバックエンド・モデル設定に従い、読み取りモードで候補の JSON を返す。人が直前の AI の答えを明示的に採用した発言では、その答えも文脈に含める。候補の出どころは番号から実物の人の発言（採用した場合は AI の答えも）を引き、既存の `memory.write` / `memory.edit` の出どころ検査を通して 2 層へ書く。重複は書かない。古い記憶と矛盾すれば、AI が書いた行は直し、人が書いた行は新しい行を足して古い行の理由に「新しい記憶で置き換わった」の印を残す。その日に新しく増えた行は bot のページに小さな印が出る。
 
-**選び直す（[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)）。** 上の「既存の記憶を毎回全部入れる」は、段階 2 から「上限内で選んで入れる」に変わった。内部呼出しへ渡す既存の記憶は、`always`（「いつも」の上限 6,000 トークン内）を先に、次に読む会話の作業場所の `workspace` と段の無い記憶を、記憶の分 12,000 トークンまで（1 回の入力は約 40,000 トークンまで。残りは新しい発言と指示の分）。`archive`（保存だけ）・約束は渡さない。並びは配るときと同じで、重みは選ぶにも段にも使わない（`core/memory/nightly.mjs`）。AI は新しい記憶に加えて、渡した記憶の段の付け直しの候補（`tiers`）を返せ、段・作業場所を決めて付けるのはコード（`decideNightlyTier`。1 回の実行で 20 件まで。人が書いた記憶・人が選んだ段・約束は付け直さない）。付け直しは変更記録に `nightly:<日付>` の migration と理由を残して戻せる。結果の `retiered` は付け直した件数で、bot のページの記憶の頭の 1 行に「段を変えた N 件」と出る。**約束は記憶に書かない**: 整理の指示から「約束」を外し、会話の中に約束を見つけても記憶にも気がかりにも書かない（元の会話は残るので後から拾える）。同じ文・忘れた記憶かどうかは、渡した分ではなく全件（保存だけ・忘れた記憶を含む）をコードが照らす。
+**選び直す（[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)）。** 上の「既存の記憶を毎回全部入れる」は、段階 2 から「上限内で選んで入れる」に変わった。内部呼出しへ渡す既存の記憶は、`always`（「いつも」の上限 6,000 トークン内）を先に、次に読む会話の作業場所の `workspace` と段の無い記憶を、記憶の分 12,000 トークンまで（1 回の入力は約 40,000 トークンまで。残りは新しい発言と指示の分）。`archive`（保存だけ）・約束は渡さない。並びは配るときと同じで、重みは選ぶにも段にも使わない（`core/memory/nightly.mjs`）。AI は新しい記憶に加えて、渡した記憶の段の付け直しの候補（`tiers`）を返せ、段・作業場所を決めて付けるのはコード（`decideNightlyTier`。1 回の実行で 20 件まで。人が書いた記憶・人が選んだ段・約束は付け直さない）。付け直しは変更記録に `nightly:<日付>` の migration と理由を残して戻せる。結果の `retiered` は付け直した件数で、bot のページの記憶の頭の 1 行に「渡す場面を決め直した N 件」と出る。**約束は記憶に書かない**: 整理の指示から「約束」を外し、会話の中に約束を見つけても記憶にも気がかりにも書かない（元の会話は残るので後から拾える）。同じ文・忘れた記憶かどうかは、渡した分ではなく全件（保存だけ・忘れた記憶を含む）をコードが照らす。
 
-## 一度きりの振り分け（[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)）
+## 段の無い記憶の振り分け（[ADR 0363](adr/0363-memory-tiers-and-workspaces.md)。2026-11-26 に「一度きり・人が始める」から「毎晩の整理が少しずつ進める」へ改めた）
 
-段の無い既存の記憶を、AI に一度だけ「いつも・この作業場所で・保存だけ」へ振り分けてもらう。**自動では走らない**（アプリの起動・夜の整理からは始まらず、自動整理がオフでも始められる）。人が設定 › 記憶の「記憶の振り分け」の［振り分けを始める］を押したときだけ走る（`memory.sortStart`。部品は `core/memory/sort.mjs`、走らせる側は `core/memory/learn.mjs`）。
+段の無い既存の記憶を、AI に「いつも・この作業場所で・保存だけ」（画面は「毎回渡す・このフォルダーのときだけ・渡さない」）へ振り分けてもらう。**人は始めない**。設定 › bot の「毎晩、会話から覚え直す」（`memoryAutoLearn`）が入っている間、夜の整理（`runNow`。［今すぐ整理］の `learnNow` も同じ）の最後に 1 晩分が進む（`sortNight`。部品は `core/memory/sort.mjs`、走らせる側は `core/memory/learn.mjs`）。切れていれば走らない。
 
-- 最初に、既存の約束（`kind: promise`）を AI を使わずコードで `archive` にする（何度走らせても同じ。ToDo・気がかりへは写さない）。残りの段の無い記憶を 50 件または本文の見積もり 8,000 トークンごとに内部呼出し（`kind: sort`）へ渡す。送るのは id・本文・理由・種類・覚えた作業場所の短い名前だけで、返るのは id・段・短い理由だけ。本文は書き換えない。
-- 知らない id・壊れた返事は捨て、その件は段なしのままにする。`workspace` と答えたが、記憶の出どころからコードが正規の作業場所を決められない件は `archive` にし、理由を `workspace unknown` として変更記録に残す。人が記憶の一覧で作業場所を付ければ、その場所で渡る。
-- 1 束ごとに `memory.place` で段（と作業場所）だけを書いてから、進み具合を `memory_state` の `memory.sort`/`run` の 1 行へ保存する（数だけ。本文は持たない）。同じ小分けが 2 回続けて失敗したら、その件は段なしのまま次へ進む。止める（`sortStop`）は今の束を書いてから止まる。止まった・失敗・再起動の後は、［続ける］で同じ走りの続きから（段が付いた件は飛ばす）。
-- 取り消す（`sortUndo`）は、その走りが付けた段・作業場所だけを、今もそのままのものに限って外す（人が後から直した件は残して `kept` に数える）。1 件ごとの前後は変更記録に `sort:<走りの id>` / `sort-undo:<走りの id>` の migration と理由で残る。
+- 1 晩は、AI の呼び出し 10 回（`SORT_NIGHT_BATCHES`）まで・最大 500 件（`SORT_NIGHT_ITEMS`）。1,490 件ならおよそ 3 晩。最初に、既存の約束（`kind: promise`）を AI を使わずコードで `archive` にする（何度走らせても同じ。ToDo・気がかりへは写さない）。残りの段の無い記憶を 50 件または本文の見積もり 8,000 トークンごとに内部呼出し（`kind: sort`）へ渡す。送るのは id・本文・理由・種類・覚えた作業場所の短い名前だけで、返るのは id・段・短い理由だけ。本文は書き換えない。
+- 知らない id・壊れた返事は捨て、その件は段なしのままにする（同じ晩には送り直さない。次の晩にまた送る）。`workspace` と答えたが、記憶の出どころからコードが正規の作業場所を決められない件は `archive` にし、理由を `workspace unknown` として変更記録に残す。人が記憶の一覧で作業場所を付ければ、その場所で渡る。
+- 1 束ごとに `memory.place` で段（と作業場所）だけを書いてから、進み具合を `memory_state` の `memory.sort`/`run` の 1 行へ保存する（数だけ。本文は持たない）。束が 3 回続けて失敗したら、その晩の振り分けを打ち切る（状態は `failed`。夜の整理の失敗・停止・再試行の待ちには数えない）。次の晩は同じ走りの続きから（段が付いた件は飛ばす）。
+- 止め方は夜の整理のスイッチ 1 つ。切る・世代が変わると、次の束へ進まず、返ってきた束も書かない。済んだ所は残る。
+- 取り消す（`sortUndo`）は、その走りが付けた段・作業場所だけを、今もそのままのものに限って外す（人が後から直した件は残して `kept` に数える）。1 件ごとの前後は変更記録に `sort:<走りの id>` / `sort-undo:<走りの id>` の migration と理由で残る。取り消した後は、夜の整理のスイッチを入れ直すまで決め直さない。
 - 画面は件数・内訳・失敗の数だけを出し、記憶の本文・失敗の文は出さない。走っている間は 2 秒ごとに状態を読み直す。
 
 ## 頭の中（心拍・活動メモ・気がかり。[ADR 0126](adr/0126-bot-pulse-and-stream.md)）

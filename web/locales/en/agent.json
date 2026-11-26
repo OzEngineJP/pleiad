@@ -2009,21 +2009,14 @@
         "summary": "When the automatic memory organizer last ran, its result and the next run, and how many times and why it did not run (also reports enabled, episode summaries, running, failure and halted)."
       },
       "learnNow": {
-        "summary": "Run the automatic memory organizer once now (adds new memories and re-selects the tier of existing ones. Also clears a halted state to retry. Does nothing while automatic organization is off)."
+        "summary": "Run the automatic memory organizer once now (adds new memories, re-selects the tier of existing ones and sorts up to 500 memories that have no tier yet. Also clears a halted state to retry. Does nothing while automatic organization is off)."
       },
       "sortStatus": {
-        "summary": "Return the state of the one-time memory sort (status, memories still without a tier, how many were processed, counts per tier, failures). It never returns memory text."
-      },
-      "sortStart": {
-        "summary": "Have the AI sort memories that have no tier into always / this workspace / archive only (continuing a stopped sort works the same; it can start while automatic organization is off). It can be started only from the settings screen.",
-        "confirm": "Start sorting the memories that have no tier (the text of a memory is not rewritten; only its tier and workspace are set)"
-      },
-      "sortStop": {
-        "summary": "Stop a running memory sort after the batch in progress is written. It can be done only from the settings screen."
+        "summary": "Return the state of the memory sort (it runs at the end of each nightly organization while that is on, up to 500 memories a night): status, memories still without a tier and how many nights are left, how many were processed, counts per tier, failures. It never returns memory text."
       },
       "sortUndo": {
-        "summary": "Put back the tier and workspace the memory sort set, only for memories that still have them (a memory a human changed afterwards is left alone). It can be done only from the settings screen.",
-        "confirm": "Undo the tier and workspace the memory sort set (memories a human changed afterwards are kept)"
+        "summary": "Put back the tier and workspace the memory sort set, only for memories that still have them (a memory a human changed afterwards is left alone; after an undo the sort does not run again until automatic organization is switched off and on). It can be done only from the settings screen.",
+        "confirm": "Undo what the nightly organization decided about when to hand memories over (memories a human changed afterwards are kept; it does not decide again until the nightly switch is turned off and on)"
       },
       "forget": {
         "summary": "Forget one memory line. The same content cannot be written again later. Needs the user's approval.",

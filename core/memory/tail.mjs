@@ -174,7 +174,7 @@ export function pickTieredCore(userEntries, botEntries, { workspace = null, now 
 }
 
 /**
- * 会話の始まりに入りきらない記憶の件数（設定 › 記憶が出す）。段ごとに { untiered, always, workspace }。
+ * 会話の始まりに入りきらない記憶の件数（MCP・CLI 用。設定画面は出さない）。段ごとに { untiered, always, workspace }。
  * workspace を渡せばその作業場所で見たとき、省けば作業場所ごとに見て入りきらなかった数の合計。保存だけ（archive）は数えない。
  * 返りは { omitted: { untiered, always, workspace }, total, inactiveWorkspace }（inactiveWorkspace は今の作業場所に合わず、渡さない件。作業場所を省くと 0）
  */
