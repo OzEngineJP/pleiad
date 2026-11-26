@@ -4,7 +4,6 @@ import path from 'node:path';
 import { recordBackendShapeMismatch } from '../../core/backend-shape-diagnostics.mjs';
 import { readTurnRejections } from '../../core/backends/codex-rejections.mjs';
 import { invalidSubagentTranscript, invalidQueuedCommandTranscript } from '../../core/backends/claude-normalize.mjs';
-import { invalidAgyEvent } from '../../core/backends/antigravity-cli.mjs';
 
 export const name = 'backend-shape-diagnostics';
 export const title = '外部エージェントの非公開形式の不一致を一度だけ安全に記録する';
@@ -42,6 +41,5 @@ export default async function (t) {
     const goodQueued = JSON.stringify({ type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: 'secret' }, version: '2.1.282' }) + '\n';
     t.ok('Claude の正常な transcript の形は通す', !invalidSubagentTranscript(goodSub) && !invalidQueuedCommandTranscript(goodQueued));
     t.ok('Claude の壊れた transcript の形を検知する', invalidSubagentTranscript('{"type":"user","message":{}}\n') && invalidQueuedCommandTranscript('{"type":"attachment","attachment":{"type":"queued_command"}}\n'));
-    t.ok('Antigravity の正常な stream-json は通し、形が違えば検知', !invalidAgyEvent({ event: 'result', result: { status: 'SUCCESS' } }) && invalidAgyEvent({ event: 'result', result: null }));
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }

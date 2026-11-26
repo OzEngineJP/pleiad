@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { runSync, onExit } from '../process.mjs';
 import { systemTool } from '../win-system.mjs';
 import { spawnCli, directCommand } from '../cli-installation.mjs';
-import { killTree } from './antigravity-background.mjs';
+import { killTree } from '../process-tree.mjs';
 import { createV2Protocol } from './opencode-v2.mjs';
 import { opencodeRelay } from '../opencode-relay.mjs';
 import {t} from '../i18n.mjs';

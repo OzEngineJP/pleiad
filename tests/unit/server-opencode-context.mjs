@@ -53,8 +53,6 @@ export default async function (t) {
       FAKE_OPENCODE_STATE_DIR: path.join(tmp, 'oc-state'),
     } });
     client = await open({ ...host, autoAllow: true });
-    const [backend] = await client.cmd('backends');
-    t.ok('能力: ply_context をターンごとの口で受ける', backend.capabilities.plyContext === 'turn', JSON.stringify(backend.capabilities.plyContext));
 
     // エージェント任せの会話は共有のサーバー
     const plain = await client.runTurn({ backend: 'opencode', cwd, prompt: 'show-system', mode: 'full', model: 'fake/echo' }, { ms: 60_000 });

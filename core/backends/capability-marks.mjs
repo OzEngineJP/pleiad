@@ -5,14 +5,18 @@
 //    impossible('理由')（技術的に無理・該当しない）/ todo('#Issue')（手段はあるが未実装）。
 //    false は書かない。書いていないことを「対応しない」の代わりにしない（tests/unit/backend-contract.mjs が落とす）。
 //    現役のエージェントは NO_CAPABILITIES を使えない（対応を終えたバックエンドだけ）。
-//    印を足すときは、ここに 1 行足し、全バックエンドに状態を書き、一覧の説明（tests/lib/backend-matrix.mjs の ABOUT）と
-//    印の契約の試験（tests/lib/backend-contracts.mjs）を足す。未実装（todo）は tests/backend-todos.json の基準より増やせない。
+//    required: true の印（plyInstructions・plyAgents・browser・plyControl・secrets）は、現役のエージェントなら対応の値だけ
+//    （impossible・todo にできない。対応を終えたバックエンドの RETIRED だけ許す。capabilityProblem が落とす）。
+//    impossible は cause（upstream / design / retired）を持つ。手段があるのに確かめていない・未実装のものは todo('#Issue') に書く。
+//    印を足すときは、ここに 1 行足し、全バックエンドに状態を書く（agent-marks.mjs）。
+//    印の説明は CAPABILITY_DOCS の 1 か所だけに書く（開発者向けの一覧の写しは持たない。ADR 0364）。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
 // 2. 性質（TRAITS）: 機能ではなく、そのエージェントの特徴。全エージェントにそろえる対象ではない。
 //    true / false だけで書き、covered・impossible・todo は持たない（「持っていない」は未対応ではなく、そのエージェントの性質）。
 //    server・bot・委譲の振り分けが読み、画面へは出さない（describeBackends に載せない）。
-// 3. 印の説明（CAPABILITY_DOCS）: 公開文書（site/docs/scripts/generate.mjs）が使う利用者向けの文（ja・en）。
+// 3. 印の説明（CAPABILITY_DOCS）: 印の説明の正本。公開文書（site/docs/scripts/generate.mjs）が使う利用者向けの文（ja・en）。
 //    アプリの辞書（web/locales）とは別に持つ。印を足したらここにも書く（無いと backend-contract が落とす）。
+//    エージェントごとの対応は公開文書のエージェントのページ（node site/docs/scripts/generate.mjs）で見る。
 //
 // エージェントごとの状態は core/backends/agent-marks.mjs。ここは「印の意味」だけを持つ。
 
@@ -22,14 +26,21 @@ const yes = (v) => v === true;
 
 // ---- 状態（対応しない理由） --------------------------------------------------------------
 //
-// 値は 1 行で読める形にする: `hooks: todo('#98')`・`accounts: impossible('…')`・`fork: covered`。
+// 値は 1 行で読める形にする: `hooks: todo('#98')`・`accounts: impossible('…', 'upstream')`・`fork: covered`。
 // impossible の reason は今は作る人向けの短い日本語。利用者向けの文は CAPABILITY_DOCS の unavailable に持つ。
 
 /** Pleiad の共通処理が補う（タイトル・タグ・分岐・巻き戻しなど） */
 export const covered = Object.freeze({ state: 'covered' });
 
-/** 技術的に無理・該当しない。reason は必須 */
-export const impossible = (reason) => Object.freeze({ state: 'impossible', reason });
+/**
+ * 技術的に無理・該当しない。reason は必須。cause は理由の種類（IMPOSSIBLE_CAUSES）:
+ * upstream = エージェント側（CLI・プロトコル）にその口が無い（確かめた版を reason に書く）/ design = Pleiad が意図して持たない /
+ * retired = 対応を終えた。「確かめていない」「#Issue の番号」を reason に書かない（手段があるのに未確認・未実装は todo('#Issue')）。
+ */
+export const impossible = (reason, cause) => Object.freeze({ state: 'impossible', reason, cause });
+
+/** impossible の cause の取りうる値 */
+export const IMPOSSIBLE_CAUSES = Object.freeze(['upstream', 'design', 'retired']);
 
 /** 手段はあるが未実装。issue は '#98' の形（必須） */
 export const todo = (issue) => Object.freeze({ state: 'todo', issue });
@@ -53,7 +64,11 @@ export function legacyCapabilities(capabilities) {
  * 能力の印。valid は対応のときの値、requires は「この値ならこのメソッドが要る」。
  * absent は状態のときに server・画面へ渡す今までの値（false など）。無ければ状態を持てない（approvals・mcpApproval）。
  * covered は Pleiad の共通処理が補える印だけ true。coveredRequires は covered のときに要るメソッド。
- * hint は落ちたときの文に出す値の形。意味は一覧（node tests/lib/backend-matrix.mjs。説明は ABOUT）
+ * required: true は、現役のエージェントなら対応の値だけ（impossible・todo にできない。contract.mjs の capabilityProblem）。
+ * probe: true は、対応（補う）のエージェント全部で「届いた」ことを、偽のプロセスに 1 ターン流して確かめる印（tests/lib/backend-common.mjs の probe）。
+ * 対応なのに証拠が無い・証拠が偽・知らない証拠が出る、を tests/unit/backend-common.mjs が落とす。runArgs の配達物の印（RUN_ARG_FEATURES）は全部これを持つ
+ * （持たないと tests/unit/backend-contract.mjs が落とす）。一部のエージェントだけで確かめる印は、tests/lib/backend-common.mjs の EXTRA_PROBES に書く。
+ * hint は落ちたときの文に出す値の形。意味は下のコメントと CAPABILITY_DOCS
  */
 export const CAPABILITIES = {
   // ネイティブにタイトル・状態タグを持つ（無ければ Pleiad の控えが正本）
@@ -96,18 +111,18 @@ export const CAPABILITIES = {
   internalCall: { valid: oneOf('ephemeral', 'isolated'), absent: false, hint: "'ephemeral' or 'isolated'", requires: (v) => (v === 'ephemeral' || v === 'isolated' ? ['internalTurn'] : []) },
   // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
   // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）
-  plyInstructions: { valid: yes, absent: false, hint: 'true' },
+  plyInstructions: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // ply_agents（委譲の橋）を受け取る。agentRuntime（url・headers・instructions）が渡る。
   // instructions の後ろには Pleiad の指示（plyInstructions の分）も足される
-  plyAgents: { valid: yes, absent: false, hint: 'true' },
+  plyAgents: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // Pleiad のコンテキスト（ply_context）の受け取り方（turn: ターンごと / conversation: 会話ごとの同じトークン）
-  plyContext: { valid: oneOf('turn', 'conversation'), absent: false, hint: "'turn' or 'conversation'" },
+  plyContext: { valid: oneOf('turn', 'conversation'), absent: false, probe: true, hint: "'turn' or 'conversation'" },
   // ply_computer を受け取る（画像の渡し方と待ちの区切り。docs/computer-use.md）
-  computerUse: { valid: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs)), absent: false, hint: "{ images: 'inline' | 'path', waitSliceMs: number | null }" },
+  computerUse: { valid: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs)), absent: false, probe: true, hint: "{ images: 'inline' | 'path', waitSliceMs: number | null }" },
   // 入力欄の `!`（host: Pleiad が走らせて次のターンで渡す / native: エージェントが走らせる。ADR 0054）
   shell: { valid: oneOf('host', 'native'), absent: false, hint: "'host' or 'native'", requires: (v) => (v === 'native' ? ['shell'] : []) },
   // Pleiad のシェルのツール（ply_shell。runArgs.shellRuntime）を受け取る（ADR 0227 §1）
-  plyShell: { valid: yes, absent: false, hint: 'true' },
+  plyShell: { valid: yes, absent: false, probe: true, hint: 'true' },
   // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0227 §3）。切るのは ply_shell を受け取るときだけ
   nativeShellOff: { valid: yes, absent: false, hint: 'true' },
   // エージェント自身の外部 MCP を会話ごとに名前単位で止められる（contextRuntime.mcp.suppress。ADR 0327・0336）。
@@ -119,15 +134,15 @@ export const CAPABILITIES = {
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['adoptTurn'] : []) },
   // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
-  browser: { valid: yes, absent: false, hint: 'true' },
+  browser: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // ply_control（操作の一覧の MCP）と、会話に束縛した CLI の環境変数（PLEIAD_CONTROL_*）を受け取る（ADR 0081）
-  plyControl: { valid: yes, absent: false, hint: 'true' },
+  plyControl: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // 秘密情報と変数（runArgs.secretsRuntime。会話のシェルの環境変数と一覧の文）を受け取る（ADR 0217）
-  secrets: { valid: yes, absent: false, hint: 'true' },
+  secrets: { valid: yes, absent: false, probe: true, required: true, hint: 'true' },
   // 可視化の指示（runArgs.visualizeInstructions）を受け取る
-  visualize: { valid: yes, absent: false, hint: 'true' },
+  visualize: { valid: yes, absent: false, probe: true, hint: 'true' },
   // Pleiad がそろえる Hooks（runArgs.hooksRuntime）を受け取る（ADR 0049）
-  hooks: { valid: yes, absent: false, hint: 'true' },
+  hooks: { valid: yes, absent: false, probe: true, hint: 'true' },
 };
 
 export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
@@ -162,19 +177,20 @@ export const NO_TRAITS = Object.freeze(Object.fromEntries(TRAIT_KEYS.map((key) =
 /**
  * 印の説明（公開文書 site/docs が使う利用者向けの文。ja・en）。
  * label は短い名前、summary はできることの説明、unavailable はできないときの理由、values は値ごとの補足。
- * 開発者向けの説明は tests/lib/backend-matrix.mjs の ABOUT（一覧の 1 列目）。
+ * covered は Pleiad が補える印（CAPABILITIES の covered: true）だけが持つ、補い方の説明（持たないと backend-contract が落とす）。
+ * 印の説明はここだけに書く（旧 tests/lib/backend-matrix.mjs の ABOUT はここへ寄せた。ADR 0364）。
  */
 export const CAPABILITY_DOCS = {
-  title: { label: { ja: 'タイトル', en: 'Title' }, summary: { ja: '会話に名前を付けて、一覧や見出しに表示します。', en: 'Name a conversation and show it in the list and header.' }, unavailable: { ja: 'このエージェントではタイトルを保存できません。', en: 'This agent cannot store conversation titles.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  tag: { label: { ja: '状態タグ', en: 'Status tag' }, summary: { ja: '会話に「実行中」「確認待ち」などの状態を付けます。', en: 'Show a status such as running or waiting for review.' }, unavailable: { ja: 'このエージェントでは状態タグを保存できません。', en: 'This agent cannot store status tags.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  fork: { label: { ja: '分岐', en: 'Fork' }, summary: { ja: '会話を途中から分けて、別の枝として続けます。', en: 'Split a conversation and continue on a new branch.' }, unavailable: { ja: 'このエージェントでは会話を分岐できません。', en: 'This agent cannot fork conversations.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  forkMessage: { label: { ja: '発言の途中からの分岐', en: 'Fork at a message' }, summary: { ja: '途中の発言までを含む枝を作ります。', en: 'Create a branch that includes messages up to the middle.' }, unavailable: { ja: 'このエージェントでは発言の途中で分岐できません。', en: 'This agent cannot fork in the middle of a conversation.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  rewind: { label: { ja: '巻き戻し', en: 'Rewind' }, summary: { ja: '同じ会話を前の地点まで戻して続けます。', en: 'Go back to an earlier point in the same conversation.' }, unavailable: { ja: 'このエージェントでは会話を巻き戻せません。', en: 'This agent cannot rewind a conversation.' }, values: { resumeAt: { ja: '次のターンで戻ります。', en: 'Rewinds on the next turn.' }, thread: { ja: 'その場で戻ります。', en: 'Rewinds immediately.' } } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  title: { label: { ja: 'タイトル', en: 'Title' }, summary: { ja: '会話に名前を付けて、一覧や見出しに表示します。', en: 'Name a conversation and show it in the list and header.' }, unavailable: { ja: 'このエージェントではタイトルを保存できません。', en: 'This agent cannot store conversation titles.' }, covered: { ja: 'Pleiad の控えに題名を保存します。', en: 'Pleiad stores the title on its side.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  tag: { label: { ja: '状態タグ', en: 'Status tag' }, summary: { ja: '会話に「実行中」「確認待ち」などの状態を付けます。', en: 'Show a status such as running or waiting for review.' }, unavailable: { ja: 'このエージェントでは状態タグを保存できません。', en: 'This agent cannot store status tags.' }, covered: { ja: 'Pleiad の控えに状態タグを保存します。', en: 'Pleiad stores the status tag on its side.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  fork: { label: { ja: '分岐', en: 'Fork' }, summary: { ja: '会話を途中から分けて、別の枝として続けます。', en: 'Split a conversation and continue on a new branch.' }, unavailable: { ja: 'このエージェントでは会話を分岐できません。', en: 'This agent cannot fork conversations.' }, covered: { ja: 'Pleiad が会話を写して分けます。', en: 'Pleiad copies the conversation to make the branch.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  forkMessage: { label: { ja: '発言の途中からの分岐', en: 'Fork at a message' }, summary: { ja: '途中の発言までを含む枝を作ります。', en: 'Create a branch that includes messages up to the middle.' }, unavailable: { ja: 'このエージェントでは発言の途中で分岐できません。', en: 'This agent cannot fork in the middle of a conversation.' }, covered: { ja: 'Pleiad がその発言までを写して分けます。', en: 'Pleiad copies the conversation up to that message.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  rewind: { label: { ja: '巻き戻し', en: 'Rewind' }, summary: { ja: '同じ会話を前の地点まで戻して続けます。', en: 'Go back to an earlier point in the same conversation.' }, unavailable: { ja: 'このエージェントでは会話を巻き戻せません。', en: 'This agent cannot rewind a conversation.' }, values: { resumeAt: { ja: '次のターンで戻ります。', en: 'Rewinds on the next turn.' }, thread: { ja: 'その場で戻ります。', en: 'Rewinds immediately.' } }, covered: { ja: 'Pleiad が前の地点までを写した会話で続けます。', en: 'Pleiad continues in a copy of the conversation up to that point.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   subagents: { label: { ja: 'サブエージェント', en: 'Subagents' }, summary: { ja: 'エージェントが分けた子の作業を一覧して、中身を読めます。', en: 'List and read the child tasks an agent splits off.' }, unavailable: { ja: 'このエージェントの接続方法では、子の作業の一覧を取得できません。', en: "This agent's protocol does not expose child tasks." } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   liveModel: { label: { ja: '実行中のモデル切り替え', en: 'Switch models while running' }, summary: { ja: 'ターンを止めずにモデルを切り替えます。', en: 'Switch models without stopping the turn.' }, unavailable: { ja: '走っているターンの途中ではモデルを切り替えられません。次のターンから切り替わります。', en: 'The model cannot be changed during a running turn. It changes from the next turn.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   liveMode: { label: { ja: '実行中の承認モード切り替え', en: 'Switch approval modes while running' }, summary: { ja: 'ターンを止めずに承認モードを切り替えます。', en: 'Switch approval modes without stopping the turn.' }, unavailable: { ja: '走っているターンの途中では承認モードを切り替えられません。次のターンから切り替わります。', en: 'The approval mode cannot be changed during a running turn. It changes from the next turn.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   liveEffort: { label: { ja: '実行中のエフォート切り替え', en: 'Switch effort while running' }, summary: { ja: 'ターンを止めずにエフォートを切り替えます。', en: 'Switch effort without stopping the turn.' }, unavailable: { ja: '走っているターンの途中ではエフォートを切り替えられません。止めて新しい設定で続けるか、次のターンから切り替わります。', en: 'Effort cannot be changed during a running turn. Pleiad stops and continues with the new setting, or it changes from the next turn.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  hostTools: { label: { ja: 'AI からの題名・状態・分岐', en: 'Title, status, and fork from the AI' }, summary: { ja: 'AI が会話の題名・状態を変えたり、分岐したりできます。', en: 'The AI can rename a conversation, change its status, and fork it.' }, unavailable: { ja: 'このエージェントでは AI から題名・状態・分岐を変えられません。', en: 'The AI cannot change titles, status, or forks with this agent.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  hostTools: { label: { ja: 'AI からの題名・状態・分岐', en: 'Title, status, and fork from the AI' }, summary: { ja: 'AI が会話の題名・状態を変えたり、分岐したりできます。', en: 'The AI can rename a conversation, change its status, and fork it.' }, unavailable: { ja: 'このエージェントでは AI から題名・状態・分岐を変えられません。', en: 'The AI cannot change titles, status, or forks with this agent.' }, covered: { ja: 'AI は Pleiad の操作の一覧（ply_control）から同じことができます。', en: 'The AI can do the same through the Pleiad control surface (ply_control).' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   approvals: { label: { ja: '対話の承認', en: 'Interactive approvals' }, summary: { ja: 'ツールの実行前に承認を求めます。', en: 'Ask before running tools.' }, unavailable: { ja: 'このエージェントでは承認を求められません。', en: 'This agent cannot ask for approval.' }, values: { interactive: { ja: '実行前に承認を求めます。', en: 'Asks before running tools.' }, none: { ja: '承認は求めず、確認なしで実行します。', en: 'Runs without asking for approval.' } } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   alwaysAllow: { label: { ja: '「常に許可」', en: 'Always allow' }, summary: { ja: '承認に「常に許可」を返せます。', en: 'Answer an approval with always allow.' }, unavailable: { ja: 'このエージェントでは「常に許可」を返せません。', en: 'This agent cannot always allow.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   mcpApproval: { label: { ja: 'MCP ツールの承認', en: 'MCP tool approvals' }, summary: { ja: 'MCP のツールの実行前に承認を求めます。', en: 'Ask before running MCP tools.' }, unavailable: { ja: 'このエージェントでは MCP のツールの承認を扱えません。', en: 'This agent cannot handle MCP tool approvals.' }, values: { agent: { ja: 'エージェントが承認を求めます。', en: 'The agent asks.' }, host: { ja: 'Pleiad が承認を求めます。', en: 'Pleiad asks.' } } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
@@ -184,7 +200,7 @@ export const CAPABILITY_DOCS = {
   compatEndpoints: { label: { ja: '会話ごとの接続先（互換）', en: 'Connections per conversation (compatible)' }, summary: { ja: '会話ごとに互換の接続先（公式以外の API）を選べます。', en: 'Choose a compatible connection (a non-official API) for each conversation.' }, unavailable: { ja: 'このエージェントでは互換の接続先を選べません。', en: 'This agent cannot choose a compatible connection.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   compact: { label: { ja: '圧縮', en: 'Compaction' }, summary: { ja: '会話の文脈を要約して縮めます。', en: 'Summarize and shrink the conversation context.' }, unavailable: { ja: 'このエージェントでは Pleiad から圧縮を始められません。', en: 'Pleiad cannot start compaction for this agent.' }, values: { true: { ja: 'Pleiad の操作から圧縮できます。', en: 'Compact from Pleiad.' }, prompt: { ja: '/compact を発言として送って圧縮します。', en: 'Send /compact as a message to compact.' } } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   autoCompactWindow: { label: { ja: '委譲の子の自動圧縮の閾値', en: 'Auto-compaction threshold for delegated children' }, summary: { ja: '委譲した子の会話だけ、自動圧縮の閾値を下げられます。', en: 'Lower the auto-compaction threshold for delegated child conversations.' }, unavailable: { ja: '委譲した子の自動圧縮の閾値は変えられません。', en: 'The threshold for delegated children cannot be changed.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
-  promptSuggestions: { label: { ja: '次の発言の候補', en: 'Prompt suggestions' }, summary: { ja: '次の発言の候補を出します。', en: 'Suggest what to say next.' }, unavailable: { ja: 'このエージェントでは次の発言の候補を出せません。', en: 'This agent cannot suggest prompts.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
+  promptSuggestions: { label: { ja: '次の発言の候補', en: 'Prompt suggestions' }, summary: { ja: '次の発言の候補を出します。', en: 'Suggest what to say next.' }, unavailable: { ja: 'このエージェントでは次の発言の候補を出せません。', en: 'This agent cannot suggest prompts.' }, values: { native: { ja: 'ターンの中でエージェントが候補を出します。', en: 'The agent suggests prompts during the turn.' } }, covered: { ja: 'ターンの後に Pleiad が候補を作ります。', en: 'Pleiad creates suggestions after the turn.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   internalCall: { label: { ja: '内部処理の呼び出し', en: 'Internal calls' }, summary: { ja: '記憶の整理・心拍・候補・題名などの内部処理を、会話の履歴に残さず呼べます。', en: 'Run internal work such as memory organization, heartbeat, suggestions, and titles without leaving it in conversation history.' }, unavailable: { ja: 'このエージェントでは内部処理を履歴に残さず呼べないため、その種の内部処理は動きません。', en: 'This agent cannot run internal work without leaving it in history, so those internal features are off.' }, values: { ephemeral: { ja: '接続先に会話を残しません。', en: 'Nothing is left in the provider history.' }, isolated: { ja: '履歴と分離した一時の実行で呼べます。', en: 'Runs in a temporary session separated from history.' } } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   plyInstructions: { label: { ja: 'Pleiad の指示', en: 'Pleiad instructions' }, summary: { ja: 'Pleiad の指示（追加の文・既定の項目）をエージェントに渡します。', en: "Pass Pleiad's instructions (added text and defaults) to the agent." }, unavailable: { ja: 'このエージェントには Pleiad の指示を渡せません。', en: "Pleiad's instructions cannot be passed to this agent." } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外
   plyAgents: { label: { ja: '委譲（ply_agents）', en: 'Delegation (ply_agents)' }, summary: { ja: 'エージェントから Pleiad の子へ作業を委譲できます。', en: 'Let the agent delegate work to Pleiad child agents.' }, unavailable: { ja: 'このエージェントからは委譲できません。', en: 'This agent cannot delegate work.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外

@@ -1,16 +1,13 @@
 // antigravity バックエンドを server 越しに通すテスト。**本物の agy は起動しない。**
 //
 // AGENT_HOST_AGY_BIN に `node tests/lib/fake-agy.mjs` を渡すと、
-// core/backends/antigravity-cli.mjs は「ヘッドレスの stream-json を真似た子プロセス」と話す。
-// つまり測っているのは NDJSON の張り方と、step_update -> 正規化イベントの写し替えと、
+// core/backends/antigravity.mjs は「ACP（agy acp）を真似た子プロセス」と話す。
+// つまり測っているのは JSON-RPC の張り方と、session/update -> 正規化イベントの写し替えと、
 // 控えの書き出しであって、agy そのものではない。
 //
-// このバックエンドは**持てないものが多い**ので、持てないことも測る:
-// 対話承認が無い / 思考が流れない。
-//
 // 実機で踏んだ穴（docs/multi-backend.md §2.8）もここで塞いだままにする:
-// ツールの ACTIVE / DONE を分けること、出力の打ち切りを成功と取り違えないこと、
-// 打ち切った agy を残さないこと、`--print-timeout` を渡すこと。
+// ツールの開始・終了を分けること、出力の打ち切りを成功と取り違えないこと、
+// 打ち切った agy を残さないこと。
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +27,9 @@ export default async function (t) {
   const dataDir = path.join(scratch, "data");
   const argsFile = path.join(scratch, "agy-args.json");
   const pidFile = path.join(scratch, "agy-pids.json");
+  const acpLog = path.join(scratch, "agy-acp.log");
+  /** fake-agy（ACP）が受けた依頼を 1 行 1 JSON で控えたもの */
+  const acpFrames = async () => (await fs.readFile(acpLog, "utf8").catch(() => "")).split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const promptLog = path.join(scratch, "agy-prompts.log");
 
   const readJson = async (file, fallback) => JSON.parse(await fs.readFile(file, "utf8").catch(() => fallback));
@@ -64,6 +64,7 @@ export default async function (t) {
       AGENT_HOST_AGY_BIN: `node "${fake}"`,
       FAKE_AGY_ARGS_FILE: argsFile,
       FAKE_AGY_PID_FILE: pidFile,
+      FAKE_AGY_ACP_LOG: acpLog,
       FAKE_AGY_PROMPT_LOG: promptLog,
     },
     dataDir,
@@ -87,25 +88,11 @@ export default async function (t) {
     const b = backends[0];
     t.ok("antigravity だけが有効になる", backends.length === 1 && b.id === "antigravity",
          backends.map((x) => x.id).join(",") || "(なし)");
-    t.ok("タイトルも状態タグも持てないと申告する",
-      b.capabilities?.title === false && b.capabilities?.tag === false,
-      JSON.stringify({ title: b.capabilities?.title, tag: b.capabilities?.tag }));
-    t.ok("子の会話本文を取得できないため、サブエージェントには対応しないと申告する",
-      b.capabilities?.subagents === false, String(b.capabilities?.subagents));
-    // agy には対話承認そのものが無い。「常に許可」も出せない
-    t.ok("常に許可は出せないと申告する", b.capabilities?.alwaysAllow === false, String(b.capabilities?.alwaysAllow));
-    t.ok("実行中のモード・モデル切り替えはできないと申告する",
-      b.capabilities?.liveMode === false && b.capabilities?.liveModel === false,
-      JSON.stringify({ liveMode: b.capabilities?.liveMode, liveModel: b.capabilities?.liveModel }));
-    t.ok("ログインはできると申告する", b.capabilities?.login === true, String(b.capabilities?.login));
-    t.ok("入力欄の ! は Pleiad が実行する方式", b.capabilities?.shell === 'host', String(b.capabilities?.shell));
 
-    // ---- 語彙。**選べるのは「全部自動」だけ。**
-    // agy のヘッドレスは --dangerously-skip-permissions 以外だとツールを soft-deny するので、
-    // plan / accept-edits を出すと「選んだのに黙って何もできない」になる
+    // ---- 語彙。ACP は承認を Pleiad の承認カードへ繋ぐので、default / accept-edits / auto / plan と全部自動（yolo）を選べる
     const modes = await c.cmd("modes", { backend: "antigravity" });
-    t.ok("承認モードは全部自動の1つだけ",
-      Object.keys(modes).join(",") === "yolo" && Boolean(modes.yolo?.label),
+    t.ok("承認モードは ACP の 4 つと全部自動の 5 つ",
+      Object.keys(modes).join(",") === "default,accept-edits,auto,plan,yolo" && Boolean(modes.yolo?.label),
       Object.keys(modes).join(","));
 
     // ---- ログイン判定。`agy models` に聞く（資格情報は OS の資格情報ストアにあって読めない）。
@@ -141,20 +128,11 @@ export default async function (t) {
     );
     const sid = first.sessionId;
     t.ok("init の conversation_id が session イベントで来る", Boolean(sid), sid ?? "(なし)");
-    const argvList = JSON.parse(await fs.readFile(argsFile, "utf8").catch(() => "[]"));
-    const sessionArgs = argvList.find((args) => args.some((a) => a.startsWith("--print"))) ?? [];
-    const addDirIdx = sessionArgs.indexOf("--add-dir");
-    t.ok("agy 起動引数に --add-dir で作業ディレクトリが渡される",
-      addDirIdx >= 0 && sessionArgs[addDirIdx + 1] === ROOT,
-      JSON.stringify(sessionArgs));
-    // 既定の 5m0s は長いターンを空の SUCCESS で打ち切る。明示的に長い値を渡す
-    const timeoutIdx = sessionArgs.indexOf("--print-timeout");
-    t.ok("agy 起動引数に --print-timeout が渡される",
-      timeoutIdx >= 0 && /^\d/.test(String(sessionArgs[timeoutIdx + 1] ?? "")),
-      JSON.stringify(sessionArgs.slice(timeoutIdx, timeoutIdx + 2)));
-    // 「既定」でも覚えた既定のモデルを明示する。省くと agy はその時点の自分の既定を使い、画面の「既定（モデル名）」とずれる（issue #161）
-    t.ok("既定のモデル・段のままなら、既定のモデルを --model に渡し、--effort は渡さない",
-      sessionArgs[sessionArgs.indexOf("--model") + 1] === "fake-flash-high" && !sessionArgs.includes("--effort"), JSON.stringify(sessionArgs));
+    const sessionNew = (await acpFrames()).find((f) => f.method === "session/new");
+    t.ok("session/new に作業ディレクトリが渡される", sessionNew?.params?.cwd === ROOT, JSON.stringify(sessionNew?.params ?? null));
+    // 「既定」のままなら、モデルも段も替えない（session/new が返した既定のモデルをそのまま使う）
+    t.ok("既定のモデル・段のままなら、設定を替えない",
+      !(await acpFrames()).some((f) => f.method === "session/set_config_option" && f.params?.configId !== "mode"), JSON.stringify((await acpFrames()).map((f) => f.method)));
     const sessionEvents = first.events.filter((e) => e.type === "session");
     t.ok("id 確定の session は first 付きで1本だけ",
       sessionEvents.length === 1 && sessionEvents[0].first === true,
@@ -169,7 +147,7 @@ export default async function (t) {
     // 持てないもの
     t.ok("思考は流れない（agy は逐次の reasoning を出さない）",
       first.events.every((e) => e.type !== "thinking.start" && e.type !== "thinking.delta"));
-    t.ok("承認は聞かれない（agy に対話承認が無い）", asked.length === 0, `${asked.length} 件`);
+    t.ok("承認は聞かれない（yolo のターンは agy が許可を求めない。聞かれる側は server-agent-tasks・backend-contract が確かめる）", asked.length === 0, `${asked.length} 件`);
 
     // ツールは同じ step_index で ACTIVE -> DONE の 2 回来る。**分けて 1 件にする**
     t.ok("tool_name が tool.start になる", first.tools.join(",") === "run_command",
@@ -217,7 +195,7 @@ export default async function (t) {
     t.ok("控えは Pleiad の置き場に入る", stored.conversationId === sid && stored.messages.length === 2,
          `${stored.messages?.length} 件`);
     t.ok("成功 result の生 status と経路を控える",
-      stored.turnResults?.[0]?.status === "SUCCESS" && stored.turnResults[0].source === "result" && stored.turnResults[0].outcome === "ok",
+      stored.turnResults?.[0]?.status === "end_turn" && stored.turnResults[0].source === "result" && stored.turnResults[0].outcome === "ok",
       JSON.stringify(stored.turnResults ?? null));
 
     const loaded = await c.cmd("loadSession", { sessionId: sid });
@@ -284,25 +262,20 @@ export default async function (t) {
     const bodyTrace = diagnosed.turnResults.at(-1);
     t.ok("本文付き ERROR は失敗だが本文を残す", bodyError.outcome === "error" && textOf(bodyError) === "本文は届いた"
       && diagnosed.messages.at(-1)?.text === "本文は届いた", JSON.stringify(bodyTrace));
-    t.ok("生 status・失敗理由を会話の控えに残す", bodyTrace?.source === "result" && bodyTrace.status === "ERROR"
-      && bodyTrace.outcome === "error" && bodyTrace.error === "結果は失敗", JSON.stringify(bodyTrace));
+    // ACP は依頼の失敗として届く。失敗の文面は安全な固定文（wire の message は残さない）
+    t.ok("失敗理由を会話の控えに残す", bodyTrace?.source === "exception" && bodyTrace.outcome === "error" && Boolean(bodyTrace.error), JSON.stringify(bodyTrace));
     const { DatabaseSync } = loadSqlite();
     const db = new DatabaseSync(path.join(dataDir, "pleiad.db"), { readOnly: true });
     let failures;
     try { failures = JSON.parse(db.prepare("SELECT value FROM session_fields WHERE session_id = ? AND field = 'antigravityFailures'").get(bodySid)?.value ?? "[]"); }
     finally { db.close(); }
     t.ok("server が failed にした経路も残す", failures.at(-1)?.source === "backend.turnResult"
-      && failures.at(-1)?.error === "結果は失敗", JSON.stringify(failures.at(-1)));
+      && Boolean(failures.at(-1)?.error), JSON.stringify(failures.at(-1)));
     const afterReply = await c.runTurn({ prompt: "limit-after-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
-    t.ok("完成した返事の後の上限は成功として本文を届ける", afterReply.outcome === "ok" && textOf(afterReply) === "完成した返事"
-      && !afterReply.events.some((e) => e.type === "turnResult" && e.outcome === "limited"), JSON.stringify(afterReply.outcome));
+    // ACP には「返事が完成した」合図が無いので、返事の後の失敗も本文を残したまま失敗・上限として扱う（成功に読み替えない）
+    t.ok("返事の後の上限は limited で、本文は残す", afterReply.outcome === "limited" && textOf(afterReply) === "完成した返事", JSON.stringify(afterReply.outcome));
     const afterOtherError = await c.runTurn({ prompt: "error-after-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
-    t.ok("完成した返事の後の一般エラーも成功として本文を届ける", afterOtherError.outcome === "ok" && textOf(afterOtherError) === "完成した返事");
-    const diagnostics = new DatabaseSync(path.join(dataDir, "pleiad.db"), { readOnly: true });
-    let afterFailures;
-    try { afterFailures = JSON.parse(diagnostics.prepare("SELECT value FROM session_fields WHERE session_id = ? AND field = 'antigravityFailures'").get(bodySid)?.value ?? "[]"); }
-    finally { diagnostics.close(); }
-    t.ok("返事後の失敗理由を成功ターンにも残す", afterFailures.slice(-2).every((r) => r.outcome === "ok" && r.source === "backend.afterReply"), JSON.stringify(afterFailures.slice(-2)));
+    t.ok("返事の後の一般エラーは失敗で、本文は残す", afterOtherError.outcome === "error" && textOf(afterOtherError) === "完成した返事", String(afterOtherError.outcome));
     const noReply = await c.runTurn({ prompt: "limit-no-reply", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
     t.ok("返事が完成しない上限は従来どおり limited", noReply.outcome === "limited", String(noReply.outcome));
     const unfinished = await c.runTurn({ prompt: "error-after-tool", sessionId: bodySid, cwd: ROOT }, { ms: 60_000 });
@@ -311,35 +284,13 @@ export default async function (t) {
     t.ok("非成功 result が次のターンへ残らない", recovered.outcome === "ok" && (await spawned()).length === pidCount,
       String(recovered.outcome));
 
-    // ---- 出力の打ち切り（--print-timeout）。
-    // 実機の agy は stderr に文言を出し、**本文が空のまま status:"SUCCESS"** を返す。
-    // そのまま写すと「正常に終わったのに何も言わない」ターンになるので、失敗として畳む。
-    // しかも agy は裏でターンを回し続けるので、そのプロセスは落とす
-    const before = await spawned();
-    const truncated = await c.runTurn({ prompt: "timeout", sessionId: null, cwd: ROOT, backend: "antigravity" }, { ms: 60_000 })
-      .catch((err) => ({ outcome: "error", error: String(err?.message ?? err), events: [] }));
-    const timedPid = (await spawned()).filter((p) => !before.includes(p)).at(-1) ?? null;
-    t.ok("打ち切りのターンで agy が起きる", Number.isInteger(timedPid), String(timedPid));
-    t.ok("空の SUCCESS を ok にしない", truncated.outcome === "error", String(truncated.outcome));
-    t.ok("打ち切りだと分かる文面が出る",
-      /打ち切/.test(truncated.events.find((e) => e.type === "turnResult")?.error ?? ""),
-      JSON.stringify(truncated.events.find((e) => e.type === "turnResult")?.error ?? null));
-    const timeoutTrace = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${truncated.sessionId}.json`), "utf8")).turnResults.at(-1);
-    t.ok("打ち切りは result と区別して控える", timeoutTrace?.source === "printTimeout"
-      && timeoutTrace.outcome === "error", JSON.stringify(timeoutTrace));
-    t.ok("打ち切った agy は落とす", await gone(timedPid), `pid ${timedPid}`);
-    t.ok("落とした agy は pid の控えから消える",
-      !(await recorded()).includes(timedPid), JSON.stringify(await recorded()));
-    // 生きている agy は控えに残る（次の起動が孤児を掃除するため）
-    t.ok("生きている agy の pid を控える", (await recorded()).length > 0, JSON.stringify(await recorded()));
-
     // ---- 段。agy の --effort は段違いの id を選ぶことと同じ。--model と同時に渡さず、段違いの id に解決する
-    const beforeEffort = JSON.parse(await fs.readFile(argsFile, "utf8").catch(() => "[]")).length;
+    const beforeEffort = (await acpFrames()).length;
     const low = await c.runTurn({ prompt: "段", sessionId: null, cwd: ROOT, backend: "antigravity", mode: "yolo", effort: "low" }, { ms: 60_000 });
-    const lowArgs = JSON.parse(await fs.readFile(argsFile, "utf8").catch(() => "[]")).slice(beforeEffort).find((a) => a.some((x) => x.startsWith("--print"))) ?? [];
-    t.ok("段を選ぶと、既定のモデルの段違いの id を --model に渡す（--effort は渡さない）",
-      low.outcome === "ok" && lowArgs[lowArgs.indexOf("--model") + 1] === "fake-flash-low" && !lowArgs.includes("--effort"),
-      JSON.stringify(lowArgs));
+    const lowSet = (await acpFrames()).slice(beforeEffort).filter((f) => f.method === "session/set_config_option");
+    t.ok("段を選ぶと、既定のモデルの段違いの id を session/set_config_option の model に渡す",
+      low.outcome === "ok" && lowSet.some((f) => f.params?.configId === "model" && f.params?.value === "fake-flash-low"),
+      JSON.stringify(lowSet));
 
     // ---- 中断。プロトコルに中断が無いのでプロセスを落とす
     const mark = c.mark();
@@ -369,12 +320,12 @@ export default async function (t) {
     for (let i = 0; i < 200 && (await slowCount()) === slowBefore; i++) await new Promise((r) => setTimeout(r, 50));
     await c.cmd("abort", { sessionId: countedSid });
     await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === countedSid, { ms: 60_000, from: killFrom });
-    const argsMark = (await readJson(argsFile, "[]")).length;
+    const argsMark = (await acpFrames()).length;
     const countedResumed = await c.runTurn({ prompt: "数える 3", sessionId: countedSid, cwd: ROOT }, { ms: 60_000 });
-    const resumedArgs = (await readJson(argsFile, "[]")).slice(argsMark).filter((a) => a.some((x) => x.startsWith("--print")));
-    t.ok("落とした agy を --conversation で起こし直す",
-      countedResumed.outcome === "ok" && resumedArgs.length === 1 && resumedArgs[0][resumedArgs[0].indexOf("--conversation") + 1] === countedSid,
-      JSON.stringify(resumedArgs));
+    const resumedCalls = (await acpFrames()).slice(argsMark).filter((f) => f.method === "session/resume" || f.method === "session/load");
+    t.ok("中断した会話は、次のターンで同じ会話 id を resume する",
+      countedResumed.outcome === "ok" && resumedCalls.every((f) => f.params?.sessionId === countedSid),
+      JSON.stringify(resumedCalls));
     // 新しいプロセスの累計は 33（前のプロセスの 22 の続き）。差の 11（入力はキャッシュ読みを足して 13）だけを記録する
     t.ok("agy のプロセスを替えても、次のターンの使用量はそのターンの分だけ",
       usageOf(countedResumed) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 33,
@@ -388,24 +339,6 @@ export default async function (t) {
     t.ok("数え直した後は、新しい累計を基準に差を取る",
       usageOf(countedAfterReset) === "13,10,2" && (await lastTrace())?.usage?.input_tokens === 22,
       JSON.stringify({ usage: usageOf(countedAfterReset), trace: await lastTrace() }));
-
-    // ---- 渡った合図を出せない backend（traits.promptDelivery = false）:
-    // 発言を受け取ったかもしれないまま無出力で終わったとき、failed（再開で自動再送）にせず結果不明（unknown）にする。
-    // 自動再送されると、ネイティブの履歴に同じ発言が二重に登る
-    const quietSession = await c.cmd("newSession", { backend: "antigravity", cwd: ROOT });
-    const quietFrom = c.mark();
-    await c.cmd("sendMessage", { sessionId: quietSession.sessionId, messageId: "quiet-001", prompt: "quiet" });
-    // 身代わりが受け取るまで待ってから止める（渡したあとで無出力のまま終わる形にする）
-    for (let i = 0; i < 100 && !(await fs.readFile(promptLog, "utf8").catch(() => "")).includes("quiet"); i++) await new Promise((r) => setTimeout(r, 50));
-    await c.cmd("abort", { sessionId: quietSession.sessionId });
-    await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === quietSession.sessionId, { from: quietFrom, ms: 60_000 });
-    const quietItem = (await c.cmd("listMessages", { sessionId: quietSession.sessionId }))[0];
-    t.ok("合図の無いまま終わった発言は失敗にせず結果不明にする", quietItem?.status === "unknown", JSON.stringify(quietItem));
-    const resumed = await c.cmd("resume", { sessionId: quietSession.sessionId }).catch((e) => e);
-    t.ok("再開は結果不明の発言を自動で送り直さず、確かめるよう促す", resumed instanceof Error, JSON.stringify(resumed));
-    t.ok("発言は結果不明のまま残る", (await c.cmd("listMessages", { sessionId: quietSession.sessionId }))[0]?.status === "unknown");
-    const quietPrompts = (await fs.readFile(promptLog, "utf8").catch(() => "")).split("\n").filter((line) => line.includes("quiet"));
-    t.ok("同じ発言が二重に届いていない", quietPrompts.length === 1, String(quietPrompts.length));
   } finally {
     c.close();
     await server.stop().catch(() => {});

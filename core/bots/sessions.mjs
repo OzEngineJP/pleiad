@@ -95,7 +95,7 @@ export function pickCwd(bot, channel, modeEntry) {
   return folders[0]?.path ?? os.homedir();
 }
 
-/** 新しい bot の既定のモード: 作業場所に書けて毎回聞くもの（Claude の default・Codex の ask）。無ければ先頭（Antigravity は yolo だけ） */
+/** 新しい bot の既定のモード: 作業場所に書けて毎回聞くもの（Claude の default・Codex の ask）。無ければ先頭（Antigravity は作業場所に限るモードが無いので先頭の default） */
 export function defaultMode(modes) {
   const entries = Object.entries(modes ?? {});
   const weak = entries.find(([, m]) => { const p = modePosition(m); return p.scope === 'workspace' && p.autonomy === 'ask'; });

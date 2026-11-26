@@ -106,7 +106,8 @@ function agentPage(lang, id) {
     const doc = docs[key];
     if (!doc) continue;
     if (marks.isCapabilityState(value)) {
-      if (value.state === "covered") works.push(`- **${doc.label[lang]}** — ${doc.summary[lang]}${ja ? "（Pleiad が補います）" : " (Pleiad provides this)"}`);
+      // 補い方の文（CAPABILITY_DOCS の covered）があれば添える。無い古い版の印は短い注記だけ
+      if (value.state === "covered") works.push(`- **${doc.label[lang]}** — ${doc.summary[lang]}${doc.covered?.[lang] ? `${ja ? "" : " "}${doc.covered[lang]}` : ja ? "（Pleiad が補います）" : " (Pleiad provides this)"}`);
       else if (value.state === "impossible") cannot.push(`- **${doc.label[lang]}** — ${doc.unavailable[lang]}`);
       else if (value.state === "todo") planned.push(`- **${doc.label[lang]}** — ${ja ? "対応予定" : "Planned"}`);
       continue;

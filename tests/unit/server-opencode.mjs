@@ -1,6 +1,6 @@
 // OpenCode のバックエンド（core/backends/opencode.mjs）を、身代わりの opencode serve（tests/lib/fake-opencode.mjs）で動かして確かめる:
 // 記述と語彙・ツール・承認（1 回・常に・拒否の理由）・質問・Pleiad の MCP の中継（会話の口へ振り分ける）・会話のシェルの環境変数・
-// 途中送信と渡った合図・中断・失敗・サブエージェント・圧縮・分岐。全体の共通の契約は backend-conformance
+// 途中送信と渡った合図・中断・失敗・サブエージェント・圧縮・分岐。全体の共通の契約は backend-common
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,8 +55,6 @@ export default async function (t) {
     t.ok('起こす前: 一覧・ログインの状態・発言の読み出しでは OpenCode のサーバーを起こさない', startedEarly === '', startedEarly);
     const [b] = await c.cmd('backends');
     t.ok('記述: 短い名前・ロゴ・自動の圧縮の行が付く', b.id === 'opencode' && b.shortLabel === 'OpenCode' && b.brand?.logo === 'opencode.svg' && b.idleCompaction === 'opencode', JSON.stringify(b));
-    t.ok('能力: 分岐・サブエージェント・承認・圧縮・委譲の橋・コンピューターの操作', b.capabilities.fork && b.capabilities.subagents && b.capabilities.alwaysAllow
-      && b.capabilities.compact && b.capabilities.plyAgents && b.capabilities.computerUse?.images === 'inline' && b.capabilities.shell === 'host');
     const vocab = await c.cmd('models', { backend: 'opencode' });
     t.ok('モデル: 既定と接続先のモデル。エフォートはモデルの variants', vocab[''] && vocab['fake/echo']?.efforts?.join() === 'low,high' && vocab['fake/tiny']?.efforts?.length === 0, JSON.stringify(vocab));
     t.ok('モデル: 既定の行にも、実際に当たるモデルの段を写す', vocab['']?.resolvesTo === 'fake/echo' && vocab['']?.efforts?.join() === 'low,high', JSON.stringify(vocab['']));

@@ -29,6 +29,8 @@
 - **未実装は減る方向にしか動かせない。** `tests/backend-todos.json` に「エージェント × 印 → Issue」を持ち、基準に無い `todo` が
   増えたら `backend-contract` が落ちる。減った・Issue が変わったときは `node tests/lib/backend-todos.mjs --update-baseline` で
   基準を下げる（増える更新は拒む）。lint（ADR 0020・0081）と同じ形。
+  （後の版で、この基準の表は廃止した。`todo` は Issue 番号を持つ宣言そのものが記録で、数の上限は持たない。
+  代わりに `impossible` が原因（upstream / design / retired）を持ち、手段があるのに未確認・未実装のものは `todo` に書かせる）
 - **印を足したら全エージェントの状態を書かないと落ちる。** 落ちた文は `core/backends/agent-marks.mjs` の
   `CAPABILITY_STATES.<id>` に何を書くか（対応の値・`covered`・`impossible('理由')`・`todo('#Issue')`）を案内する。
   メソッドが要る印は `core/backends/<id>.mjs` を案内する（[0274](0274-capability-traits-and-public-marks.md)）。
@@ -38,7 +40,8 @@
   （[0274](0274-capability-traits-and-public-marks.md)）。`contract.mjs` は検査とイベントの契約を持ち、定義を re-export する。
 - **性質（traits）は能力ではないので分ける**（[0274](0274-capability-traits-and-public-marks.md)）。`effortInModelId`・
   `instructionsAtStart`・`failureDiagnostics`・`promptDelivery` は `true` / `false` だけで書き、状態を持たない。
-- **写しの文書を消す。** `docs/backend-matrix.md` を消し、一覧は `node tests/lib/backend-matrix.mjs` で端末に出す。
+- **写しの文書を消す。** `docs/backend-matrix.md` を消し、一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
+  （後の版で廃止した。対応は公開文書のエージェントのページで見る。[0364](0364-consolidate-backend-leak-guards.md)）。
   `docs/multi-backend.md`「エージェントを足す」は試験の案内に寄せて短くする。
 
 ## 理由

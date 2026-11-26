@@ -45,7 +45,7 @@ export function createCompletionNotices({ busy, send, ready = () => {} }) {
 /**
  * 走っているターンへ、完了通知（依頼元のターン。ADR 0057）や追加指示（子のターン。ADR 0065）を途中送信（control.steer）で渡してよいか。
  * 人間の送信待ち（unsent）を優先し、次ターンの設定が予約されている会話（outbox も途中送信を断る）・圧縮のターン・
- * 中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）には渡さない
+ * 中断や終了に向かっているターン・途中送信を持たないバックエンドには渡さない
  */
 export function canSteerNotice(turn, { unsent, nextSettings }) {
   if (!turn || turn.ac?.signal?.aborted || turn.outcome || turn.compactTrigger || typeof turn.control?.steer !== 'function') return false;

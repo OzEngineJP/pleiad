@@ -235,7 +235,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 収まるモードが無い、あるいは範囲を機械的に強制できないエンジンに「誰にも聞かない」を渡すことになる場合は、
 **委譲した瞬間に1回だけ親の会話で承認を求める**。承認カードには、どのバックエンドをどのモードで動かすことになるかを表示する。
 拒否すると委譲は失敗する。コマンドのたびに聞かれるのとは負担が違うので、1回に畳んでいる。
-Antigravity は対話承認を持たず常に全部自動（`yolo`）なので、親が無制限（Codex の `yolo`、Claude の `bypass`）でない限りこの確認が出る。
+Antigravity は、旧い口（stream-json）では対話承認を持たず常に全部自動（`yolo`）だったので、親が無制限でない限りこの確認が出た。2026-11 に ACP へ替えて `default`・`accept-edits`・`auto`・`plan` を持った（[ADR 0365](adr/0365-antigravity-on-acp.md)）ので、親の範囲に収まるモードがあればこの確認は出ない（範囲は宣言で、`enforced: false`）。新しい会話の既定は今も `yolo`。
 Codex の親は `full` / `yolo` 以外では必ず確認する。Codex は MCP のツール呼び出しを自前の承認に通さず、これが無いと委譲が起きたことに気づけないため。
 
 親の自動許可・承認済み操作そのものは引き継がない。実行中の承認は子の会話で通常の Pleiad カードとして表示する。
@@ -275,18 +275,18 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 
 ## 無音と長いコマンドの通知
 
-実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。この時刻は `running` の配信（全端末・4 秒）の行にも載せる。同じ中身の配信は抑止されるので、これが無いと子が黙々と動いている間は、開いているバックグラウンドの詳細を読み直すきっかけが無い（2026-10-24）。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
+実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。この時刻は `running` の配信（全端末・4 秒）の行にも載せる。同じ中身の配信は抑止されるので、これが無いと子が黙々と動いている間は、開いているバックグラウンドの詳細を読み直すきっかけが無い（2026-10-24）。Antigravity は履歴に残さない `agent_message_chunk`・`tool_call`・`tool_call_update`（`task.activity`）、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
 既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
 待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0138](adr/0138-quiet-wait-notices.md)）。
 
-コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のステップだけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0138](adr/0138-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
+コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のメッセージとツールの通知だけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0138](adr/0138-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
 知らせるのは子が走っている（`running`）間だけで、止まった子（`completed`・`failed`・`cancelled`・`interrupted`）に残ったコマンドは知らせない（[ADR 0242](adr/0242-settle-commands-of-stopped-children.md)）。
 
 `ply_task_status` / `ply_task_list` の `activeCommands` は、コマンドごとに `toolCallId`、`command`、`cwd`、`observedAt`、`startedAt`、`startKnown`、`elapsedMinutes`、`state`、分かれば `turnId`・`nativeTaskId`・`processId` を返す。本文と cwd は既存の秘密値の伏せ方を使い、本文は台帳で 2000 字、通知で 200 字に切る。既知の形式以外の秘密は伏せきれない。開始時刻がないものは最初の観測から数え、開始を推定して埋めない。`processId` はバックエンドの識別子であり OS の PID とは限らない。`stopSupported` はこの台帳が個別停止を提供するかを表し、現在は false。
 
 | バックエンド | 開始 | 完了 |
 |---|---|---|
-| Antigravity | `run_command` の ACTIVE を正規化した `tool.start` | 同じ ID の DONE を正規化した `tool.result` |
+| Antigravity | `run_command` の `tool_call` を正規化した `tool.start` | 同じ `toolCallId` の完了（`completed`・`failed`）を正規化した `tool.result` |
 | Claude | Bash / PowerShell の `tool_use` を正規化した `tool.start` | 前景の `tool_result`、または task ID を結んだ `task_notification` / 終了状態の `task_updated` |
 | Codex | `commandExecution` の `item/started` を正規化した `tool.start`（`startedAtMs` があれば保持） | 同じ item の `item/completed`。元のターンの終了後も受け取る |
 | OpenCode | `bash` の部品（running）を正規化した `tool.start` | 同じ呼び出しの `tool.result` |
@@ -313,7 +313,7 @@ Claude の background 起動結果（`backgroundTaskId` または起動を示す
 
 Pleiad は結果を保存し、完了した時点で依頼元へ専用の完了通知を届ける（[ADR 0057](adr/0057-deliver-completion-notice-live.md)）。届け方は 2 通り。
 
-- **走っている依頼元のターンへ途中送信（`control.steer`）で渡す。** 依頼元がターンを実行中で、`control.steer` を持ち、次ターンの設定の予約と人の送信待ち（outbox の未送・失敗・保留・結果不明）が無いとき。判定は `core/completion-notices.mjs` の `canSteerNotice`。圧縮のターン・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）には渡さない。人の送信を優先する決まりは変えない。
+- **走っている依頼元のターンへ途中送信（`control.steer`）で渡す。** 依頼元がターンを実行中で、`control.steer` を持ち、次ターンの設定の予約と人の送信待ち（outbox の未送・失敗・保留・結果不明）が無いとき。判定は `core/completion-notices.mjs` の `canSteerNotice`。圧縮のターン・中断や終了に向かっているターン・途中送信を持たないバックエンドには渡さない。人の送信を優先する決まりは変えない。
 - **空いたときに新しいターンで送る。** 上の条件を満たさず、依頼元が走っておらず・裏の作業が残っておらず・送信待ちも無いとき。渡せなかった通知（途中送信が受理されない）もこちらへ戻る。
 
 子がさらに Pleiad の子を作った場合は、その結果通知と子の回答が終わるまで待ち、最終回答を依頼元へ返す。
@@ -381,7 +381,7 @@ Chrome を戻した続きは、子の会話の名札を「Chrome を戻した続
 `ply_task_send` は指示を `queued` で受け付けた（保存できなければ断る）後、次の条件がそろえば待たずに**子の走っているターンへ途中送信**する。
 
 - タスクが `running` で、子が委譲の実行中のターンとして走っている。
-- 子が `control.steer` を持ち、追加指示用の `childTarget` の条件を満たす。圧縮中・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）・子の会話に人の送信待ちがあるときは渡さない。設定変更と同時の指示は、新設定のターンを待つ。
+- 子が `control.steer` を持ち、追加指示用の `childTarget` の条件を満たす。圧縮中・中断や終了に向かっているターン・途中送信を持たないバックエンド・子の会話に人の送信待ちがあるときは渡さない。設定変更と同時の指示は、新設定のターンを待つ。
 - 前の途中送信の配送確認を待たず、後続も送る。待機分が複数あれば、元の順序を保ち、空行で区切って1回の途中送信で渡す。起動準備中などで送れなかった指示は、子が受信可能になった時点で現在のターンへ送る。
 
 渡す道は完了通知の `steerNotice` と同じ形（`core/server.mjs` の `steerInstruction`）。outbox は通さず、item id `task-send-<先頭の指示 ID>`（まとめた全指示の ID と照合する） で `control.steer` を呼ぶ。子の会話の中の位置は受け付けた時点で確定する: 保存できた直後に `taskInstruction` イベントを流し、画面はその出来事の位置に指示の行を置く（送信中・待機中・届かなかった分も同じ行で状態だけが変わる）。履歴にはバックエンドの記録が入る。
@@ -407,10 +407,12 @@ Grok は対応する CLI の `_x.ai/interject` で実行を中断せずに指示
 Grok は途中送信を、会話の読み直し（`session/load` の再生）でだけ `The user sent a message while you were working:` で始まる定型の包み（`<user_query>` の中が本文）に入れて返し、続けて送った分は 1 つの発言にまとめて返す（実測 1.0.62）。`core/backends/grok-normalize.mjs` は再生の発言の末尾に続く包みを外し、中身ごとに別の user の発言へ分ける（走っている間の記録の行と一致させ、読み直しで同じ指示が 2 回出ないようにする）。直す前に読み直して記録に入ってしまった包みの行は、記録の行を消さない合わせ方なので残る。
 Codex の履歴（`thread/read`）は、ツールの後に書いた本文を同じ発言に畳む。畳んだ発言には `textAfterTools` を付け、ツールの錨の指示はそのツールと後の本文の間に置く（付けないと、読み直したときに指示が後の本文の後ろへずれる）。
 
-### 途中送信できないエージェント（Antigravity）
+### Antigravity の途中送信
 
-Antigravity（agy 1.4.4）の `--output-format stream-json` は、走っているターンへ入力を足せない。標準入力の 2 行目は今のターンが終わった後の別のターンになり、途中の割り込みの口も無い（実測 2026-10-21）。そのため能力の印 `steer` を false にし、`control.steer` を持たせない。`childTarget` は `requeue` を返し、追加指示は `queued` のまま、今のターンが終わった後のターンの入力としてまとめて渡す（届いたら `delivered`）。待機中の子への指示は、すぐ新しいターンで渡す。
-画面は、子が走っている間の待機の指示に「次のターンで届く · 今の作業の途中には渡せない」を添える（[design-system.md](design-system.md) の作業ダイアログ）。実際の会話では、まとめた指示が 1 つの user の発言として次のターンの頭に入り、その回の結果が指示への返答になる。依頼元が「今の作業に反映させたい」指示は、Antigravity では今の回が終わるまで効かない。
+Antigravity は、旧い口（agy 1.4.4 の `--output-format stream-json`）では走っているターンへ入力を足せなかった。標準入力の 2 行目は今のターンが終わった後の別のターンになり、途中の割り込みの口も無かった（実測 2026-10-21）。
+2026-11 に ACP（`agy acp`）へ替えて、走っているターンへ `session/prompt` を重ねる途中送信を持った（`core/backends/acp-steer.mjs`。能力の印 `steer` を true にし、`control.steer`・`control.steerConfirms` を持たせる。[ADR 0365](adr/0365-antigravity-on-acp.md)）。
+受理は書き込みが断られなかったことで、「渡った」の合図は `session/prompt` の決着で出す。agy が重ねた入力を今のターンへ折り込むのか、待ち行列に積んで次のターンとして走らせるのかは、実物の agy ではまだ測っていない（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りを確かめた）。
+いまは途中送信できないエージェントは無い。圧縮のターン・人の送信待ちなど、途中で渡せないときの扱い（`queued` で次のターンへ）は、ほかのエージェントと同じ。
 
 ## 子の結果
 
@@ -451,7 +453,7 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
   - 裏のシェルの出力ファイルが分かる作業（Claude の `local_bash`）は、`tasks` の行に `output`（`{ bytes, quietMinutes }`）が載り、通知の見出しにも「出力 N バイト。最後に伸びてから M 分」と添える。大きさと mtime は知らせるたびにファイルから読む（`core/server.mjs` の `backgroundOutput`）。出力の置き場は SDK の task 系のメッセージに無いので、シェルのツールの結果の本文（`Output is being written to: <パス>.output`）から拾う（`core/backends/claude-background.mjs`）。出力が伸びないまま待っている作業は、終わらないか、出力の口を握られて戻れなくなっている（Windows の agent-browser のデーモン。[ADR 0285](adr/0285-prestart-agent-browser-daemon.md)）。止めるかは今までどおり依頼元が決める。ホストに任せたタスクは、端末へ送る telemetry の `background.tasks` にも同じ `output` が載る。ファイルの場所はどちらの依頼元へも渡さない。
   - 裏の作業が終わると CLI が main を再開させ、ターンが終わる。結果は今までどおり最後の返答で、完了通知で届く。
 - **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たない。端末はターンの終わりに `background` になり、Codex が挙げている間は子の完了後も `activeCommands` に残る（長いコマンドの通知は送らない）。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
-- **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の ACTIVE から DONE まで監視する。
+- **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の `tool_call` から完了（`tool_call_update` の `completed`・`failed`）まで監視する。
 
 コマンドの 5 分通知は開始から数え、裏作業通知は返答後の待機から数える。再起動時、実行中だった子タスクは従来どおり `interrupted` にし、再実行しない。
 

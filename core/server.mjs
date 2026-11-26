@@ -139,8 +139,7 @@ import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS,
 import { CODEX_LABEL_KIND, hasHeldCodexThread, stopHeldAppServer } from './backends/codex-held.mjs';
 import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart, cliVersion } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
-import { stopHeldAgy } from './backends/antigravity.mjs';
-import { sweepIdleAtStart } from './backends/antigravity-held.mjs';
+import { stopHeldAgy, sweepIdleAtStart } from './backends/antigravity.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { createHooksAgents } from './hooks-agents.mjs';
@@ -8128,7 +8127,7 @@ async function taskStopUnconfirmed(task) {
   return false;
 }
 // 前のサーバーが保持役に残した idle の agy（ターンを終えて札も印も無い子）を止める。付け直したターンの子（札と印がある）には触れない。
-// 待つ agy を止めるタイマーは前のサーバーのメモリにあったので、ここで止めないと agy を使わない間ずっと残る（core/backends/antigravity-held.mjs の sweepIdleAtStart）
+// 待つ agy を止めるタイマーは前のサーバーのメモリにあったので、ここで止めないと agy を使わない間ずっと残る（core/backends/antigravity.mjs の sweepIdleAtStart）
 {
   const stoppedAgy = await sweepIdleAtStart({ dataDir: store.dataDir }).catch(err => { console.error('  前のサーバーが残した agy を片付けられませんでした:', String(err?.message ?? err)); return []; });
   if (stoppedAgy.length) console.log(`  前のサーバーが残した待機中の agy ${stoppedAgy.length} 件を止めた`);

@@ -41,12 +41,12 @@ export default async function (t) {
 
   const cases = [['保持役に載せない', false], ['保持役に載せる', true]];
   const dataDirs = [];
-  // 起こされた pid のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは --input-format を持つ）
+  // 起こされた pid のうち会話の agy だけを拾う（送信の関所・裏の一覧取得も同じ控えに残る。会話の起こしは先頭の引数が acp）
   const convPids = async (pidFile, argsFile) => {
     const [pids, args] = await Promise.all([readJson(pidFile), readJson(argsFile)]);
-    return pids.filter((_, i) => args[i]?.includes('--input-format'));
+    return pids.filter((_, i) => args[i]?.[0] === 'acp');
   };
-  const convArgs = async (argsFile) => (await readJson(argsFile)).filter((a) => a.includes('--input-format'));
+  const convArgs = async (argsFile) => (await readJson(argsFile)).filter((a) => a[0] === 'acp');
   // 既定が先から分かっている状態を作る一覧の写し。無いと、ターンのあいだに一覧が届いて渡すモデルが変わり、会話を --conversation で起こし直して揺れる
   const seedModels = async (dataDir) => {
     const dir = path.join(dataDir, 'antigravity');
@@ -135,7 +135,7 @@ export default async function (t) {
         const pids = await convPids(pidFile, argsFile);
         const last = (await convArgs(argsFile)).at(-1) ?? [];
         t.ok(`${label}: 止めた後のターンは --conversation で起こし直す`,
-          pids.length === 2 && pids[1] !== p1 && last[last.indexOf('--conversation') + 1] === sid && next.sessionId === sid,
+          pids.length === 2 && pids[1] !== p1 && last[0] === 'acp' && next.sessionId === sid,
           JSON.stringify({ pids, last }));
       } finally { c.close(); await s.stop(); }
     }

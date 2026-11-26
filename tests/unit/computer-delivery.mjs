@@ -141,7 +141,6 @@ export default async function (t) {
       t.ok("Claude: ply_computer はツールごとに聞かずに allow（アプリの承認は橋で行う）", decision?.behavior === "allow" && asked === 0, JSON.stringify(decision));
       const other = await q.options?.canUseTool?.("mcp__other__left_click", {}, { signal: new AbortController().signal, suggestions: [] });
       t.ok("Claude: 名前の似た別のサーバーのツールは今までどおり聞く", other?.behavior === "deny" && asked === 1, JSON.stringify(other));
-      t.ok("Claude: capabilities.computerUse は inline・分けない", claude.capabilities.computerUse?.images === "inline" && claude.capabilities.computerUse?.waitSliceMs === null);
       q.finish();
       await Promise.race([done.catch(() => {}), sleep(3000)]);
     } finally { restore(); }
@@ -199,7 +198,6 @@ export default async function (t) {
       && results[0]?.isError === false && results[0]?.truncated === false && !JSON.stringify(results[0]).includes(IMAGE.slice(0, 40)), JSON.stringify(results[0]).slice(0, 300));
     t.ok("Codex: 止められた結果は isError で、理由は computer に残る", results[1]?.isError === true && results[1]?.computer?.reason === "escape", JSON.stringify(results[1]));
     t.ok("Codex: 他のサーバーの結果は今までどおり JSON を切ったもの", results[2]?.text?.startsWith("{") && !results[2].images, JSON.stringify(results[2]).slice(0, 200));
-    t.ok("Codex: capabilities.computerUse は inline・分けない", codex.capabilities.computerUse?.images === "inline" && codex.capabilities.computerUse?.waitSliceMs === null);
 
     requests.length = 0;
     await codex.runTurn({ prompt: "fixture", cwd: process.cwd(), mode: "default", locale: "ja", emit: () => {} });

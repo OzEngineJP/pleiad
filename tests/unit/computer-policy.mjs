@@ -32,7 +32,7 @@ export default async function(t) {
   t.ok('確認なし（範囲 full かつ自律 never）は聞かずに許可', d({ mode: BYPASS }) === 'allow');
   t.ok('範囲が workspace の「聞かずに進む」（Codex の全部自動）は聞く', d({ mode: { scope: 'workspace', autonomy: 'never' } }) === 'ask'
     && !isUnattendedMode({ scope: 'workspace', autonomy: 'never' }) && isUnattendedMode(BYPASS));
-  t.ok('Antigravity はいつも聞かずに許可（承認モードが yolo しかない）', d({ approvals: 'none', mode: ASK }) === 'allow');
+  t.ok('対話の承認を持たないエージェント（approvals: none）はいつも聞かずに許可（旧い口の Antigravity。ACP の Antigravity はモードに従う）', d({ approvals: 'none', mode: ASK }) === 'allow');
   t.ok('このターンで拒否済みなら、聞き直さずに denied', d({ deniedThisTurn: new Set([notepad.id]) }) === 'denied');
   t.ok('拒否は確認なし・すべて許可・常に許可より先に効く', d({ deniedThisTurn: new Set([notepad.id]), mode: BYPASS }) === 'denied'
     && d({ deniedThisTurn: new Set([notepad.id]), prefs: { computerUse: { allowAllApps: true } } }) === 'denied');

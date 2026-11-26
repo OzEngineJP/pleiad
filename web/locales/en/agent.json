@@ -1886,7 +1886,7 @@
         "reason": "Why you are changing it (shown on the approval card)."
       },
       "setMode": {
-        "summary": "Change a bot's approval mode (screen only; AI cannot call it). Antigravity bots only have yolo.",
+        "summary": "Change a bot's approval mode (screen only; AI cannot call it).",
         "botId": "The bot id.",
         "mode": "Approval mode id (from the agent's list)."
       },

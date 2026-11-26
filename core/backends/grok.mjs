@@ -258,6 +258,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
     capabilities: CAPABILITY_STATES.grok,
     traits: AGENT_TRAITS.grok,
+    // 子は _x.ai/session_notification の subagent_spawned / finished の通知から控えるので、委譲を呼ぶツール名は申告しない（契約: contract.mjs の checkBackendShape）
+    subagentToolsAbsent: 'subagent_spawned / finished の通知から子を控えるので、ツール名では見分けない', // i18n-ignore: 契約の申告の理由（開発者向け）
     modes,
     get activeCount() { return active.size; },
     async forAccount(account) {

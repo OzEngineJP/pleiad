@@ -225,6 +225,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
         if (text.includes('[kill]')) process.exit(17);
+        // [fail]: このターンの session/prompt を JSON-RPC のエラーで終える（下の catch が応答を書く。共通の契約のエラーの試験）
+        if (text.includes('[fail]')) { running.delete(session.sessionId); throw new Error('fake grok failure'); }
         if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_GROK_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
         if (token.cancelled) { running.delete(session.sessionId); result = { stopReason: 'cancelled' }; break; }
         if (text.includes('[frame-malformed]')) { process.stdout.write('{not-json}\n'); break; }

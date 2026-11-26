@@ -9,7 +9,7 @@
 - **できること**: 会話の中でエージェントが PC の画面を撮り、マウスとキーボードでアプリを操作する。Windows・macOS 14 以上のデスクトップ版で使える。macOS 13 以前・Linux・`npm start` の起動では、設定のスイッチが止まり、使えない理由が出る。
 - **設定の場所**: 設定 › コンピューターの操作。全体のスイッチ（既定はオン）、すべてのアプリを許可、常に許可したアプリの一覧（ここから消せる）、操作できないアプリの一覧（読み取りのみ）がある。
 - **承認**: エージェントが初めてそのアプリを操作するとき、入力欄の上にカードが出る。「常に許可」「この会話で許可」「拒否」から選ぶ（拒否はそのターンの間だけ覚える）。ターミナル・パスワード管理・セキュリティソフトなどは承認の設定にかかわらず操作できない。
-- **確認なしの会話**: Claude の bypass・Codex の yolo の会話では承認を聞かずに操作する（操作できないアプリを除く）。Antigravity は確認なしでしか動かないため、同じく承認を聞かない。
+- **確認なしの会話**: Claude の bypass・Codex の yolo の会話では承認を聞かずに操作する（操作できないアプリを除く）。Antigravity も、承認モードが全部自動（`yolo`。新しい会話の既定）の会話では同じく承認を聞かない。ほかのモード（都度確認・編集は自動・自動判断・計画）では Claude・Codex と同じく聞く（旧い口では `yolo` しか無く常に聞かなかったが、2026-11 の ACP 移行で変わった。[ADR 0365](adr/0365-antigravity-on-acp.md)）。
 - **止める**: 操作中はディスプレイの縁が光り、上に「操作中」のピルが出る。Esc か会話の「止める」でいつでも止められ、押したままの入力も離れる。止めても会話は続く。
 - **画面が落ち着くまで待つ**: エージェントは `wait_until` で、画面が動いてから止まるまで待てる。問いを付けると、止まるたびに（動き続けるときは 2 秒ごとに）決定モデル（Perplexity の pplx-decider）が画面を見て「終わったか」を答える。問いを使うのは、設定 › コンピューターの操作で Pleiad Plus か OpenRouter のキーを選んだときだけで、そのとき撮った画面が OpenRouter（Pleiad Plus を選んだときは Pleiad Plus のサーバーを通って OpenRouter）へ送られる。選ぶまでは画面の差分だけで待つ。
 - **同時に操作できる会話は 1 つ**。別の会話が操作中のときは終わるまで待つ。撮った画面は会話の中に小さな画像で残る。
@@ -462,7 +462,7 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 - `core/store.mjs` に `rememberComputerApp(app)` / `forgetComputerApp(id)`（`rememberBrowserSite` と同じ書き方）。
 - 「この会話で許可」は会話のデータの `computerApps: string[]`（id の一覧。`store.setSessionData`）。再起動をまたいで保たれ、会話を消せば消える。
 - 拒否は覚えない。ターンの間だけ `turn.computerDenied`（id の Set）に持ち、同じアプリは `denied` をすぐ返す（2026-10-01 に決めた）。
-- 設定の画面: 全体のスイッチ、すべてのアプリを許可、常に許可の一覧と削除、操作できないアプリ（読み取りのみ）、「Antigravity では承認を聞きません」の 1 行、`wait_until` の問いに使うキー（下の段落）。
+- 設定の画面: 全体のスイッチ、すべてのアプリを許可、常に許可の一覧と削除、操作できないアプリ（読み取りのみ）、「Antigravity は全部自動のときだけ承認を聞かない」の 1 行、`wait_until` の問いに使うキー（下の段落）。
 - `wait_until` の問いに使うキーは prefs ではなく API キーの割り当て `computer:decider`（`setApiKeyUse`。人だけ）。選ぶ欄は「Pleiad Plus / OpenRouter / 使わない」の 3 行のラジオ（`web/plus-key-row.mjs` の `keyRadioRow`。「使わない」は OpenRouter の選ぶ欄の中には無い）。キーの状態は OpenRouter の行の 2 行目、選べないときは 1 文と直す操作（Pleiad Plus なら［アカウントを管理］）を出す。欄の下に「wait_until に問いを付けたとき、撮った画面が OpenRouter（Perplexity）へ送られます。Pleiad Plus を選んだときは、Pleiad Plus のサーバーを通ります」と書く。API キーの移行を保留している間は選べない（古い置き場を持たない割り当てなので、保留中は問いを使わない）。
 
 ### 判定の順（`core/computer-use/policy.mjs`）
@@ -477,7 +477,7 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
    - Windows の内部（LockApp・consent.exe・ShellExperienceHost・SearchHost・StartMenuExperienceHost・TextInputHost など）
    - エージェント自身: Claude（claude.exe・Claude Desktop）、Codex（codex.exe・Codex / ChatGPT のアプリ）、Antigravity（agy・Antigravity のエディター）
 3. このターンで拒否済み → `denied`。
-4. 会話の承認モードが確認なし（`modePosition` で範囲 `full` かつ自律 `never`）→ `allow`。Claude の bypass、Codex の yolo、agy（yolo しか無い）が当たる。**Antigravity はいつもアプリの承認を聞かない**（2026-10-01 に決めた）。
+4. 会話の承認モードが確認なし（`modePosition` で範囲 `full` かつ自律 `never`）→ `allow`。Claude の bypass、Codex の yolo、agy の yolo が当たる。Antigravity は旧い口（stream-json。`yolo` しか無く `capabilities.approvals: 'none'`）ではいつも聞かなかった（2026-10-01 に決めた）が、ACP（2026-11〜）では `approvals: 'interactive'` になり、モードに従う（`yolo` のときだけ聞かない）。
 5. `allowAllApps` → `allow`。
 6. 常に許可の一覧か、この会話で許可済み → `allow`。
 7. それ以外 → `ask`。高リスクのアプリ（エクスプローラー、設定（SystemSettings・control）、regedit、mmc、taskmgr、IDE（Code・devenv・JetBrains））は `ask-high`（警告付きのカード。許可はできる）。
@@ -527,17 +527,17 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 |---|---|---|---|
 | Claude | `plyServers` に `ply_computer: { type: 'http', url, headers }` | `systemPrompt.append` | `decidePermission` の先頭で `mcp__ply_computer__` を allow（アプリの承認は橋で行う） |
 | Codex | `thread/start` の `config` の `mcp_servers.ply_computer`（`url`・`http_headers`・`required: false`・`default_tools_approval_mode: 'approve'`・`tool_timeout_sec`）と、同梱の computer use を切る上書き（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | `developerInstructions` | Codex 側は `approve`。elicitation は使わない |
-| Antigravity | `agent.md` の `mcpServers` に stdio の中継（`core/agy-context-relay.mjs --computer`。ply_context・ply_browser も渡す会話は 1 本に束ねる（agy は先頭の 1 本しか起こさない）。env は `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`）。中継はツール名に `ply_computer_` を付けて見せ、呼び出しで外す | agent.md の本文 | agy は yolo だけ。アプリの承認も聞かない（判定の順の 4） |
+| Antigravity | `session/new`・`session/resume`・`session/load` の `mcpServers` に stdio の中継（`core/agy-context-relay.mjs --computer`。ply_context・ply_browser も渡す会話は 1 本に束ねる（旧い口では agy は先頭の 1 本しか起こさなかった。ACP でも複数本が起こるかは未確認なので束ねを保つ）。env は `[{ name, value }]` で `PLY_COMPUTER_URL` / `PLY_COMPUTER_AUTHORIZATION`）。中継はツール名に `ply_computer_` を付けて見せ、呼び出しで外す | 制限した会話は `agent.md` の本文、それ以外は `session/new` の `_meta.antigravity.systemPrompt.append` | `session/request_permission` を承認カードへ繋ぐ。アプリの承認はモードに従う（`yolo` のときだけ聞かない。判定の順の 4） |
 
 指示文は 3 つに共通の `computer.instructions`（橋の `instructions`）に、エージェントごとの呼び方（`agent.json` の `computerDelivery.codex` / `computerDelivery.antigravity`）を足す。Claude には足す文が無い。右パネルの「指示の量」では、足した後の文を「コンピューターの操作の説明」（`plyParts` の `computer`）として数える。
 
-ロード済みの会話への反映: Codex は指示か `ply_computer` の接続先が変わったスレッドを外して読み直す（resume は config の変更を黙って無視する）。agy は渡す・渡さない・接続先が変わったら agy を起こし直す（`--conversation` で続く）。
+ロード済みの会話への反映: Codex は指示か `ply_computer` の接続先が変わったスレッドを外して読み直す（resume は config の変更を黙って無視する）。agy は渡す・渡さない・接続先が変わったら agy を起こし直す（`session/resume` で続く）。
 
 `ply_computer` を渡さない会話には何も足さない（Codex は利用者の `~/.codex` に任せ、`config.toml` は書き換えない）。
 
 ### エージェントごとの値（2026-10-01 実測）
 
-Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.284）、agy 1.2.14 で測った。Claude（haiku）と agy は、偽の driver の橋をつないだ Pleiad から本物で `screenshot` を呼ばせ、名前・表示・モデルが画像を読めることを確かめた。版が変わって合わなくなったら、`core/backends/computer-delivery.mjs` の値と各バックエンドの `capabilities.computerUse` だけを差し替える。
+Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.284）、agy 1.2.14（旧い口。stream-json）で測った。ACP（agy 1.5.15 以上。2026-11〜）に替えた後の `call_mcp_tool` の `rawInput` の形・ツールの定義の置き場・3 分の上限は、実物ではまだ測っていない（`tool_call` の正規化は `agyComputerName` が `ToolName` と `rawInput` の両方を見る前提で、身代わり `tests/lib/fake-agy.mjs` で確かめた）。Claude（haiku）と agy は、偽の driver の橋をつないだ Pleiad から本物で `screenshot` を呼ばせ、名前・表示・モデルが画像を読めることを確かめた。版が変わって合わなくなったら、`core/backends/computer-delivery.mjs` の値と各バックエンドの `capabilities.computerUse` だけを差し替える。
 
 | | Claude | Codex | Antigravity |
 |---|---|---|---|
