@@ -1,11 +1,30 @@
 ---
 title: Memory
-description: What bots remember and the automatic memory organization settings — where to set them, what the defaults are, and what turning organization on does.
+description: What bots remember, the three tiers (Always, In this workspace, Stored only), the one-time sorting, and the automatic memory organization settings — where to set them, what the defaults are, and what turning organization on does.
 ---
 
 Bots hold memories — short factual notes grounded in things you said — and receive them at the start of a conversation. You can see them on the bot page under "Memory": two layers, "About you" (shared across all bots) and "This bot only". Each line can be edited or forgotten.
 
 Memory settings live in Settings › "Memory".
+
+## The three tiers
+
+Each line carries a tier badge showing how far it is given to the AI: "Always", "In this workspace", or "Stored only" ("Unsorted" for lines not sorted yet).
+
+| Tier | How it is given |
+| --- | --- |
+| Always | Given at the start of every conversation, whatever the workspace. |
+| In this workspace | Given only in conversations in that working folder. The workspace is decided from the working folder of the conversation where it was learned (for a git repository, the repository root; a worktree counts as the same place as its original repository). |
+| Stored only | Kept, but never given to the AI. You can see it in the list and move it back up to a higher tier. |
+
+- The amount given at the start of a conversation is at most 9,000 tokens in total. Memories that don't fit are given when they relate to the topic. How many didn't fit appears on the status line in Settings › "Memory", as "Didn't fit at the start of a conversation".
+- Memories you write are "Always". Memories a bot writes are "In this workspace" when the conversation has a workspace, and "Always" otherwise.
+- "Edit" on a line lets you change the tier — and, for "In this workspace", the workspace — as well as the text.
+- "Unsorted" memories are given the way they always were until you finish the sorting below.
+
+## Promises and progress
+
+Promises and work progress are not written to memory. They go to the thread's to-do list if it has one, and otherwise to the bot's concerns. Existing promise memories move to "Stored only" (they are not deleted).
 
 ## General
 
@@ -16,6 +35,8 @@ This is the same setting that used to live under "Experimental"; its on/off stat
 ## Bots
 
 "Automatic memory organization" re-reads conversations at a set time and writes what matters into memories. **It is off by default** — for both new users and users upgrading from an earlier version. Nothing runs until you turn it on. Toggling it never deletes the memories you already have.
+
+Besides learning new things, it also re-tiers memories you already have (up to 20 per run; the bot page's "Memory" shows "changed the tier of N" in the organization result). It doesn't send all memories, only the ones that relate.
 
 - **Organize at**: the local time organization starts.
 - **Summarize and hand off bot conversations**: summarizes quiet bot conversations and hands them off to the next one. Only runs while automatic organization is on. Off by default; the switch is kept even if you turn organization off.
@@ -42,3 +63,12 @@ Below the switches, a status line shows what the organizer is doing.
 - **Connection unconfirmed**: Pleiad couldn't tell passively whether the agent is connected. A connection check that may open a sign-in screen only happens when you press "Check connection".
 
 The bot page's "Memory" heading also shows "Auto-organize: … ›", which opens this settings page.
+
+## Memory sorting
+
+Asks the AI once to sort memories that have no tier into "Always", "In this workspace", or "Stored only". It only runs when you press "Start sorting" under "Memory sorting" in Settings › "Memory" (it can be started even if automatic organization is off). Until you start it, memories are given the way they always were.
+
+- Memory text is never rewritten. Only the tier and the workspace are set. A memory whose workspace can't be decided becomes "Stored only".
+- It runs on the agent used for organizing (the same as "The agent used for organizing" above).
+- While it runs, the status line shows how many are processed and how many are in each tier. "Stop" stops it and "Continue" resumes from where it left off. If you close the app, what has been done stays.
+- Afterwards (also after stopping, or after it stopped on failures), "Undo" removes the tiers that run set. Memories you edited after the sorting are not reverted.

@@ -130,7 +130,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
   const lang = () => host.currentLocale?.() ?? 'ja';
 
   async function resolve(bot, channel, cwdHint, backendHint = null) {
-    // backendHint: スレッドで選んだ backend（組み込みの bot だけ。channels.threadSettings の backend）
+    // backendHint: 会話を作るときに選んだ backend（組み込みの bot だけ）
     const base = host.getBackend((bot.plain && backendHint) || bot.backend);
     if (!base) throw new Error(agentT(lang(), 'delegation.backendDisabled'));
     // 互換の接続先を選んでいれば、モデル・エフォートは接続先の語彙で決める（アカウントの一覧は引かない）
@@ -193,14 +193,13 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
-      // このスレッドだけで変えた欄（sidecar の overrides。channels.threadSettings）は、bot の既定を変えても上書きしない（ADR 0157）
-      const own = meta.bot?.overrides ?? {};
-      if (!own.mode && modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
+      // スレッドごとの上書き（以前の sidecar の overrides）は読まない。どのスレッドの会話も bot の設定に揃える（ADR 0362）
+      if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
-      const model = own.model ? meta.model : await host.resolveModel(null, bot.model || undefined, backend, cwd, endpoint);
-      if (!own.model && meta.model !== model) await host.store.setModel(sessionId, model);
+      const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, endpoint);
+      if (meta.model !== model) await host.store.setModel(sessionId, model);
       const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, row);
-      if (!own.effort && meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
+      if (meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
       // 互換の接続先は次のターンから効く（ターンの始めに server の prepareTurn が compatEndpoint を引く。接続先を替えても会話の記録は替えない）。
       // 先に書く（公式に戻すとき、下のアカウントの予約が前の接続先のままで組まれないように）
       if (takesEndpoint(base) && (meta.compatEndpoint ?? '') !== endpoint) await host.store.setSessionData(sessionId, 'compatEndpoint', endpoint);

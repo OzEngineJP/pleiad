@@ -9,7 +9,9 @@ import { z } from 'zod';
 import { OpError, defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError, QUOTE_MIN } from '../memory/guard.mjs';
-import { USER_LAYER, oneLine } from '../memory/store.mjs';
+import { LOOP_TEXT_MAX } from '../brain/answer.mjs';
+import { slashPath } from '../git-root.mjs';
+import { USER_LAYER, MEMORY_TIERS, WORKSPACE_MAX, oneLine } from '../memory/store.mjs';
 import { MEMORY_KINDS, MEMORY_STATUSES, WEIGHT_MIN, WEIGHT_MAX } from '../memory/strength.mjs';
 
 const D = (id, key) => `agent:ops.memory.${id}.${key}`;
@@ -29,22 +31,44 @@ const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
   kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
+  tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
 });
 const tagInputs = (id) => ({
   kind: z.enum(MEMORY_KINDS).optional().describe(D(id, 'kind')),
   weight: z.number().int().min(WEIGHT_MIN).max(WEIGHT_MAX).optional().describe(D(id, 'weight')),
   status: z.enum(MEMORY_STATUSES).optional().describe(D(id, 'status')),
+  tier: z.enum(MEMORY_TIERS).optional().describe(D(id, 'tier')),
+  workspace: z.string().max(WORKSPACE_MAX).optional().describe(D(id, 'workspace')),
 });
-/** 種類・重み・状態のうち、今の行から変わるものがあるか */
-const changesTags = (entry, args) => ['kind', 'weight', 'status'].some((key) => args[key] !== undefined && args[key] !== entry[key]);
+const TAG_KEYS = ['kind', 'weight', 'status', 'tier', 'workspace'];
+/** 種類・重み・状態・段・作業場所のうち、今の行から変わるものがあるか（作業場所は \ と末尾の / をそろえて比べる） */
+const changesTags = (entry, args) => TAG_KEYS.some((key) => args[key] !== undefined
+  && (key === 'workspace' ? slashPath(args[key]) : args[key]) !== entry[key]);
 
 const learnStatusOut = z.object({
   at: z.string(), enabled: z.boolean(), summaryEnabled: z.boolean(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
-  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
+  lastResult: z.object({ at: z.number(), read: z.number(), changed: z.number(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), scoped: z.boolean().optional(), stopped: z.string().optional() }).nullable(),
   skip: z.object({ reason: z.string(), count: z.number(), at: z.number() }).nullable(),
   failure: z.object({ message: z.string(), count: z.number(), at: z.number(), retryAt: z.number() }).nullable(),
   halted: z.object({ message: z.string(), at: z.number() }).nullable(),
+});
+
+// 一度きりの振り分けの様子（数・内訳・失敗の数だけ。記憶の本文は返さない）
+const sortStatusOut = z.object({
+  status: z.enum(['none', 'running', 'stopped', 'done', 'failed', 'undone']),
+  running: z.boolean(), stopping: z.boolean(), untiered: z.number().int(),
+  processed: z.number().int(), left: z.number().int(), failures: z.number().int(), changed: z.number().int(), unknown: z.number().int(),
+  tiers: z.object({ always: z.number().int(), workspace: z.number().int(), archive: z.number().int() }),
+  startedAt: z.number().nullable(), updatedAt: z.number().nullable(),
+  undone: z.object({ restored: z.number().int(), kept: z.number().int() }).nullable(),
+});
+
+// 会話の始まりに入りきらない記憶の件数（段ごと。設定 › 記憶が出す）
+const coreFitOut = z.object({
+  layer: z.string(), workspace: z.string().nullable(),
+  omitted: z.object({ untiered: z.number().int(), always: z.number().int(), workspace: z.number().int() }),
+  total: z.number().int(), inactiveWorkspace: z.number().int(),
 });
 
 /** MemoryError → OpError（会話の言語の文）。ほかの例外はそのまま */
@@ -91,7 +115,57 @@ async function visibleEntry(ctx, who, id) {
   return entry;
 }
 
-const callCtx = (ctx, who) => ({ sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale });
+/** この会話に ToDo があるか（1 件でもあれば真。読めなければ偽）。約束を記憶に書こうとしたとき、ToDo へ置くか気がかりへ置くかを分ける */
+const hasTodoList = async (ctx, sessionId) => {
+  if (!sessionId || !ctx.todos?.list) return false;
+  try { return ((await ctx.todos.list({ kind: 'session', id: sessionId }))?.items?.length ?? 0) > 0; } catch { return false; }
+};
+
+/** service へ渡す呼び出しの文脈。sessionCwd は書いた会話の cwd（無い・読めなければ null。記憶の作業場所の既定に使う）。
+ *  hasTodos は会話に ToDo があるか（約束を断ったときの案内の分け先） */
+const callCtx = async (ctx, who) => ({
+  sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale,
+  sessionCwd: who.sessionId ? (await ctx.sessionCwd?.(who.sessionId).catch(() => null)) ?? null : null,
+  hasTodos: await hasTodoList(ctx, who.sessionId),
+});
+
+/**
+ * AI が約束を記憶に書こうとして断られた（MEMORY_REJECTED の promiseTodo / promiseLoop）とき、その約束を実際に置く（ADR 0363）。
+ * 会話に ToDo があれば ToDo へ、無ければ bot の気がかりへ（気がかりを持たない bot でない会話は、ToDo を作って足す）。
+ * 同じ文が開いたまま既にあれば足さない（言い直しで増やさない）。置けたら理由を promiseTodoAdded / promiseLoopAdded に付け替えた MemoryError を返す。
+ * 道具が無い・一覧が満杯・失敗のときは、元の断り（自分で置く案内）のまま返す。記憶には書かない。memory.edit と夜の整理は置かない（断るだけ）。
+ * 置き先の仕組みは todos.add（core/todos.mjs）と brain.loopAdd（core/brain/store.mjs の applyLoops）のものをそのまま使う（上限・押し出しもそちらの決まり）
+ */
+async function redirectPromise(ctx, who, err, text) {
+  if (!(err instanceof MemoryError) || err.code !== 'MEMORY_REJECTED' || !['promiseTodo', 'promiseLoop'].includes(err.reason) || !who.sessionId) return err;
+  const note = oneLine(String(text ?? '')).slice(0, LOOP_TEXT_MAX);
+  if (!note) return err;
+  const toTodo = async () => {
+    if (!ctx.todos?.add || !ctx.todos?.list) return null;
+    const scope = { kind: 'session', id: who.sessionId };
+    if (!ctx.todos.list(scope).items.some((item) => item.text === note && item.status !== 'done')) {
+      const backend = (await ctx.sessions?.get(who.sessionId).catch(() => null))?.row?.backend;
+      ctx.todos.add(scope, { entries: [{ text: note }], by: backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' } });
+    }
+    return 'promiseTodoAdded';
+  };
+  const toLoop = async () => {
+    if (!who.botId || !ctx.brain?.applyLoops) return null;
+    if (ctx.brain.loops(who.botId, 'open').some((loop) => loop.text === note)) return 'promiseLoopAdded';
+    const taint = (await ctx.botOfSession?.(who.sessionId))?.taint ?? null;
+    const { applied } = ctx.brain.applyLoops(who.botId, [{ op: 'add', text: note }], { taint });
+    if (!applied.length) return null;
+    for (const a of applied) ctx.brain.append(who.botId, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint });
+    return 'promiseLoopAdded';
+  };
+  for (const place of err.reason === 'promiseTodo' ? [toTodo, toLoop] : [toLoop, toTodo]) {
+    try {
+      const reason = await place();
+      if (reason) return new MemoryError('MEMORY_REJECTED', reason);
+    } catch { /* 置けなかった。次の置き先か、元の断り */ }
+  }
+  return err;
+}
 
 export const memoryOps = [
   defineOp({
@@ -124,6 +198,24 @@ export const memoryOps = [
     },
   }),
 
+  // 会話の始まりに入りきらない記憶の件数（段なし・いつも・この作業場所で）。設定 › 記憶が出す。bot は自分の層と user だけ
+  defineOp({
+    id: 'memory.coreFit',
+    summary: 'agent:ops.memory.coreFit.summary',
+    risk: 'read',
+    input: z.object({
+      layer: z.string().min(1).max(80).optional().describe(D('coreFit', 'layer')),
+      workspace: z.string().max(WORKSPACE_MAX).optional().describe(D('coreFit', 'workspace')),
+    }),
+    output: coreFitOut,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'core-fit'] } },
+    handler: async (ctx, { layer, workspace }) => {
+      const who = await whoIs(ctx, { write: false });
+      const name = layer ? layerOf(ctx, who, layer) : (who.botId ?? USER_LAYER);
+      return guarded(ctx, () => ctx.memory.coreFit({ layer: name, workspace }));
+    },
+  }),
+
   defineOp({
     id: 'memory.write',
     summary: 'agent:ops.memory.write.summary',
@@ -144,8 +236,15 @@ export const memoryOps = [
       // 組み込みの bot（bot なし）は記憶を持たない（ADR 0157）
       if (who.botId && (await ctx.bots?.get({ botId: who.botId }).catch(() => null))?.plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the built-in agent has no memory' }));
       const layer = layerOf(ctx, who, args.layer);
-      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
-        who.author, callCtx(ctx, who)));
+      const call = await callCtx(ctx, who);
+      return guarded(ctx, async () => {
+        try {
+          return await ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
+            tier: args.tier, workspace: args.workspace }, who.author, call);
+        } catch (err) {
+          throw await redirectPromise(ctx, who, err, args.text);   // 約束は記憶に書かず、ToDo か気がかりへ置く
+        }
+      });
     },
   }),
 
@@ -162,10 +261,10 @@ export const memoryOps = [
       ...tagInputs('edit'),
     }),
     output: entryOut,
-    // 人が書いた行の本文・種類・重み・状態を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
-    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0118）
+    // 人が書いた行の本文・種類・重み・状態・段・作業場所を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
+    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0118）。段と作業場所も渡し先を決めるので同じ
     riskOf: async (ctx, args) => {
-      if (ctx.principal?.by !== 'agent' || (args.text === undefined && args.kind === undefined && args.weight === undefined && args.status === undefined)) return 'write';
+      if (ctx.principal?.by !== 'agent' || (args.text === undefined && TAG_KEYS.every((key) => args[key] === undefined))) return 'write';
       const who = await whoIs(ctx, { write: false });
       const entry = await ctx.memory.get({ id: args.id });
       if (!entry || (who.botId && entry.layer !== USER_LAYER && entry.layer !== who.botId)) return 'write';   // 見えない記憶は handler が MEMORY_NOT_FOUND にする
@@ -176,7 +275,7 @@ export const memoryOps = [
       const entry = await ctx.memory.get({ id: args.id });
       const rows = [
         ...(args.text !== undefined ? [{ path: 'text', before: entry?.text ?? null, after: oneLine(args.text) }] : []),
-        ...['kind', 'weight', 'status'].filter((key) => args[key] !== undefined).map((key) => ({ path: key, before: entry?.[key] ?? null, after: args[key] })),
+        ...TAG_KEYS.filter((key) => args[key] !== undefined).map((key) => ({ path: key, before: entry?.[key] ?? null, after: key === 'workspace' ? slashPath(args[key]) : args[key] })),
       ];
       return { note: agentT(ctx.locale, 'ops.memory.edit.confirm'), before: entry?.text ?? null, loosens: false, rows };
     },
@@ -184,8 +283,9 @@ export const memoryOps = [
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
       await visibleEntry(ctx, who, args.id);
-      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
-        who.author, callCtx(ctx, who)));
+      const call = await callCtx(ctx, who);
+      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
+        tier: args.tier, workspace: args.workspace }, who.author, call));
     },
   }),
 
@@ -203,7 +303,7 @@ export const memoryOps = [
     handler: async (ctx, { id }) => {
       const who = await whoIs(ctx);
       await visibleEntry(ctx, who, id);
-      return guarded(ctx, () => ctx.memory.forget({ id }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, async () => ctx.memory.forget({ id }, who.author, await callCtx(ctx, who)));
     },
   }),
 
@@ -225,9 +325,55 @@ export const memoryOps = [
     risk: 'write',
     riskReason: 'Starts one memory-organization turn on the chosen backend right now and clears a stopped state. It is explicit: the automatic switch off still skips it',
     input: z.object({}),
-    output: z.object({ read: z.number().optional(), changed: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
+    output: z.object({ read: z.number().optional(), changed: z.number().optional(), retiered: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-now'] } },
     handler: async (ctx) => ctx.memoryLearner.learnNow(),
+  }),
+
+  // 一度きりの振り分け（ADR 0363 段階 2 の単位 4）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
+  // 始める・止める・取り消すは画面だけに出す（設定 › 記憶 › 振り分け。surfaces が ui だけなので AI・CLI からは見つからない。自動では始まらない）。
+  // human-only は ADR 0094 の 5 つだけなので使わず、たくさんの記憶を書き換える開始と取り消しは guarded、止めるは write にする。様子は AI・CLI も読める。自動整理が OFF でも始められる
+  defineOp({
+    id: 'memory.sortStatus',
+    summary: 'agent:ops.memory.sortStatus.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: sortStatusOut,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'sort-status'] } },
+    handler: async (ctx) => ctx.memoryLearner.sortStatus(),
+  }),
+
+  defineOp({
+    id: 'memory.sortStart',
+    summary: 'agent:ops.memory.sortStart.summary',
+    risk: 'guarded',
+    input: z.object({}),
+    output: z.object({ started: z.boolean().optional(), skipped: z.string().optional() }),
+    confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortStart.confirm'), before: null, loosens: false }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortStart(),
+  }),
+
+  defineOp({
+    id: 'memory.sortStop',
+    summary: 'agent:ops.memory.sortStop.summary',
+    risk: 'write',
+    riskReason: 'Stops a running one-time sort after the batch in flight is saved. It only stops work that a person started and changes no memory itself; it is on the settings screen only (not on MCP or the CLI)',
+    input: z.object({}),
+    output: z.object({ stopping: z.boolean().optional(), skipped: z.string().optional() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortStop(),
+  }),
+
+  defineOp({
+    id: 'memory.sortUndo',
+    summary: 'agent:ops.memory.sortUndo.summary',
+    risk: 'guarded',
+    input: z.object({}),
+    output: z.object({ restored: z.number().int().optional(), kept: z.number().int().optional(), skipped: z.string().optional() }),
+    confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortUndo.confirm'), before: null, loosens: false }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortUndo(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る
@@ -245,7 +391,7 @@ export const memoryOps = [
       if (gone && who.botId && gone.layer !== USER_LAYER && gone.layer !== who.botId) {
         throw new OpError('MEMORY_NOT_FOUND', agentT(ctx.locale, 'ops.errors.MEMORY_NOT_FOUND', { id }));
       }
-      return guarded(ctx, () => ctx.memory.unforget({ id }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, async () => ctx.memory.unforget({ id }, who.author, await callCtx(ctx, who)));
     },
   }),
 ];

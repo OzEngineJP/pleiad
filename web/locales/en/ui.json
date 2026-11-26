@@ -99,6 +99,12 @@
         "failed": "Failed",
         "retryAt": "Retrying at {{when}}",
         "waiting": "On",
+        "fit": "Didn't fit at the start of a conversation: {{tiers}} (passed when they relate to the topic)",
+        "fitTier": {
+          "untiered": "{{n}} untiered",
+          "always": "{{n}} always",
+          "workspace": "{{n}} in this workspace"
+        },
         "loadFailed": "Couldn't load status"
       },
       "act": {
@@ -110,6 +116,38 @@
         "skippedRunning": "Already organizing",
         "failed": "Couldn't complete the action",
         "saveFailed": "Couldn't save"
+      },
+      "sort": {
+        "title": "Memory sorting",
+        "note": "Asks the AI once to sort memories that have no tier into Always, In this workspace or Stored only. It only runs when you press Start, even if automatic organization is off. Memory text is never rewritten, and you can undo it afterwards",
+        "status": {
+          "none": "Not sorted yet",
+          "running": "Sorting",
+          "stopping": "Stopping",
+          "stopped": "Stopped",
+          "done": "Sorted",
+          "failed": "Stopped after failures",
+          "undone": "Undone"
+        },
+        "sub": {
+          "untiered": "{{n}} without a tier",
+          "processed": "{{n}} processed",
+          "tiers": "Always {{always}} · In this workspace {{workspace}} · Stored only {{archive}}",
+          "unknown": "{{n}} stored only because the workspace was unknown",
+          "left": "{{n}} left without a tier",
+          "changed": "{{n}} skipped because you changed them first",
+          "failures": "{{n}} failures",
+          "undone": "{{restored}} restored · {{kept}} kept because you changed them"
+        },
+        "act": {
+          "start": "Start sorting",
+          "resume": "Continue",
+          "redo": "Run again",
+          "stop": "Stop",
+          "undo": "Undo",
+          "skippedRunning": "Already sorting",
+          "failed": "Couldn't complete the action"
+        }
       }
     },
     "agents": {
@@ -3310,16 +3348,10 @@
   },
   "composer": {
     "destination": {
-      "title": "Bot",
       "sentAria": "Model: {{backend}} · {{model}}{{effort}}",
       "botAria": "Bot and model: {{name}} ({{backend}} · {{model}}{{effort}})",
       "plainAria": "Bot and model: none · {{backend}} · {{model}}{{effort}}",
-      "optionAria": "{{name}} ({{backend}}{{state}})",
-      "botRuns": "{{name}} runs with its defaults: {{setup}}. You can change them in the thread after sending.",
-      "openBot": "Change the defaults on the bot page",
-      "locked": "Runs with {{name}}'s defaults (you can change it in the thread after sending)",
-      "changedAria": "changed for this thread only",
-      "resetBot": "Reset to bot defaults"
+      "changedAria": "changed for this thread only"
     },
     "cwd": {
       "placeholder": "Working directory path",
@@ -3812,7 +3844,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Quick chats › {{title}}",
+      "chat": "Chats › {{title}}",
       "remote": "Settings › Remote",
       "plus": "Settings › Pleiad Plus"
     },

@@ -34,8 +34,6 @@ const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
 // モデルのアイコン（チップの形を 3 つそろえるため。2026-09-23 に足した）
 const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
 const CARET = "M7 10l5 5 5-5";
-/** チップのアイコン（作業フォルダー・モデル・承認モード。スレッドの欄も同じ絵を使う。web/channels/thread-composer.mjs） */
-export const chipGlyph = (kind) => glyph(...(kind === "cwd" ? [FOLDER] : kind === "model" ? MODEL : kind === "danger" ? WARN : [SHIELD]));
 /** チップの ▾（480px 以下は CSS が消す） */
 export function chipCaret() {
   const caret = glyph(CARET);
@@ -62,11 +60,11 @@ function nameBox(chip) {
 
 const FIT_CLASSES = ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon"];
 /**
- * 入力欄の下の行を 1 行に収める（Chats とスレッドで同じ。docs/design-system.md「入力欄の設定」）。
+ * 入力欄の下の行を 1 行に収める（Chats の入力欄。docs/design-system.md「入力欄の設定」。スレッドの欄はチップを持たない。ADR 0362）。
  * ① ブランチ・段を外す・承認モードを短い名前に ② bot なら「· モデル」を外して名前だけ
  * ③ 作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで … で詰める
  * ④ それでも入らなければ 作業ディレクトリ → 承認モード → 宛先とモデル の順にアイコンだけ。送信は常に右端
- * 承認モードは、スレッドの欄ではチップ（.chip.mode）、Chats の欄ではモデルのチップの中の印（.mk）。どちらも同じ段で縮む
+ * 承認モードは、モデルのチップの中の印（.mk）。同じ段で縮む
  */
 export function fitComposerRow(row, { cwd, who }) {
   if (!row || !row.isConnected || !row.offsetParent) return;
@@ -420,11 +418,9 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
   if (pending) chip.setAttribute('aria-busy', 'true'); else chip.removeAttribute('aria-busy');
 }
 
-const botMark = (bot) => { const mark = botIcon(bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); return mark; };
-
 // ---- 2 段の面（承認済み（2026-11-18）。docs/design-system.md「入力欄の設定」）
 //
-// 1 段目は 1 種類の行（アイコン・見出し・今の値・右端の ›）を Bot → エージェント → 接続先 → アカウント → モデル → エフォート →
+// 1 段目は 1 種類の行（アイコン・見出し・今の値・右端の ›）を エージェント → 接続先 → アカウント → モデル → エフォート →
 // 承認モード の順に並べる（承認モードは常に最後。ADR 0252）。行を押すとその項目の一覧（2 段目）に替わり、先頭の「‹ 見出し」か Esc で戻る。
 // 一覧で選ぶと 1 段目に戻り、押した行へフォーカスを戻す。エフォートだけは 1 段目の行の中の棒で選ぶ（1 つの role=slider）。
 // どの段にいるかは面ごとに覚える（views。面を開くたびに 1 段目から）
@@ -433,14 +429,11 @@ const GO = "M10 7l5 5-5 5";
 const BACK = "M14 7l-5 5 5 5";
 const CHECK = "M5 12.5l4.5 4.5L19 7.5";
 const SEARCH = ["M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z", "M20 20l-4.2-4.2"];
-const AT = "M4 12h12M12 6l6 6-6 6";
 const CUBE = ["M12 3l8 4.5v9L12 21l-8-4.5v-9z", "M4 7.5l8 4.5 8-4.5M12 12v9"];
 const GAUGE = ["M4 18a8 8 0 1 1 16 0", "M12 18l4-5"];
 const CHART = "M5 19V11M12 19V5M19 19v-6";
 const PLUG = "M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5";
-const RESET = ["M5 12a7 7 0 1 0 2.1-5", "M5 4v4h4"];
-
-/** 面 -> { view, q }（view は top / bot / agent / conn / model / mode。q はモデルの検索の字） */
+/** 面 -> { view, q }（view は top / agent / conn / model / mode。q はモデルの検索の字） */
 const views = new WeakMap();
 
 const icon = (node) => { const s = el("span", "ic"); if (node) s.append(node); return s; };
@@ -615,25 +608,10 @@ export function renderModel(args) {
 }
 
 function topView(ctx) {
-  const { d, on, hide, go } = ctx;
+  const { d, on, go } = ctx;
   const dest = d.destination;
   const rows = [];
-  // Bot（送る前だけ。送った会話では行ごと出さない。ADR 0160）
-  const options = (dest?.groups ?? []).flatMap((g) => g.options ?? []);
-  if (dest && !dest.sent && options.length) {
-    const picked = options.find((o) => o.id === dest.selected) ?? options.find((o) => o.id == null);
-    rows.push(navRow({ key: "nav:bot", ic: glyph(AT), label: t("composer.destination.title"), value: picked?.name ?? t("channels:homeDest.none"), onClick: () => go("bot") }));
-  }
-  if (dest?.chooseOnly) return [plist(rows)];
   const labelOf = (id) => d.backends?.find((b) => b.id === id)?.label ?? dest?.backendLabel?.(id) ?? id;
-  // bot を選んだ未送信の会話: その bot の既定で動く（ここでは変えない。送った後、スレッドの中で変える）
-  if (dest?.readOnlyBot) {
-    const bot = dest.readOnlyBot;
-    rows.push(navRow({ ic: logo(bot.backend), label: t("composer.agent"), value: dest.backendLabel?.(bot.backend) ?? labelOf(bot.backend) }));
-    const out = [plist(rows), pnote(t("composer.destination.botRuns", { name: bot.name, setup: dest.botSetup }))];
-    if (dest.openBot) out.push(plist([linkRow({ key: "destination:openBot", ic: botMark(bot), text: t("composer.destination.openBot"), onClick: () => { hide(false); dest.openBot(bot.id); } })]));
-    return out;
-  }
   // 接続先（CLI のログイン・アカウント・互換を 1 行。選べる先が CLI のログインだけなら出さない。ADR 0359）。
   // 週の使用量の棒は公式の枠（CLI のログイン・アカウント）の行だけ。接続先の行が無ければエージェントの行に出す
   const ep = d.endpoint;
@@ -669,11 +647,6 @@ function topView(ctx) {
   const out = [plist(rows)];
   if (follow) out.push(plist([optRow({ key: "effort:conversation", sel: follow.selected, name: follow.label, onPick: follow.pick })]));
   if (ctx.footer) out.push(ctx.footer());
-  // スレッドの設定はそのスレッドだけに効く。bot の既定から変えていれば戻す口
-  if (dest?.threadPlain || dest?.bot) {
-    out.push(pnote(t("channels:thread.settings.note")));
-    if (dest.changed && dest.onReset) out.push(plist([linkRow({ key: "destination:reset", ic: glyph(...RESET), text: t("composer.destination.resetBot"), onClick: dest.onReset })]));
-  }
   return out;
 }
 
@@ -690,25 +663,6 @@ function subView(ctx) {
   };
   const wrap = (title, parts) => { const box = el("div", "view-in"); box.append(backRow(title), ...parts.filter(Boolean)); return [box]; };
   switch (st.view) {
-    case "bot": {
-      const dest = d.destination;
-      if (!dest || dest.sent || !dest.groups?.some((g) => g.options?.length)) return null;
-      const title = t("composer.destination.title");
-      const parts = [];
-      for (const group of dest.groups ?? []) {
-        if (!group.options?.length) continue;
-        if (group.heading) parts.push(inHead(group.heading));
-        parts.push(plist(group.options.map((o) => {
-          const picked = o.id === dest.selected;
-          const state = o.state ? ` · ${o.state}` : "";
-          const meta = o.waiting ? el("span", "meta wait", "◆") : o.working ? runMark() : null;
-          return optRow({ key: `destination:${o.id ?? "none"}`, sel: picked, ic: o.bot ? botMark(o.bot) : o.backend ? logo(o.backend) : null, name: o.name, meta,
-            aria: o.bot ? t("composer.destination.optionAria", { name: o.name, backend: o.backendLabel ?? o.backend ?? "", state }) : null,
-            onPick: () => ctx.pick("bot", () => { if (!picked) dest.onPick(o.id); }) });
-        }), group.heading || title));
-      }
-      return wrap(title, parts);
-    }
     case "agent": {
       if (!d.backendSwitchable) return null;
       const usable = [], other = [];
@@ -802,10 +756,7 @@ function officialModelView(ctx) {
   // 段違いを系統にまとめた一覧（antigravity）は系統ごとに 1 行（composer-labels.mjs の modelRowIds）
   const ids = ctx.explicitModels ? Object.keys(models).filter(Boolean) : modelRowIds(models, d.model);
   const { main, other, quiet } = splitModelRows(models, ids);
-  // 宛先が bot なら、bot の既定のモデルに「<名前> の既定」の札（エージェントの既定の札は出さない）
-  const botDefault = d.destination?.bot && d.destination.defaults ? d.destination.defaults.model || def : null;
-  const tagOf = (id) => botDefault !== null ? (id === botDefault ? t("channels:thread.settings.botDefault", { name: d.destination.bot.name }) : "")
-    : holdsDefault(models, id) ? DEFAULT_TAG() : "";
+  const tagOf = (id) => (holdsDefault(models, id) ? DEFAULT_TAG() : "");
   // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
   const follow = !ctx.explicitModels && (!def || !ids.some((id) => holdsDefault(models, id)));
   const words = () => String(ctx.st.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);

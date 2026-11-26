@@ -99,6 +99,12 @@
         "failed": "失敗しました",
         "retryAt": "{{when}} に再試行",
         "waiting": "オン",
+        "fit": "始まりに入りきらない記憶: {{tiers}}（関係する話のときに渡します）",
+        "fitTier": {
+          "untiered": "段なし {{n}} 件",
+          "always": "いつも {{n}} 件",
+          "workspace": "この作業場所で {{n}} 件"
+        },
         "loadFailed": "状態を読み込めませんでした"
       },
       "act": {
@@ -110,6 +116,38 @@
         "skippedRunning": "いま整理を走らせています",
         "failed": "操作できませんでした",
         "saveFailed": "保存できませんでした"
+      },
+      "sort": {
+        "title": "記憶の振り分け",
+        "note": "段の無い記憶を、AI に一度だけ「いつも」「この作業場所で」「保存だけ」へ振り分けてもらいます。人が［始める］を押したときだけ走り、自動整理がオフでも始められます。本文は書き換えず、あとから取り消せます",
+        "status": {
+          "none": "まだ振り分けていません",
+          "running": "振り分けています",
+          "stopping": "止めています",
+          "stopped": "止まっています",
+          "done": "振り分けました",
+          "failed": "失敗して止まりました",
+          "undone": "取り消しました"
+        },
+        "sub": {
+          "untiered": "段なし {{n}} 件",
+          "processed": "処理済み {{n}} 件",
+          "tiers": "いつも {{always}} · この作業場所で {{workspace}} · 保存だけ {{archive}}",
+          "unknown": "作業場所が分からず保存だけにした {{n}} 件",
+          "left": "段をつけなかった {{n}} 件",
+          "changed": "人が先に変えたので見送った {{n}} 件",
+          "failures": "失敗 {{n}} 回",
+          "undone": "戻した {{restored}} 件 · 人が変えていたので残した {{kept}} 件"
+        },
+        "act": {
+          "start": "振り分けを始める",
+          "resume": "続ける",
+          "redo": "もう一度",
+          "stop": "止める",
+          "undo": "取り消す",
+          "skippedRunning": "いま振り分けを走らせています",
+          "failed": "操作できませんでした"
+        }
       }
     },
     "agents": {
@@ -3223,16 +3261,10 @@
   },
   "composer": {
     "destination": {
-      "title": "Bot",
       "sentAria": "モデル: {{backend}} · {{model}}{{effort}}",
       "botAria": "Bot とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
       "plainAria": "Bot とモデル: なし · {{backend}} · {{model}}{{effort}}",
-      "optionAria": "{{name}}（{{backend}}{{state}}）",
-      "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
-      "openBot": "bot のページで既定を変える",
-      "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
-      "changedAria": "このスレッドだけ変更あり",
-      "resetBot": "bot の既定に戻す"
+      "changedAria": "このスレッドだけ変更あり"
     },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
@@ -3709,7 +3741,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}",
+      "chat": "チャット › {{title}}",
       "remote": "設定 › リモート",
       "plus": "設定 › Pleiad Plus"
     },

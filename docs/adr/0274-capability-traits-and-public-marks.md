@@ -62,5 +62,5 @@
 - 性質は `todo` を持たない。
 - 公開文書の `/docs/agents/<id>/` が増える。v0.40.0 の公開では一覧だけ。
 - 印を足すときは、`capability-marks.mjs`（定義・説明）・`agent-marks.mjs`（全エージェントの状態）・
-  `CAPABILITY_DOCS` を書く（当時は `ABOUT`・`CAPABILITY_CONTRACTS` も要ったが、後の版で廃止した。[0362](0362-consolidate-backend-leak-guards.md)）。
+  `CAPABILITY_DOCS` を書く（当時は `ABOUT`・`CAPABILITY_CONTRACTS` も要ったが、後の版で廃止した。[0364](0364-consolidate-backend-leak-guards.md)）。
   性質を足すときは `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS`。

@@ -3,7 +3,6 @@
   "sameAsJa": [
     "ui:context.workspaceRow.mcp",
     "ui:composer.account.connectors.why.settings",
-    "ui:composer.destination.title",
     "tabs:address.locations.html",
     "pages:new.git",
     "pages:plugins.skill",

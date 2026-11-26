@@ -9,7 +9,7 @@ import { durationText } from '../chrome-control.mjs';
 import { backendLogo } from '../side.mjs';
 import { placeAttachments, attachmentHtml, paintUserBody, userTools, attachmentImageSrc } from '../user-message.mjs';
 import { renderReactions, addButton } from './reactions.mjs';
-import { botIcon } from './bot-icon.mjs';
+import { botIcon, botColorVar } from './bot-icon.mjs';
 import { copyGlyphs, copyToClipboard } from '../message-actions.mjs';
 
 /** 同じ日か */
@@ -59,8 +59,25 @@ export function authorInfo(author, ctx) {
 /** 札・一覧の「誰が」に出す名前 */
 export const nameOfAuthor = (author, ctx) => authorInfo(author, ctx).name;
 
-/** bot の名前を、@ の呼びかけとして色付けする。コード（code・pre）と、すでにリンクの中は触らない */
-export function highlightMentions(root, names) {
+const foldName = (s) => String(s ?? '').normalize('NFKC').toLowerCase();
+
+/** 送った投稿の bot の宛先: 顔＋名前の塊（入力欄の塊と同じ見た目。mention-blocks.mjs）。`@` は見えない字で残す（コピーすると `@名前`） */
+function mentionPill(bot, text) {
+  const pill = el('span', 'mention mt');
+  pill.dataset.bot = bot.id ?? '';
+  pill.style.setProperty('--bot-color', botColorVar(bot));
+  const face = botIcon(bot, 'mention-av mt-face');
+  face.setAttribute('aria-hidden', 'true');
+  pill.append(face, el('span', 'mt-at', text.slice(0, 1)), text.slice(1));
+  return pill;
+}
+
+/**
+ * bot の名前を、@ の呼びかけとして色付けする。コード（code・pre）と、すでにリンクの中は触らない。
+ * bots（宛先になった bot の定義）に当たる名前は、顔＋名前の塊にする（ADR 0362）。それ以外（@あなた など）は字の色だけ
+ */
+export function highlightMentions(root, names, bots = []) {
+  const byName = new Map((bots ?? []).filter((b) => b?.name).map((b) => [foldName(b.name), b]));
   const list = [...new Set(names.filter(Boolean))].sort((a, b) => b.length - a.length);
   if (!list.length) return;
   const escaped = list.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
@@ -84,7 +101,8 @@ export function highlightMentions(root, names) {
       // メールの形（直前が英数字・_）は呼びかけではない
       const before = m.index > 0 ? text[m.index - 1] : '';
       if (/[A-Za-z0-9_]/.test(before)) continue;
-      frag.append(text.slice(last, m.index), el('span', 'mention', m[0]));
+      const bot = byName.get(foldName(m[1]));
+      frag.append(text.slice(last, m.index), bot ? mentionPill(bot, m[0]) : el('span', 'mention', m[0]));
       last = m.index + m[0].length;
     }
     frag.append(text.slice(last));
@@ -343,14 +361,14 @@ export function fillPost(root, post, ctx) {
   } else if (info.kind === 'human') {
     // あなたの投稿は Chats の自分の発言と同じ描き方（添付をその位置に・長ければ畳む。原文は dataset.raw。web/user-message.mjs）
     paintUserBody(body, post.text ?? '', (post.attachments ?? []).map(presentOf));
-    highlightMentions(body, (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name)));
+    highlightMentions(body, (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name)), (post.mentions ?? []).map((m) => ctx.bots.get(m)));
   } else {
     body.innerHTML = post.attachments?.length
       ? attachedBodyHtml(post.text ?? '', post.attachments, (s) => ctx.host.renderAssistantMarkdown(s))
       : ctx.host.renderAssistantMarkdown(post.text ?? '');
     const names = (post.mentions ?? []).map((m) => (m === 'you' ? t('channels:feed.you') : ctx.bots.get(m)?.name));
     if (post.mentions?.includes('you')) names.push('you');
-    highlightMentions(body, names);
+    highlightMentions(body, names, (post.mentions ?? []).map((m) => ctx.bots.get(m)));
     if (post.turn) paintChecklist(body, post.state === 'working');
   }
   main.append(body);
@@ -405,10 +423,8 @@ export function fillPost(root, post, ctx) {
     const more = iconButton('more', t('channels:feed.more'), moreIcon());
     more.setAttribute('aria-haspopup', 'menu');
     more.onclick = (e) => { e.stopPropagation(); const r = more.getBoundingClientRect(); ctx.actions.menu(post, r.right, r.bottom + 4, more); };
-    // 一時チャットの合成の投稿（会話の最初の発言）には、会話に記録の無いリアクションを出さない
-    if (post.home) tools.append(reply, copy, more); else tools.append(quick, add, copy, reply, more);
+    tools.append(quick, add, copy, reply, more);
     root.append(tools);
-    if (post.home) root.classList.add('home-root');
   }
   return root;
 }

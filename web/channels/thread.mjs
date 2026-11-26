@@ -12,7 +12,8 @@ import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
-import { PLAIN, plainOption, shownBot } from './plain-bot.mjs';
+import { shownBot } from './plain-bot.mjs';
+import { notify } from '../file-actions.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
@@ -87,63 +88,26 @@ export function createThread(host) {
   subsButton.setAttribute('aria-controls', 'workDialog');
   subs.append(subsButton);
   const subsChip = createBackgroundChip(subsButton);
-  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。先頭に宛先のチップ
+  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。宛先は本文の @ だけ（ADR 0362）
   let voiceView = null;
   const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
     candidates: () => candidates(),
+    blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => send(draft),
     onStop: () => stopThread(),
-    dest: () => destOptions(),
-    onDestChange: () => { paintPlaceholder(); composer.setDisabled(Boolean(S.channel?.archivedAt || (threadReadOnly() && !composer.dest?.bot)), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); },
-    settings: (botId) => botSettings(botId),
+    receiver: () => receiver(),
+    session: () => receiverSession(),
     schedules: () => (host.state?.schedules ?? []).filter((r) => r.kind === 'post' && r.channelId === S.channelId && r.threadId === S.threadId).sort((a, b) => a.at - b.at),
     pending: () => S.pending.map((x) => ({ id: x.postId, text: S.index.get(x.postId)?.text ?? '' })).filter((x) => x.text),
     withdrawPending: (postId) => host.invoke('channels.withdrawPending', { channelId: S.channelId, postId }).then(() => refreshPending()),
     edit: { target: (id) => resendTarget(id), send: (ctx) => resendSend(ctx), branch: (ctx) => resendBranch(ctx), decorate: (id, on, tail) => resendDecorate(id, on, tail), locate: (id) => resendLocate(id) },
     compact: (sessionId) => host.invoke('sessions.compact', { sessionId }),
-    onSettings: async (botId, patch) => {
-      // 組み込みの bot の最初の設定は、選んだエージェント（無ければ Chats の既定）で会話を作る（作った後は backend を変えない）
-      const plain = isPlain(botId);
-      const first = plain && !plainSession(botId);
-      // エージェントだけを選んだ間は会話を作らず手元に持つ（選び直せるように）。最初の設定か最初の送信で会話を作る
-      if (first && patch.backend !== undefined && Object.keys(patch).every((k) => k === 'backend' || patch[k] === '')) {
-        plainBackend = patch.backend;
-        return;
-      }
-      const s = botSettings(botId);
-      const got = await host.invoke('channels.threadSettings', { channelId: S.channelId, threadId: S.threadId, botId, ...patch,
-        ...(first && patch.backend === undefined && s?.backend ? { backend: s.backend } : {}), ...(plain && patch.cwd === undefined && s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
-      settingsSeen.set(botId, got);
-    },
   });
-  // 宛先の bot の、このスレッドの会話の設定（channels.threadSettings が返した値を先に使う。会話の一覧が追い付くまでの間も出す）
-  const settingsSeen = new Map();
-  // このスレッドの「bot なし」で選んだエージェント（会話を作るまで。作った後は会話の backend）
-  let plainBackend = null;
-  const isPlain = (botId) => botId === PLAIN || Boolean(S.bots.get(botId)?.plain);
-  const plainSession = (botId) => S.thread?.sessions?.[botId] ?? settingsSeen.get(botId)?.sessionId ?? null;
-  function botSettings(botId) {
-    // 組み込みの bot をまだ作っていない（「bot なし」を選んだだけ）: Chats の新しい会話の既定から
-    const bot = S.bots.get(botId) ?? (botId === PLAIN ? { ...plainOption(t), backend: host.state?.prefs?.backend ?? host.state?.backendId ?? '', model: '', effort: '', mode: '', folders: [] } : null);
-    if (!bot) return null;
-    const sessionId = S.thread?.sessions?.[botId] ?? null;
-    const row = sessionId ? host.state?.sessions?.find((s) => s.id === sessionId) : null;
-    const seen = settingsSeen.get(botId) ?? (bot.plain ? settingsSeen.get(PLAIN) : undefined);
-    const next = row?.nextSettings ?? {};
-    const values = seen && (!row || seen.sessionId === sessionId) ? seen
-      : { model: next.model ?? row?.model ?? bot.model ?? '', effort: next.effort ?? row?.effort ?? bot.effort ?? '', mode: next.mode ?? row?.mode ?? bot.mode ?? '', cwd: next.cwd ?? row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? host.state?.homeDir ?? '' };
-    // 組み込みの bot はフォルダーを持たない: チャンネルの作業場所と、Chats の今の作業場所から選ぶ
-    const folders = [...new Set([...(bot.folders ?? []).map((f) => f.path), ...(S.channel?.cwd ? [S.channel.cwd] : []), ...(bot.plain && host.state?.cwd ? [host.state.cwd] : [])])];
-    const made = sessionId ?? seen?.sessionId ?? null;
-    return { backend: seen?.backend ?? next.backend ?? row?.backend ?? ((bot.plain && !made && plainBackend) || bot.backend),
-      account: bot.plain ? '' : bot.account ?? '', endpoint: bot.plain ? '' : bot.endpoint ?? '', sessionId: made, values,
-      defaults: { model: bot.model ?? '', effort: bot.effort ?? '', mode: bot.mode ?? '' }, folders };
-  }
   // 目次のボタンは会話の目次（web/conversation-toc.mjs）が自分で受ける
   const head = createThreadHead({ host, onClose: () => close(), onBack: () => close(), onToc: () => {},
     // 題を変える（根の投稿は変えない。空にすると根の投稿の最初の行に戻る）
@@ -162,7 +126,7 @@ export function createThread(host) {
   // 通話モードの差し込み口（スレッド。承認済み 2026-10-06）。契約は web/voice/index.mjs の冒頭。入力欄・見出し・面へは、ここの 1 か所だけで繋ぐ
   voiceView = host.voice?.mount({
     id: 'thread',
-    canStart: () => Boolean(S.threadId && !S.channel?.archivedAt && (!threadReadOnly() || composer.dest?.bot)),
+    canStart: () => Boolean(S.threadId && !S.channel?.archivedAt && (!threadReadOnly() || receiver())),
     header: head.el.querySelector('.th-entries'), headerBefore: head.todoButton,
     composer: composer.voiceSlot(),
     main: root, log, overlay: root, replyScope: () => log,
@@ -329,12 +293,19 @@ export function createThread(host) {
   function threadReadOnly() {
     return Boolean(S.thread?.deletedBot && !Object.keys(S.thread.sessions ?? {}).some(id => S.bots.has(id)));
   }
+  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0362） */
+  const allBots = () => [...S.bots.values()].filter((b) => !b.plain);
+  /** @ の一覧に出す bot: チャンネルのメンバー。メンバーがまだいないチャンネルは、いる bot の全員（選べば投稿のときメンバーに足される） */
+  const callableBots = () => (memberBots().length || S.channel?.kind !== 'channel' ? memberBots() : allBots());
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
-      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
-      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, backend: b.backend ?? null,
+      // @here・@everyone は、メンバーの bot がいないとき（呼ぶ相手が 0 体）は出さない
+      ...(memberBots().length ? [
+        { id: 'here', name: 'here', icon: '@', glyph: true, hint: t('channels:feed.mention.here') },
+        { id: 'everyone', name: 'everyone', icon: '@', glyph: true, hint: t('channels:feed.mention.everyone') },
+      ] : []),
+      ...callableBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, color: b.color, backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
@@ -344,17 +315,17 @@ export function createThread(host) {
   function suggestion() {
     if (liveBots().length === 1) return null;
     const last = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId));
-    return (last && S.bots.get(last.author.botId)) || memberBots()[0] || null;
+    return (last && S.bots.get(last.author.botId)) || callableBots()[0] || null;
   }
   function paintPlaceholder() {
     voiceView?.refresh();
-    // 狭い画面は短く「スレッドに返信」だけ（宛先は入力欄の下のチップが示す）
+    // 狭い画面は短く「スレッドに返信」だけ
     if (window.matchMedia?.('(max-width: 700px)').matches) { composer.setPlaceholder(t('channels:thread.composer.placeholder')); composer.refresh(); return; }
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
     const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
-    // 宛先に追従する: 宛先の bot が作業中なら「作業中でも届きます」、そうでなければ「〜に届きます」
-    const to = composer.dest?.bot ?? null;
+    // 受ける bot に追従する: その bot が作業中なら「作業中でも届きます」、そうでなければ「〜に届きます」
+    const to = receiver();
     const text = to && live.some((b) => b.id === to.id) ? t('channels:thread.composer.working', { name: to.name })
       : to ? t('channels:thread.composer.to', { name: to.name })
         : live.length === 1 ? t('channels:thread.composer.working', { name: live[0].name }) : t('channels:thread.composer.placeholder');
@@ -363,22 +334,24 @@ export function createThread(host) {
   }
 
   /**
-   * 宛先のチップの候補: このスレッドの bot（会話を持つ bot。作業中・あなた待ちの状態つき）→ ほかのメンバー。
-   * 選んでいないときの宛先は、このスレッドの決まり（作業中の bot が 1 体ならそれ、無ければ最後に話した bot。ADR 0117）
+   * @ の無い返信を受ける bot（サーバーの宛先の決まりと同じ。ADR 0117・0362）。DM はその bot、スレッドは作業中の 1 体 →
+   * 最後に答えた bot → 会話を持つ bot。いなければ null（チャンネルでまだ bot が答えていないスレッドは、誰も起きない）
    */
-  function destOptions() {
-    const stateOf = new Map();
-    for (const p of S.posts) if (p.turn?.botId && LIVE.has(p.state) && !p.deletedAt) stateOf.set(p.turn.botId, p.state);
-    const asBot = (id) => ({ ...(S.bots.get(id) ?? { id, name: t('channels:feed.unknownBot'), icon: '' }), state: stateOf.get(id) ?? 'idle' });
-    const threadIds = Object.keys(S.thread?.sessions ?? {}).filter((id) => S.bots.has(id));
-    const others = memberBots().filter((b) => !threadIds.includes(b.id)).map((b) => asBot(b.id));
-    const live = liveBots();
-    const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId ?? null;
-    const fallback = live.length === 1 ? live[0].id : lastSpoke ?? threadIds[0] ?? null;
-    // 「bot なし（モデルを直接選ぶ）」: 組み込みの bot（ADR 0157）。このスレッドにまだいなければ選べる（一時チャット・DM には出さない）
-    const plainHere = threadIds.some((id) => S.bots.get(id)?.plain);
-    const plain = !plainHere && S.channel?.kind === 'channel' && !S.channel.home ? { ...plainOption(t), state: 'idle' } : null;
-    return { inThread: threadIds.map(asBot), others, fallback, plain };
+  function receiver() {
+    if (S.channel?.kind === 'dm') return S.bots.get(S.channel.botId) ?? memberBots()[0] ?? null;
+    const live = liveBots().filter((b) => S.bots.has(b.id));
+    if (live.length === 1) return S.bots.get(live[0].id);
+    const lastSpoke = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId))?.author.botId;
+    const id = lastSpoke ?? Object.keys(S.thread?.sessions ?? {}).find((b) => S.bots.has(b));
+    return id ? S.bots.get(id) : null;
+  }
+  /** 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact）。会話がまだ無ければ作業場所だけ */
+  function receiverSession() {
+    const bot = receiver();
+    if (!bot) return null;
+    const sessionId = S.thread?.sessions?.[bot.id] ?? null;
+    const row = sessionId ? host.state?.sessions?.find((x) => x.id === sessionId) : null;
+    return { sessionId, cwd: row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? host.state?.homeDir ?? '' };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */
@@ -584,7 +557,6 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 読み込み
   function reset() {
     Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
-    plainBackend = null;
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
@@ -626,7 +598,7 @@ export function createThread(host) {
       refreshPending();
       toBottom();
       for (const sid of new Set([...windows.values()].map((w) => w.sessionId))) tools.refresh(sid, { force: true });
-      composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
+      composer.setDisabled(Boolean((threadReadOnly() && !receiver()) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       composer.refresh();
       composer.syncEdit();
       markSelected();
@@ -663,24 +635,23 @@ export function createThread(host) {
   }
 
   // ---------------------------------------------------------------- 操作
-  async function send({ text, attachments, confirmedWake, to, clientId, at }) {
-    if (threadReadOnly() && !to) { composer.edit.end({ restore: true }); throw new Error(t('ui:deletedBotReadOnly')); }
+  async function send({ text, attachments, confirmedWake, clientId, at }) {
+    if (threadReadOnly()) { composer.edit.end({ restore: true }); throw new Error(t('ui:deletedBotReadOnly')); }
     // 送り先は押した時のスレッド。途中の待ち（会話を作る・投稿の応答）の間に別のスレッドへ移っても、送り先と載せる先は変えない
     const channelId = S.channelId, threadId = S.threadId;
     const here = () => S.channelId === channelId && S.threadId === threadId;
-    // 「bot なし」でエージェントだけ選んだまま送る: 先にそのエージェントで会話を作る（投稿で作ると bot の既定のエージェントになる）
-    const plainTo = to && isPlain(to) && plainBackend && !plainSession(to) ? to : null;
-    if (plainTo) {
-      const s = botSettings(plainTo);
-      const made = await host.invoke('channels.threadSettings', { channelId, threadId, botId: plainTo, backend: plainBackend, ...(s?.values?.cwd ? { cwd: s.values.cwd } : {}) });
-      if (here()) settingsSeen.set(plainTo, made);
-    }
     // 日時を指定した返信は予定として置く（時刻が来たら人の投稿として投稿される。channels.schedulePost）
     if (at) {
-      await host.invoke('channels.schedulePost', { channelId, threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}), ...(to ? { to } : {}) });
+      await host.invoke('channels.schedulePost', { channelId, threadId, text, at, clientId, ...(attachments?.length ? { attachments } : {}) });
       return;
     }
-    const made = await host.invoke('channels.post', { channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), ...(clientId ? { clientId } : {}) });
+    const made = await host.invoke('channels.post', { channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(clientId ? { clientId } : {}) });
+    // @ で選んだ bot がメンバーでなかったので足した（サーバーが投稿の前に足す）。足したことを知らせ、候補にも反映する
+    if (made?.addedMembers?.length) {
+      const names = made.addedMembers.map((id) => S.bots.get(id)?.name).filter(Boolean);
+      if (names.length) notify(t('channels:feed.mention.added', { names: names.join('、') }));
+      if (S.channel?.id === channelId) S.channel.members = [...new Set([...(S.channel.members ?? []), ...made.addedMembers])];
+    }
     if (!here()) return;
     if (made?.id && !S.index.has(made.id) && made.threadId === threadId) { addPost(made); afterPosts(); }
     toBottom();
@@ -1059,7 +1030,7 @@ export function createThread(host) {
       const retitled = (S.thread?.title ?? '') !== (ev.thread.title ?? '');
       S.thread = ev.thread;
       if (threadReadOnly()) composer.edit.end({ restore: true });
-      composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
+      composer.setDisabled(Boolean((threadReadOnly() && !receiver()) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       if (retitled) paintHead();
       paintStop();
       paintPlaceholder();
@@ -1071,7 +1042,7 @@ export function createThread(host) {
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }
-      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintStop(); composer.setDisabled(Boolean((threadReadOnly() && !composer.dest?.bot) || ev.channel.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); }
+      if (ev.channel?.id === S.channelId) { S.channel = ev.channel; paintHead(); paintStop(); composer.setDisabled(Boolean((threadReadOnly() && !receiver()) || ev.channel.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived')); }
     },
     botsChanged(ev) {
       if (ev.removed) S.bots.delete(ev.removed);
@@ -1090,10 +1061,6 @@ export function createThread(host) {
       // client.mjs が承認の残りを数え直した後に、答え済みのカードを外す
       if (S.threadId) setTimeout(settleCards, 0);
     },
-    claudeAccountsChanged() { composer.invalidateVocab?.(); },
-    agentAccountsChanged() { composer.invalidateVocab?.(); },
-    // 互換の接続先の登録が変わった（名前・確認の結果。web/client.mjs が取り直せる状態にしてから呼ぶ）
-    connChanged() { composer.invalidateVocab?.(); },
   };
 
   // ---------------------------------------------------------------- 開く・閉じる

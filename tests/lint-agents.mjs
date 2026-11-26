@@ -2,7 +2,7 @@
 /* ==================== エージェントの種類の漏れの lint（直書きと一覧の入れ忘れ） ====================
    エージェントごとの知識は core/backends/（バックエンドと、エージェントの記述 agents.mjs）に置き、ほかの場所は能力の印
    （core/backends/capability-marks.mjs。エージェントごとの状態は agent-marks.mjs）とエージェントの記述から引く
-   （docs/multi-backend.md「エージェントを足す」・ADR 0362）。その外に id を書くと、エージェントを足したときに黙って足りなくなる。
+   （docs/multi-backend.md「エージェントを足す」・ADR 0364）。その外に id を書くと、エージェントを足したときに黙って足りなくなる。
 
      node tests/lint-agents.mjs [--update-baseline] [--json]
 

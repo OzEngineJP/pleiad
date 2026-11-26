@@ -207,14 +207,14 @@ export default async function (t) {
     t.ok('レールの ⇄ からも同じ面が開く', ui.pop.hidden === false && ui.rail.getAttribute('aria-expanded') === 'true');
     doc.fire('keydown', { key: 'Escape' });
     t.ok('Esc で閉じる（レールからも）', ui.pop.hidden === true);
-    // 700px 以下の添え字（.host-sub、crumbSep の次。モバイル版の殻と同じ置き方）
+    // 700px 以下の添え字（.host-sub、行の先頭。依頼元の行の前。モバイル版の殻と同じ置き方）
     const colD = new N('div'); colD.className = 'title-col';
     const lineD = new N('div'); lineD.className = 'title-sub';
-    const sepD = new N('span'); sepD.id = 'crumbSep';
-    lineD.append(sepD); colD.append(lineD); doc.body.append(colD);
+    const originD = new N('span'); originD.id = 'remoteOriginLine';
+    lineD.append(originD); colD.append(lineD); doc.body.append(colD);
     const uiSub = setupRemoteBadge({ remote: { ...remote, onStatus: () => {} }, doc });
-    t.ok('タイトルの下の行に添え字（crumbSep の次、⇄ とホスト名）',
-      uiSub.sub && lineD.children.indexOf(uiSub.sub) === lineD.children.indexOf(sepD) + 1 && uiSub.sub.textContent.includes('desktop-home'), uiSub.sub?.textContent);
+    t.ok('タイトルの下の行の先頭に添え字（依頼元の行の前、⇄ とホスト名）',
+      uiSub.sub && lineD.children.indexOf(uiSub.sub) === 0 && lineD.children.indexOf(originD) === 1 && uiSub.sub.textContent.includes('desktop-home'), uiSub.sub?.textContent);
     // 添え字から開く面はその行の直下に出す（下端固定ではない。2026-11-09 のずれ直し）
     uiSub.sub.getBoundingClientRect = () => ({ left: 70, bottom: 104, right: 200, top: 80, width: 130, height: 24 });
     uiSub.sub.onclick({ stopPropagation() {}, currentTarget: uiSub.sub });

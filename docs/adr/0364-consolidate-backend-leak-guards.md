@@ -1,4 +1,4 @@
-# 0362 エージェントの実装漏れ対策を、宣言・共通の試験・lint・実物の確認の 4 つと生成 1 つにまとめる
+# 0364 エージェントの実装漏れ対策を、宣言・共通の試験・lint・実物の確認の 4 つと生成 1 つにまとめる
 
 - 状態: 承認（2026-11-26）。実装済み
 - 関係: [0220](0220-backend-contract-and-agent-descriptors.md)（能力の印の明示）・[0234](0234-common-backend-delivery-minimum.md)（共通機能の最低限）・[0273](0273-capability-states.md)（印の 4 つの状態）・[0274](0274-capability-traits-and-public-marks.md)（性質の分離と公開文書の表）・[0278](0278-capability-delivery-tests.md)（配達物の届いたかの試験）

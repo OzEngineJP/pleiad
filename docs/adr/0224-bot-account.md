@@ -18,7 +18,7 @@
   bot のエージェントに登録の無い id は `INVALID`（not registered）、使えない（トークン・資格情報の無い）アカウントは `INVALID`（not ready）で断る。`''` はいつでも選べる。同じ値なら何も書かない。
   組み込みのエージェント（`plain`）は bot の既定を持たない（スレッドごとに選ぶ）ので断る。
 - **アカウントは、そのエージェントがアカウントを持てる（能力の印 `capabilities.accounts` が `'token'` か `'agent'`）ときだけ効く。** backend の id では比べない。
-  一覧と検査は server の `accountRows`（入力欄の `accountList` と同じ。Claude はトークン、ほかは資格情報）。持てないエージェント（Devin など。ADR 0364 までは Antigravity も）の bot は `''` だけ。Antigravity は 2 つ目以降の登録アカウントを持てるので、Claude・Codex と同じに選べる（[ADR 0364](0364-antigravity-multiple-accounts.md)）。
+  一覧と検査は server の `accountRows`（入力欄の `accountList` と同じ。Claude はトークン、ほかは資格情報）。持てないエージェント（Devin など。ADR 0366 までは Antigravity も）の bot は `''` だけ。Antigravity は 2 つ目以降の登録アカウントを持てるので、Claude・Codex と同じに選べる（[ADR 0366](0366-antigravity-multiple-accounts.md)）。
   - **bot のエージェントを替えると、アカウントは `''` に戻す。** id はエージェントごとで、替えた先には無い。
   - 会話を作るとき（DM・スレッド・ルーティン・学習）に、会話のメタの `claudeAccount` を入れる。変えたら、今ある会話（ルーティンの実行の会話も）を揃える（次のターンから効く）。
     Claude の会話と、まだ送っていない会話は `claudeAccount` を直に書く。送った `'agent'` の会話（Codex など）は、ネイティブの会話がアカウントごとなので、次のターンの予約（`reserveTurnSettings` の `account`）で替える（ターンの始めに会話を起こし直す）。

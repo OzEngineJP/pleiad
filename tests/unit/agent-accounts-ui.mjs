@@ -226,15 +226,14 @@ export default async function test(t) {
       };
       const accountReads = [], vocabReads = [], effortReads = [], headers = [];
       const state = { sessions: [], current: null, prefs: { backends: { codex: { account: 'default-A' } } }, draft: { changes: [] }, backendId: 'codex' };
-      const homeDest = { paint() {}, bot: null };
       // syncTopbar は語彙の鍵（vocabKey・vocabReady・defaultModelOf）とエフォートの取得（adoptEfforts → effortsView）を使う。
       // どちらも本物の web/composer-vocab.mjs と client.mjs の関数を渡し、エフォートの取得は cmd の境界だけを差し替える
       const effortCmd = async (op, args) => { assert.equal(op, 'efforts'); effortReads.push(args); return { '': {} }; };
       const effortsLoader = createEffortsLoader({ cmd: effortCmd });
       const effortsView = createEffortsView({ loader: effortsLoader });
-      const sandbox = vm.createContext({ state, composerAccount, homeDest, topbarVersion: 0, bootHold: null,
+      const sandbox = vm.createContext({ state, composerAccount, topbarVersion: 0, bootHold: null,
         vocabKey, vocabReady, defaultModelOf, effortsLoader, effortsView, noEfforts: () => ({ '': {} }),
-        justCreated: () => false, unsentHere: () => true, activeBackendId: () => 'codex',
+        justCreated: () => false, activeBackendId: () => 'codex',
         capsOf: () => ({ accounts: 'agent', compatEndpoints: false }),
         $: id => { if (!nodes.has(id)) { const node = new Node('div'); node.id = id; } return $(id); },
         t: tr, syncRemoteOriginLine() {}, rememberTitle() {}, syncTitleControls() {}, controls: { paint() {} },
@@ -255,11 +254,7 @@ export default async function test(t) {
       assert.equal(state.account, 'default-B');
       assert.equal(vocabReads[0].account, 'default-A'); assert.equal(vocabReads[1].account, 'default-B');
       assert.equal(effortReads[1].account, 'default-B'); assert.equal(headers[1].account, 'default-B');
-      homeDest.bot = { backend: 'codex', model: '', effort: '' };
-      await sandbox.syncTopbar();
-      assert.equal(vocabReads.at(-1).account, ''); assert.equal(effortReads.at(-1).account, '');
-      assert.equal(headers.at(-1).account, ''); assert.equal(state.accountShown, false);
-      check('real client synchronization uses the same effective account for header/models/efforts, discards stale account-list continuation and gives homeBot login priority');
+      check('real client synchronization uses the same effective account for header/models/efforts, discards stale account-list continuation');
 
       const modelReads = [], modelState = { vocab: new Map() };
       let refreshed = 0;

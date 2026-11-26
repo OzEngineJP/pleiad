@@ -85,6 +85,7 @@ export const botOps = [
     input: z.object({
       name: z.string().min(1).max(64).describe(D('create', 'name')),
       icon: z.string().max(32).optional().describe(D('create', 'icon')),
+      color: z.number().int().min(1).max(8).optional().describe(D('create', 'color')),
       iconImage: z.string().max(2000).optional().describe(D('create', 'iconImage')),
       persona: z.string().max(12000).optional().describe(D('create', 'persona')),
       backend: z.string().max(40).optional().describe(D('create', 'backend')),
@@ -99,6 +100,7 @@ export const botOps = [
       return {
         before: null, loosens: Boolean(plan?.loosens),
         rows: [{ path: 'name', before: null, after: args.name }, { path: 'icon', before: null, after: args.icon ?? '' },
+          ...(args.color ? [{ path: 'color', before: null, after: String(args.color) }] : []),
           ...(args.backend ? [{ path: 'backend', before: null, after: args.backend }] : []),
           ...(plan ? [{ path: 'mode', before: null, after: plan.label }] : []),
           ...(args.persona ? [{ path: 'persona', before: null, after: clip(args.persona) }] : [])],
@@ -120,6 +122,7 @@ export const botOps = [
       botId: z.string().min(1).max(100).describe(D('update', 'botId')),
       name: z.string().min(1).max(64).optional().describe(D('update', 'name')),
       icon: z.string().max(32).optional().describe(D('update', 'icon')),
+      color: z.number().int().min(1).max(8).optional().describe(D('update', 'color')),
       iconImage: z.string().max(2000).nullable().optional().describe(D('update', 'iconImage')),
       persona: z.string().max(12000).optional().describe(D('update', 'persona')),
       backend: z.string().max(40).optional().describe(D('update', 'backend')),

@@ -118,10 +118,11 @@ export default async function (t) {
           ...(modes ? { approvalOf: async ({ botId }) => { const b = BOT_LIST.find((x) => x.id === botId); const m = modes[botId]; return b && m ? { ...b, mode: m.id, label: m.label, entry: m } : null; },
             createSession: async ({ botId, threadId }) => { const sessionId = `s_new_${botId}`; sessions[sessionId] = { bot: { botId, kind: 'thread', channelId: 'c_1', threadId, memRev: 0, snapshotDue: false, delivered: [], postCursor: null } }; return { sessionId }; } } : {}),
         };
-        const memory = { turnContext: async () => ({ notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }) };
+        const memoryCalls = [];   // memory.turnContext に渡った引数（作業場所 cwd の受け渡しを見る）
+        const memory = { turnContext: async (args) => { memoryCalls.push(args); return { notes: [...memoryNotes], memRev: 0, delivered: [], snapshotDue: false }; } };
         const d = createDispatcher({ channels, bots, memory, episodes, host });
         dRef = d;
-        return { d, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
+        return { d, memoryCalls, posts, threads, sessions, steers, emitted, started, aborted, turn, turns, control, channel, host, setAccept: (f) => { accept = f; } };
       };
       const statusOf = async (w, postId) => (await w.d.inbox.list({})).find((i) => i.postId === postId)?.status;
       const tick = () => sleep(60);
@@ -209,6 +210,20 @@ export default async function (t) {
         await w.d.onCompacted('s1');
         const later = await w.d.turnExtras(w.turn);
         t.ok('圧縮の後も申し送りを繰り返さない', !later.notes.some((n) => n.includes('<pleiad-bot-recent>')) && requested === 1, JSON.stringify({ notes: later.notes, requested }));
+      }
+      // 記憶の作業場所（段 2 単位 3）: ターンの cwd（無ければ保存済みの会話の cwd）を memory.turnContext へ渡す。どちらも無ければ null
+      {
+        const w = world('none');
+        w.turn.info.cwd = 'D:/dev/app/src';
+        await w.d.turnExtras(w.turn);
+        t.ok('このターンの cwd を memory.turnContext に渡す', w.memoryCalls.at(-1)?.cwd === 'D:/dev/app/src', JSON.stringify(w.memoryCalls));
+        delete w.turn.info.cwd;
+        w.sessions.s1.cwd = 'D:/dev/stored';
+        await w.d.turnExtras(w.turn);
+        t.ok('ターンに cwd が無ければ、保存済みの会話の cwd を渡す', w.memoryCalls.at(-1)?.cwd === 'D:/dev/stored', JSON.stringify(w.memoryCalls.at(-1)));
+        delete w.sessions.s1.cwd;
+        await w.d.turnExtras(w.turn);
+        t.ok('cwd がどこにも無い会話は null（作業場所なし）', w.memoryCalls.at(-1)?.cwd === null);
       }
       // チャンネルの「ここでの決まり」（memo）: 受け取っていない・変わった・取り直し（圧縮）のときだけ、末尾の文脈の包みで渡す。指示ではなく材料として包む
       {
@@ -1179,28 +1194,6 @@ export default async function (t) {
       await sleep(300);
       t.ok('to: 本文の @ があれば @ が先に効く（宛先の bot は起こさない）', botPost(await read(dev.id, rootT.id), owl, 'done').length === owlBefore);
       t.ok('to: 投稿に宛先が残る（承認の後の起こし直しが使う）', (await read(dev.id, rootT.id)).posts.some((p) => p.to === owl.id));
-    }
-
-    // ---- このスレッドだけの設定（channels.threadSettings。ADR 0157）: bot の会話の設定を変え、bot の既定を変えても上書きしない
-    {
-      const rootS = await call('channels.post', { channelId: dev.id, text: '@Owl echo:設定の前' });
-      await until(async () => botPost(await read(dev.id, rootS.id), owl, 'done').length === 1, { label: '設定の前の Owl' });
-      await settled(rootS);
-      const sOwl = (await threadOf(rootS)).sessions[owl.id];
-      const r1 = await call('channels.threadSettings', { channelId: dev.id, threadId: rootS.id, botId: owl.id, model: 'fast' });
-      t.ok('threadSettings: このスレッドの Owl の会話のモデルを変える（返りは今の値）', r1.sessionId === sOwl && r1.model === 'fast', JSON.stringify(r1));
-      const r2 = await call('channels.threadSettings', { channelId: dev.id, threadId: rootS.id, botId: lynx.id, model: 'tiny' });
-      t.ok('threadSettings: 会話がまだ無い bot（Lynx）は、会話を作ってから入れる', Boolean(r2.sessionId) && (await threadOf(rootS)).sessions[lynx.id] === r2.sessionId && r2.model === 'tiny', JSON.stringify(r2));
-      await call('channels.post', { channelId: dev.id, threadId: rootS.id, text: '@Owl echo:設定の後' });
-      await until(async () => botPost(await read(dev.id, rootS.id), owl, 'done').length === 2, { label: '設定の後の Owl' });
-      await settled(rootS);
-      const rowOf = async (id) => (await c.cmd('listSessions')).find((s) => s.id === id);
-      t.ok('threadSettings: 次のターンからそのモデルで走る', (await rowOf(sOwl))?.model === 'fast', JSON.stringify(await rowOf(sOwl)));
-      await call('bots.update', { botId: owl.id, persona: '調べ物が得意。直した' });
-      await sleep(300);
-      t.ok('threadSettings: bot の既定を変えても、このスレッドで変えたモデルは上書きしない', (await rowOf(sOwl))?.model === 'fast', String((await rowOf(sOwl))?.model));
-      const prefs = await fs.readFile(path.join(dataDir, 'prefs.json'), 'utf8').catch(() => '{}');
-      t.ok('threadSettings: Chats の新しい会話の既定（モデル）は変えない', !prefs.includes('"fast"'), prefs.slice(0, 200));
     }
 
     // ---- G: スレッドで @ の無い人の投稿は、そのスレッドで最後に話した bot が受ける（ADR 0117）。bot の @ の無い返事は誰も起こさない

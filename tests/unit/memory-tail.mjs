@@ -4,8 +4,12 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createMemoryService } from '../../core/memory/service.mjs';
-import { foldDelta, pickCore, coreSnapshot, turnContext, formatNow, DELTA_MAX, RELATED_MAX } from '../../core/memory/tail.mjs';
+import {
+  foldDelta, pickCore, pickTieredCore, coreFitCounts, fitEntries, clipEntry, sameWorkspace, coreSnapshot, turnContext, formatNow,
+  DELTA_MAX, RELATED_MAX, RELATED_ITEM_TOKENS, RELATED_TOTAL_TOKENS, SEARCH_MAX, SEARCH_TOTAL_TOKENS, CORE_ALWAYS_TOKENS, CORE_WORKSPACE_TOKENS,
+} from '../../core/memory/tail.mjs';
 import { splitLeadingNotes } from '../../core/system-messages.mjs';
+import { estimateTokens } from '../../web/token-estimate.mjs';
 
 export const name = 'memory-tail';
 export const title = '毎ターンの末尾: 時刻・記憶の差分・関係する記憶・渡し済みを繰り返さない・核の写しは始まりと圧縮の後だけ';
@@ -71,6 +75,84 @@ export default async function (t) {
     const related = Array.from({ length: 9 }, (_, i) => ({ text: `関係${i}` }));
     return (turnContext({ now: AT, related, locale: 'ja' }).match(/関係\d/g) ?? []).length === RELATED_MAX;
   })());
+
+  // ---- 段 2 単位 3: 段と作業場所で配送する（pickTieredCore・fitEntries・coreFitCounts・関係する記憶の上限）
+  const ent = (id, extra = {}) => ({ id, layer: 'user', text: 'あ'.repeat(40), by: HUMAN, at: 1, updatedAt: 1, sources: [], ...extra });
+  const WS = 'D:/dev/app', WS_OTHER = 'D:/dev/other';
+  t.ok('配送の上限: いつも 6000・この作業場所で 3000 トークン', CORE_ALWAYS_TOKENS === 6000 && CORE_WORKSPACE_TOKENS === 3000);
+  t.ok('pickTieredCore: 段の無い記憶は従来の pickCore のまま（段の仕組みの外で、強さと目安で選ぶ）', (() => {
+    const list = Array.from({ length: 30 }, (_, i) => ent(`m_${i}`, { text: `${'長い記憶 '.repeat(20)}${i}`, at: i, updatedAt: i }));
+    const legacy = pickCore(list, [], { layerTokens: 400, now: 30 });
+    const tiered = pickTieredCore(list, [], { layerTokens: 400, now: 30 });
+    return tiered.user.map((e) => e.id).join() === legacy.user.map((e) => e.id).join() && tiered.omittedByTier.untiered === legacy.omitted && tiered.omittedByTier.always === 0 && tiered.omittedByTier.workspace === 0;
+  })());
+  t.ok('pickTieredCore: いつも（always）は 6000 トークンまで・今の作業場所の workspace は 3000 トークンまで・保存だけ（archive）は入れない', (() => {
+    const list = [
+      ...Array.from({ length: 3 }, (_, i) => ent(`m_a${i}`, { tier: 'always', text: 'あ'.repeat(2400), updatedAt: 10 + i })),   // 2403 トークン × 3 → 2 つで 4806、3 つ目は 7209 で超える
+      ...Array.from({ length: 2 }, (_, i) => ent(`m_w${i}`, { tier: 'workspace', workspace: WS, text: 'い'.repeat(1600), updatedAt: 10 + i })),   // 1603 × 2 = 3206 > 3000 → 1 つ
+      ent('m_arc', { tier: 'archive', updatedAt: 99 }),
+    ];
+    const core = pickTieredCore(list, [], { workspace: WS, now: 100 });
+    const ids = core.ids;
+    return ids.filter((id) => id.startsWith('m_a') && id !== 'm_arc').length === 2 && ids.filter((id) => id.startsWith('m_w')).length === 1 && !ids.includes('m_arc')
+      && core.omittedByTier.always === 1 && core.omittedByTier.workspace === 1 && core.omittedByTier.untiered === 0 && core.omitted === 2;
+  })());
+  t.ok('pickTieredCore: 上限を超えるときは 人が書いた・直したもの → やめたこと → 新しい更新の順', (() => {
+    const bot = { kind: 'bot', botId: OTHER };
+    const list = [
+      ent('m_botnew', { tier: 'always', by: bot, updatedAt: 90, text: 'う'.repeat(100) }),
+      ent('m_stop', { tier: 'always', by: bot, kind: 'stop', updatedAt: 10, text: 'え'.repeat(100) }),
+      ent('m_humanold', { tier: 'always', by: HUMAN, updatedAt: 1, text: 'お'.repeat(100) }),
+      ent('m_rewritten', { tier: 'always', by: bot, origBy: HUMAN, updatedAt: 95, text: 'か'.repeat(100) }),   // 人の行を AI が直した行は人の行として先に入れる
+      ent('m_botold', { tier: 'always', by: bot, updatedAt: 5, text: 'き'.repeat(100) }),
+    ];
+    const core = pickTieredCore(list, [], { now: 100, alwaysTokens: 220 });   // 1 件 103 → 2 件まで
+    const ids = core.ids.slice().sort();
+    const first = pickTieredCore(list, [], { now: 100, alwaysTokens: 330 }).ids.slice().sort();   // 3 件まで
+    return ids.join() === ['m_humanold', 'm_rewritten'].sort().join() && first.join() === ['m_humanold', 'm_rewritten', 'm_stop'].sort().join() && core.omittedByTier.always === 3;
+  })());
+  t.ok('pickTieredCore: 作業場所が違う・作業場所の無い会話は workspace を渡さず、入りきらなかった数にも入れない（inactiveWorkspace に数える）', (() => {
+    const list = [ent('m_ws', { tier: 'workspace', workspace: WS }), ent('m_ws2', { tier: 'workspace', workspace: WS_OTHER }), ent('m_al', { tier: 'always' })];
+    const here = pickTieredCore(list, [], { workspace: WS, now: 100 });
+    const other = pickTieredCore(list, [], { workspace: WS_OTHER, now: 100 });
+    const none = pickTieredCore(list, [], { workspace: null, now: 100 });
+    return here.ids.sort().join() === 'm_al,m_ws' && other.ids.sort().join() === 'm_al,m_ws2' && none.ids.join() === 'm_al'
+      && here.inactiveWorkspace === 1 && none.inactiveWorkspace === 2 && here.omitted === 0 && none.omitted === 0;
+  })());
+  t.ok('pickTieredCore: 作業場所は \\ と末尾の / を揃えて比べる・どちらかが空なら同じではない', sameWorkspace('D:\\dev\\app\\', 'D:/dev/app') && !sameWorkspace('', '') && !sameWorkspace(null, WS) && !sameWorkspace(WS, WS_OTHER));
+  t.ok('pickTieredCore: 段の付いた記憶は薄れの仕組みで落とさない（古くて人の行でなくても、上限の中なら入る）', (() => {
+    const old = ent('m_old', { tier: 'always', by: { kind: 'bot', botId: OTHER }, at: 1, updatedAt: 1, text: '古い記憶' });
+    return pickTieredCore([old], [], { now: Date.now() + 5 * 365 * 24 * 3600 * 1000 }).ids.includes('m_old');
+  })());
+  t.ok('pickTieredCore: 自分の層（bot）の記憶も同じ規則で入り、層ごとの本文に分かれる', (() => {
+    const core = pickTieredCore([ent('m_u', { tier: 'always' })], [ent('m_b', { tier: 'always', layer: 'b_owl12345' })], { now: 100 });
+    return core.user.map((e) => e.id).join() === 'm_u' && core.bot.map((e) => e.id).join() === 'm_b';
+  })());
+  t.ok('coreFitCounts: 入りきらなかった数を段ごとに返す（作業場所を省くと作業場所ごとの合計。保存だけは数えない）', (() => {
+    const mk = (n, ws, i0) => Array.from({ length: n }, (_, i) => ent(`m_${ws}_${i0 + i}`, { tier: 'workspace', workspace: ws, text: 'あ'.repeat(1600), updatedAt: i0 + i }));
+    const list = [...mk(2, WS, 0), ...mk(3, WS_OTHER, 10), ent('m_arc', { tier: 'archive' })];
+    const all = coreFitCounts(list, [], { now: 100 });
+    const here = coreFitCounts(list, [], { workspace: WS, now: 100 });
+    return all.omitted.workspace === 1 + 2 && all.omitted.always === 0 && all.omitted.untiered === 0 && all.total === 3 && all.inactiveWorkspace === 0
+      && here.omitted.workspace === 1 && here.inactiveWorkspace === 3 && here.total === 1;
+  })());
+  t.ok('fitEntries: 件数・1 件・合計の上限（1 件は切る・合計を超える件から後は出さない・順位は保つ）', (() => {
+    const list = [{ id: 'a', text: 'あ'.repeat(400) }, { id: 'b', text: 'い'.repeat(100) }, { id: 'c', text: 'う'.repeat(100) }, { id: 'd', text: 'え'.repeat(10) }];
+    const out = fitEntries(list, { max: 3, perItem: 150, total: 280 });
+    return out.map((e) => e.id).join() === 'a,b' && out[0].text.endsWith('…') && estimateTokens(out[0].text) <= 150 && out[1].text === 'い'.repeat(100)
+      && fitEntries(list, { max: 1, perItem: 1000, total: 10000 }).length === 1 && fitEntries([], { max: 3, perItem: 1, total: 1 }).length === 0;
+  })());
+  t.ok('clipEntry: 収まる本文は触らない・収まらなければ … で切る', (() => {
+    const short = { id: 'a', text: '短い' };
+    return clipEntry(short, 150) === short && clipEntry({ id: 'b', text: 'あ'.repeat(500) }, 150).text.endsWith('…') && estimateTokens(clipEntry({ id: 'b', text: 'あ'.repeat(500) }, 150).text) <= 150;
+  })());
+  t.ok('関係する記憶: 1 件 150 トークン・合計 2000 トークン・5 件まで（長い本文は切る）', (() => {
+    const long = Array.from({ length: 5 }, (_, i) => ({ text: `長い関係${i}${'あ'.repeat(1000)}` }));
+    const text = turnContext({ now: AT, related: long, locale: 'ja' });
+    const lines = text.split('\n').filter((l) => l.startsWith('- 長い関係'));
+    return RELATED_ITEM_TOKENS === 150 && RELATED_TOTAL_TOKENS === 2000 && lines.length === 5 && lines.every((l) => estimateTokens(l.slice(2)) <= RELATED_ITEM_TOKENS) && lines.every((l) => l.endsWith('…'));
+  })());
+  t.ok('memory.search の上限: 8 件・合計 1200 トークン', SEARCH_MAX === 8 && SEARCH_TOTAL_TOKENS === 1200);
 
   // ---- サービス: 時刻・核・差分・関係する記憶
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'memory-tail-'));

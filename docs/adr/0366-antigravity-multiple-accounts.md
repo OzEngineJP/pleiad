@@ -1,7 +1,7 @@
-# 0364 Antigravity の 2 つ目以降のアカウントを、トークンのファイル保存で分ける
+# 0366 Antigravity の 2 つ目以降のアカウントを、トークンのファイル保存で分ける
 
 - 状態: 承認（2026-11-26）。実装済み（Ph3 の P3-1〜P3-5）。実機の確認は**未実施（人が確認中）**。結果は末尾の「実機確認の結果」に追記する
-- 関係: [0222](0222-agent-accounts-and-provider-quota.md)（アカウントの分離。「Antigravity は持てない」を置き換え）・[0224](0224-bot-account.md)（bot のアカウント。Antigravity だけ `''` を撤回）・[0359](0359-connections-unify.md)（接続先。§7 の「Antigravity の頭の行は変えない」を撤回）・[0363](0363-antigravity-on-acp.md)（Antigravity の口は ACP）・[0362](0362-consolidate-backend-leak-guards.md)（能力の印の宣言）・[0264](0264-delegation-account-scope.md)（委譲の候補はアカウントの単位）
+- 関係: [0222](0222-agent-accounts-and-provider-quota.md)（アカウントの分離。「Antigravity は持てない」を置き換え）・[0224](0224-bot-account.md)（bot のアカウント。Antigravity だけ `''` を撤回）・[0359](0359-connections-unify.md)（接続先。§7 の「Antigravity の頭の行は変えない」を撤回）・[0365](0365-antigravity-on-acp.md)（Antigravity の口は ACP）・[0364](0364-consolidate-backend-leak-guards.md)（能力の印の宣言）・[0264](0264-delegation-account-scope.md)（委譲の候補はアカウントの単位）
 
 ## 状況
 

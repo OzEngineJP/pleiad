@@ -29,7 +29,7 @@ function fake(dataDir, { dmFails = false } = {}) {
   const backends = {
     claude: { id: 'claude', modes: () => CLAUDE_MODES, capabilities: { accounts: 'token' } },
     codex: { id: 'codex', capabilities: { accounts: 'agent' }, modes: () => ({ ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'workspace', autonomy: 'never' }, yolo: { scope: 'full', autonomy: 'never' } }) },
-    // 身代わりの antigravity はモードが 1 つ（yolo）だけ。実物は ACP で 5 つ持つ（ADR 0363。既定が default になるのは tests/unit/bot-instructions.mjs）。
+    // 身代わりの antigravity はモードが 1 つ（yolo）だけ。実物は ACP で 5 つ持つ（ADR 0365。既定が default になるのは tests/unit/bot-instructions.mjs）。
     // ここでは「モードが 1 つだけのバックエンド」の経路（既定・他を断る・強くなる向きの承認）を確かめるために 1 つのままにする
     antigravity: { id: 'antigravity', modes: () => ({ yolo: { scope: 'full', autonomy: 'never' } }) },
   };

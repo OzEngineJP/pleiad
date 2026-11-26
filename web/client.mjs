@@ -81,7 +81,6 @@ import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
 import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
-import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
 import { childRoute, restoredSession, createOpenGate } from "./child-route.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
@@ -438,7 +437,7 @@ const chatSuggestion = createSuggestion({
   touch: () => matchMedia('(pointer:coarse)').matches,
   enabled: () => inputPrefs(state.prefs).suggestions,
   blocked: () => !state.current || state.current === freshSessionId || isRunningHere() || chatEdit.active || chatRecall.active
-    || shellComposer.active || shellComposer.blocked || Boolean(state.loadingSession) || Boolean(homeDest.bot),
+    || shellComposer.active || shellComposer.blocked || Boolean(state.loadingSession),
   accept: (text) => {
     suggestions.delete(state.current);
     const prompt = $('prompt');
@@ -458,9 +457,6 @@ function dropSuggestion(sessionId) {
 }
 $('prompt').addEventListener('input', () => { chatRecall.input(); chatSuggestion.refresh(); });
 $('prompt').addEventListener('focus', () => chatSuggestion.refresh());
-// まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
-const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args }),
-  visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
   time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState(),
@@ -3413,7 +3409,6 @@ function onEvent(ev, replay = false) {
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
-  if (ev.type === 'botsChanged') homeDest.botsChanged();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
   if (ev.type === 'todosChanged') { sessionTodo.onEvent(ev); return; }
@@ -5093,12 +5088,11 @@ function settleNext(version) {
 function composerSelection() {
   const session = state.sessions.find(s => s.id === state.current);
   const draft = !session || justCreated() ? draftView(state.draft.changes, state.draft.base) : pendingChoice(session);
-  const homeBot = unsentHere() ? homeDest.bot : null;
-  const backend = homeBot?.backend ?? draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
-  const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot });
-  const endpoint = homeBot ? '' : draft?.endpoint ?? (draft?.reset ? '' : endpointOf(session));
-  const model = homeBot?.model ?? draft?.model ?? (draft?.reset ? '' : session?.nextSettings?.model ?? session?.model) ?? '';
-  return { session, draft, homeBot, backend, account, endpoint, model, hasAccounts: Boolean(capsOf(backend).accounts) };
+  const backend = draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
+  const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts });
+  const endpoint = draft?.endpoint ?? (draft?.reset ? '' : endpointOf(session));
+  const model = draft?.model ?? (draft?.reset ? '' : session?.nextSettings?.model ?? session?.model) ?? '';
+  return { session, draft, backend, account, endpoint, model, hasAccounts: Boolean(capsOf(backend).accounts) };
 }
 function selectedBackend() { return composerSelection().backend; }
 /**
@@ -5287,23 +5281,9 @@ function syncAttachButton() {
   if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false");
 }
 
-/** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
-function homeBackend() {
-  const s = state.sessions.find(x => x.id === state.current);
-  const chosen = !s || justCreated() ? draftView(state.draft.changes, state.draft.base) : null;
-  return chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
-}
-/** Chats の未送信で選んだ bot の動かし方（表示だけ）。「Codex · Fake 1 · medium · 都度確認」 */
-function homeBotSetup(bot) {
-  // チップと同じ字（syncTopbar が bot の既定を state.model・effort・mode に入れている）
-  const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
-  return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
-}
-/** モデルの一覧・エフォートの段が見る作業場所。会話があればその次のターンの場所、まだ無い草稿では選んでいる場所、
- *  Chats で bot を選んでいるときは bot の最初のフォルダー（bot はそこで走る。core/bots/sessions.mjs の pickCwd）。
+/** モデルの一覧・エフォートの段が見る作業場所。会話があればその次のターンの場所、まだ無い草稿では選んでいる場所。
  *  その場所のプロジェクト設定が Claude のモデルの一覧・段を変える（作ったばかりの会話は予約が届くまで下書きの場所） */
-function vocabCwd(s, homeBot = null) {
-  if (homeBot) return homeBot.folders?.[0]?.path || state.homeDir || '';
+function vocabCwd(s) {
   if (s) return (justCreated() && state.draft.cwd) || s.nextSettings?.cwd || s.cwd || '';
   return state.draft.cwd || state.cwd || '';
 }
@@ -5311,7 +5291,7 @@ function vocabCwd(s, homeBot = null) {
 function effortSelection() {
   const s = state.sessions.find(x => x.id === state.current);
   const choice = composerSelection();
-  return { backend: state.shownBackend ?? activeBackendId(), account: choice.account, endpoint: choice.endpoint, model: state.model, cwd: vocabCwd(s, choice.homeBot) };
+  return { backend: state.shownBackend ?? activeBackendId(), account: choice.account, endpoint: choice.endpoint, model: state.model, cwd: vocabCwd(s) };
 }
 /**
  * これから選ぶ値（予約の保存はまだ）のエフォートの段を、裏で取っておく。予約が書けたあとの描き直しは、同じ鍵の取得に相乗りする。
@@ -5336,13 +5316,13 @@ async function adoptEfforts() {
  */
 function warmAgentChoices(backend) {
   const s = state.sessions.find(x => x.id === state.current);
-  const { homeBot, backend: curBackend, endpoint: curEndpoint } = composerSelection();
+  const { backend: curBackend, endpoint: curEndpoint } = composerSelection();
   const draft = s ? state.drafts.get(s.id) : state.draft;
   const sameDraft = draft && (!draft.backend || draft.backend === backend);
   const account = curBackend === backend && curEndpoint ? '' : composerAccount({
-    backend, session: s, draft: sameDraft ? draft : null, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot,
+    backend, session: s, draft: sameDraft ? draft : null, prefs: state.prefs, kind: capsOf(backend).accounts,
   });
-  const cwd = vocabCwd(s, homeBot);
+  const cwd = vocabCwd(s);
   loadVocab(backend, account, cwd).then(({ models }) => {
     if (state.shownBackend !== backend) return;
     effortsLoader.load({ backend, account, model: defaultModelOf(models), cwd }).catch(() => {});
@@ -5357,16 +5337,13 @@ const controls = chatComposer.useControls({
   cmd,
   get: () => {
     const bid = state.shownBackend ?? activeBackendId();
-    const bot = homeDest.bot;
-    const sent = !unsentHere();
     // 切り替えた直後は、前のエージェントのモデル・エフォートの一覧を出さない（取れたら syncTopbar が鍵を合わせる）
     const choice = composerSelection();
     const wanted = vocabKey({ backend: bid, account: choice.account, endpoint: choice.endpoint,
-      cwd: vocabCwd(state.sessions.find(x => x.id === state.current), choice.homeBot) });
+      cwd: vocabCwd(state.sessions.find(x => x.id === state.current)) });
     const modelsReady = vocabReady(state.vocabKey, wanted), effortsReady = modelsReady && effortsView.ready(effortSelection());
     return {
-      // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
-      cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
+      cwd: state.cwd, recent: cwdOptions(),
       backends: state.backends, backend: bid,
       // エージェントの行の右端の週の使用量（取れないものは出さない）
       backendUsage: (id) => weekUsage(usageSource.get(id)?.quota, ""),
@@ -5379,25 +5356,14 @@ const controls = chatComposer.useControls({
       // 安全装置で切り替わったモデル（選んだモデルの札に「⇄ X」を添える）
       switched: state.switched && state.switched.sessionId === state.current && !answeredByChosen(state.switched.model) ? { label: modelDisplayName(state.models ?? {}, state.switched.model) } : null,
       efforts: effortsReady ? state.efforts : {}, effortsPending: !effortsReady, effort: state.effort, effortDisabled: !effortsReady || state.effortDisabled,
-      accounts: !bot && state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
-      endpoint: bot ? null : endpointView(bid),
+      accounts: state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
+      endpoint: endpointView(bid),
       modes: modelsReady ? state.modes : {}, modesPending: !modelsReady, mode: state.mode,
-      modeDisabled: Boolean(bot),
-      // 押せない理由（作業ディレクトリ・承認モードのチップの title と読み上げに足す）
-      lockedNote: bot ? t('composer.destination.locked', { name: bot.name }) : '',
+      // 普通のチャットは bot を選ばない（bot の仕事は bot の面の DM から。ADR 0362）。エージェントの名前と「使用量」の口だけ
       destination: {
-        sent, bot, selected: homeDest.selected, readOnlyBot: bot, fixedAfterSend: true,
-        botSetup: bot ? homeBotSetup(bot) : '',
-        openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
-        backendLabel: labelOf, onPick: id => homeDest.choose(id),
+        sent: true, backendLabel: labelOf,
         // エージェントの一覧の下の「使用量」（使用量の画面を開く）
         openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
-        groups: sent ? [] : [{ options: [
-          { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
-          ...homeDest.bots.map(b => ({ id: b.id, name: b.name, bot: b, backend: b.backend, backendLabel: labelOf(b.backend),
-            state: b.state ? t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`) : '',
-            waiting: b.state === 'waiting', working: b.state === 'working' })),
-        ] }],
       },
       git: state.git.data,
       worktree: state.worktree.data,
@@ -5446,8 +5412,8 @@ const controls = chatComposer.useControls({
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => {
-      const { backend, account, endpoint, homeBot } = composerSelection();
-      revalidateVocab(backend, endpoint ? '' : account, vocabCwd(state.sessions.find(x => x.id === state.current), homeBot));
+      const { backend, account, endpoint } = composerSelection();
+      revalidateVocab(backend, endpoint ? '' : account, vocabCwd(state.sessions.find(x => x.id === state.current)));
       usageSource.load(backend).catch(() => {});
       // エージェントの一覧で、ほかのエージェントの棒を出すかを決めるのに、そのアカウントの登録も要る（取ってあれば何もしない）
       const registered = () => state.backends.map((b) => accountList(b.id).length > 0).join();
@@ -5600,7 +5566,7 @@ function renderSessions() {
   });
   // 脇で選ばれて見える行: Channels の面ではそのスレッド、会話の面では開いている会話
   const where = (() => { try { return viewAddress.current; } catch { return null; } })();   // 起動の途中（アドレスを作る前）は無い
-  const currentId = surface() === 'channels' && !document.body.classList.contains('home-split') ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
+  const currentId = surface() === 'channels' ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
     : pendingNewSession && !state.current ? pendingNewSession.id : state.current;
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない。閉じたレールの P の印にも同じ印を付ける
   lastAttention = attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
@@ -5629,67 +5595,6 @@ function renderSessions() {
   });
   syncResumeStrip();
   syncResume();
-  paintCrumb();
-  try { channelsUi.homeChanged(); } catch { /* 起動の途中（Channels の面を作る前） */ }
-}
-
-// ---- 一時チャット（docs/design-system.md「一時チャットの流れ」）
-/** 会話の頭のパンくず「# 一時チャット ›」。一時チャットの会話のときだけ（bot の会話・委譲の子・流れの右に並べているときは出さない） */
-function paintCrumb() {
-  const s = state.sessions.find((x) => x.id === state.current);
-  const show = Boolean(s) && !s.bot && !s.delegation && !document.body.classList.contains('home-split');
-  $('crumbHome').hidden = !show;
-  $('crumbSep').hidden = !show;
-}
-$('crumbHome').onclick = () => viewAddress.go({ channelId: 'home' });
-
-/** 流れの右に会話を並べる（幅が 900px 以上で右パネルが閉じているとき）。並べられないときは会話の面へ */
-const homeSplitFits = () => (document.querySelector('body > main')?.clientWidth ?? 0) >= 900 && !document.body.classList.contains('file-preview-open');
-function setHomeSplit(on) {
-  if (document.body.classList.contains('home-split') === on) return;
-  document.body.classList.toggle('home-split', on);
-  try { channelsUi.tabs.paint(); } catch { /* 起動の途中 */ }
-  paintCrumb();
-}
-async function openHomeThread(sessionId) {
-  if (document.body.classList.contains('home-feed') && surface() === 'channels' && homeSplitFits()) {
-    setHomeSplit(true);
-    if (state.current !== sessionId) await select(sessionId);
-    viewAddress.note({ sessionId });
-    renderSessions();
-    return;
-  }
-  setHomeSplit(false);
-  await viewAddress.go({ sessionId });
-}
-// 幅が足りなくなった・右パネルを開いた: 並べるのをやめて会話の面へ
-const dropSplitIfNarrow = () => { if (document.body.classList.contains('home-split') && !homeSplitFits()) { setHomeSplit(false); channelsUi.setTab('chats'); } };
-addEventListener('resize', dropSplitIfNarrow);
-new MutationObserver(dropSplitIfNarrow).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-
-/** 一時チャットの流れの入力欄に書いた: 新しい会話を作って送る（作業ディレクトリ・モデル・承認モードは新しい会話の既定） */
-async function newHomeThread({ text, attachments = [] }) {
-  const split = homeSplitFits();
-  if (split) setHomeSplit(true); else channelsUi.setTab('chats');
-  const id = await startNew();
-  if (!id || state.current !== id) throw new Error(t('chat.send.failed', { error: 'new session' }));
-  $('prompt').value = text;
-  state.attached = attachments.map((a) => ({ path: a.path, name: a.name ?? shortPath(a.path), kind: 'file', mime: a.mime ?? '', from: 'host' }));
-  renderAttached();
-  await submit();
-  viewAddress.note({ sessionId: id });
-}
-
-/** 一時チャットの流れの投稿の ⋯ の「状態を変更」（会話の状態と同じ器） */
-function homeStatusItems(sessionId) {
-  const s = state.sessions.find((x) => x.id === sessionId);
-  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
-  return [{ label: t('session.menu.changeStatus'), hint: s?.status || t('session.status.none'), sub: () => [
-    { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatusOf(sessionId, v) } },
-    ...known.map((k) => ({ label: k, checked: k === s?.status, onClick: () => setStatusOf(sessionId, k) })),
-    { sep: true },
-    { label: t('session.menu.clearStatus'), onClick: () => setStatusOf(sessionId, '') },
-  ] }];
 }
 
 // ---------------------------------------------------------------- 中断と再開（docs/design-system.md「中断と再開」）
@@ -8848,19 +8753,8 @@ const channelsUi = setupChannels({
   // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
   noteView: (view) => {
     viewAddress.note(view);
-    // 一時チャットの流れを見ているか（その右に会話を並べられる）。別の面へ移ったら 2 枚並びをやめる
-    const homeFeed = view?.kind === 'channel' && view.id === 'home' && !view.threadId;
-    document.body.classList.toggle('home-feed', homeFeed);
-    if (!homeFeed) setHomeSplit(false);
     renderSessions();
   },
-  // 一時チャットの流れ（web/channels/feed.mjs）: 会話を開く・新しい会話を書く・状態のメニュー・エージェントの名前
-  openHomeThread: (sessionId) => openHomeThread(sessionId),
-  newHomeThread: (draft) => newHomeThread(draft),
-  homeStatusItems: (sessionId) => homeStatusItems(sessionId),
-  agentName: (sessionId) => { const s = state.sessions.find((x) => x.id === sessionId); return s ? labelOf(s.backend) : null; },
-  // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
-  vocab: (backend, cwd = '', account = '') => loadVocab(backend, account, cwd),
   quota: (backend) => usageSource.load(backend),
   usageOf: (backend) => usageSource.get(backend),
   agentView: (id) => { const b = state.backends.find((x) => x.id === id); return b ? agentRows.condensed(rowAgent(b)) : null; },
@@ -8874,10 +8768,9 @@ const channelsUi = setupChannels({
     const resident = status?.resident;
     return { persistent: !resident?.available || Boolean(status?.enabled && resident.keepRunning), hostZone: state.hostTimeZone };
   },
-  efforts: (args) => cmd('efforts', args),
   // bot のページの接続先の行（入力欄と同じ部品。登録が変わったら connChanged で知らせる）
   conn: connChoices,
-  noteChats: () => { setHomeSplit(false); if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
+  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),
@@ -9982,7 +9875,6 @@ function readBootTitle() {
 }
 async function syncTopbar() {
   syncRemoteOriginLine();
-  homeDest.paint();
   const version = ++topbarVersion;
   const s = state.sessions.find((x) => x.id === state.current);
   if (s?.title && s.title !== "(no title)") rememberTitle(s.id, s.title);
@@ -9991,7 +9883,7 @@ async function syncTopbar() {
   const id = state.current;
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
   // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
-  const { draft: chosen, homeBot, backend: bid, account: selectedAccount, endpoint: selectedEndpoint, model: selectedModel } = composerSelection();
+  const { draft: chosen, backend: bid, account: selectedAccount, endpoint: selectedEndpoint, model: selectedModel } = composerSelection();
   syncResume();
   paintContextStrip();
   const current = () => state.current === id && version === topbarVersion;
@@ -10002,7 +9894,6 @@ async function syncTopbar() {
 
   if (bid) state.shownBackend = bid;
   state.account = selectedAccount;
-  if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
   headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: selectedModel });
 
@@ -10014,10 +9905,10 @@ async function syncTopbar() {
   refreshGit().catch(() => {});
 
   // 語彙はエージェントごとに違う。切り替えたら取り直す。互いに待たない問い合わせ（語彙・接続先・アカウント）は一緒に出す
-  const wanted = vocabKey({ backend: bid, account: selectedAccount, endpoint: selectedEndpoint, cwd: vocabCwd(s, homeBot) });
-  const vocabRequest = loadVocab(bid, selectedEndpoint ? '' : selectedAccount, vocabCwd(s, homeBot));
-  const endpointRequest = syncEndpoint(s, bid, { value: selectedEndpoint, visible: !homeBot && Boolean(s), current });
-  const accountRequest = syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
+  const wanted = vocabKey({ backend: bid, account: selectedAccount, endpoint: selectedEndpoint, cwd: vocabCwd(s) });
+  const vocabRequest = loadVocab(bid, selectedEndpoint ? '' : selectedAccount, vocabCwd(s));
+  const endpointRequest = syncEndpoint(s, bid, { value: selectedEndpoint, visible: Boolean(s), current });
+  const accountRequest = syncAccount(s, bid, { value: selectedAccount, visible: true, current });
   endpointRequest.catch(() => {}); accountRequest.catch(() => {});
   const { modes, models } = await vocabRequest;
   if (state.current !== id || version !== topbarVersion) return;
@@ -10025,12 +9916,11 @@ async function syncTopbar() {
   state.models = models;
   if (s) { state.mode = s.mode ?? "default"; state.model = selectedModel; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
-  state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
+  state.mode = selectedMode(s, bid, modes, chosen);
   refreshWorktree().catch(() => {});   // 作業場所・モードが決まったら始める（接続先・エフォート・アカウントの取得を待たない）
   await endpointRequest;
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
-  if (homeBot) state.model = homeBot.model ?? '';
   if (!state.endpoint && !(state.model in models)) state.model = defaultModelOf(models);
   // モデルの一覧が揃ったらすぐ描く（エフォートの段を待たない）。エフォートは取れるまで「読み込み中」
   state.vocabKey = wanted;
@@ -10038,7 +9928,7 @@ async function syncTopbar() {
   const adopted = await adoptEfforts();
   if (state.current !== id || version !== topbarVersion) return;
   if (adopted) {
-    state.effort = homeBot?.effort ?? chosen?.effort ?? (chosen?.reset ? '' : s?.nextSettings?.effort ?? s?.effort) ?? '';
+    state.effort = chosen?.effort ?? (chosen?.reset ? '' : s?.nextSettings?.effort ?? s?.effort) ?? '';
     controls.paint();
   }
   await accountRequest;
@@ -10959,66 +10849,6 @@ const submitVoiceText = createChatVoiceSender({
     syncOutboxRows(outboxes.get(sessionId) ?? []);
   },
 });
-/** まだ送っていない会話を開いている（新しい会話の欄・作ったばかり・未送信の会話）。bot の会話は除く */
-function unsentHere() {
-  if (!state.current || state.current === freshSessionId) return true;
-  const s = state.sessions.find((x) => x.id === state.current);
-  return Boolean(s?.unsent) && !s.bot;
-}
-
-/**
- * 新しい会話の宛先に bot を選んだ最初の送信: 一時チャットの実体のチャンネルへ、その bot 宛ての投稿を置き（channels.post の to）、
- * そのスレッドを開く。空の会話（未送信）は残さず消す。送り直しても同じ投稿を二重に作らない（clientId）
- */
-// 送り直しの id と送っている印は、投稿を始めた会話（新しい会話の欄は ""）ごと
-const homeAttempts = new Map();
-const homeSending = new Set();
-/** 投稿を始めた会話の下書きを、押した時の版のままなら空にする。空にしたら true（ほかの会話へ移っていても、その会話の下書きだけを見る） */
-function clearHomeDraft(source, revision) {
-  const key = source ?? '';
-  if ((state.current ?? '') === key) {
-    if (draftRevision !== revision) return false;   // 応答を待つ間に書き足した: 残す
-    $('prompt').value = '';
-    state.attached = [];
-    renderAttached();
-    fitPrompt();
-    draftRevision = randomId();
-  } else if (state.drafts.get(key)?.revision !== revision) return false;
-  if (key) persistDraft(key, { text: '', attached: [], revision: key === (state.current ?? '') ? draftRevision : randomId(), dirty: true }).catch(() => {});
-  else dropBlankDraft();
-  return true;
-}
-async function sendToHomeBot(bot) {
-  // 送る中身・始めた会話・下書きの版は押した時に決める。応答を待つ間に別の会話へ移っても、後片付けは始めた会話とその版にだけ
-  const source = state.current;
-  const sourceKey = source ?? '';
-  if (homeSending.has(sourceKey)) return;
-  const text = $('prompt').value;
-  const attachments = orderedAttachments().map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
-  if (!text.trim() && !attachments.length) return;
-  saveDraft().catch(() => {});   // 押した時の版を下書きに写す（移った後に、その会話の下書きの版で見分ける）
-  const revision = draftRevision;
-  const empty = source ? state.sessions.find(s => s.id === source && s.unsent && !s.bot) ?? null : null;
-  const key = JSON.stringify([bot.id, text, attachments]);
-  if (homeAttempts.get(sourceKey)?.key !== key) homeAttempts.set(sourceKey, { key, clientId: `home-${randomId()}` });
-  homeSending.add(sourceKey);
-  try {
-    const post = await cmd('invoke', { op: 'channels.post', args: { channelId: 'home', text, ...(attachments.length ? { attachments } : {}), to: bot.id, clientId: homeAttempts.get(sourceKey).clientId } });
-    homeAttempts.delete(sourceKey);
-    const here = state.current === source;
-    const cleared = clearHomeDraft(source, revision);
-    if (here && cleared) {
-      homeDest.reset();
-      $('settingsError').textContent = '';
-      viewAddress.go({ channelId: post.channelId, threadId: post.id });
-    }
-    // 空の会話（未送信）は、下書きを空にできたときだけ消す（移った先で書き足した会話は残す）
-    if (cleared && empty && state.sessions.find(s => s.id === empty.id)?.unsent) deleteSessionRow(empty).catch(() => {});
-  } catch (e) {
-    if (state.current !== source) { notify(t('chat.send.failed', { error: e.message })); return; }
-    $('settingsError').textContent = t('chat.send.failed', { error: e.message });
-  } finally { homeSending.delete(sourceKey); }
-}
 
 // メインの入力欄の配送（web/composer/sender.mjs。子の会話のモーダルの入力欄も同じ核を使う）
 const chatSender = createSender({
@@ -11068,7 +10898,6 @@ async function submit({ at = armedSends.get(state.current), retry = false } = {}
     if (composerWait.held) { composerWait.point(); return; }
     const upBlock = uploadBlockReason();
     if (upBlock) { notify(upBlock); flashAttachEntry(); return; }
-    if (homeDest.bot) return sendToHomeBot(homeDest.bot);
   }
   const target = state.current;
   if (submittingMessages.has(target) || state.busy ||

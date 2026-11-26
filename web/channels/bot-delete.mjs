@@ -19,10 +19,10 @@ export function createBotDelete(host) {
   const focusBack = () => {
     if (opener?.isConnected && !opener.closest('[hidden]')) opener.focus();
     else {
-      const sameBot = target && document.querySelector('.bt[data-id="' + CSS.escape(target.id) + '"]');
+      const sameBot = target && document.querySelector('#groups [data-key="b:' + CSS.escape(target.id) + '"]');
       if (sameBot && !sameBot.closest('[hidden]')) { sameBot.focus(); return; }
       const notice = document.querySelector('#botView:not([hidden]) .bp-gone:not([hidden])');
-      (notice ?? document.querySelector('.bot-strip .bt, .bt'))?.focus();
+      (notice ?? document.querySelector('#groups .botsec-head, #faceChannels'))?.focus();
     }
   };
   const close = () => { if (!submitting) { sequence++; dialog.close(); focusBack(); target = null; } };

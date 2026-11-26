@@ -1,7 +1,7 @@
 // 無停止の更新 段階 3（agy）の実機の確かめ: 本物の agy（ACP。agy acp）を Pleiad のサーバーから保持役に載せ（AGENT_HOST_RUNTIME_ROOT を渡すと既定で載る）、ツールの実行中のターンを
 // サーバー A → B で付け直す（ADR 0270 の形: A を普通に落とす。札はターンの間に保持役の子へ置き直されている）。
 // B が印からの再生と続きで締め、turnEnd・completedAt・使用量が 1 回だけ残り、本文とツールの結果が履歴に 1 回ずつあることを見る。
-// agy は 1 会話 1 プロセス（ADR 0363。保持役の子の id は acp-agy-…）。2 ターンとも同じ agy のプロセスで、モデルは session/set_config_option で当てる（--model の引数は無い）。
+// agy は 1 会話 1 プロセス（ADR 0365。保持役の子の id は acp-agy-…）。2 ターンとも同じ agy のプロセスで、モデルは session/set_config_option で当てる（--model の引数は無い）。
 // LLM は gemini-3.8-flash-low で 2 ターン（1 つ目は会話を作るだけ。2 つ目が数秒かかる ping のシェル）。agy の会話は ~/.gemini/antigravity-cli に残る。
 // agy は AGENT_HOST_AGY_BIN で身代わり（node tests/lib/fake-agy.mjs）に替えられる（段取りだけの確かめ。台本はツールを呼ばないので tools の判定は外れる）。
 //

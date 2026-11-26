@@ -576,28 +576,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /**
-   * スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。会話がまだ無ければ作る。
-   * 走っていれば次のターンから（予約 nextSettings）。変えた欄は sidecar の overrides に印を付け、bot の既定を変えても上書きしない
-   */
-  async function threadSettings({ channelId, threadId, botId, backend, model, effort, mode, cwd }) {
-    const channel = await channels.get({ channelId });
-    if (channel.kind === 'dm') throw Object.assign(new Error('a DM has no thread settings'), { code: 'INVALID' });
-    const root = await channels.getPost({ channelId, postId: threadId });
-    if (!root || root.threadId !== null) throw Object.assign(new Error(`thread not found: ${threadId}`), { code: 'POST_NOT_FOUND' });
-    const bot = await getBot(botId);
-    if (!bot) throw Object.assign(new Error(`bot not found: ${botId}`), { code: 'BOT_NOT_FOUND' });
-    // 組み込みの bot の会話は、最初の設定（backend・作業場所）で作る。backend は作った後は変えない
-    const sessionId = await sessionFor({ bot, channel, threadId, post: root, ...(bot.plain ? { backend, cwd } : {}) });
-    const patch = { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}), ...(mode !== undefined ? { mode } : {}), ...(cwd !== undefined ? { cwd } : {}) };
-    // 組み込みの bot の会話は、スレッドで選んだエージェントのまま（bot.backend は Chats の既定。予約で替えない）
-    if (Object.keys(patch).length) await host.reserveTurnSettings({ sessionId, ...(bot.plain ? {} : { backend: bot.backend }), ...patch });
-    await updateSidecar(sessionId, (sb) => ({ ...sb, overrides: { ...(sb.overrides ?? {}), ...Object.fromEntries(Object.keys(patch).map((k) => [k, true])) } }));
-    const meta = await host.store.get(sessionId);
-    const next = meta.nextSettings ?? {};
-    return { sessionId, backend: meta.backend, model: next.model ?? meta.model ?? '', effort: next.effort ?? meta.effort ?? '', mode: next.mode ?? meta.mode ?? '', cwd: next.cwd ?? meta.cwd ?? '' };
-  }
-
-  /**
    * スレッドを atPostId のところで分ける（channels.branchThread。ADR 0157 の 4.4）。
    * bot ごとに、atPostId より後の投稿を最初に含むまとまりの手前で会話を分ける（無ければ末尾まで）。atPostId より後に呼ばれた bot（残す配達が無い）は連れて行かない。
    * 子の会話の sidecar は親の写しで、スレッドは新しい根・postCursor は残した配達のうち最後の投稿の写し（P と後ろの投稿を 1 通にまとめて渡していたら P の前。次のターンで P を渡し直す）。
@@ -1008,7 +986,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 組み込みの bot（bot なし）は記憶もスレッドの申し送りも持たない（ADR 0157）
     if (!bot.plain) {
       try {
-        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', locale: turn.agentLocale });
+        // 作業場所は会話の cwd（このターンの cwd。無ければ保存済みの会話の cwd）。無い会話は「この作業場所で」の記憶を受けない
+        let cwd = turn.info?.cwd ?? null;
+        if (!cwd) { try { cwd = (await host.store.get(sessionId))?.cwd ?? null; } catch { /* 読めなければ作業場所なし */ } }
+        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', cwd, locale: turn.agentLocale });
         rec.tail = tail;
         notes = tail.notes ?? [];
       } catch (e) { log('could not build the turn tail:', errText(e)); }
@@ -1654,7 +1635,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (rows.length) await inbox.remove(rows.map(x => x.id));
     },
     channels, bots, memory, host, emit, now, inbox,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

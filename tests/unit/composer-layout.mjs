@@ -76,7 +76,9 @@ export default async function (t) {
       && /\["fit-cwd-icon", "fit-mode-icon", "fit-model-icon"\]/.test(controlsSrc));
   t.ok('名前の最小の幅は先頭 N 字と … を実際の書体で測る（ch では「Smart 3.5」の 4 字が「Sm…」になり、アイコンだけにする段へ進まなかった。画面の順は tests/browser/composer-fit.cjs）',
     /measureText\(`\$\{chars\.slice\(0, n\)\.join\(""\)\}…`\)/.test(controlsSrc) && !/calc\(\$\{frame\}px \+ \$\{ch\}ch\)/.test(controlsSrc));
-  t.ok('スレッドの入力欄も同じ詰め方（fitComposerRow）', /fitComposerRow\(destChip\.parentElement/.test(fs.readFileSync(new URL('../../web/channels/thread-composer.mjs', import.meta.url), 'utf8')));
+  const threadSrc = fs.readFileSync(new URL('../../web/channels/thread-composer.mjs', import.meta.url), 'utf8');
+  t.ok('スレッドの入力欄はチップを持たない（宛先・作業フォルダー・モデル・承認モードを隠し、行は添付と送信だけ。ADR 0362）',
+    /const UNUSED = \[[^\]]*'cwdChip', 'modelChip'\]/.test(threadSrc) && !/destChip|modeChip|fitComposerRow/.test(threadSrc));
   const hideFn = controlsSrc.slice(controlsSrc.indexOf('hide(returnFocus = true) {'), controlsSrc.indexOf('place() {'));
   t.ok('面を閉じたら（Esc・面の外・チップのどれでも hide を通る）onHide を呼ぶ。モデルの面の 2 段目の Esc は閉じずに 1 段目へ戻る', /onHide\?\.\(\);/.test(hideFn)
     && /export function panel\(chip, pop, \{[^}]*onHide[^}]*\}\)/.test(controlsSrc) && /if \(e\.key === "Escape"\) \{[\s\S]{0,800}?if \(v && v\.view !== "top"\) \{[\s\S]{0,400}?return;\s*\}\s*self\.hide\(\);/.test(controlsSrc) && /openPanel\.hide\(false\)/.test(controlsSrc));

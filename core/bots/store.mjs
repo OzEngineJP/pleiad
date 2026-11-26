@@ -14,6 +14,7 @@ import { writeAtomic } from '../atomic-file.mjs';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 
 export const BOTS_VERSION = 1;
+export const BOT_COLOR_COUNT = 8;
 // ウイルス対策などが一時的に開いている間の読み取りの失敗（再試行で通ることが多い）
 const TRANSIENT_READ = new Set(['EBUSY', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE']);
 const READ_RETRIES = [60, 200, 500];
@@ -52,6 +53,8 @@ export function nameProblem(name) {
   return null;
 }
 export const iconProblem = (icon) => (icon === '' || oneEmoji(icon) ? null : 'icon: empty or a single emoji');
+export const colorValue = (color) => (Number.isInteger(color) && color >= 1 && color <= BOT_COLOR_COUNT ? color : null);
+export const colorProblem = (color) => (colorValue(color) ? null : `color: integer 1-${BOT_COLOR_COUNT}`);
 export const personaProblem = (persona) => (typeof persona !== 'string' ? 'persona: string'
   : [...persona].length > PERSONA_MAX_CHARS ? `persona: at most ${PERSONA_MAX_CHARS} characters` : null);
 
@@ -90,6 +93,8 @@ export function normalizeBot(raw, now = Date.now()) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id || typeof raw.name !== 'string' || !raw.name) return null;
   return {
     id: raw.id, name: raw.name, icon: str(raw.icon), iconImage: str(raw.iconImage), persona: str(raw.persona),
+    // 顔の色（1〜8。無い行は load が作った順に補う。色だけを選べ、絵文字・画像は残っていても画面では読まない。ADR 0362）
+    color: colorValue(raw.color),
     backend: str(raw.backend), model: str(raw.model), effort: str(raw.effort), mode: str(raw.mode),
     // bot のエージェントのアカウントの id（'' = ログイン中のアカウント）。人だけが bots.setAccount で変える。capabilities.accounts を持たない backend では使わない
     account: str(raw.account),
@@ -154,6 +159,10 @@ export function createBotStore({ file } = {}) {
     broken = null;
     loaded = true;
     bots = data.bots.map((b) => normalizeBot(b)).filter(Boolean);
+    // 色を持たない前の版の bot には、作った順の色を付ける。メモリで埋めるだけでここでは書かないが、
+    // 次の保存でそのまま残るので、消した bot の分で既存の bot の色がずれない
+    const byCreation = [...bots].filter((b) => !b.plain).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    byCreation.forEach((b, i) => { if (!colorValue(b.color)) b.color = (i % BOT_COLOR_COUNT) + 1; });
     // id か name が無い行は読み込まれず、次の保存で消える。黙って消さずにログへ残す
     if (bots.length < data.bots.length) console.error(`  bots: ${data.bots.length - bots.length} row(s) of bots.json have no id or name and were dropped: ${file}`);
   };

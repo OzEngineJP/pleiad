@@ -8313,13 +8313,20 @@ async function steerInstruction(task, instruction) {
 /** 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）。作り直したら公開の形を返す */
 async function renewTaskWorktree(task) {
   if (!task.worktree || await worktreeHost.worktrees.get(task.worktree.id)) return { needed: false, ok: true, worktree: null };
-  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return { needed: true, ok: false, worktree: null };
+  if (!await fs.stat(task.worktree.origin).then(s => s.isDirectory(), () => false)) return { needed: true, ok: false, worktree: null, reason: 'missing', error: task.worktree.origin };
   const made = await worktreeHost.createForTask({ cwd: task.worktree.origin, owner: task.parentSessionId, taskId: task.taskId, sessionId: task.sessionId });
-  if (!made.ok) return { needed: true, ok: false, worktree: null };
+  if (!made.ok) return { needed: true, ok: false, worktree: null, reason: made.reason ?? 'git', error: made.error ?? null };
   const current = (await store.get(task.sessionId)).cwd ?? null;
   await store.recordChange(task.sessionId, { by: 'ply', field: 'cwd', from: current, to: made.cwd, ...savedReason('worktreeSplit') });
   emitGlobal({ type: 'cwd', sessionId: task.sessionId, cwd: made.cwd, by: 'ply', ...savedReason('worktreeSplit') });
   return { needed: true, ok: true, worktree: publicWorktree(made.entry) };
+}
+/** 作り直せなかった理由（renewTaskWorktree の reason・error）を、人が読む今の言語の 1 文にする（送信待ちの「送れなかった」の行に出す） */
+function renewFailureText(renewal) {
+  if (renewal.reason === 'missing') return t('cwd.missing', { cwd: renewal.error ?? '' });
+  // i18n-dynamic: worktree.fail.
+  if (renewal.reason && renewal.reason !== 'git' && i18n.exists(`worktree.fail.${renewal.reason}`)) return t(`worktree.fail.${renewal.reason}`);
+  return t('worktree.fail.git', { error: renewal.error ?? renewal.reason ?? '' });
 }
 
 /**
@@ -8810,8 +8817,12 @@ agentTasks = await createAgentTasks({
     const release = trackChild(task, signal, execution);
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
-      const renewal = await renewTaskWorktree(task).catch(() => ({ needed: true, ok: false, worktree: null }));
-      if (renewal.needed && !renewal.ok) return { outcome: 'error', text: '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.worktreeRenewFailed') };
+      const renewal = await renewTaskWorktree(task).catch(e => ({ needed: true, ok: false, worktree: null, reason: 'git', error: String(e?.message ?? e) }));
+      if (renewal.needed && !renewal.ok) {
+        // 外から起きたターン（人の送信など）は始めずに断る。発言は送信待ちに「送れなかった」で残り、理由を人の言語で出す（ADR 0360 §3）
+        if (meta.external) meta.external.refuse?.(t('queue.worktreeRenewFailed', { reason: renewFailureText(renewal) }));
+        return { outcome: 'error', text: '', error: agentT(await agentLocaleFor(task.parentSessionId), 'delegation.worktreeRenewFailed') };
+      }
       const renewed = renewal.worktree;
       // 外から起きたターン: 作業場所を作り直した後で、送信待ちのターンを走らせる（人の発言なので onAccepted で指示を配送済みにしない）
       if (meta.external) {
@@ -9085,8 +9096,6 @@ botHost = createBotHost({
   accountBackend: (backend, accountId) => scopedOrUnavailable(backend, accountId),
   sessionBusy: id => sessionBusy(id),
   refuseBotDelete: id => refuseDelete(id, { bot: true }),
-  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
-  reserveTurnSettings: (args) => reserveTurnSettings(args),
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
   readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
   forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),

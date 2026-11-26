@@ -70,7 +70,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   updatedAt: number }} ThreadState */
 
 /** @typedef {{
- *   id: string, name: string, icon: string,               // icon は絵文字 1 つ
+ *   id: string, name: string, icon: string,               // icon は絵文字 1 つ（前の版の保存値。画面は読まない）
+ *   color?: number|null,                                  // 顔の色（1〜8。画面のアイコンはこの色だけ。ADR 0362）
  *   persona: string,                                      // 人格（自由文。1.5k トークンまで）
  *   iconImage?: string,                                   // 画像アイコンの写し（uploads/bot-icons/ の WebP）。空なら icon の絵文字を使う
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
@@ -90,7 +91,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  * 削除した bot の会話は本文を保持して閲覧専用。`bot` が null でも実行の入口で拒否する（ADR 0293）。
  * 会話の記録の欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
- *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // このスレッドだけで人が変えた欄（channels.threadSettings）。bot の既定を変えても上書きしない（ADR 0157）
+ *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // 以前のスレッドごとの上書きの印（ADR 0157）。残っていても読まない（ADR 0362）
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner'|'pulse',   // pulse = 心拍の安いモデルの隠れた会話（ADR 0126。投稿は作らず、channels.* の書き込みは断る）
  *   channelId: string|null, threadId: string|null, routineId?: string, taint?: 'webhook',
  *   memRev: number,                                       // 末尾の差分をどこまで渡したか（memory/log.jsonl の rev）
@@ -107,7 +108,9 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   sources: { kind: 'post'|'message', channelId?: string, postId?: string, sessionId?: string, messageId?: string, quote: string, at: number }[],
  *   at: number, updatedAt: number,
  *   by: Author,                                           // 今の本文を書いた者
- *   origBy?: Author }} MemoryEntry */                     // 書き手が替わる直し（人の行を AI が直すなど）のとき、元の書き手（最初の者）
+ *   tier?: 'always'|'workspace'|'archive',                // 段（core/memory/store.mjs。無いものは未振り分けで、従来どおり渡る）。markdown のキーは tier
+ *   workspace?: string,                                   // 作業場所（git の本体。スラッシュ形・末尾なし・500 字まで）。markdown のキーは ws
+ *   origBy?: Author }} MemoryEntry */                    // 書き手が替わる直し（人の行を AI が直すなど）のとき、元の書き手（最初の者）
 
 /** @typedef {{
  *   id: string, name: string, botId: string, channelId: string, prompt: string,

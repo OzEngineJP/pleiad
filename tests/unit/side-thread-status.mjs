@@ -110,15 +110,20 @@ export default async function (t) {
       threads: [threadRow],
     });
     const root = dom.els.get('groups');
-    const secA = sectionOf(root, 'A'), secB = sectionOf(root, 'B');
-    t.ok('状態ごとの節（A と B）が描かれる', Boolean(secA && secB));
-    const threadEl = rowOf(root, 'thread:c1:t1'), sessEl = rowOf(root, 's1');
-    t.ok('会話は一時チャットの状態の中、スレッドはチャンネルの中', Boolean(threadEl && sessEl) && rowOf(secA, 's1') === sessEl && !rowOf(secA, threadRow.id));
+    t.ok('状態ごとの節（A と B）が描かれる', Boolean(sectionOf(root, 'A') && sectionOf(root, 'B')));
+    t.ok('チャットの面: 会話は状態の節の中、チャンネルのスレッドは出さない（bot の面に出す。ADR 0362）',
+      Boolean(rowOf(sectionOf(root, 'A'), 's1')) && !rowOf(root, threadRow.id));
+    side.setFace('channels');
+    const threadEl = rowOf(root, threadRow.id);
+    t.ok('bot の面: スレッドはチャンネルの中', Boolean(threadEl) && rowOf(find(root, n => n.dataset.sideKey === 'chsec:c1'), threadRow.id) === threadEl);
     t.ok('チャンネルのスレッドはドラッグしない', threadEl.draggable !== true);
     threadEl.treeMenu(0, 0);
     t.ok('スレッドのメニューはスレッドの行を受け取る', calls[0]?.[0] === 'context' && calls[0]?.[1] === threadRow.id);
     calls.length = 0;
-    t.ok('一時チャットの会話は掴める', sessEl.draggable === true);
+    side.setFace('chats');
+    const secA = sectionOf(root, 'A'), secB = sectionOf(root, 'B');
+    const sessEl = rowOf(root, 's1');
+    t.ok('チャットの会話は掴める', sessEl.draggable === true);
     sessEl.dispatchEvent(dragEvent('dragstart'));
     const overB = dragEvent('dragover');
     secB.dispatchEvent(overB);
@@ -139,7 +144,7 @@ export default async function (t) {
       statuses: [{ status: 'A' }, { status: 'B', kept: true }],
       threads: [threadRow],
     });
-    // bot の DM は Bots の行で示し、一時チャットには入れない
+    // bot の DM は Bots の行で示し、チャットには入れない
     t.ok('bot の会話の行は掴めないまま（状態を持たない）', !rowOf(root, 's2') || rowOf(root, 's2').draggable !== true);
   } finally {
     dom.restore();
@@ -167,8 +172,10 @@ export default async function (t) {
       t.ok('畳んだ状態の見出しに待ちの印', sectionOf(root, 'A').classList.contains('collapsed') && !!find(sectionOf(root, 'A').children[0], n => n.classList.contains('wait')));
       const home = find(root, n => n.dataset.sideKey === 'chsec:home');
       home.children[0].treeExpand(false);
-      t.ok('一時チャットも畳むと待ちの印', !!find(find(root, n => n.dataset.sideKey === 'chsec:home').children[0], n => n.classList.contains('wait')));
+      t.ok('チャットも畳むと待ちの印', !!find(find(root, n => n.dataset.sideKey === 'chsec:home').children[0], n => n.classList.contains('wait')));
       t.ok('あなたを待っている区画は無い', !find(root, n => n.classList.contains('bot-waits')));
+      t.ok('チャットの面はチャットの見出しだけ（ルーティン・チャンネルは bot の面。ADR 0362）', root.children.map(n => n.dataset.sec ?? n.dataset.sideKey).join() === 'chsec:home');
+      side.setFace('channels');
       const channel = find(root, n => n.dataset.sideKey === 'chsec:a');
       if (prefs.filter?.dir || prefs.filter?.backends) {
         t.ok('スレッドの持たない値で絞る間はチャンネルを見せない', !channel && !find(root, n => n.dataset.sideKey === 'chsec:z'));
@@ -177,7 +184,7 @@ export default async function (t) {
         t.ok('スレッドの行の状態アイコンに名前がある', !!find(channel, n => n.classList.contains('row-status') && n.getAttribute('aria-label') === 'A'));
       }
       const order = root.children.map(n => n.dataset.sec ?? n.dataset.sideKey);
-      t.ok('ルーティン・一時チャット・「チャンネル ＋」・チャンネルの順（ADR 0288）', prefs.filter ? true : order.join() === 'routines,chsec:home,channels,chsec:a,chsec:z', order.join());
+      t.ok('bot の面: ルーティン・Bots・「チャンネル ＋」・チャンネルの順（ADR 0362）', prefs.filter ? true : order.join() === 'routines,bots-head,channels,chsec:a,chsec:z', order.join());
       t.ok('フィルター中はルーティンと「チャンネル ＋」を隠す', prefs.filter ? !root.children.includes(routinesSec) && !root.children.includes(channelsSec) : root.children.includes(routinesSec) && root.children.includes(channelsSec));
       t.ok('状態の絞り込みでは空のチャンネルを出さない', !prefs.filter || !find(root, n => n.dataset.sideKey === 'chsec:z'));
     } finally { d.restore(); }
@@ -322,12 +329,12 @@ export default async function (t) {
     } finally { d.restore(); }
   }
 
-  // ---- 4 つのメニュー（スレッドの行・一時チャットの流れ・グループの見出し・会話の行）は、どれも side.statusChoices を使う
+  // ---- 3 つのメニュー（スレッドの行・グループの見出し・会話の行。一時チャットの流れは ADR 0362 で無い）は、どれも side.statusChoices を使う
   {
     const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     const body = (head) => { const at = source.indexOf(head); return source.slice(at, source.indexOf('\n}\n', at) + 2); };
-    const menus = ['function threadMenu(', 'function homeStatusItems(', 'function familyMenu(', 'function rowMenu('];
-    t.ok('状態の候補を組む 4 つのメニューが side.statusChoices を使い、state.sessions から候補を集めない',
+    const menus = ['function threadMenu(', 'function familyMenu(', 'function rowMenu('];
+    t.ok('状態の候補を組む 3 つのメニューが side.statusChoices を使い、state.sessions から候補を集めない',
       menus.every((m) => body(m).includes('side.statusChoices()') && !/state\.sessions\.map\(\(z\) => z\.status\)/.test(body(m))),
       menus.filter((m) => !body(m).includes('side.statusChoices()')).join());
 

@@ -476,7 +476,7 @@ button.conn-lost:hover{color:var(--ink)}
    歯車を押すと、脇のセッション一覧が設定メニューに、会話が選んだページに入れ替わる。
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
-body.settings > #sidebar > :is(.search,.botstrip,.fchips,.filter-outside,.res-head,.groups,#authNeed),
+body.settings > #sidebar > :is(.side-face,.search,.fchips,.filter-outside,.res-head,.groups,#authNeed),
 body.settings #notifBell,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。
@@ -2467,14 +2467,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
   /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
-  .title-sub > :is(#crumbHome,.host-sub){flex-shrink:0;max-width:50%}
+  .title-sub > .host-sub{flex-shrink:0;max-width:50%}
   .title-sub > #remoteOriginLine{flex-shrink:10}
   .title-sub .host-sub{height:24px}
   /* 語の間は「 · 」 */
-  .title-sub > :not([hidden]):not(#crumbSep) ~ :not([hidden]):not(#crumbSep)::before{content:"·";margin-right:4px;color:var(--ink-weak)}
-  .title-sub #crumbSep{display:none}
-  .title-sub .crumb-home{padding:0;color:var(--ink-weak);font-size:inherit}
-  .title-sub .crumb-hash{margin-right:3px}
+  .title-sub > :not([hidden]) ~ :not([hidden])::before{content:"·";margin-right:4px;color:var(--ink-weak)}
   .title-sub .host-sub{padding:0;font-size:inherit;align-self:center}
   .title-sub .remote-origin{font-size:inherit;flex-basis:auto;order:0;white-space:nowrap}
 }

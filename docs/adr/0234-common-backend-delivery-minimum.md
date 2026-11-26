@@ -1,6 +1,6 @@
 # 0234. 共通機能の配達を全バックエンドの最低限にする
 
-状態: 採用（2026-11-26。提案は 2026-10-20）。`capability-marks.mjs` の `required: true` の印として実装した（[0362](0362-consolidate-backend-leak-guards.md)）
+状態: 採用（2026-11-26。提案は 2026-10-20）。`capability-marks.mjs` の `required: true` の印として実装した（[0364](0364-consolidate-backend-leak-guards.md)）
 
 ## 状況
 

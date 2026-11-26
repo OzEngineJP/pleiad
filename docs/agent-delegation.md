@@ -219,7 +219,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 - **置き場**: `<リポジトリの親>/<リポジトリ名>.pleiad/<id>`、ブランチ `pleiad/<id>`、ベースは今の HEAD。依存（`node_modules` など）は張らない。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる。
 - **子への指示**（最初の依頼に足す。`agent:tasks.worktreeInstruction`）: 作業はこの作業場所の中だけ・元の場所の絶対パスに書かない・依存は入っていないので必要なら自分で入れる・終わったらこのブランチにコミットする。
 - **依頼元へ返す**: タスクの記録に `worktree`（上の形）と、完了時の状態 `workspace`（`{ state: unmerged | merged | empty | unknown, files, ahead, dirty, removed }`）。完了通知の結果の後に `作業場所: worktree <branch>（未取り込み · N ファイル）`（`agent:delegation.noticeWorkspace*`。取り込み済み・変更なしで片付けたものはその旨、もう無いものは「片付け済み」）。`ply_task_status` / `ply_task_wait` は今の状態の 1 行 `workspaceSummary` と構造 `workspace` を返す。
-- **片付け**（[ADR 0360](adr/0360-delegated-worktree-settle-once.md)）: タスクの回が終わったとき（完了・失敗・取り消し。変更なし・取り込み済みなら消す。この回の子の会話の cwd は元の場所へ戻してから）に 1 度だけ片付ける。上限・ログイン切れの切り替えと仕事前のエラーの任せ直しでは片付けず、同じ worktree・ブランチで次の委譲先が続ける。タスクの記録の `worktree` を書き換えるときは `cwd` もそのパスにする。ほかに起動時・git のページを開いたときに状態を見る。未取り込みは残り、git のタブの Worktree に出る（取り込みを頼む相手は依頼元の会話）。消す直前に、その中を cwd に持つ外部 MCP を畳んでから消す（Windows は cwd が掴まれた場所を消せない。畳まれた分は次の利用で起き直る）。追加の指示（`ply_task_send`）や外から起きたターンで片付け済みの子が再開したときは、元の場所から新しい worktree を作り直す。作り直せなければターンを始めず、元の場所では走らせずに失敗で返す（`agent:delegation.worktreeRenewFailed`）。
+- **片付け**（[ADR 0360](adr/0360-delegated-worktree-settle-once.md)）: タスクの回が終わったとき（完了・失敗・取り消し。変更なし・取り込み済みなら消す。この回の子の会話の cwd は元の場所へ戻してから）に 1 度だけ片付ける。上限・ログイン切れの切り替えと仕事前のエラーの任せ直しでは片付けず、同じ worktree・ブランチで次の委譲先が続ける。タスクの記録の `worktree` を書き換えるときは `cwd` もそのパスにする。ほかに起動時・git のページを開いたときに状態を見る。未取り込みは残り、git のタブの Worktree に出る（取り込みを頼む相手は依頼元の会話）。消す直前に、その中を cwd に持つ外部 MCP を畳んでから消す（Windows は cwd が掴まれた場所を消せない。畳まれた分は次の利用で起き直る）。追加の指示（`ply_task_send`）や外から起きたターンで片付け済みの子が再開したときは、元の場所から新しい worktree を作り直す。作り直せなければターンを始めず、元の場所では走らせない。追加の指示はタスクの失敗で返す（`agent:delegation.worktreeRenewFailed`）。外から起きたターン（人の送信など）は、タスクの行を変えず依頼元へも知らせず、発言を送信待ちに理由付きの「送れなかった」で残す（`server:queue.worktreeRenewFailed`。子の会話の吹き出しに理由と［再送する］［取り消す］が出る）。
 - **一覧**: `agentTasks`（と `running` の `tasks`）の行の `worktree` に、台帳にまだあるか（`live`）。画面は作業場所が変わった（`worktreesChanged`）ら会話の分を読み直す。委譲カードの開いた内訳の「作業場所」は `⑂ worktree <branch>`、終わって取り込まれていなければ閉じた行の右端に「未取り込み」。
 
 子の作業場所の変更を伝える完了通知の 1 行 `変更: <branch> · N ファイル +a −d · コミット k`（2026-10-03、[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md) の決定 6。タスクの記録の `git`、`ply_task_status` / `ply_task_wait` の `git` / `gitSummary`、委譲カードの内訳の「変更」の行）は、2026-11-25 に消した（[ADR 0354](adr/0354-remove-turn-snapshots-and-guard-background-git.md)）。基準にしていた「会話の最初のターンの始まりの撮影」が無くなり、worktree を切らない子では同じ作業場所の別の会話のコミットまで混ざって当てにならなかったため（実例: main で動いた子に「34 ファイル +731 −1383 · コミット 7」と出た）。親が事実で確かめられるのは、worktree の子の上の `作業場所: worktree <branch>（未取り込み · N ファイル）` の行（ブランチの差）。worktree を切らない子には、変更の行を載せない。
@@ -235,7 +235,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 収まるモードが無い、あるいは範囲を機械的に強制できないエンジンに「誰にも聞かない」を渡すことになる場合は、
 **委譲した瞬間に1回だけ親の会話で承認を求める**。承認カードには、どのバックエンドをどのモードで動かすことになるかを表示する。
 拒否すると委譲は失敗する。コマンドのたびに聞かれるのとは負担が違うので、1回に畳んでいる。
-Antigravity は、旧い口（stream-json）では対話承認を持たず常に全部自動（`yolo`）だったので、親が無制限でない限りこの確認が出た。2026-11 に ACP へ替えて `default`・`accept-edits`・`auto`・`plan` を持った（[ADR 0363](adr/0363-antigravity-on-acp.md)）ので、親の範囲に収まるモードがあればこの確認は出ない（範囲は宣言で、`enforced: false`）。新しい会話の既定は今も `yolo`。
+Antigravity は、旧い口（stream-json）では対話承認を持たず常に全部自動（`yolo`）だったので、親が無制限でない限りこの確認が出た。2026-11 に ACP へ替えて `default`・`accept-edits`・`auto`・`plan` を持った（[ADR 0365](adr/0365-antigravity-on-acp.md)）ので、親の範囲に収まるモードがあればこの確認は出ない（範囲は宣言で、`enforced: false`）。新しい会話の既定は今も `yolo`。
 Codex の親は `full` / `yolo` 以外では必ず確認する。Codex は MCP のツール呼び出しを自前の承認に通さず、これが無いと委譲が起きたことに気づけないため。
 
 親の自動許可・承認済み操作そのものは引き継がない。実行中の承認は子の会話で通常の Pleiad カードとして表示する。
@@ -369,7 +369,7 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 
 止まった子が外から起きたとき（[ADR 0355](adr/0355-delegated-child-wake-notifies.md)）は、誰が起こしたかに関係なく、タスクを running → completed と動かし、最新の返答を結果にして依頼元へ知らせる。
 入口は、人が子へ直接送る（`byHuman`）・Chrome を「戻す」の続き（`continueAfterHandoff`。`byHandoff`）・「再開」（`resumeWritableSession`。`byResume`）・別の会話からの送信（`sessions.send`）・送信予定。
-どれも送信待ち（outbox）の `start` から `agentTasks.external` に渡り、ターンが受け付けられた直後に行を `running` にする（片付いた作業場所はターンの前に作り直す）。
+どれも送信待ち（outbox）の `start` から `agentTasks.external` に渡り、ターンが受け付けられた直後に行を `running` にする（片付いた作業場所はターンの前に作り直す。作り直せなければターンを走らせず、発言は送信待ちに理由付きの「送れなかった」で残る。タスクの行は変えず、依頼元へも知らせない。[ADR 0360](adr/0360-delegated-worktree-settle-once.md) §3）。
 タスクの回が走っていればその回に合流し、回は合流したターンと送信待ちの次のターンが終わるまで締めない（`closeRun`）。1 回止まったら 1 回知らせる。
 きっかけは、出来事の一覧のその回の行に「（きっかけ：依頼元の追加の指示／人の指示／Chrome を戻した続き／再開／別の会話からの送信）」（`agent:delegation.eventCause`）として書く。最初の回には付けない。
 Chrome を戻した続きは、子の会話の名札を「Chrome を戻した続き」（`sentByHandoff`）に、「再開」の文は「再開」（`byResume` → `sentByResume`。`ui:dialog.work.resumeContinue`）にし、どちらも人の指示には数えない。ホストに任せた子（根）は対象外。試験は `tests/unit/server-task-wake.mjs`・`tests/unit/server-chrome-handoff-wake.mjs`・`tests/unit/server-worktree.mjs`・`tests/unit/agent-tasks-end-notice.mjs`・`tests/unit/task-notice-events.mjs`。
@@ -410,7 +410,7 @@ Codex の履歴（`thread/read`）は、ツールの後に書いた本文を同�
 ### Antigravity の途中送信
 
 Antigravity は、旧い口（agy 1.4.4 の `--output-format stream-json`）では走っているターンへ入力を足せなかった。標準入力の 2 行目は今のターンが終わった後の別のターンになり、途中の割り込みの口も無かった（実測 2026-10-21）。
-2026-11 に ACP（`agy acp`）へ替えて、走っているターンへ `session/prompt` を重ねる途中送信を持った（`core/backends/acp-steer.mjs`。能力の印 `steer` を true にし、`control.steer`・`control.steerConfirms` を持たせる。[ADR 0363](adr/0363-antigravity-on-acp.md)）。
+2026-11 に ACP（`agy acp`）へ替えて、走っているターンへ `session/prompt` を重ねる途中送信を持った（`core/backends/acp-steer.mjs`。能力の印 `steer` を true にし、`control.steer`・`control.steerConfirms` を持たせる。[ADR 0365](adr/0365-antigravity-on-acp.md)）。
 受理は書き込みが断られなかったことで、「渡った」の合図は `session/prompt` の決着で出す。agy が重ねた入力を今のターンへ折り込むのか、待ち行列に積んで次のターンとして走らせるのかは、実物の agy ではまだ測っていない（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りを確かめた）。
 いまは途中送信できないエージェントは無い。圧縮のターン・人の送信待ちなど、途中で渡せないときの扱い（`queued` で次のターンへ）は、ほかのエージェントと同じ。
 

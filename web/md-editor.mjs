@@ -217,6 +217,25 @@ export function createMarkdownEditor(root, o) {
     const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
     let acc = 0, n, lastEnd = null;
     while ((n = walker.nextNode())) {
+      // 書けない塊（入力欄の bot の宛先。web/channels/mention-blocks.mjs）の中には置かない: 塊の頭なら手前、中・尻なら後ろへ
+      const isl = n.parentElement?.closest('[contenteditable="false"]');
+      if (isl && isl !== div && div.contains(isl)) {
+        const len = isl.textContent.length;
+        if (pos.v <= acc) return [isl.parentNode, [...isl.parentNode.childNodes].indexOf(isl)];
+        if (pos.v <= acc + len) {
+          const next = isl.nextSibling;
+          if (next?.nodeType === 3) return [next, 0];
+          const empty = document.createTextNode('');
+          isl.after(empty);
+          return [empty, 0];
+        }
+        acc += len;
+        let last = isl;
+        while (last.lastChild) last = last.lastChild;
+        walker.currentNode = last;
+        lastEnd = null;
+        continue;
+      }
       const len = n.nodeValue.length;
       if (pos.v < acc + len || (!after && pos.v === acc + len)) return [n, pos.v - acc];
       if (pos.v === acc + len) lastEnd = n;
