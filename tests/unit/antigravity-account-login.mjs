@@ -86,6 +86,29 @@ export default async function run(t) {
     await assert.rejects(accounts.hasAgyToken({ ...account, id: 'acct-ffffffffffff' }, data));
     t.ok('A token with another hard link is not a credential; a foreign directory is rejected', true);
 
+    // ---- ログイン済みの 2 つ目のアカウントの会話: ファイル保存の env・相対の置き場で起こし、印を確かめてから prompt を送る。1 つ目は何も足さない
+    const { backend } = await import(`../../core/backends/antigravity.mjs?re=turn-${Date.now()}`);
+    const work = path.join(data, 'work');
+    await fs.mkdir(work);
+    const turnEvents = [];
+    await fs.rm(process.env.FAKE_AGY_ACP_LOG, { force: true });
+    const bound = await backend.forAccount(account);
+    assert.deepEqual(await bound.accountStatus(), { hasCredential: true, label: '仕事用' });
+    const turn = await bound.runTurn({ prompt: 'hello', cwd: work, mode: 'default', emit: e => turnEvents.push(e), sessionId: 'agy-acct-turn-1' });
+    assert.ok(turnEvents.length > 0, 'the turn produced events');
+    const turnMethods = await sent();
+    assert.ok(turnMethods.indexOf('session/prompt') > turnMethods.indexOf('session/new'), 'prompt follows session/new');
+    assert.equal(await fs.stat(keychain).catch(() => null), null, 'the keychain stand-in is still untouched after a turn');
+    await bound.accountDispose();
+    // 印が出ない版: 会話も prompt を送らずに止まる（鍵束へ黙って戻さない）
+    process.env.FAKE_AGY_NO_FILE_MARKER = '1';
+    await fs.rm(process.env.FAKE_AGY_ACP_LOG, { force: true });
+    await assert.rejects(bound.runTurn({ prompt: 'hello', cwd: work, mode: 'default', emit: () => {}, sessionId: 'agy-acct-turn-2' }), e => e.code === 'AGY_FILE_STORAGE_UNSUPPORTED');
+    assert.ok(!(await sent()).includes('session/prompt'), 'no prompt was sent without the marker');
+    delete process.env.FAKE_AGY_NO_FILE_MARKER;
+    await bound.accountDispose();
+    t.ok('A logged-in second account runs a turn under the file-storage launch and the keychain stays untouched', true);
+
     // ---- 版が違って印が出ない: authenticate を送らず、止める
     const second = { id: 'acct-aaaaaaaaaaaa', name: 'B', dir: path.join(data, 'accounts', 'antigravity', 'acct-aaaaaaaaaaaa') };
     process.env.FAKE_AGY_NO_FILE_MARKER = '1';

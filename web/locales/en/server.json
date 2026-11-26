@@ -849,8 +849,7 @@
       "fileStorageUnsupported": "This version of agy cannot keep a second account separate (the setting that stores the token in a file has no effect). Update agy and try again.",
       "appDataUnreachable": "Pleiad's data folder is on a different drive from the user folder, so additional Antigravity accounts cannot be used.",
       "loginInBrowser": "Sign in to Google in your browser",
-      "loginTokenMissing": "The token file could not be confirmed after signing in. Sign in again.",
-      "unavailable": "Switching Antigravity connections is unavailable because its shared OS credentials cannot be safely isolated. Use the CLI login, or a separate OS user or virtual machine."
+      "loginTokenMissing": "The token file could not be confirmed after signing in. Sign in again."
     },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {

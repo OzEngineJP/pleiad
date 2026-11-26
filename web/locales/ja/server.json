@@ -846,8 +846,7 @@
       "fileStorageUnsupported": "この版の agy では 2 つ目以降のアカウントを分けられません（トークンをファイルに保存する設定が効きません）。agy を更新してから、もう一度お試しください。",
       "appDataUnreachable": "Pleiad のデータの置き場がユーザーフォルダーと別のドライブにあるため、Antigravity の 2 つ目以降のアカウントを使えません。",
       "loginInBrowser": "ブラウザーで Google にログインしてください",
-      "loginTokenMissing": "ログイン後にトークンのファイルを確認できませんでした。もう一度ログインしてください。",
-      "unavailable": "Antigravity の接続先の切り替えは未対応です。OS の共有資格情報を安全に分離できません。CLI のログインを使うか、別の OS ユーザーまたは仮想マシンで実行してください。"
+      "loginTokenMissing": "ログイン後にトークンのファイルを確認できませんでした。もう一度ログインしてください。"
     },
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {

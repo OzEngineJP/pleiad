@@ -95,7 +95,7 @@ export default async function (t) {
     t.ok('キーが無ければ自動選択のモデルへ送らず、難しさ mid で選ぶ（fallback: no_key）', !noKey.isError && noKey.data.routing.mode === 'auto' && noKey.data.routing.fallback === 'no_key'
       && noKey.data.routing.judge === 'none' && noKey.data.routing.difficulty === 'mid' && jevCalls.length === 0, noKey.text.slice(0, 300));
     t.ok('自動で選んだ委譲先で子を作る（antigravity の gemini）', noKey.data.backend === 'antigravity' && noKey.data.routing.target.backend === 'antigravity'
-      && noKey.data.routing.target.model === 'gemini-3.8-flash-high' && noKey.data.routing.target.account === null && noKey.data.routing.tier === 't1');
+      && noKey.data.routing.target.model === 'gemini-3.8-flash-high' && !noKey.data.routing.target.account && noKey.data.routing.tier === 't1');
 
     // ---- キーを登録して Jev に聞く
     await c.cmd('setDelegationRoutingKey', { service: 'nope', key: 'x' }).then(() => t.ok('知らないサービスは断る', false), () => t.ok('知らないサービスは断る', true));
@@ -243,10 +243,10 @@ export default async function (t) {
     const stoppedRow = await settle(limited.data?.taskId);
     // flash から同じ子のまま pro に切り替える。pro も上限で断る。偽の agy の Claude と GPT の枠は 5 時間が 100% だが、
     // 使用率では先回りして外さない（ADR 0352）ので、段の外の（t2 の）gemini-3.8-lite-high にも切り替え、そこも断られて止まる枠は 3 つになる
-    t.ok('agy の子は依頼元の会話の Claude のアカウントを継いで走り、上限で止まる',
-      stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === registered,
+    t.ok('agy の子は Claude のアカウントの id を継がず（ログイン中の agy で走り）、上限で止まる',
+      stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === '',
       JSON.stringify(stoppedRow?.limit ?? stoppedRow?.status));
-    t.ok('止まった枠の記録は、アカウントを持たないエージェントなので account: null（継いだ id を載せない）', stoppedRow?.limit && stoppedRow.limit.account === null && stoppedRow.routing?.target?.account === null, JSON.stringify(stoppedRow?.limit));
+    t.ok('止まった枠の記録に、依頼元の Claude のアカウントの id を載せない（agy は自分の台帳のアカウント。登録が無ければログイン中）', stoppedRow?.limit && !JSON.stringify(stoppedRow.limit).includes(registered) && !stoppedRow.routing?.target?.account, JSON.stringify(stoppedRow?.limit));
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high', 'antigravity:gemini-3.8-mini-high'], t2: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-lite-high'] } } });
     const after = await call(owner, { kind: 'trivial', task: 'agy-after-limit' });
     const afterSkipped = after.data?.routing?.skipped ?? [];
@@ -261,12 +261,12 @@ export default async function (t) {
     t.ok('実際に断られた枠だけが止まる（5 時間が 100% でも断られるまでは枠を止めない。止まるのは 3 つ）', heldAgy.length === 3
       && heldAgy.every(x => x.reason === 'recently_limited'), JSON.stringify(heldAgy));
     t.ok('使用量（providerUsage の held）の agy の行に、継いだ Claude のアカウントを載せない',
-      heldAgy.some(x => x.model === 'gemini-3.8-flash-high' && x.reason === 'recently_limited' && x.account === null) && !JSON.stringify(heldAgy).includes(registered), JSON.stringify(heldAgy));
+      heldAgy.some(x => x.model === 'gemini-3.8-flash-high' && x.reason === 'recently_limited') && !JSON.stringify(heldAgy).includes(registered), JSON.stringify(heldAgy));
     const usageFrom = c.mark();
     await turnOn(owner, prompt('ply_usage', { backend: 'antigravity' }));
     const usageText = (await c.waitFor(e => e.type === 'tool.result' && e.sessionId === owner, { from: usageFrom, ms: 60000 })).text;
     const plyHeld = JSON.parse(usageText).backends[0].held ?? [];
-    t.ok('ply_usage の agy の行にも、継いだ Claude のアカウントを載せない', plyHeld.some(x => x.model === 'gemini-3.8-flash-high' && !('account' in x)) && !usageText.includes(registered), usageText.slice(0, 600));
+    t.ok('ply_usage の agy の行にも、継いだ Claude のアカウントを載せない', plyHeld.some(x => x.model === 'gemini-3.8-flash-high') && !usageText.includes(registered), usageText.slice(0, 600));
 
     // 対照: ログイン中のアカウント（claudeAccount が空）の会話。別のモデルの枠で同じことをする
     await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-mini-high'], t2: ['antigravity:gemini-3.8-mini-high'] } } });

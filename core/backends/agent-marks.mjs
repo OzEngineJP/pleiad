@@ -129,7 +129,8 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     rewind: covered,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
     approvals: 'interactive', // session/request_permission を Pleiad の承認カードへ繋ぐ
     mcpApproval: 'agent',
-    accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 2 つ目以降のアカウントは、トークンをファイルに保存させて別の置き場に分ける（AGY_CLI_FORCE_FILE_TOKEN_STORAGE と --app-data-dir。1 つ目は OS の鍵束のまま。ADR 0222）
+    accounts: 'agent',
     compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // /compact を session/prompt で送る
     autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）

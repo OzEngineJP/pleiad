@@ -12,7 +12,8 @@
 // **組織の管理ポリシーは承認の省略（yolo）より強い。** 確認を求める設定のとき、確認の要るツールは拒否される。黙らせずに知らせる（adminNotice）。
 // **思考は流れない**（thought chunk は捨てる。thinking_tokens は usage_update の集計にだけ出る）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
-import { AgyAcp, MIN_ACP_VERSION, agyLaunchProfile, tooOldAcp } from "./antigravity-acp.mjs";
+import { AgyAcp, MIN_ACP_VERSION, agyLaunchProfile, assertFileStorage, prepareAgyLogs, tooOldAcp } from "./antigravity-acp.mjs";
+import { LOGIN_TIMEOUT_MS, accountHome, hasAgyToken, loginAgyAccount } from "./antigravity-accounts.mjs";
 import { adoptHome, agyRestricted, antigravityAgentOwners, antigravitySkipsNativeInstructions, prepareAgent, sweep, sweepHeldHomes, systemPromptAppend } from "./antigravity-context.mjs";
 import { nativeInstructionEntries } from "../context-session.mjs";
 import * as transcript from "./antigravity-store.mjs";
@@ -174,6 +175,18 @@ const live = new Map();   // conversationId -> entry
 
 // 前の起動が残した、Pleiad のコンテキストを渡すためのエージェント定義も消す（antigravity-context.mjs）
 sweep();
+
+/** account の指定の検査。無ければ null（1 つ目＝今ログインしているアカウント）。指定があるのに id が無い（空のオブジェクトなど）ものは、1 つ目へ黙って落とさず断る */
+function profileFor(account) {
+  if (account != null && !account?.id) throw Object.assign(new Error('A valid Antigravity account is required'), { code: 'AGY_ACCOUNT_INVALID' });
+  return agyLaunchProfile({ account: account ?? null });
+}
+
+/** 登録したアカウントの agy を止めている・ログインしている・消している最中（会話の起動と消す操作が重ならないための印） */
+const accountLogins = new Set();
+const accountRemoving = new Set();
+/** アカウントの会話の生きた agy（keys.profile がアカウントの id） */
+const entriesOf = account => [...new Set(live.values())].filter(entry => entry.keys?.profile === account?.id || entry.profile?.key === account?.id);
 
 /** 会話の生きた agy 1 本の状態。client は AgyAcp。turn は走っているターンの受け口（無いときは出来事を捨てる） */
 function newEntry(conversationId, fields = {}) {
@@ -381,9 +394,6 @@ const modelsGateRetryMs = () => Number(process.env.AGENT_HOST_AGY_MODELS_GATE_RE
 /** 未認証の印（`agy models` の「Please sign in」と `--print` 系の authentication required） */
 const AUTH_REQUIRED = /sign in|authentication required/i;
 
-
-/** 端末でのログインを待つ上限。 */
-const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_AGY_LOGIN_MS ?? 10 * 60_000);
 
 /** 待っている間に `agy models` を叩く間隔。 */
 const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_AGY_POLL_MS ?? 3_000);
@@ -602,7 +612,7 @@ export const backend = {
   //     'in' なら一覧を取り、'out' ならログインの案内、確かめられなければ checkNeeded（`agy models` は起こさない）
   //   - 取得のほかの失敗・直前の失敗から間隔（modelsGateRetryMs）が浅い再試行: checkNeeded（失敗を連発しない）
   async requireModelCatalog(cwd, model, { account = null } = {}) {
-    const catalog = profileState(agyLaunchProfile({ account }).key);
+    const catalog = profileState(profileFor(account).key);
     await loadModelsCache(catalog);
     if (catalog.modelCache !== null) return;
     const old = await tooOldAcp();
@@ -637,16 +647,16 @@ export const backend = {
 
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
   async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, visualizeInstructions = null, shellAppends = [], computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {}, askPermission = null, onPromptDelivered = null }, adopt = null) {
-    if (account != null) {
-      const error = new Error(t('antigravity.accounts.unavailable'));
-      error.code = 'AGY_ACCOUNTS_UNSUPPORTED';
-      throw error;
+    if (account != null && (accountRemoving.has(account?.id) || accountLogins.has(account?.id))) {
+      throw undelivered(new Error(t(accountRemoving.has(account.id) ? 'accounts.backend.removing' : 'accounts.backend.loginRunning', { agent: 'Antigravity' })));
     }
     const modeId = modeFor(mode);
     const m = MODES[modeId];
     const yolo = modeId === 'yolo';
     const k = adopt?.card?.agy ?? null;   // 付け直しの札のバックエンドの欄（backendCard）
-    const profile = agyLaunchProfile({ account });
+    const profile = profileFor(account);
+    // 2 つ目以降のアカウントは、置き場の検査（id の書式・親・リンク）を通してから起こす
+    if (profile.guard) await accountHome(account, store.dataDir).catch(e => { throw undelivered(e); });
     const catalog = profileState(k?.keys?.profile ?? profile.key);
 
     // **控えはターンの途中から書き足すが、ユーザー発言の時刻は送信の時刻で打つ。**（AI の発言は書くたびにその時刻、終わりで完了の時刻に打ち直す）
@@ -957,6 +967,11 @@ export const backend = {
         if (!entry) {
           const old = await tooOldAcp();
           if (old) throw undelivered(new Error(t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION })));
+          if (profile.guard) {
+            // トークンが無いアカウントは起こさない（起こしても -32000 で落ちるだけ）。ログの置き場を作り、古いログを片付ける
+            if (!(await hasAgyToken(account, store.dataDir).catch(() => false))) throw undelivered(Object.assign(new Error(t('accounts.backend.notLoggedIn', { agent: 'Antigravity' })), { code: 'AGY_NOT_LOGGED_IN' }));
+            prepareAgyLogs(profile);
+          }
           const plan = await heldAcpPlan({ dataDir: store.dataDir, argv: cliCommand('antigravity'), envName: 'AGENT_HOST_AGY_HOLDER' });
           if (plan) await sweepIdleOnce(plan.client);
           const botDirs = botFolders?.additionalDirectories ?? [];
@@ -967,7 +982,7 @@ export const backend = {
             browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
             control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
           const held = plan ? createHeldAcp({ client: plan.client, lifetime: 'conversation', childPrefix: ACP_CHILD_PREFIX }) : null;
-          entry = newEntry(conversationId, { keys, home: plan && agent ? agent.home : null, hookRuns: agent?.runs ? { file: agent.runs, offset: 0 } : null,
+          entry = newEntry(conversationId, { keys, profile, home: plan && agent ? agent.home : null, hookRuns: agent?.runs ? { file: agent.runs, offset: 0 } : null,
             cleanup: agent?.cleanup ?? (() => {}), held, catalog, mcpServers: restricted ? [] : agent?.mcpServers ?? [],
             mcpTokens: useAgent && agent ? relayTokens(agent.env) : [], cwd });
           entry.client = client = new AgyAcp({ cwd, home: agent?.home, extraDirs: botDirs, restricted, skipPermissions: yolo, profile,
@@ -1011,6 +1026,11 @@ export const backend = {
           learnModels(catalog, state);
         }
         check();
+        // ---- 2 つ目以降のアカウント: ファイル保存の印がログに出たことを確かめるまで prompt を送らない（鍵束へ黙って戻さない。プロセス 1 つにつき 1 度）
+        if (entry.profile?.guard && !entry.fileStorage) {
+          await assertFileStorage(entry.profile);
+          entry.fileStorage = true;
+        }
         // ---- 承認モードとモデルの適用（yolo は起動の旗。それ以外は ACP の mode）
         if (!yolo && (entry.modeId ?? '') !== m.acp) {
           const applied = await client.call('session/set_config_option', { sessionId: conversationId, configId: 'mode', value: m.acp }).catch(() => null);
@@ -1096,8 +1116,13 @@ export const backend = {
       else outcome = 'error';
       if (outcome === 'error' && AUTH_REQUIRED.test(String(error?.message ?? ''))) {
         catalog.authGuess = 'out';   // agy が自ら認証を求めた＝未ログインが確定
-        const argv = cliCommand('antigravity');
-        emit({ type: 'auth', backend: 'antigravity', phase: 'url', url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ') : 'agy', message: t('antigravity.auth.notLoggedInTurn') });
+        if (profile.guard) {
+          // 2 つ目以降のアカウントは端末のコマンドで入れない。「このアカウントのログインが要る」（画面のログインの導線）にまとめる
+          error = Object.assign(new Error(t('accounts.backend.notLoggedIn', { agent: 'Antigravity' })), { code: 'AGY_NOT_LOGGED_IN' });
+        } else {
+          const argv = cliCommand('antigravity');
+          emit({ type: 'auth', backend: 'antigravity', phase: 'url', url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ') : 'agy', message: t('antigravity.auth.notLoggedInTurn') });
+        }
       }
       // 何も実行せずに thought signature で断られた: 発言を控えから外し、再開した会話はネイティブの会話を使えない印を付ける
       if (outcome === 'error' && error?.thoughtSignature && started.size === 0 && !sawText) {
@@ -1129,7 +1154,7 @@ export const backend = {
     } finally {
       // ターンが終わった子は付け直す対象から外す。生きていれば次の発言を待つ（IDLE_MS で止める）。断られた・落ちた・中断を畳めなかった会話は使い回さない
       entry?.held?.endTurn();
-      const dead = !entry?.client?.alive || retracted || (outcome === 'aborted' && Boolean(fatal)) || outcome === 'error' && Boolean(error?.code === 'AGY_GONE');
+      const dead = !entry?.client?.alive || retracted || (outcome === 'aborted' && Boolean(fatal)) || outcome === 'error' && ['AGY_GONE', 'AGY_FILE_STORAGE_UNSUPPORTED'].includes(error?.code);
       if (entry) {
         if (dead || retracted) { closeEntry(entry); release(conversationId, entry); }
         else { live.set(conversationId, entry); armIdle(conversationId, entry); }
@@ -1247,7 +1272,8 @@ export const backend = {
    * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る（agy が available_commands_update に compact を出しているときだけ）。
    * 走っているターンでは呼ばれない。前後の文脈量は usage_update（文脈の占有）から取る
    */
-  async compact({ sessionId, emit, cwd, trigger = "manual", signal, hostSessionId, hostBackend }) {
+  async compact({ sessionId, emit, cwd, trigger = "manual", signal, hostSessionId, hostBackend, account = null }) {
+    const profile = profileFor(account);
     const dir = path.resolve(cwd ?? process.cwd());
     const hostSignal = signal?.signal ?? signal;
     let client, fatal = null, usage = null, before = null, commands = [];
@@ -1261,7 +1287,12 @@ export const backend = {
       const existing = live.get(sessionId);
       if (existing?.turn) throw new Error(t("antigravity.errors.notConnected"));
       if (existing) { closeEntry(existing); release(sessionId, existing); existing.cleanup?.(); }
-      client = new AgyAcp({ cwd: dir, timeoutMs: START_TIMEOUT_MS, skipPermissions: true,
+      if (profile.guard) {
+        await accountHome(account, store.dataDir);
+        if (!(await hasAgyToken(account, store.dataDir).catch(() => false))) throw Object.assign(new Error(t('accounts.backend.notLoggedIn', { agent: 'Antigravity' })), { code: 'AGY_NOT_LOGGED_IN' });
+        prepareAgyLogs(profile);
+      }
+      client = new AgyAcp({ cwd: dir, timeoutMs: START_TIMEOUT_MS, skipPermissions: true, profile,
         onGone: (error) => { fatal = error; },
         onUpdate: (params) => {
           if (params.sessionId !== sessionId) return;
@@ -1280,6 +1311,7 @@ export const backend = {
         try { state = await client.call(method, { sessionId, cwd: dir, mcpServers: [] }); break; } catch (e) { lastError = e; if (e?.notFound) break; }
       }
       if (!state) throw lastError ?? new Error(t("antigravity.errors.notConnected"));
+      await assertFileStorage(profile);   // 2 つ目以降のアカウントは印を確かめてから prompt（/compact）を送る
       await new Promise((resolve) => setImmediate(resolve));
       if (fatal) throw fatal;
       if (!commands.some((c) => String(c?.name ?? "").replace(/^\//, "") === "compact")) {
@@ -1311,6 +1343,75 @@ export const backend = {
   // stderr へ OAuth の URL を出し、stdin で認可コードを待つ**（実機で確認）。
   // つまりログイン専用の口は要らず、ターンを 1 本起こせばその経路に乗る。
 
+  // ---- 2 つ目以降のアカウント（ADR 0222。トークンをファイルに保存させて別の置き場に分ける。antigravity-accounts.mjs） -------------------
+  //
+  // 1 つ目（account 無し）は今の OS の鍵束のまま。agy のバックエンドはモジュールに 1 つで、アカウントごとの状態は profile（key = アカウントの id）に持つ。
+
+  /** アカウントを束縛した写し。各メソッドの引数にアカウントを入れる（OpenCode と同じ形。履歴は Pleiad の控えなのでアカウントを問わない） */
+  async forAccount(account) {
+    if (!account?.id) throw Object.assign(new Error('A valid Antigravity account is required'), { code: 'AGY_ACCOUNT_INVALID' });
+    await accountHome(account, store.dataDir);
+    const bound = Object.defineProperties({}, Object.getOwnPropertyDescriptors(backend));
+    const inject = (name, index) => {
+      const fn = backend[name];
+      bound[name] = (...args) => {
+        const next = [...args];
+        next[index] = { ...(typeof next[index] === 'object' && next[index] !== null ? next[index] : {}), account };
+        return fn(...next);
+      };
+    };
+    for (const [name, index] of [['runTurn', 0], ['adoptTurn', 0], ['compact', 0], ['models', 1], ['validModel', 1], ['requireModelCatalog', 2]]) inject(name, index);
+    bound.usage = (options = {}) => backend.usage({ ...options, account, accounts: [] });
+    bound.forAccount = next => backend.forAccount(next);
+    for (const name of ['accountLogin', 'accountStatus', 'accountRemove', 'accountDispose']) bound[name] = (options = {}) => backend[name]({ ...options, account });
+    bound.auth = {
+      status: async () => { const status = await backend.accountStatus({ account }); return { loggedIn: status.hasCredential, account: status.label ?? null }; },
+      login: (options = {}) => backend.accountLogin({ ...options, account }),
+      cancel: () => backend.auth.cancel({ account }),
+      logout: (options = {}) => backend.auth.logout({ ...options, account }),
+    };
+    return bound;
+  },
+
+  /** トークンのファイルが安全に在るか（中身は読まない）。置き場が安全でないときは「無い」 */
+  async accountStatus({ account }) {
+    const has = await hasAgyToken(account, store.dataDir).catch(() => false);
+    return { hasCredential: has, ...(has ? { label: account.name || t('antigravity.auth.account') } : {}) };
+  },
+
+  /** ブラウザーでのログイン（method は oauth-personal・oauth-business。既定は個人用） */
+  async accountLogin({ account, emit, signal, method }) {
+    if (!account?.id) throw new Error('A dedicated Antigravity account is required');
+    if (accountRemoving.has(account.id)) throw new Error(t('accounts.backend.removing', { agent: 'Antigravity' }));
+    if (accountLogins.has(account.id)) throw new Error(t('accounts.backend.loginRunning', { agent: 'Antigravity' }));
+    // 生きている agy があると、ログインで書かれるトークンと食い違う。止めてから進める
+    for (const entry of entriesOf(account)) { if (entry.turn) throw new Error(t('accounts.backend.inUseByTurn', { agent: 'Antigravity' })); }
+    for (const entry of entriesOf(account)) { closeEntry(entry); release(entry.conversationId, entry); entry.cleanup?.(); }
+    accountLogins.add(account.id);
+    try {
+      const result = await loginAgyAccount({ account, dataDir: store.dataDir, emit, signal, ...(method ? { method } : {}) });
+      profileState(account.id).authGuess = 'in';
+      return result;
+    } finally { accountLogins.delete(account.id); }
+  },
+
+  /** アカウントの agy を止める（使用中のターン・バックグラウンドのコマンドがあれば断る）。置き場は accounts.remove が消す */
+  async accountRemove({ account }) {
+    if (!account?.id) throw new Error('A dedicated Antigravity account is required');
+    if (accountRemoving.has(account.id) || accountLogins.has(account.id)) throw new Error(t('accounts.backend.inUse', { agent: 'Antigravity' }));
+    accountRemoving.add(account.id);
+    try {
+      if (entriesOf(account).some(entry => entry.turn || entry.behind)) throw new Error(t('accounts.backend.inUseByTurn', { agent: 'Antigravity' }));
+      await backend.accountDispose({ account });
+      profileStates.delete(account.id);
+    } finally { accountRemoving.delete(account.id); }
+  },
+
+  /** アカウントの生きた agy を止める（接続先の一覧から外すとき・作り直すとき） */
+  async accountDispose({ account }) {
+    for (const entry of entriesOf(account)) { closeEntry(entry); release(entry.conversationId, entry); entry.cleanup?.(); }
+  },
+
   auth: {
     /**
      * ログインしているか。
@@ -1320,7 +1421,7 @@ export const backend = {
      * 未ログインなら「Please sign in」で落ちる（実機で確認）。
      */
     async status({ probe = false, account = null } = {}) {
-      const catalog = profileState(agyLaunchProfile({ account }).key);
+      const catalog = profileState(profileFor(account).key);
       // probe=false（起動時・定期の受動確認）は `agy` を起こさない。最後に分かった見通しだけを返す
       if (!probe) {
         if (catalog.authGuess === 'in') return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
@@ -1361,7 +1462,7 @@ export const backend = {
      * `agy models` が通るようになるまで見張る（利用者は「再確認」を押さなくてよい）。
      */
     async login({ emit, account = null } = {}) {
-      const catalog = profileState(agyLaunchProfile({ account }).key);
+      const catalog = profileState(profileFor(account).key);
       if (catalog.pendingAuth) throw new Error(t("antigravity.auth.loginRunning"));
       catalog.pendingAuth = {};
       const watch = catalog.loginWatch.begin();
@@ -1401,7 +1502,7 @@ export const backend = {
 
     /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
     async cancel({ account = null } = {}) {
-      return profileState(agyLaunchProfile({ account }).key).loginWatch.cancel();
+      return profileState(profileFor(account).key).loginWatch.cancel();
     },
 
     /**
@@ -1409,9 +1510,9 @@ export const backend = {
      * Pleiad からは消せないので、そのことを伝える。
      */
     async logout({ account = null } = {}) {
-      const catalog = profileState(agyLaunchProfile({ account }).key);
+      const catalog = profileState(profileFor(account).key);
       // ACP に logout があるときだけ agy に頼む（無ければ端末での操作を案内する）
-      const client = new AgyAcp({ timeoutMs: START_TIMEOUT_MS, profile: agyLaunchProfile({ account }) });
+      const client = new AgyAcp({ timeoutMs: START_TIMEOUT_MS, profile: profileFor(account) });
       try {
         const init = await client.start();
         if (init?.agentCapabilities?.auth?.logout) {
