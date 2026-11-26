@@ -503,7 +503,8 @@ async function runTurn(text) {
     } });
   }
 
-  const noReplyLimit = text === "limit-no-reply" || text.endsWith("\nlimit-no-reply");
+  // 委譲の isolate では依頼の後に worktree の段落が付き、末尾の段落が依頼でなくなる。届いた本文全体の行で見る
+  const noReplyLimit = wire.split("\n").some(line => line === "limit-no-reply");
   if (text === "error-after-reply" || text === "limit-after-reply" || noReplyLimit || text === "error-after-tool") {
     if (!noReplyLimit) {
       step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完成した返事" });

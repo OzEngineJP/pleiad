@@ -151,13 +151,14 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
   }
 
   /** 子が終わった。変わっていなければ・取り込み済みなら片付け、そうでなければ残す。子の会話の cwd は消すときに元の場所へ戻す。状態は片付ける前のもの */
-  async function taskDone(task) {
+  // sessions は cwd を元の場所へ戻してよい子の会話（既定はタスクの今の会話。任せ直した前の子の会話も渡せる）
+  async function taskDone(task, { sessions = [task?.sessionId] } = {}) {
     if (!task?.worktree?.id) return null;
     const before = await taskState(task.worktree);
     // 台帳の子のタスクはまだ「走っている」ことになっている（終わりはこの後に書かれる）。自分自身を使っているものに数えない
     ignoring.add(task.taskId);
     let settled;
-    try { settled = await worktrees.settle(task.worktree.id, { release: [task.sessionId] }); }
+    try { settled = await worktrees.settle(task.worktree.id, { release: sessions.filter(Boolean) }); }
     finally { ignoring.delete(task.taskId); }
     if (settled.action === 'removed') return { ...before, removed: true };
     // 消せなかった（掴まれている・外せないリンク）ものを「片付けた」と言わない

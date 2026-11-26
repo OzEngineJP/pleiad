@@ -350,6 +350,7 @@
     "idPending": "The conversation ID is not determined yet.",
     "parentEnded": "The requesting conversation has ended.",
     "childDeleted": "The delegated child conversation has been deleted. To continue, delegate again.",
+    "worktreeRenewFailed": "The delegated child's worktree could not be recreated, so the task stopped instead of running in the original location. Check the original location and the git state.",
     "backendDisabled": "The specified backend is not enabled.",
     "modelUnknown": "model_unknown: The model {{model}} is not in the current {{backend}} model list (available: {{models}}). Fix or omit model and delegate again.",
     "accountUnknown": "account_unknown: the connection {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
