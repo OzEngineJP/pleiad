@@ -155,10 +155,10 @@ body.file-preview-wide .file-preview-resize{display:none}
 .browser-confirm-settings h3{font-size:var(--fs);margin:24px 0 12px}
 .browser-confirm-settings h4{font-size:var(--fs-s);color:var(--ink-weak);font-weight:400;margin:18px 0 8px}
 .browser-confirm-settings .browser-setting{max-width:none;padding:10px 0}
-.browser-confirm-settings input[role=switch]{appearance:none;width:36px;height:22px;border:0;border-radius:999px;background:var(--surface-3);position:relative;cursor:pointer;flex:none}
+.browser-confirm-settings input[role=switch]{appearance:none;width:36px;height:22px;border:0;border-radius:999px;background:var(--fill-off);color:var(--on-fill);position:relative;cursor:pointer;flex:none}
 .browser-confirm-settings input[role=switch]:before{content:'';position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:var(--surface-paper);transition:transform .12s}
 .browser-confirm-settings input[role=switch]:checked{background:var(--fill-primary);color:var(--on-fill)}
-.browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px)}
+.browser-confirm-settings input[role=switch]:checked:before{transform:translateX(14px);background:currentColor}
 .browser-confirm-settings input[role=switch]:focus-visible{outline:2px solid var(--line-blue);outline-offset:3px}
 .browser-site-name{flex:1;min-width:140px;overflow-wrap:anywhere}
 /* 設定 › ブラウザー › エージェントのブラウザー（PC の Chrome への接続。ADR 0148・0153） */

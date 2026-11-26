@@ -40,6 +40,7 @@
   /* -- 塗り（fill）。唯一の有彩色の面。主要操作にだけ使う。文字は --on-fill 固定 -- */
   --fill-primary:#3a499e;     /* 送信・許可・回答する */
   --fill-primary-hover:#2f3c86;
+  --fill-off:#596089;         /* スイッチのオフのトラック。面（--surface-1・--surface-paper）に対して明暗どちらでも 3:1 以上 */
   --on-fill:#f4f5ff;          /* 塗りの上に乗る文字・アイコン。ほぼ白 */
 
   /* -- 文字（ink）。濃い青が本文。「青い線と文字」を地に置く -- */
@@ -143,7 +144,7 @@
     --surface-hover:#222329;--surface-sel:#2a2b32;
     --surface-veil:rgba(0,0,0,.55);
     --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
-    --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
+    --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--fill-off:#8a91b8;--on-fill:#f4f5ff;
     --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
     --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
@@ -164,7 +165,7 @@
   --surface-hover:#222329;--surface-sel:#2a2b32;
   --surface-veil:rgba(0,0,0,.55);
   --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
-  --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
+  --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--fill-off:#8a91b8;--on-fill:#f4f5ff;
   --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
   --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
