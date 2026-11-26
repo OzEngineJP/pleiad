@@ -5,6 +5,7 @@
 //   deps（server.mjs が渡す。足りない口が見つかったらここと docs/channels.md に足す）:
 //     store, dataDir, usageStore, sessionSearch, runtime（走っているターンの表）, outbox（人の送信待ち）,
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
+//     updating()（更新のリース中か）・reserveBotStart()（配達開始からターン確保までリースの取得を防ぎ、解除関数を返す。リース中なら null）
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
 //     accountList(backendId)（そのエージェントに登録したアカウント [{ id, name, ready }]。bots.setAccount の検査が使う。ADR 0224）、
 //     endpointHas(backendId, id)（そのエージェントに登録した互換の接続先か。bots.setAccount の検査）・endpointRow(id)（一覧の行。キー無し。段の確かめ）・
@@ -170,6 +171,9 @@ export function createBotHost(deps) {
       return { botInstructions: extra?.botInstructions ?? setup?.botInstructions ?? null, notes: extra?.notes ?? [], folders: setup?.folders ?? null };
     }, { botInstructions: null, notes: [], folders: null }),
     restoreTurn: guard('restoreTurn', (turn, card) => dispatch.restoreTurn(turn, card), false),
+    loadBots: guard('loadBots', () => bots.load()),
+    recoverRoutines: guard('recoverRoutines', () => routines.recover()),
+    initialDeliveredFor: (sessionId) => dispatch.initialDeliveredFor(sessionId),
     liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
     itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
     callersFor: (sessionId) => dispatch.callersFor(sessionId),

@@ -7876,7 +7876,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
         },
       });
     }
-    botHost?.onPermission({ id: cards[0].id, ...payload }, 'open');
+    botHost?.onPermission({ id: cards[0].id, ...payload, askedAt: restoredCards.get(cards[0].id)?.askedAt }, 'open');
     // 通知の一覧のあなた待ち。委譲の子の承認は、カードが出ている依頼元の会話へ飛ぶ（ADR 0149）
     if (payload.sessionId) void inboxSources.permissionOpened({ id: cards[0].id, sessionId: payload.sessionId, kind: payload.kind, via: ancestors[0] ?? null, chrome: Boolean(payload.browserHandoff || payload.chromeWait) });
     signal?.addEventListener?.("abort", onAbort, { once: true });
@@ -8103,7 +8103,10 @@ const restoredCards = waitingCards.load();
 if (restoredCards.size) console.log(`  前の起動が残した承認・質問のカード ${restoredCards.size} 件を読んだ`);
 const startupHeldChildren = new Map();
 let startupHolder = null, startupHolderUnreadable = false;
+botHost = makeBotHost();
+await botHost.loadBots();
 const adopting = await restoreAdoptedTurns();
+await botHost.recoverRoutines();
 
 async function taskStopUnconfirmed(task) {
   if (startupHolderUnreadable) return true;
@@ -9082,47 +9085,51 @@ await worktreeHost.worktrees.reconcile()
   .catch(e => console.error('  worktree の整理に失敗:', String(e?.message ?? e)));
 worktreeSweepSoon();
 
-// bot・Channels・ルーティン。会話を作る・走らせる・止める・途中送信するための道具を渡す（中身は core/bots-host.mjs のモジュールが持つ）
-botHost = createBotHost({
-  store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
-  createConversation, runTurn, noticeTarget, noticeBlocked, abortSessions, emitGlobal,
-  // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
-  internalCall: internalCalls.call,
-  getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
-  // bot のアカウントを検査する側（checkModelEffort）は、引けないアカウントを投げて断る。会話・心拍の側は、投げずに使えないバックエンドを受ける
-  // （ログイン中の一覧へ黙って落とさない。保存済みの会話は読める）
-  backendForAccount: async (backend, accountId) => !backend || !accountId || !accountKind(backend)
-    ? backend
-    : backendForAccount(backend, await accountResolve(backend, accountId)),
-  accountBackend: (backend, accountId) => scopedOrUnavailable(backend, accountId),
-  sessionBusy: id => sessionBusy(id),
-  refuseBotDelete: id => refuseDelete(id, { bot: true }),
-  // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
-  readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
-  forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),
-  // スレッドの送り直し（channels.resend）: 巻き戻せるかを先に全部確かめ、確かめた後で巻き戻す（ADR 0102 の順）
-  rewindPlan: async ({ sessionId, beforeMessageId }) => (await pickBackend(sessionId)).rewindPlan(sessionId, { beforeMessageId }),
-  rewindSession: (args) => rewindConversation(args),
-  // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
-  deleteHidden: async id => {
-    if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
-    if (!await conversation(id)) { await store.removeSession(id); return true; }
-    if (!await deleteHiddenConversation(id, getBackend)) {
-      // ネイティブ削除に対応しないエージェントでは、非表示の印を保持する。続行は永続の閲覧用状態で拒否する。
-      return Boolean((await store.get(id)).deletedBot);
-    }
-    await store.removeSession(id);
-    return true;
-  },
-  // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
-  accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
-  // bot の互換の接続先（bots.setAccount。ADR 0359）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
-  endpointHas: (backendId, id) => compatEndpoints.has(id, backendId),
-  endpointRow: (id) => endpointRow(id),
-  endpointResolve: (id, backendId) => compatEndpoints.resolve(id, backendId),
-  // bot のアカウントを、送った会話（Codex・OpenCode）では次のターンの予約にする。人の既定には覚えない
-  reserveAccount: (sessionId, account) => reserveTurnSettings({ sessionId, account, keepPrefs: true }),
-});
+// bot・Channels・ルーティン。保持役からターンを付け直す前に組み立てる
+function makeBotHost() {
+  return createBotHost({
+    store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
+    createConversation, runTurn, noticeTarget, noticeBlocked: id => noticeBlocked(id), abortSessions, emitGlobal,
+    updating: () => updateGate.locked,
+    reserveBotStart: () => updateGate.locked ? null : updateGate.enter(),
+    // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
+    internalCall: internalCalls.call,
+    getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+    // bot のアカウントを検査する側（checkModelEffort）は、引けないアカウントを投げて断る。会話・心拍の側は、投げずに使えないバックエンドを受ける
+    // （ログイン中の一覧へ黙って落とさない。保存済みの会話は読める）
+    backendForAccount: async (backend, accountId) => !backend || !accountId || !accountKind(backend)
+      ? backend
+      : backendForAccount(backend, await accountResolve(backend, accountId)),
+    accountBackend: (backend, accountId) => scopedOrUnavailable(backend, accountId),
+    sessionBusy: id => sessionBusy(id),
+    refuseBotDelete: id => refuseDelete(id, { bot: true }),
+    // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
+    readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
+    forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),
+    // スレッドの送り直し（channels.resend）: 巻き戻せるかを先に全部確かめ、確かめた後で巻き戻す（ADR 0102 の順）
+    rewindPlan: async ({ sessionId, beforeMessageId }) => (await pickBackend(sessionId)).rewindPlan(sessionId, { beforeMessageId }),
+    rewindSession: (args) => rewindConversation(args),
+    // 隠れた会話（夜の整理・心拍）をネイティブの会話ごと消す。消せないバックエンド・走っている会話は残して false（ADR 0127）
+    deleteHidden: async id => {
+      if (sessionBusy(id) || !HIDDEN_BOT_KINDS.has((await store.get(id)).bot?.kind)) return false;
+      if (!await conversation(id)) { await store.removeSession(id); return true; }
+      if (!await deleteHiddenConversation(id, getBackend)) {
+        // ネイティブ削除に対応しないエージェントでは、非表示の印を保持する。続行は永続の閲覧用状態で拒否する。
+        return Boolean((await store.get(id)).deletedBot);
+      }
+      await store.removeSession(id);
+      return true;
+    },
+    // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
+    accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
+    // bot の互換の接続先（bots.setAccount。ADR 0359）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
+    endpointHas: (backendId, id) => compatEndpoints.has(id, backendId),
+    endpointRow: (id) => endpointRow(id),
+    endpointResolve: (id, backendId) => compatEndpoints.resolve(id, backendId),
+    // bot のアカウントを、送った会話（Codex・OpenCode）では次のターンの予約にする。人の既定には覚えない
+    reserveAccount: (sessionId, account) => reserveTurnSettings({ sessionId, account, keepPrefs: true }),
+  });
+}
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
 for (const b of listBackends()) {
@@ -9133,6 +9140,7 @@ for (const b of listBackends()) {
 }
 
 async function runTurn(args, onStarted = () => {}, hooks = {}) {
+  if (hooks.internal && updateGate.locked) return 'requeue';
   const releaseUpdateGate = updateGate.enter({ turn: true });
   try {
     return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
@@ -10016,7 +10024,8 @@ function heldTurnCard(ctx) {
   const live = /^Bearer ([a-f0-9]{64})$/.exec(ctx.runtimeContext?.headers?.Authorization ?? '')?.[1] ?? null;
   const tokens = entry ? { ...connectionTokens(entry), ...(live ? { context: live } : {}) } : null;
   // バックエンドの欄（backendCard）は、保持役に子を載せるバックエンドが control.backendCard で渡す（Claude の途中送信の控え・費用の基準など。2c）
-  return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
+  return cardOf({ ...ctx, initialDelivered: ctx.initialDelivered || botHost?.initialDeliveredFor(turn.info.sessionId),
+    backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null,
     botLiveSteers: botHost?.liveSteersFor?.(turn.info.sessionId) ?? [],
     botItemIds: botHost?.itemIdsFor?.(turn.info.sessionId) ?? [],
@@ -10066,8 +10075,8 @@ function heldTurn(turn) {
 /**
  * 札と付け直す元（core/adopt.mjs の source）から、走っているターン（runtime.turns の 1 件と ctx）を組み立てて登録する。
  * 起動時の後片付け（送信待ちの戻し・中断の記録）より前に呼ぶ。口を開き直すのと記録を流すのは、待ち受けの後の adoptTurn。
- * 付け直せない（札が大きすぎる・版が違う・会話の走っている印と合わない・記録に印が無い・切れている・続きを受けられない、
- * bot の会話・圧縮のターン・タスクの id が分からない委譲の子。委譲の子は 2b-7 から付け直す）ときは投げる。呼び出し側は何もせず、今の起動時の restart の回復（中断）に任せる
+ * 札や記録が不完全なときや、バックエンドや bot の配達の記録を復元できないときは投げる。起動時の中断処理に任せる。
+ * bot の配達、圧縮、委譲の実行は、札の種別に応じて付け直す。
  */
 async function restoreTurn(card, source) {
   if (Buffer.byteLength(JSON.stringify(card ?? null), 'utf8') > CARD_MAX_BYTES) throw new Error('card too large');

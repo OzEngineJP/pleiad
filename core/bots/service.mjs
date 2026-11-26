@@ -224,16 +224,20 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     return out;
   }
 
+  let loading;
   const service = {
     dataDir, channels, emit, now,
     get problem() { return store.problem; },
 
-    async start() {
-      try { await store.load(); }
-      catch (e) {
-        if (e instanceof BotStoreError) { log(String(e.message)); return; }   // 読めない bots.json は上書きしない。画面へは problem で出す
+    load() {
+      return loading ??= store.load().then(() => true, (e) => {
+        if (e instanceof BotStoreError) { log(String(e.message)); return false; }   // 読めない bots.json は上書きしない。画面へは problem で出す
         throw e;
-      }
+      });
+    },
+
+    async start() {
+      if (!await service.load()) return;
       for (const bot of store.list()) if (!bot.dmChannelId && !bot.plain) await ensureDm({ botId: bot.id }).catch(() => {});
     },
 

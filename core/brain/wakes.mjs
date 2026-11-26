@@ -126,6 +126,8 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
     }).catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) {
       const reason = result?.reason ?? 'failed';
+      // 更新のリースが解けるか、次の起動でこのまま発火できるようにする
+      if (reason === 'updating') return false;
       for (const w of list) (TRANSIENT.has(reason) ? wait(w, reason) : drop(w, reason));
       return false;
     }
