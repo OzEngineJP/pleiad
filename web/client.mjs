@@ -3636,8 +3636,28 @@ function onEvent(ev, replay = false) {
       // 設定 › 委譲の互換の接続先の候補（名前・「使えない（確認に失敗）」。ADR 0361）を取り直す
       try { delegationSettings.event({ type: 'delegationRoutingChanged', change: 'endpoints' }); } catch {}
       break;
-    case "nextSettings":
+    case "nextSettings": {
+      // 送った瞬間、サーバーは予約を消す知らせを「走っている」より先に流す。取り直しを待つと、その間だけ
+      // 「走っている、かつ行には古い予約」になり、止まっていた会話の帯が一瞬出る。知らせの値を先に行へ載せ、帯はここですぐ描く。
+      // 消す知らせではチップを描き直さない（行のモデルはまだ予約の前の値で、描き直すと選んだモデルが一瞬戻る）。
+      // 書く前に始まった取り直しが古い予約のまま届いても、settleNext が消した値を載せ直す。
+      const row = ev.sessionId ? state.sessions.find((s) => s.id === ev.sessionId) : null;
+      if (row && Object.hasOwn(ev, "nextSettings")) {
+        const previous = row.nextSettings;
+        row.nextSettings = ev.nextSettings;
+        settledNext.set(ev.sessionId, {
+          value: ev.nextSettings,
+          // サーバーが効かせて消した予約（applied: true）だけ、古い取り直しがチップを予約の前へ戻さないように行へ写す。
+          // 今の値に戻した・取り消しは applied を持たないので写さない（推測しない）
+          applied: ev.applied === true && ev.nextSettings == null ? previous : null,
+          worktreePending: typeof ev.worktreePending === "boolean" ? ev.worktreePending : row.worktreePending,
+          version: refreshVersion,
+        });
+      }
+      paintSettingsNotice();
+      if (ev.nextSettings) syncTopbar().catch(() => {});
       return refresh().then(() => { shellComposer.sync(); paintWorktreeLines(); });
+    }
     // エージェントの変更は会話に行を出さない（入力欄の「次のターンから」の行と引き継ぎの案内が持つ。ADR 0067）
     case "backend":
       return refresh().then(() => shellComposer.sync());
@@ -4741,7 +4761,7 @@ let cwdSaving = 0;   // 作業ディレクトリを保存している間、チ�
 // 書いている間に別の会話の変更などで取り直しが走っても、チップが前の選択へ戻らない（pendingChoice）
 const inflightNext = new Map();   // sessionId -> [{ patch }]（書く順）
 // 書けた予約と、そのときの取り直しの版。それ以前に始まった取り直しの写しは書く前の値を持つので、載せ直す（settleNext）
-const settledNext = new Map();    // sessionId -> { value, version }
+const settledNext = new Map();    // sessionId -> { value, applied?, worktreePending, version }
 function reserveSettings(patch, targetId = state.current) {
   const id = targetId;
   if (!id) return;
@@ -5052,10 +5072,21 @@ function settleNext(version) {
   for (const [id, entry] of settledNext) {
     if (version > entry.version) { settledNext.delete(id); continue; }
     const row = state.sessions.find((s) => s.id === id);
-    if (row) {
-      row.nextSettings = entry.value;
-      if (entry.worktreePending !== undefined) row.worktreePending = entry.worktreePending;
+    if (!row) continue;
+    // 送って消した予約を、書く前の取り直しが古い nextSettings のまま戻しても帯を出し直さない。
+    // チップの元（会話の行）も、その予約の値にしてから消す（予約の前のモデルへ戻さない）。取り消しは applied を持たない
+    if (entry.value == null && entry.applied) {
+      const applied = entry.applied;
+      if (applied.backend !== undefined) row.backend = applied.backend;
+      if (applied.model !== undefined) row.model = applied.model;
+      if (applied.effort !== undefined) row.effort = applied.effort;
+      if (applied.mode !== undefined) row.mode = applied.mode;
+      if (applied.cwd) row.cwd = applied.cwd;
+      if (applied.account !== undefined) row.claudeAccount = applied.account;
+      if (applied.endpoint !== undefined) row.compatEndpoint = applied.endpoint;
     }
+    row.nextSettings = entry.value;
+    if (entry.worktreePending !== undefined) row.worktreePending = entry.worktreePending;
   }
 }
 function composerSelection() {
@@ -5529,7 +5560,7 @@ function setThreadStatusOf({ channelId, threadId }, status) {
 /** スレッドの行のメニュー: 開く・流れを開く・作業フォルダーと ID のコピー・状態（会話と同じ状態のグループ） */
 function threadMenu(s, x, y) {
   const { channelId, threadId } = s.thread;
-  const known = [...new Set([...state.sessions.map((z) => z.status), ...(state.threadIndex?.threads ?? []).map((th) => th.status)].filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   const setStatus = (status) => setThreadStatusOf({ channelId, threadId }, status);
   showMenu(x, y, [
     { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
@@ -5651,7 +5682,7 @@ async function newHomeThread({ text, attachments = [] }) {
 /** 一時チャットの流れの投稿の ⋯ の「状態を変更」（会話の状態と同じ器） */
 function homeStatusItems(sessionId) {
   const s = state.sessions.find((x) => x.id === sessionId);
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   return [{ label: t('session.menu.changeStatus'), hint: s?.status || t('session.status.none'), sub: () => [
     { input: { placeholder: t('session.menu.newStatus'), onCommit: (v) => setStatusOf(sessionId, v) } },
     ...known.map((k) => ({ label: k, checked: k === s?.status, onClick: () => setStatusOf(sessionId, k) })),
@@ -9363,7 +9394,7 @@ function groupItems(s) {
 
 /** グループの見出しの右クリック。解除と、まとまりごとの状態変更 */
 function familyMenu(root, members, x, y) {
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   showMenu(x, y, [
     { label: t("session.menu.ungroup"), hint: t("session.menu.count", { count: members.length }), onClick: () => ungroupFamily(root, members) },
     { sep: true },
@@ -9413,7 +9444,7 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
 function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, conns = null;
   let waitingVisible = false;
-  const known = [...new Set(state.sessions.map((z) => z.status).filter(Boolean))];
+  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   // 枝の行き来。親があるか子がある行だけ。家族は開いている間に取り寄せる（メニューは同期で組む）
   const hasKin = Boolean(s.parent?.sessionId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
   let kin = null;

@@ -3182,11 +3182,15 @@ async function conversationTitleOf(sessionId) {
  */
 // 確実な旧内部会話（bot.kind が learner/pulse で channel・thread に紐づかないもの。Issue #180）は
 // 通常の一覧・get・read・検索・場所からは返さない。診断用に見るときだけ includeInternal を立てる
-async function sessionList({ limit = 100, track = true, includeInternal = false } = {}) {
+// everyTag: 状態を会話の側（tag）に持つエージェントは、ネイティブ一覧を件数で切らずに全部読む。
+// 状態のグループの名前替え・削除（renameStatusGroup）が、古くて上位 limit 件に入らない会話の tag を取りこぼさないため。
+// tag を持たないエージェントの状態は sidecar にあり、sidecar の行は件数に関わらず全部足すので limit のままでよい
+const EVERY_NATIVE = Number.MAX_SAFE_INTEGER;
+async function sessionList({ limit = 100, track = true, includeInternal = false, everyTag = false } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
-    ...backends.map((b) => nativeSessions(b, limit)),
+    ...backends.map((b) => nativeSessions(b, everyTag && b.capabilities?.tag && b.setTag ? EVERY_NATIVE : limit)),
   ]);
 
   const rows = new Map();
@@ -4663,7 +4667,7 @@ async function consumeSendReservation(sessionId, snapshot) {
   const consumed = await store.consumeNextSettings(sessionId, next => Object.entries(next).every(([key, value]) => (
     key === 'cwd' && snapshot.cwd ? path.resolve(value) === path.resolve(snapshot.cwd) : value === snapshot[key]
   )));
-  if (consumed) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null });
+  if (consumed) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null, applied: true });
 }
 
 /** 今の設定と予約の違い。並びはエージェント → モデル → エフォート → 承認モード（帯と跡の行の並び） */
@@ -4760,7 +4764,7 @@ async function applyReservedNow(sessionId, { via = 'button', snapshot } = {}) {
       else await store.setSessionData(sessionId, 'nextSettings', null, { durable: true });
       if (want.model !== undefined) emitGlobal({ type: 'model', sessionId, model: want.model, by: 'human', live: true });
       if (want.mode !== undefined) emitGlobal({ type: 'mode', sessionId, mode: want.mode, by: 'human', live: true });
-      if (!snapshot) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null });
+      if (!snapshot) emitGlobal({ type: 'nextSettings', sessionId, nextSettings: null, applied: true });
       await recordSettingsChange(sessionId, changes, { live: true });
       return 'live';
     }
@@ -5359,7 +5363,8 @@ async function renameStatusGroup(args, actor) {
   const { from, to } = args ?? {};
   if (typeof from !== "string" || !from) throw new Error(t('statuses.renameFromRequired'));
   const next = typeof to === "string" ? to.trim() : "";
-  const hit = (await sessionList({ limit: 500 })).filter((x) => (x.status ?? "") === from);
+  // 件数で切らない（500 件より古い会話の状態も外す・移す）。sidecar の行は sessionList が全部足し、tag の側は everyTag で全部読む
+  const hit = (await sessionList({ limit: 500, track: false, everyTag: true })).filter((x) => (x.status ?? "") === from);
   let done = 0;
   for (const x of hit) {
     const backend = getBackend(x.backend);
@@ -9274,6 +9279,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     await store.setMode(sessionId, permissionMode);
     await store.setMeta(sessionId, { cwd, unsent: false, lastModified: Date.now() });
     if (reserved) {
+      // 予約はこの送信の設定として効いた（model・effort などは予約の値で送る）。applied: true で画面に効いた値として知らせる
       if (args?.settings) {
         await consumeSendReservation(sessionId, reserved);
         if (args.worktreeCwd) {
@@ -9282,7 +9288,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
         }
       } else {
         await store.setSessionData(sessionId, "nextSettings", null, { durable: true });
-        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
+        emitGlobal({ type: "nextSettings", sessionId, nextSettings: null, applied: true });
       }
       emitGlobal({ type: "backend", sessionId, backend: backend.id, applied: true });
       if (prior) {
