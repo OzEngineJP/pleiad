@@ -262,6 +262,8 @@ const SUITES = [
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・性質ごとの契約の試験・runArgs の絞り込み・配達物の証拠の照らし方・対応表（静的）
   // （全エージェントに共通の試験 backend-common は下: 基本の流れ・中断・エラー・再起動の後の続きと、配達物が届くこと）
   './unit/backend-contract.mjs',
+  // 「CLI のログイン」のカードの［ログアウト］は能力の印 logout で決める（外せない OpenCode は端末のコマンドを案内する）
+  './unit/agent-logout-mark.mjs',
   // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
   './unit/docs-source.mjs',
   './unit/backend-registry.mjs',

@@ -430,6 +430,10 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct.cc .mp-sum>small{font-size:12px;color:var(--ink-weak)}
 .mp-acct.cc small.warn{color:var(--ink-strong)}
 .mp-acct.cc>.mp-confirm,.mp-acct.cc>.mp-note{margin:8px 0 0}
+/* 外せないエージェント（OpenCode）の CLI のログインのカード: 状態の行の下の 1 文と、端末のコマンド + ［コピー］。.auth-links は初期値で左に 22px 空くので、カードの中では文の左端に揃える */
+.mp-acct.cc>.conn-guide .auth-links{margin:6px 0 0}
+/* ［コピー］は字が短く、狭い幅で高さだけ 44px になるので、幅も押せる大きさにそろえる（--hit は狭い幅でだけ大きい） */
+.mp-acct.cc>.conn-guide .auth-links .btn{min-width:var(--hit)}
 .mp-fold-in>.mp-acct{margin:0 0 10px}
 .mp-acct .btn,.mp-fold-in>[data-add]{min-height:var(--hit)}
 .mp-acct .mp-stage .mp-note a{display:inline-flex;align-items:center;min-height:var(--hit);margin-block:calc((1lh - var(--hit)) / 2)}

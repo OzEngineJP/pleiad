@@ -28,6 +28,8 @@ import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_MS = 3_000;
+/** 端末で打つ `opencode auth <sub>` の 1 行（ログイン・ログアウトの案内。空白を含む場所は引用符で囲む） */
+const terminalCommand = (argv, sub) => [...argv, 'auth', sub].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
 // 待っているログインの見張りをやめる口（authCancel）
 const loginWatch = createLoginWatch('OpenCode');
 const nativeMessageId = (id, account) => id ? 'msg_'+crypto.createHash('sha256').update(`${account}:${id}`).digest('hex').slice(0,40) : undefined;
@@ -1188,7 +1190,7 @@ export const backend = {
       if(accountBusy(null))throw new Error(t('accounts.backend.inUse',{agent:'OpenCode'}));
       const argv = cliCommand('opencode');
       if (!argv) throw new Error(t('opencode.errors.notInstalled'));
-      const command = [...argv, 'auth', 'login'].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+      const command = terminalCommand(argv, 'login');
       emit?.({ type: 'auth', phase: 'url', url: command, message: t('opencode.auth.runCommand') });
       const until = Date.now() + LOGIN_TIMEOUT_MS;
       let seen = authStamp();
@@ -1217,6 +1219,12 @@ export const backend = {
     async logout() {
       throw new Error(t('opencode.auth.logoutInCli'));
     },
+    /**
+     * 外し方（端末で打つコマンド）。Pleiad からは外せない（能力の印 logout は不可）ので、設定 › エージェント設定の
+     * 「CLI のログイン」のカードが［ログアウト］の代わりにこれを案内する。ログインの案内と同じ書き方（terminalCommand）。
+     * CLI が見つからないときも案内は要るので、名前だけで書く
+     */
+    logoutCommand() { return terminalCommand(cliCommand('opencode') ?? ['opencode'], 'logout'); },
   },
 };
 

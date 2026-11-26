@@ -52,3 +52,12 @@ bot のページの「アカウント」の節（ADR 0224）は、互換の接�
 - 設定の ［ログインする］は、既定では畳んだ［接続先］の中に入る。ログインしていない CLI の頭の行にあった［ログイン］は無くなる（頭の状態の「⚠ 対応が要る接続先」から開く）。テストはその前提に直した（`tests/browser/missing-agent.mjs` は行の `data-sig` で状態を待つ）。
 - 削除したもの: 設定のカードの h4 と説明の段落、入力欄のアカウント行、右クリックメニューのアカウント項目、互換の URL・モデルの行。
 - 試験: `tests/unit/server-bot-compat.mjs`（bot の互換の接続先を、会話・ルーティン・試し実行・委譲・接続先の削除・再起動まで、偽のサーバーで通す）、`tests/browser/agent-conn-panel.mjs`・`limit-agent-switch.mjs`・`work-dialog-composer.mjs`・`missing-agent.mjs`、`tests/unit/bots-store.mjs`・`web-account-models.mjs`。
+
+## 追記（2026-11-26）: Pleiad から外せないエージェントは［ログアウト］を出さない
+
+決定 1 で CLI のカードに［ログアウト］を置いたが、OpenCode は Pleiad から外す口が無く（`auth.logout()` は「端末で `opencode auth logout` を実行してください」で失敗する）、押すと必ず失敗した。
+
+- 能力の印 `logout` を足す（`core/backends/agent-marks.mjs`。Claude Code・Codex・Devin・Grok は `true`、OpenCode と Antigravity は `impossible`）。画面は名前でなくこの印で、［ログアウト］を出すか決める。`describeBackends` は、印と `auth.logout()` の両方があるときだけ `logout` を返す。
+- 外せないエージェントのログイン中のカードは、［ログアウト］の代わりに「外すには、端末で次のコマンドを実行します」と、コマンドの 1 行（ログインの案内と同じ等幅 + ［コピー］）を出す。コマンドはバックエンドが `auth.logoutCommand()` で返す（`describeBackends` の `logoutCommand`。OpenCode はログインの案内と同じ書き方）。
+- 変えないもの: Claude Code・Codex・Grok の［ログアウト］、Antigravity・Devin の頭の行。画面の形は `docs/design-system.md` の「外せないエージェントの CLI のログインのカード」。
+- 「影響」の「能力の印は `accounts` と `compatEndpoints` の 2 つのまま」は接続先の印の話で、`logout` はそれとは別に足した印。

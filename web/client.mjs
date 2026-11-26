@@ -4102,15 +4102,27 @@ function cliLoginCard(b, st) {
   const warn = Boolean(st.supported && !st.pending && !st.unconfirmed && (!st.loggedIn || st.expired));
   // ログインを待っている間の［やめる］は頭の行（初回の案内の行と同じ部品）が持つ
   const canLogin = !remote && st.supported && !st.pending && (!st.loggedIn || st.expired);
+  // ログイン済みで外せる場面。Pleiad から外せるエージェント（能力の印 logout）は［ログアウト］、外せないもの（OpenCode）は押しても失敗するので
+  // ボタンを出さず、状態の行の下に端末で打つコマンドを案内する（ログインを待つ間のコマンドの案内と同じ部品）
+  const signedIn = !remote && st.supported && st.loggedIn && !st.pending;
+  const canLogout = Boolean(b.capabilities?.logout);
   return connCard({
     name: t('conn.cliLogin'), isDefault: isDef, status, warn, dataset: { conn: 'cli' },
     actions: [
       canLogin && { label: st.expired ? t('conn.relogin') : t('conn.login'), act: 'login', quiet: true,
         onClick: () => { authFocus = { agent: b.id, pending: true }; authLogin(b); } },
       !isDef && { label: t('conn.makeDefault'), act: 'default', onClick: () => setConnDefault(b.id, { account: '' }) },
-      !remote && st.supported && st.loggedIn && !st.pending && { label: t('conn.logout'), act: 'logout', onClick: () => authLogout(b) },
+      signedIn && canLogout && { label: t('conn.logout'), act: 'logout', onClick: () => authLogout(b) },
     ],
+    extra: [signedIn && !canLogout && b.logoutCommand && logoutGuide(b.logoutCommand)],
   });
+}
+
+/** 外せないエージェントの「CLI のログイン」のカードに出す、端末で外すためのコマンドの案内（1 文 + コマンドと［コピー］） */
+function logoutGuide(command) {
+  const guide = el('div', 'mp-note conn-guide');
+  guide.append(el('span', null, t('conn.logoutGuide')), authLinks(command));
+  return guide;
 }
 
 /** 一覧の下の［＋ 接続先を追加］と、押した後の「接続先の種類」（公式 1 つ・互換のプリセット）。追加の欄が開いている間は出さない */

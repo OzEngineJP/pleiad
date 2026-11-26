@@ -44,6 +44,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,
     login: true,
+    logout: true,
     // 会話ごとのアカウント（Pleiad の台帳。アカウントごとの専用フォルダのログイン。ADR 0353）を選べる。server は account を渡す（core/claude-accounts.mjs）
     accounts: 'token',
     // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
@@ -82,6 +83,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,  // acceptForSession
     login: true,
+    logout: true,
     // 互換の接続先（OpenAI Responses 互換）を会話ごとに選べる（core/compat-endpoints.mjs）
     compatEndpoints: true,
     // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
@@ -122,6 +124,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     plyContext: "conversation",
     alwaysAllow: true,      // session/request_permission の allow_always を使う
     login: true,
+    logout: impossible('1 つ目のログインは OS の資格情報ストアにあり、Pleiad の画面からは外さない（ACP の logout は使わず、端末の agy 側で外す）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // ply_computer は束ねた 1 本の中継に載せて渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
     // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びなかった（stream-json で 1.2.14 の実測。ACP でも同じとみなして据え置く）ので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
@@ -174,6 +177,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
     mcpApproval: 'agent',   // MCP のツールも権限の規則（*）を通り、OpenCode が聞く
     login: true,            // 端末で opencode auth login を案内して待つ
+    logout: impossible('OpenCode CLI の接続先は端末の opencode auth logout で外す。Pleiad から起こす口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     accounts: 'agent',
     compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // POST /session/{id}/summarize
@@ -214,6 +218,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
+    logout: true,
     accounts: impossible('Devin CLI 3000.11.92 は APPDATA を会話別に変えても既存ログインで応答し、資格情報が共有される。CLI がアカウント別の認証プロファイルを提供するまで分離できない', 'upstream'), // i18n-ignore: 実物の認証分離を確認した開発者向け理由
     compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）', 'upstream'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
@@ -258,6 +263,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
+    logout: true,
     accounts: 'agent',
     compatEndpoints: true, // 会話専用の GROK_HOME/config.toml と XAI_API_KEY で OpenAI Chat Completions 互換へ接続
     compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す

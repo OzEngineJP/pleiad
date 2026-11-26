@@ -11,5 +11,5 @@ OpenCode's free models (OpenCode Zen) work without signing in. To connect other 
 3. Open "Connections" and press "Sign in" on the "CLI login" card. Pleiad shows a command (`opencode auth login`). Press "Copy", run it in a terminal, and pick a provider to connect.
 4. The row switches to "Signed in" automatically when it finishes (it times out after about 10 minutes).
 
-- To disconnect a provider (the equivalent of signing out), run `opencode auth logout` in a terminal. Pressing "Sign out" on the "CLI login" card does not disconnect it; Pleiad shows a message pointing to this command instead.
+- To disconnect a provider (the equivalent of signing out), run `opencode auth logout` in a terminal. Pleiad cannot disconnect it for you, so the "CLI login" card has no "Sign out" button. Instead, the card shows the command to run, with a "Copy" button.
 - To stop waiting for sign-in, press "Cancel".

@@ -480,6 +480,7 @@ export const backend = {
     plyInstructions: true,
     alwaysAllow: true,
     login: true,
+    logout: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
     // アカウント（Claude の台帳を共有する形）。試験が FAKE_ACCOUNTS=off で「アカウントを持てないエージェント」にする
     get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている', 'design') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
