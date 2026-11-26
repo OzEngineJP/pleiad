@@ -10,7 +10,6 @@ import { backendForAccount, accountUnavailableBackend } from '../../core/backend
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
 import { createBrainStore } from '../../core/brain/store.mjs';
 import { createPulse } from '../../core/brain/pulse.mjs';
-import { createBudget } from '../../core/bots/budget.mjs';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createBotSessions } from '../../core/bots/sessions.mjs';
 import { normalizePulse } from '../../core/bots/store.mjs';
@@ -569,7 +568,6 @@ export default async function (t) {
     const channels = createChannelService({ dir: path.join(pulseDir, 'channels'), now, listBots: bots.list });
     await channels.start();
     const home = await channels.create({ name: 'home', members: [bot.id] }, { kind: 'human' });
-    await channels.update({ channelId: home.id, budget: { daily: 10 } }, { kind: 'human' });
     clock += 11 * 60_000;
     await channels.post({ channelId: home.id, text: 'Mythos アカウントで心拍を回すテスト' }, { kind: 'human' });
     clock += 1000;
@@ -601,7 +599,6 @@ export default async function (t) {
         setModel: async () => {},
         setSessionData: async () => {},
       },
-      readQuota: async () => null,
       usageStore: {},
       listBackends: () => [baseBackend],
       getBackend: () => baseBackend,
@@ -621,9 +618,8 @@ export default async function (t) {
       },
     };
     const brain = createBrainStore({ dataDir: pulseDir, now });
-    const budget = createBudget({ channels, host, now, brain });
     const fakeClock = { now, setTimer: () => ({}), clearTimer: () => {} };
-    const pulse = createPulse({ dataDir: pulseDir, brain, channels, bots, host, budget, dispatch: { handoff: async () => ({ ok: true }) }, clock: fakeClock, now });
+    const pulse = createPulse({ dataDir: pulseDir, brain, channels, bots, host, dispatch: { handoff: async () => ({ ok: true }) }, clock: fakeClock, now });
     try {
       const res = await pulse.beat(bot.id, { force: true });
       assert.equal(res.ran, true);

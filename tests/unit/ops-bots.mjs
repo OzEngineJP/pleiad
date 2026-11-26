@@ -1,5 +1,5 @@
 // bots.* の操作（registry 越し。サーバーの道具は身代わり）: 作成と DM のチャンネル・AI から見える操作と見えない操作（承認モードは人だけ）・
-// 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
+// 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の状態（使用量は出さない）・DM の会話。ADR 0082・0109
 // bot のアカウント（bots.setAccount。人だけ・bot のエージェントに登録の無い id と使えないアカウントは断る・会話に写す（送った Codex の会話は次のターンの予約）・バックエンドを替えると ''。ADR 0224）
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { registry } from '../../core/ops/index.mjs';
 import { createBotService } from '../../core/bots/service.mjs';
 
 export const name = 'ops-bots';
-export const title = 'bots.* の操作: 作成と DM・human-only は承認モードとアカウント・広げる向きは承認・Antigravity は yolo だけ・削除・一覧の使用量';
+export const title = 'bots.* の操作: 作成と DM・human-only は承認モードとアカウント・広げる向きは承認・Antigravity は yolo だけ・削除・一覧の状態';
 
 const human = { by: 'human', via: 'ui', local: true };
 const agent = (sessionId, via = 'mcp') => ({ by: 'agent', via, sessionId });
@@ -22,8 +22,8 @@ const CLAUDE_MODES = {
   plan: { scope: 'readonly', autonomy: 'ask' }, bypass: { scope: 'full', autonomy: 'never' },
 };
 
-/** 身代わり: バックエンド 3 つ（Claude はトークン・Codex は資格情報のアカウント・Antigravity は無し）・会話の保存・チャンネルの口・使用量・実行中のターン・登録したアカウント */
-function fake(dataDir, { usage = [], dmFails = false } = {}) {
+/** 身代わり: バックエンド 3 つ（Claude はトークン・Codex は資格情報のアカウント・Antigravity は無し）・会話の保存・チャンネルの口・実行中のターン・登録したアカウント */
+function fake(dataDir, { dmFails = false } = {}) {
   const sessions = {};
   let n = 0;
   const backends = {
@@ -52,7 +52,6 @@ function fake(dataDir, { usage = [], dmFails = false } = {}) {
       setSessionData: async (id, field, value) => { sessions[id] = { ...sessions[id], [field]: value }; },
       removeSession: async (id) => { delete sessions[id]; },
     },
-    usageStore: { records: async ({ sessionIds, since }) => usage.filter((r) => sessionIds.includes(r.sessionId) && r.at >= since) },
     runtime: { turns: new Map(), waiting: new Map() },
     accountList: async (backendId) => ({
       claude: [{ id: 'acc-oz', name: 'OZ', ready: true }, { id: 'acc-bare', name: 'Bare', ready: false }],
@@ -94,7 +93,7 @@ export default async function (t) {
     const made = await call(human, 'bots.create', { name: 'Owl', icon: '🦉', persona: 'のんびり屋', backend: 'claude' });
     t.ok('人が作ると通り、DM のチャンネルができる', made.ok && made.result.dmChannelId === `c_dm_${made.result.id}` && calls.dm.length === 1, JSON.stringify(made));
     t.ok('承認モードは作業場所に書けて毎回聞くもの・フォルダーなし・他の会話へ送るは既定で ON', made.result.mode === 'default' && made.result.folders.length === 0 && made.result.sendToOthers === true);
-    t.ok('返りに使用量と状態が付く', made.result.usage.weekTokens === 0 && made.result.state === 'idle');
+    t.ok('返りに状態が付く。bot 専用の使用量（usage）は付けない（ADR 0357）', made.result.usage === undefined && made.result.state === 'idle');
     t.ok('botsChanged が出る', calls.events.some((e) => e.type === 'botsChanged' && e.bot?.name === 'Owl'));
     const owl = made.result.id;
     const dup = await call(human, 'bots.create', { name: 'ＯＷＬ', backend: 'claude' });
@@ -162,7 +161,7 @@ export default async function (t) {
     t.ok('無い bot は BOT_NOT_FOUND', (await call(human, 'bots.setAccount', { botId: 'b_nope', account: '' })).code === 'BOT_NOT_FOUND');
     const eventsBefore = calls.events.length;
     const chosen = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
-    t.ok('人が選ぶと変わり、返り（bots.get と同じ形）に account が出る', chosen.ok && chosen.result.account === 'acc-oz' && typeof chosen.result.usage?.weekTokens === 'number', JSON.stringify(chosen));
+    t.ok('人が選ぶと変わり、返り（bots.get と同じ形）に account が出る', chosen.ok && chosen.result.account === 'acc-oz', JSON.stringify(chosen));
     t.ok('botsChanged が出る', calls.events.slice(eventsBefore).some((e) => e.type === 'botsChanged' && e.bot?.account === 'acc-oz'));
     t.ok('今ある DM の会話の claudeAccount も揃う（次のターンから効く）', sessions[sess.sessionId].claudeAccount === 'acc-oz');
     t.ok('一覧と get も account を返す', (await call(human, 'bots.list', {})).result.bots.find((b) => b.id === owl)?.account === 'acc-oz'
@@ -294,18 +293,14 @@ export default async function (t) {
     const outside = await f.service.createSession({ botId: owl, channel: { id: 'c_2', kind: 'channel', name: 'x', cwd: path.join(dir, 'elsewhere') }, threadId: 'p_2', kind: 'thread' });
     t.ok('チャンネルの cwd が bot のフォルダーの外なら、bot の先頭のフォルダー', outside.cwd === folderA, outside.cwd);
 
-    // ---- 一覧: 使用量（今週の記録だけ・sessionId で引く）と状態
-    const g = fake(path.join(dir, 'g'), { usage: [
-      { sessionId: 'sess-1', at: 1_000_000 - 1000, inputTokens: 100, outputTokens: 20, cachedTokens: 60 },
-      { sessionId: 'sess-1', at: 1_000_000 - 8 * 24 * 3600_000, inputTokens: 999, outputTokens: 999, cachedTokens: 0 },
-      { sessionId: 'sess-other', at: 1_000_000, inputTokens: 5000, outputTokens: 5000, cachedTokens: 0 },
-    ] });
+    // ---- 一覧: 状態（bot 専用の使用量は出さない。ADR 0357）
+    const g = fake(path.join(dir, 'g'));
     await g.service.start();
     const gBot = (await g.call(human, 'bots.create', { name: 'Metered', backend: 'claude' })).result;
     const gSess = await g.service.ensureDmSession({ botId: gBot.id });
     t.ok('前提: DM の会話は sess-1', gSess.sessionId === 'sess-1');
     const listed = await g.call(human, 'bots.list', {});
-    t.ok('使用量は今週のその bot の会話の分だけ・キャッシュ率', listed.result.bots[0].usage.weekTokens === 120 && Math.abs(listed.result.bots[0].usage.cacheRatio - 0.6) < 1e-9, JSON.stringify(listed.result.bots[0].usage));
+    t.ok('一覧に使用量（usage）は付かない', listed.result.bots[0].usage === undefined && listed.result.bots[0].state === 'idle', JSON.stringify(listed.result.bots[0]));
     g.host.runtime.turns.set('k', { info: { sessionId: 'sess-1' } });
     t.ok('走っているターンがあれば working', (await g.call(human, 'bots.get', { botId: gBot.id })).result.state === 'working');
     g.host.runtime.waiting.set('w', { payload: { sessionId: 'sess-1' } });

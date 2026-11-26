@@ -291,7 +291,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 
 - **能力の印**: `capabilities.internalCall`。Claude・Codex は `ephemeral`（接続先に会話を残さない実行。Claude は保存しない設定・道具・hook・MCP を外して呼び、確かめられるときだけ。Codex は使い捨てのスレッドと閉じた道具・MCP で呼び、設定が読めないときは呼ばない）。fake は `ephemeral`（試験用）。Antigravity・Devin・Grok・OpenCode は `impossible(理由)` — 接続先に会話を残さないことを確かめられないため
 - **分離できないエージェントでは実行しない**（通常会話への切り替えはしない）: learner・episode は停止（halted）として記憶の設定の状態の行に理由を出し、pulse は bot のページの静かな行（理由 `internalUnavailable`）を付けて paused、候補は設定 › 入力の説明にエージェント名と理由、タイトル生成は `UNSUPPORTED` で断る
-- **記録**: 呼び出しごとに journal（`memory_state` kind `internal.calls`。1 呼出し 1 行・終了分は直近 100 件・起動時にこのプロセスの開始前の running は interrupted）と、使用量（`usage_records` の `internalTask` 欄。kind・botId・model・account・endpoint）を残す。測れない値は 0 でなく null（不明）。pulse の不明な消費はその日の自発を止める。失敗・中断でも記録し、上限時間で打ち切った後に届いた使用量は同じ行に補正する。呼び出しには上限時間と abort の猶予を付ける
+- **記録**: 呼び出しごとに journal（`memory_state` kind `internal.calls`。1 呼出し 1 行・終了分は直近 100 件・起動時にこのプロセスの開始前の running は interrupted）と、使用量（`usage_records` の `internalTask` 欄。kind・botId・model・account・endpoint）を残す。測れない値は 0 でなく null（不明）。失敗・中断でも記録し、上限時間で打ち切った後に届いた使用量は同じ行に補正する。呼び出しには上限時間と abort の猶予を付ける
 - **会話に差し込む内部の発言**（`runTurn({ internal: true })`。接続先からの通知・待機応答など）は別物で変えない。**Claude のターンの中の候補**（`promptSuggestions: 'native'`）も内部呼び出しではないので従来どおり
 - **旧内部会話の除外**: 以前 learner・pulse が作った隠れた会話は、確かな印（`meta.bot.kind` が `learner`・`pulse` で `channelId`・`threadId` が null。題・文頭の prefix では判定しない）のあるものだけを、一覧・検索・最近の場所・通常の `sessions.get`/`sessions.read` から外す（`core/internal-conversation.mjs`）。データは残す（消さない）。診断用に `sessions.get`/`sessions.read` の `includeInternal` で読める
 

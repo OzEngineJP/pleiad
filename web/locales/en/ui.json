@@ -3827,7 +3827,7 @@
         }
       },
       "failed": {
-        "named": "{{name}}'s turn failed",
+        "named": "{{name}}'s reply failed",
         "titled": "{{title}} failed",
         "plain": "A conversation failed"
       },

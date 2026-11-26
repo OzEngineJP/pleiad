@@ -119,7 +119,7 @@ export const brainOps = [
     id: 'brain.wakeAdd',
     summary: D('wakeAdd', 'summary'),
     risk: 'write',
-    riskReason: 'Reserves one wake-up of the bot in its own thread or DM conversation at a time it chooses (at least a minute ahead, at most 30 days, up to 20 waiting per bot). It runs nothing now. The woken turn runs in the same conversation with its own mode and approvals, is counted in the channel budget like a heartbeat, waits while the budget is empty, and is dropped if the thread is stopped (ADR 0140). It is the same as the bot continuing its own conversation later, so it is not guarded',
+    riskReason: 'Reserves one wake-up of the bot in its own thread or DM conversation at a time it chooses (at least a minute ahead, at most 30 days, up to 20 waiting per bot). It runs nothing now. The woken turn runs in the same conversation with its own mode and approvals, waits while the bot is resting at the service usage limit, and is dropped if the thread is stopped (ADR 0140). It is the same as the bot continuing its own conversation later, so it is not guarded',
     modeGate: false,
     input: z.object({
       at: z.union([z.number(), z.string().max(40)]).optional().describe(D('wakeAdd', 'at')),
@@ -206,7 +206,7 @@ export const brainOps = [
     id: 'brain.beat',
     summary: D('beat', 'summary'),
     risk: 'write',
-    riskReason: 'Runs one heartbeat of a bot now (the sieve, and maybe one call to the cheap model). It is counted in the channel budget like any other heartbeat and cannot pass a paused bot or an empty budget. A human can press it; an AI calling it makes the bot act by itself, so riskOf raises that to guarded (ADR 0126)',
+    riskReason: 'Runs one heartbeat of a bot now (the sieve, and maybe one call to the cheap model). It cannot pass a paused bot. A human can press it; an AI calling it makes the bot act by itself, so riskOf raises that to guarded (ADR 0126)',
     input: z.object({ botId: botIdArg('beat'), reason: z.string().max(500).optional().describe(D('beat', 'reason')) }),
     output: z.unknown(),
     riskOf: (ctx) => (ctx.principal?.by === 'agent' ? 'guarded' : 'write'),

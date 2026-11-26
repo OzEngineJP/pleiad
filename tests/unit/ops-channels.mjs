@@ -21,7 +21,7 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作は 26 個（集団宛ての wakePreview・スレッドの予算の内訳 threadBudget・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost・原文 deliveries・分岐 branchThread・送り直し resend・送信待ち pending と withdrawPending を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 26);
+    t.ok('操作は 25 個（集団宛ての wakePreview・スレッドの索引 threads と状態 setThreadStatus・題 setThreadTitle・設定 threadSettings・返信の予定 schedulePost・原文 deliveries・分岐 branchThread・送り直し resend・送信待ち pending と withdrawPending を含む）', IDS.every((id) => registry.get(id)) && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 25 && !registry.get('channels.threadBudget'));
     t.ok('送信待ち pending（読む）・withdrawPending（書く）は画面の道具だけ', registry.get('channels.pending').risk === 'read' && registry.get('channels.withdrawPending').risk === 'write'
       && [registry.get('channels.pending'), registry.get('channels.withdrawPending')].every((o) => o.surfaces.mcp === false && !o.surfaces.cli));
     t.ok('送り直し resend は書き込みで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.resend').risk === 'write' && registry.get('channels.resend').surfaces.mcp === false && !registry.get('channels.resend').surfaces.cli);
@@ -29,7 +29,7 @@ export default async function (t) {
     t.ok('原文 deliveries は読み取りで、画面の道具だけ（MCP・CLI に出さない。人だけ）', registry.get('channels.deliveries').risk === 'read' && registry.get('channels.deliveries').surfaces.ui === true
       && registry.get('channels.deliveries').surfaces.mcp === false && !registry.get('channels.deliveries').surfaces.cli);
     const risk = (id) => registry.get(id).risk;
-    t.ok('危険度: 読む 7 つは read・書く 12 は write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview', 'threadBudget', 'threads'].every((v) => risk(`channels.${v}`) === 'read')
+    t.ok('危険度: 読む 6 つは read・書く 12 は write・wake は guarded（human-only はない。ADR 0082 の 5 つ以外は AI も使える）', ['list', 'get', 'read', 'search', 'wakePreview', 'threads'].every((v) => risk(`channels.${v}`) === 'read')
       && ['create', 'update', 'archive', 'post', 'edit', 'delete', 'react', 'markRead', 'stopThread', 'setThreadStatus', 'setThreadTitle', 'threadSettings'].every((v) => risk(`channels.${v}`) === 'write') && risk('channels.wake') === 'guarded' && risk('channels.schedulePost') === 'guarded');
     t.ok('modeGate: false は post・react・stopThread だけ（読み取り・計画の bot も返事・リアクション・停止はできる）', IDS.filter((id) => registry.get(id).modeGate === false).join() === 'channels.post,channels.react,channels.stopThread');
     t.ok('口: どれも画面から。MCP は catalog（直のツールは足さない。返信の予定 schedulePost は AI に作らせないので MCP に出さない）。CLI は全部（markRead も AI・CLI に出す）',
@@ -49,13 +49,6 @@ export default async function (t) {
     const modes = { s_ro: { scope: 'readonly', autonomy: 'ask' }, s_plan: { scope: 'readonly', autonomy: 'ask' } };
     const deps = { locale: 'ja', channels, botOfSession: async (id) => bound[id] ?? null, modeOf: async (id) => modes[id] ?? { scope: 'workspace', autonomy: 'ask' }, audit: () => {} };
     const run = (p, id, args) => registry.invoke(p, id, args, deps);
-    {
-      const seen = [];
-      const ok = await registry.invoke(HUMAN, 'channels.threadBudget', { channelId: 'c_000000000aaaaaa', threadId: 'p_x' }, { ...deps, threadBudget: async (a) => { seen.push(a); return { allowance: 2.5 }; } });
-      const off = await registry.invoke(HUMAN, 'channels.threadBudget', { channelId: 'c_000000000aaaaaa', threadId: 'p_x' }, { ...deps, threadBudget: async () => null });
-      t.ok('threadBudget: 引数をそのまま渡し、返りを返す。予算の無い場所は null', ok.ok && ok.result.allowance === 2.5 && seen[0].channelId === 'c_000000000aaaaaa' && seen[0].threadId === 'p_x' && off.ok && off.result === null, JSON.stringify([ok, off]));
-    }
-
     const made = await run(HUMAN, 'channels.create', { name: '#ops', purpose: 'テスト' });
     t.ok('create: 画面（人）から作れる', made.ok && made.result.name === 'ops', JSON.stringify(made));
     const cid = made.result.id;
@@ -329,19 +322,15 @@ export default async function (t) {
         && (await call(HUMAN, 'channels.update', { channelId: made.id, memo: '人が書いた決まり' })).ok === true
         && (await call(agent('s_chat'), 'channels.update', { channelId: made.id, memo: '' })).ok === true && asked.length === memoMark);
 
-      // ADR 0119: 予算は channels.get が既定を埋めて返す。AI が外す・上げるのは承認、下げるのは承認なし。人はどちらも承認なし
-      const shownBudget = await reviewChannels.get({ channelId: made.id });
-      t.ok('予算: 設定の無いチャンネルは既定（1 日 5%・1 スレッド 50%）と今日の使用（spentToday）を返す', shownBudget.budget?.daily === 5 && shownBudget.budget?.perThread === 50 && shownBudget.spentToday === 0, JSON.stringify(shownBudget));
+      // ADR 0357: bot 専用の使用量の仕組み（予算）は無い。channels.get は予算も今日の使用も返さず、update に渡すと知らない引数として INVALID（承認も求めず、何も変えない）
+      const noBudget = await reviewChannels.get({ channelId: made.id });
+      t.ok('予算は無い: channels.get は budget も spentToday も返さない', noBudget.budget === undefined && noBudget.spentToday === undefined, JSON.stringify(noBudget));
       const budgetMark = asked.length;
-      const lower = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: 2 } });
-      t.ok('予算: AI が下げるのは承認なし（渡した欄だけ変わる）', lower.ok === true && asked.length === budgetMark && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2 && (await reviewChannels.get({ channelId: made.id })).budget.perThread === 50);
-      const raise = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: null } });
-      t.ok('予算: AI が外す（null）・上げるのは承認（before・after の行）。許可前は変わらない', raise.pending === true && asked.length === budgetMark + 1
-        && asked.at(-1).change.rows.some((r) => r.path === 'budget.daily' && r.before === 2 && r.after === null) && (await reviewChannels.get({ channelId: made.id })).budget.daily === 2);
-      await asked.at(-1).proceed();
-      t.ok('予算: 許可されたら変わる。人は承認なしで上げ下げできる。範囲の外は断る', (await reviewChannels.get({ channelId: made.id })).budget.daily === null
-        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { daily: 10, perThread: 80 } })).ok === true && asked.length === budgetMark + 1
-        && (await call(HUMAN, 'channels.update', { channelId: made.id, budget: { perThread: 0 } })).ok !== true);
+      const ignored = await call(agent('s_chat'), 'channels.update', { channelId: made.id, budget: { daily: null } });
+      const humanIgnored = await call(HUMAN, 'channels.update', { channelId: made.id, budget: { daily: 10, perThread: 80 } });
+      t.ok('予算は無い: update に budget を渡すと INVALID（承認は出ず、何も変わらない・返りにも載らない）', ignored.ok === false && ignored.code === 'INVALID'
+        && humanIgnored.ok === false && humanIgnored.code === 'INVALID' && asked.length === budgetMark
+        && (await reviewChannels.get({ channelId: made.id })).budget === undefined, JSON.stringify({ ignored, humanIgnored, asked: asked.length, budgetMark }));
       await reviewChannels.close();
     }
 

@@ -54,36 +54,6 @@ export default async function (t) {
       t.ok('inbox: 読めない版は読み込まない', await createInboxStore({ dir: future }).list({}).then(() => false, (e) => /version 2/.test(e.message)));
     }
 
-    // ================================================================ 古い Antigravity の tokens の数え直し（キャッシュを入力と分けて数えていた頃の分）
-    {
-      const rows = {
-        'p_old': { channelId: 'c_1', threadId: 'p_old', state: 'idle', sessions: { b_c: 's_claude', b_a: 's_agy' }, tokens: { input: 1100, output: 70, cached: 1600 } },   // cached > input = 古い形が混ざった
-        'p_ok': { channelId: 'c_1', threadId: 'p_ok', state: 'idle', sessions: { b_c: 's_claude' }, tokens: { input: 1000, output: 50, cached: 900 } },
-        'p_none': { channelId: 'c_1', threadId: 'p_none', state: 'idle', sessions: { b_a: 's_gone' }, tokens: { input: 10, output: 5, cached: 99 } },   // 記録が見つからない
-      };
-      const updates = [];
-      const channels = {
-        dir: path.join(tmp, 'repair'),
-        list: async () => [], read: async () => ({ posts: [] }),
-        threads: {
-          get: async (c, id) => structuredClone(rows[id] ?? null),
-          list: async () => structuredClone(Object.values(rows)),
-          update: async (c, id, patch) => { updates.push([id, patch]); Object.assign(rows[id], patch); return rows[id]; },
-        },
-      };
-      const records = [
-        { sessionId: 's_claude', inputTokens: 1000, outputTokens: 50, cachedTokens: 900 },
-        { sessionId: 's_agy', inputTokens: 100, outputTokens: 20, cachedTokens: 700 },   // 古い形（cached > input）。入力に足して読む
-      ];
-      const host = { store: { get: async () => ({}) }, usageStore: { records: async ({ sessionIds }) => records.filter((r) => sessionIds.includes(r.sessionId)) } };
-      const d = createDispatcher({ channels, bots: { get: async () => null, list: async () => [] }, memory: {}, host });
-      await d.start();
-      d.stop();
-      t.ok('cached が input を超えたスレッドだけ、使用量の記録（会話ごと）から tokens を数え直す', rows.p_old.tokens.input === 1800 && rows.p_old.tokens.output === 70 && rows.p_old.tokens.cached === 1600
-        && updates.length === 1 && updates[0][0] === 'p_old', JSON.stringify([rows.p_old.tokens, updates]));
-      t.ok('直したスレッド・正しいスレッドは触らず、記録が見つからないスレッドもそのまま', rows.p_ok.tokens.input === 1000 && rows.p_none.tokens.cached === 99);
-    }
-
     // ================================================================ 空の入れ物（P0 のつなぎ目と同じく、bot の会話でなければ何もしない）
     {
       const sessions = { plain: {} };
@@ -108,7 +78,7 @@ export default async function (t) {
           { id: 'p_2', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 2', mentions: [], at: 2000, reactions: {} },
           { id: 'p_3', channelId: 'c_1', threadId: 'p_root', author: { kind: 'human' }, text: '追記 3', mentions: [], at: 3000, reactions: {} },
         ];
-        const threads = { 'c_1/p_root': { channelId: 'c_1', threadId: 'p_root', sessions: { b_1: 's1' }, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null } };
+        const threads = { 'c_1/p_root': { channelId: 'c_1', threadId: 'p_root', sessions: { b_1: 's1' }, state: 'idle', calls: 0, stopped: null } };
         const sessions = { s1: { bot: { botId: 'b_1', kind: 'thread', channelId: 'c_1', threadId: 'p_root', memRev: 0, snapshotDue: false, delivered: [], postCursor: 'p_root' } } };
         const steers = [], emitted = [], started = [], aborted = [];
         let accept = async () => true;
@@ -120,13 +90,13 @@ export default async function (t) {
           dir: path.join(tmp, `stub-${steerKind}-${++worlds}`),
           get: async () => channel, getPost: async ({ postId }) => structuredClone(posts.find((x) => x.id === postId) ?? null),
           read: async () => ({ posts: structuredClone(posts) }),
-          post: async (a) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
-          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }].filter(Boolean)); return structuredClone(post); },
+          post: async (a, by) => { const post = { id: `p_t${posts.length}`, channelId: a.channelId, threadId: a.threadId, author: by?.kind === 'system' ? { kind: 'system' } : { kind: 'bot', botId: 'b_1' }, text: a.text, state: a.state, turn: a.turn, ...(typeof a.failure === 'string' ? { failure: a.failure } : {}), mentions: [], at: 4000, reactions: {} }; posts.push(post); return post; },
+          edit: async (a) => { const post = posts.find((x) => x.id === a.postId); Object.assign(post, ...[a.text !== undefined && { text: a.text }, a.state && { state: a.state }, a.presents && { presents: a.presents }, a.failedWithBody && { failedWithBody: true }, typeof a.failure === 'string' && { failure: a.failure }].filter(Boolean)); return structuredClone(post); },
           remove: async () => {},
           threads: {
             get: async (c, th) => structuredClone(threads[`${c}/${th}`] ?? null), list: async (c) => structuredClone(Object.values(threads).filter((x) => !c || x.channelId === c)),
             update: async (c, th, patch) => {
-              const cur = (threads[`${c}/${th}`] ??= { channelId: c, threadId: th, sessions: {}, state: 'idle', tokens: { input: 0, output: 0, cached: 0 }, calls: 0, stopped: null });
+              const cur = (threads[`${c}/${th}`] ??= { channelId: c, threadId: th, sessions: {}, state: 'idle', calls: 0, stopped: null });
               const next = typeof patch === 'function' ? patch(structuredClone(cur)) : patch;
               Object.assign(cur, next);
               return structuredClone(cur);
@@ -525,7 +495,7 @@ export default async function (t) {
 
         // 3 世代と無関係の 1 つ: p_root（s1）→ p_t2（s2）→ p_t3（s3）、p_other（s4）
         const x = world('plain', { more: true, modes: { b_1: ASK, b_2: ASK, b_3: ASK } });
-        const mkThread = (id, sessionId, botId, origin) => { x.threads[`c_1/${id}`] = { channelId: 'c_1', threadId: id, sessions: { [botId]: sessionId }, state: 'working', tokens: { input: 0, output: 0, cached: 0 }, calls: 1, stopped: null, ...(origin ? { origin } : {}) }; };
+        const mkThread = (id, sessionId, botId, origin) => { x.threads[`c_1/${id}`] = { channelId: 'c_1', threadId: id, sessions: { [botId]: sessionId }, state: 'working', calls: 1, stopped: null, ...(origin ? { origin } : {}) }; };
         mkThread('p_t2', 's2', 'b_2', { channelId: 'c_1', threadId: 'p_root' });
         mkThread('p_t3', 's3', 'b_3', { channelId: 'c_1', threadId: 'p_t2' });
         mkThread('p_other', 's4', 'b_1', null);
@@ -540,7 +510,7 @@ export default async function (t) {
         const abortedIds = x.aborted.map((a) => a.sessionId).sort().join();
         t.ok('S-3(b): ［止める］は元のスレッドと、origin で結ばれた派生のスレッド（孫も）の走っているターンを止める。無関係のスレッドは止めない', abortedIds === 's1,s2,s3', abortedIds);
         t.ok('S-3(b): 派生のスレッドにも止めた主体の印（stopped）が残り、人が書くまで起こさない。無関係のスレッドには付かない', x.threads['c_1/p_t2'].stopped?.by.kind === 'human' && x.threads['c_1/p_t3'].stopped?.by.kind === 'human' && x.threads['c_1/p_other'].stopped === null);
-        t.ok('S-3(b): 派生のスレッドにも「止めました」の投稿が残る', ['p_t2', 'p_t3'].every((id) => x.posts.some((p) => p.threadId === id && /止めました|が止めました/.test(p.text))));
+        t.ok('S-3(b): 派生のスレッドにも「中断しました」の投稿（state: stopped）が残る', ['p_t2', 'p_t3'].every((id) => x.posts.some((p) => p.threadId === id && p.author.kind === 'system' && p.state === 'stopped' && p.text === '中断しました')));
       }
 
       // F-1: 始められなかったターンの後に、その間にたまった出来事（途中送信できず pending のまま）を取り残さない
@@ -557,6 +527,8 @@ export default async function (t) {
         await sleep(3600);
         t.ok('F-1: 始められなかった後、たまっていた出来事は配り直される（次の @ まで取り残さない）。失敗した 1 通目は結果不明のまま送り直さない', calls.length === 2 && calls[1].prompt.includes('post="p_3"')
           && (await w.d.inbox.list({})).find((i) => i.postId === 'p_2')?.status === 'unknown', JSON.stringify([calls.length, await w.d.inbox.list({})]));
+        const notStartedPost = w.posts.find((p) => p.state === 'failed' && p.turn);
+        t.ok('ADR 0358: 始められなかった失敗も、返事の場所に「失敗」の投稿（理由 failure つき・本文なし）で出る', notStartedPost?.failure === 'cwd missing' && !notStartedPost.failedWithBody && notStartedPost.threadId === 'p_root', JSON.stringify(w.posts.filter((p) => p.turn)));
       }
 
       // F-2: ターンの記録ができた後に始まらず戻された（requeue）とき、delivering のまま固まらず、記録を片付けて配り直す
@@ -637,31 +609,6 @@ export default async function (t) {
         t.ok('F-3: 次のターンは、commit が進めた postCursor の後ろだけを渡す（前の起こしの投稿を文脈として渡し直さない）', w.started.length === 2 && second.includes('post="p_3"') && !second.includes('post="p_2"'), second);
       }
 
-      // S-10: トークンの足し算を、毎秒の書き換えのたびにしない（数秒に 1 回・ターンの終わりには必ず）
-      {
-        let clock = 1_000_000;
-        const w = world('plain');
-        w.turns.delete('s1');
-        const d = createDispatcher({ channels: w.d.channels, bots: w.d.bots, memory: w.d.memory, host: w.d.host, now: () => clock });
-        let tokenWrites = 0;
-        const base = w.d.channels.threads.update;
-        w.d.channels.threads.update = async (c, th, patch) => { if (typeof patch === 'function' && 'tokens' in patch({ tokens: { input: 0, output: 0, cached: 0 } })) tokenWrites++; return base(c, th, patch); };
-        const turn = { info: { sessionId: 's1' }, agentLocale: 'ja', stream: {}, control: {}, ac: { signal: { aborted: false } }, outcome: null, usage: {} };
-        await d.turnExtras(turn);
-        for (let i = 1; i <= 8; i++) {
-          clock += 1100;
-          d.onTurnEvent(turn, { type: 'usage', inputTokens: i * 100, outputTokens: i * 10, cachedTokens: i * 50 });
-          d.onTurnEvent(turn, { type: 'text.delta', text: `${i}` });
-          await sleep(40);
-        }
-        const during = tokenWrites;
-        t.ok('S-10: 8 秒の間に毎秒書き換えても、トークンの足し算は数秒に 1 回（8 回ではなく 2 回以下）', during >= 1 && during <= 2, String(during));
-        w.turns.delete('s1');
-        turn.usage = { inputTokens: 900, outputTokens: 90, cachedTokens: 450 };
-        await d.onTurnEnd(turn, { outcome: 'ok' });
-        const th = w.threads['c_1/p_root'];
-        t.ok('S-10: ターンの終わりには残りを必ず足す（途中の分と合わせて、使った分に一致する）', tokenWrites === during + 1 && th.tokens.input === 900 && th.tokens.output === 90 && th.tokens.cached === 450, JSON.stringify(th.tokens));
-      }
       // 途中の短い断片は表示を待ち、終わりにはすべての文章を順番に残す。
       {
         const none = (...xs) => xs.every((x) => progressBody({ cur: x, last: '' }) === '' && progressBody({ cur: '', last: x }) === '');
@@ -876,6 +823,8 @@ export default async function (t) {
         await finish(failedEmpty, 's_new_b_2', '', 'error');
         t.ok('本文のない failed は失敗表示のままで、呼び元へ返さない', !(await itemsOf(failedEmpty, 's1')).length
           && !failedEmpty.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failedWithBody);
+        t.ok('ADR 0358: 本文のない failed には失敗の理由（failure）が付く。本文のある failed には付けない（本文を返事として残す）', typeof failedEmpty.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failure === 'string'
+          && failed.posts.find((p) => p.turn?.sessionId === 's_new_b_2')?.failure === undefined, JSON.stringify([failedEmpty.posts.filter((p) => p.turn), failed.posts.filter((p) => p.turn)]));
         for (const outcome of ['cancelled', 'limited']) {
           const blocked = mkWorld();
           await callOwl(blocked);
@@ -906,7 +855,7 @@ export default async function (t) {
         const owlItems = await itemsOf(mention, 's1');
         t.ok('E1-4: 返事が呼んだ bot への @ を含むときは、@ で 1 回だけ起こす（reply の出来事を重ねない）', owlItems.length === 1 && !owlItems[0].reply && owlItems[0].caller === 'b_2', JSON.stringify(owlItems));
 
-        // 呼び合いの回数に上限は置かない: 予算の無いチャンネル（使用枠が読めず数えられない）では、人が書かないまま何往復でも続く（ADR 0119）
+        // 呼び合いの回数に上限は置かない: 人が書かないまま何往復でも続く（ADR 0119・0357）
         const loop = mkWorld();
         await callOwl(loop);
         await tick();
@@ -931,12 +880,11 @@ export default async function (t) {
           return loop.started.length === before + 1;
         })());
 
-        // チャンネルの予算（ADR 0119）: 使った分を週の使用枠の % の目安で数え、使い切ったら bot どうしの呼びかけだけ起こさない。人が呼べば起きる。お知らせは出さない
+        // bot 専用の使用量の仕組み（チャンネルの予算・スレッドの割り当て）は ADR 0357 でやめた。前に保存された budget・spend が残っていても、何も止めず、数えず、渡さない
         {
           const b = mkWorld();
-          b.channel.budget = { daily: 1, perThread: 100 };                    // 1 スレッド 1%
-          b.host.readQuota = async () => ({ windows: [{ label: 'week', minutes: 10080, usedPercent: 10, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }], checkedAt: Date.now() });
-          b.host.usageStore = { tokensSince: async () => 10_000 };            // 週の枠 1% = 1,000 トークン
+          b.channel.budget = { daily: 1, perThread: 100 };                    // 前の版が保存した値（読まれない）
+          b.threads['c_1/p_root'].spend = { day: new Date().toLocaleDateString('sv-SE'), percent: 99 };
           const spend = async (sessionId, text, tokens) => {
             b.host.lastReply = async () => text;
             const turn = { ...turnOf(sessionId), info: { sessionId, backend: 'fake', model: '' } };
@@ -949,42 +897,24 @@ export default async function (t) {
           const lynxRuns = () => b.started.filter((s) => s.args.sessionId === 's_new_b_2').length;
           await callOwl(b);
           await tick();
-          await spend('s_new_b_2', '返事 1', 400);                            // 0.4%: 残りがあるので Owl へ返す
-          t.ok('ADR 0119: 予算が残っている間は、呼んだ bot へ返事を返して起こす', owlRuns() === 1, String(owlRuns()));
-          await spend('s1', '@Lynx もう 1 回', 400);                           // 0.8%: まだ残る → Lynx が起きる
-          t.ok('ADR 0119: 予算が残っている間は、bot の @ で相手が起きる', lynxRuns() === 2, String(lynxRuns()));
-          await spend('s_new_b_2', '返事 2', 400);                            // 1.2%: 使い切った → Owl へは返さない
+          await spend('s_new_b_2', '返事 1', 400_000);
+          t.ok('ADR 0357: 使ったトークンが多くても、呼んだ bot へ返事を返して起こす', owlRuns() === 1, String(owlRuns()));
+          await spend('s1', '@Lynx もう 1 回', 400_000);
+          t.ok('ADR 0357: bot の @ で相手が起きる', lynxRuns() === 2, String(lynxRuns()));
+          await spend('s_new_b_2', '返事 2', 400_000);
           const root = b.threads['c_1/p_root'];
-          t.ok('ADR 0119: 使った分は根のスレッドの spend（今日の日付・%）に足す', root.spend?.day === new Date().toLocaleDateString('sv-SE') && Math.abs(root.spend.percent - 1.2) < 1e-9, JSON.stringify(root.spend));
-          t.ok('ADR 0119: 使い切ったら、呼んだ bot へ返事を返さない（起こさない）', owlRuns() === 1 && !(await b.d.inbox.list({ sessionId: 's1', status: 'pending' })).length, String(owlRuns()));
-          t.ok('ADR 0119: 使い切っても、Pleiad はスレッドにお知らせを出さない', !b.posts.some((p) => p.author?.kind === 'system' || /予算/.test(String(p.text))), JSON.stringify(b.posts.map((p) => p.text)));
-          const again = botPost('p_budget_bot', ['b_2'], { text: '@Lynx まだ？' });
-          b.posts.push(again);
-          await b.d.onPosted(again, b.channel);
-          await tick();
-          t.ok('ADR 0119: 使い切った後の bot の @ も起こさない', lynxRuns() === 2, String(lynxRuns()));
-          const human = botPost('p_budget_human', ['b_2'], { author: { kind: 'human' }, text: '@Lynx お願い' });
-          b.posts.push(human);
-          await b.d.onPosted(human, b.channel);
-          await tick();
-          t.ok('ADR 0119: 使い切っても、人が呼べば bot は起きる', lynxRuns() === 3, String(lynxRuns()));
-          const plain = botPost('p_budget_plain', [], { author: { kind: 'human' }, text: 'みんなはどう思う？' });
+          t.ok('ADR 0357: 使った分をスレッドに足さない（前の版の spend は触らず、新しく書かない）', root.spend?.percent === 99, JSON.stringify(root.spend));
+          t.ok('ADR 0357: 続けて返事を返し、呼んだ bot を起こす', owlRuns() === 2, String(owlRuns()));
+          t.ok('ADR 0357: Pleiad はスレッドにお知らせを出さない', !b.posts.some((p) => p.author?.kind === 'system' || /予算/.test(String(p.text))), JSON.stringify(b.posts.map((p) => p.text)));
+          const plain = botPost('p_plain_human', [], { author: { kind: 'human' }, text: 'みんなはどう思う？' });
           b.posts.push(plain);
           await b.d.onPosted(plain, b.channel);
           await tick();
-          const plainItems = (await b.d.inbox.list({})).filter((i) => i.postId === 'p_budget_plain');
-          t.ok('ADR 0128: 予算を使い切ったら、@ の無い人の投稿は宛先の 1 体だけが受ける（スレッドのほかの bot には聞こえた投稿を届けない）', plainItems.length === 1 && !plainItems[0].heard, JSON.stringify(plainItems));
+          await spend('s1', 'どう思うかへの返事', 400_000);                    // 宛先（最後に話した Owl）のターンが終わると、ほかの bot に聞こえた投稿が届く
+          const plainItems = (await b.d.inbox.list({})).filter((i) => i.postId === 'p_plain_human');
+          t.ok('ADR 0128: @ の無い人の投稿は、宛先の 1 体のターンの後、スレッドのほかの bot（聞こえた投稿）にも届く', plainItems.some((i) => i.botId === 'b_2' && i.heard), JSON.stringify(plainItems));
           const notes = (await b.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
-          t.ok('ADR 0119: 毎ターン、末尾の文脈で予算の残りを渡す（使い切ったら 0）', notes.some((n) => n.startsWith('<pleiad-turn-context>') && n.includes('このスレッドの予算の残り: 0%') && n.includes('チャンネルの今日の残り: 0%')), JSON.stringify(notes));
-        }
-
-        // 予算の残り: 使用枠が読めないバックエンドでは「不明」と渡す。予算なし（daily: null）のチャンネルでは渡さない
-        {
-          const u = mkWorld();
-          const notesOf = async () => (await u.d.turnExtras({ info: { sessionId: 's1', backend: 'fake', model: '' }, agentLocale: 'ja', stream: {} })).notes;
-          t.ok('ADR 0119: 使用枠が読めないときは、残りを「不明」として渡す', (await notesOf()).some((n) => n.includes('このスレッドの予算の残り: 不明')));
-          u.channel.budget = { daily: null, perThread: 50 };
-          t.ok('ADR 0119: 予算なしのチャンネルでは、残りを渡さない', !(await notesOf()).some((n) => n.includes('予算の残り')));
+          t.ok('ADR 0357: 毎ターンの末尾の文脈に、予算・使用量の残りを渡さない', !notes.some((n) => /予算|今日の残り|budget/.test(n)), JSON.stringify(notes));
         }
 
         // 黙る自由（ADR 0119）: 文章を書かずに（リアクションだけで）終えたターンは投稿を残さず、呼んだ bot へも返さない
@@ -1028,7 +958,7 @@ export default async function (t) {
         await w.d.onTurnEnd(w.turn, { outcome: 'limited', interrupted: { reason: 'limit', resetsAt } });
         await tick();
         const notes = w.posts.filter((p) => String(p.text).includes('使用量の上限'));
-        t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「止めました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|止めました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
+        t.ok('上限: 何も書けずに終わったターンの作業中の投稿（…）は消す（「中断しました」も英語の生の文も bot の発言にしない）', removed.includes(turnPost.id) && !w.posts.some((p) => /quota|中断しました|失敗しました/.test(String(p.text))), JSON.stringify(w.posts.map((p) => p.text)));
         t.ok('上限: 同じスレッドに Pleiad のお知らせを 1 回出す（解除の時刻つき）', notes.length === 1 && notes[0].threadId === 'p_root' && notes[0].text.includes('休みます'), JSON.stringify(notes));
         const owl = await w.d.bots.get({ botId: 'b_1' });
         t.ok('上限: その bot は解除の時刻まで休憩中（bots.overview の restingUntil の元）', w.d.restingUntil(owl) === resetsAt);
@@ -1128,7 +1058,6 @@ export default async function (t) {
     const thA = await settled(rootA);
     const sessionA = thA.sessions[owl.id];
     t.ok('スレッドの状態: Owl の会話・起こした回数 1・止めた印なし・idle に戻る', typeof sessionA === 'string' && thA.calls === 1 && thA.stopped === null && thA.state === 'idle', JSON.stringify(thA));
-    t.ok('スレッドの使用量に、Owl のターンの分が積まれる（入力 1000・出力 200・キャッシュ 900）', thA.tokens.input === 1000 && thA.tokens.output === 200 && thA.tokens.cached === 900, JSON.stringify(thA.tokens));
     const posts = c.since(mA).filter((e) => e.type === 'channelPost' && e.channelId === dev.id);
     t.ok('投稿は作業中（working）で作られ、同じ投稿を編集して done にする（全接続へ・sessionId なし）', posts.some((e) => e.op === 'add' && e.post.id === a.p.id && e.post.state === 'working' && e.post.text === PLACEHOLDER && !e.sessionId)
       && posts.some((e) => e.op === 'edit' && e.post.id === a.p.id && e.post.state === 'done') && botPost((await read(dev.id, rootA.id)), owl).length === 1);
@@ -1179,7 +1108,7 @@ export default async function (t) {
     }, { label: 'Lynx が止まる' });
     t.ok('走っていた Lynx のターンが止まり、投稿は stopped・スレッドは idle', turnEnds(thB.sessions[lynx.id], mStop).length === 1 && botPost(bStopped, lynx)[0].state === 'stopped' && bStopped.threads[0].stopped.by.kind === 'human');
     const sys = bStopped.posts.find((p) => p.author.kind === 'system');
-    t.ok('システムの投稿「<誰>が止めました」がスレッドに残る', sys?.text === 'あなた が止めました' && sys.threadId === rootB.id, JSON.stringify(sys));
+    t.ok('システムの投稿「中断しました」（state: stopped）がスレッドに残り、誰が止めたかは ThreadState.stopped.by が持つ', sys?.text === '中断しました' && sys.state === 'stopped' && sys.threadId === rootB.id, JSON.stringify(sys));
     t.ok('止めた後は、bot の投稿の @ で起こさない（止めたスレッドは人が次に書くまで新しく起こさない）', await (async () => {
       await sleep(300);
       return botPost(await read(dev.id, rootB.id), owl).length === 1 && botPost(await read(dev.id, rootB.id), lynx).length === 1;
@@ -1347,6 +1276,39 @@ export default async function (t) {
     await sleep(400);
     t.ok('DM の中の他の bot への @ は起こさない（DM は 1 対 1）', (await read(lynx.dmChannelId)).posts.length === 0 && !(await c.cmd('listSessions')).some((s) => s.bot?.botId === lynx.id && s.bot.kind === 'dm'));
 
+    // ---- F2: DM のスレッド返信（ADR 0358）。DM の流れの投稿へ「スレッドで返信」すると、そのスレッドの会話（kind: thread）が受け、返事は同じスレッドに出る。DM の流れには新しい投稿が出ない
+    {
+      const rootDm = (await read(dm.id)).posts.find((p) => p.author.kind === 'human' && p.text === 'echo:DM です');
+      const flowBefore = (await read(dm.id)).posts.length;
+      const mDT = c.mark();
+      const dmReply = await call('channels.post', { channelId: dm.id, threadId: rootDm.id, text: 'echo:スレッドで返す' });
+      const dt = await until(async () => { const r = await read(dm.id, rootDm.id); return botPost(r, owl, 'done')[0] ? r : null; }, { label: 'DM のスレッドの返事' });
+      const threadReply = botPost(dt, owl, 'done')[0];
+      t.ok('DM のスレッドへの返信は、同じスレッドに返事が出る（根は DM の投稿）', threadReply.text === 'スレッドで返す' && threadReply.threadId === rootDm.id, JSON.stringify(threadReply));
+      t.ok('DM の流れには何も増えない（返信の数の行だけが変わる）', (await read(dm.id)).posts.length === flowBefore && (await read(dm.id)).posts.every((x) => x.threadId === null));
+      const sessionDT = dt.threads[0].sessions[owl.id];
+      const metaDT = (await c.cmd('listSessions')).find((x) => x.id === sessionDT);
+      t.ok('スレッドの会話は DM の会話と別の会話（kind: thread・DM のチャンネル・根の投稿）。DM の会話はこのターンを走らせない',
+        typeof sessionDT === 'string' && sessionDT !== dmSession && metaDT?.bot?.kind === 'thread' && metaDT.bot.channelId === dm.id && metaDT.bot.threadId === rootDm.id
+        && turnEnds(dmSession, mDT).length === 0 && turnEnds(sessionDT, mDT).length === 1, JSON.stringify([metaDT, sessionDT, dmSession]));
+      t.ok('会話の題は「🦉 Owl › 根の投稿の頭」（DM の会話の「🦉 Owl」と見分ける）', metaDT.title === '🦉 Owl › echo:DM です', metaDT.title);
+      const histDT = (await history(sessionDT)).filter((m) => m.kind === 'channelEvent');
+      t.ok('会話には返信の投稿が包みで届く（スレッド・DM のチャンネル）', histDT.some((m) => m.postId === dmReply.id && m.threadId === rootDm.id), JSON.stringify(histDT.map((m) => [m.postId, m.threadId, m.history])));
+      // 同じスレッドの 2 回目は同じ会話
+      await call('channels.post', { channelId: dm.id, threadId: rootDm.id, text: 'echo:もう一度' });
+      const dt2 = await until(async () => { const r = await read(dm.id, rootDm.id); return botPost(r, owl, 'done').length === 2 ? r : null; }, { label: 'DM のスレッドの 2 回目' });
+      t.ok('同じ DM のスレッドの 2 回目は同じ会話・DM の流れは増えない', dt2.threads[0].sessions[owl.id] === sessionDT && (await read(dm.id)).posts.length === flowBefore && turnEnds(dmSession, mDT).length === 0);
+
+      // bot の返事（DM の流れの投稿）へ返信しても同じ。根は別の会話のターンの投稿なので、その本文は文脈に入る
+      const botRoot = botPost(await read(dm.id), owl, 'done')[0];
+      await call('channels.post', { channelId: dm.id, threadId: botRoot.id, text: 'echo:この返事について' });
+      const dt3 = await until(async () => { const r = await read(dm.id, botRoot.id); return botPost(r, owl, 'done').some((x) => x.threadId === botRoot.id) ? r : null; }, { label: 'bot の返事へのスレッド返信' });
+      const sessionDT3 = dt3.threads[0].sessions[owl.id];
+      const histDT3 = (await history(sessionDT3)).filter((m) => m.kind === 'channelEvent');
+      t.ok('bot の返事へのスレッド返信も、別の会話（根の本文を文脈に受ける）。DM の流れは増えない',
+        sessionDT3 !== dmSession && sessionDT3 !== sessionDT && histDT3.some((m) => m.history && String(m.body).includes(botRoot.text) && m.threadId === botRoot.id) && (await read(dm.id)).posts.length === flowBefore, JSON.stringify(histDT3.map((m) => [m.postId, m.threadId, m.history, m.body])));
+    }
+
     // ---- G: 末尾（記憶の核の写しは始まりだけ・毎ターン時刻・差分）と圧縮の後の取り直し
     await call('memory.write', { layer: 'user', text: 'PR は小さく、テストを先に書く', sources: [] });
     const rootG = await call('channels.post', { channelId: dev.id, text: '@Lynx notes:' });
@@ -1429,6 +1391,7 @@ export default async function (t) {
     const rootI = await call('channels.post', { channelId: dev.id, text: '@Owl fail' });
     const i1 = await until(async () => { const r = await read(dev.id, rootI.id); return botPost(r, owl, 'failed').length && r.threads[0].state === 'failed' ? r : null; }, { label: '失敗' });
     t.ok('ターンが失敗すると、投稿は failed（理由つき）・スレッドは failed', botPost(i1, owl, 'failed')[0].text.includes('fake: failure') && i1.threads[0].state === 'failed', JSON.stringify(botPost(i1, owl)));
+    t.ok('ADR 0358: 失敗の投稿には失敗の理由（failure・1 行）が付く', typeof botPost(i1, owl, 'failed')[0].failure === 'string' && botPost(i1, owl, 'failed')[0].failure.includes('fake: failure') && !botPost(i1, owl, 'failed')[0].failure.includes('\n'), JSON.stringify(botPost(i1, owl, 'failed')[0]));
 
 
     // ---- K: 独立レビューの指摘をサーバー越しに（S-3・S-2）。bot の会話の AI が ply_control から channels.post を呼ぶ
@@ -1484,7 +1447,7 @@ export default async function (t) {
       await call('channels.stopThread', { channelId: dev.id, threadId: rootL.id });
       const l2 = await until(async () => { const rr = await read(dev.id, l1.spawned.id); const l = botPost(rr, lynx)[0]; return l?.state === 'stopped' && rr.threads[0].state === 'idle' ? rr : null; }, { label: 'L 派生のスレッドが止まる' });
       t.ok('S-3(b): 元のスレッドの［止める］が、起こして新しくできたスレッドの Lynx も止める（止めた印と止めた主体）', l2.threads[0].stopped?.by.kind === 'human' && turnEnds(l2.threads[0].sessions[lynx.id], mL).length === 1
-        && l2.posts.some((p) => p.author.kind === 'system' && p.text === 'あなた が止めました'), JSON.stringify(l2.threads[0]));
+        && l2.posts.some((p) => p.author.kind === 'system' && p.text === '中断しました' && p.state === 'stopped'), JSON.stringify(l2.threads[0]));
       await settled(rootL);
 
       // S-2: 動くモードが自分より強い bot を channels.post で @ すると、投稿は残るが起こさず、承認カード（起こしますか）。許可したら起こす

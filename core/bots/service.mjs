@@ -6,7 +6,7 @@
 //   channels … ChannelService（bot を作ると DM のチャンネルを作る。createDm({ bot })。まだ無い・失敗なら dmChannelId は空のままで、
 //             start()・ensureDm() が後から作る）
 //   host    … createBotHost の道具（store・createConversation・getBackend・listBackends・resolveModel・resolveEffort・currentLocale・
-//             runtime・usageStore・accountList・reserveAccount）。無くても定義の保存だけは動く（会話を作る・使用量・状態は host が要る）
+//             runtime・accountList・reserveAccount）。無くても定義の保存だけは動く（会話を作る・状態は host が要る）
 //   emit    … botsChanged を出す
 //
 // BotService（author は types.mjs の Author）:
@@ -23,8 +23,7 @@
 //                                                   登録の無い id・使えないアカウントは断る（host.accountList）。既存の会話（capabilities.accounts を持つ backend）も揃える。
 //                                                   update で backend を替えると '' に戻る（アカウントはエージェントごと）
 //   remove({ botId }, author): Promise<void>      … DM は archive。会話は閲覧用として Chats に残す。専用情報の片付け後に本体を消す（ADR 0293）
-//   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … 使用量の記録（DB の usage_records）を sessionId で引く
-//   overview({ botId? }): Promise<(Bot & { usage, state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
+//   overview({ botId? }): Promise<(Bot & { state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
 //   --- S4（dispatch）・host が使う口
 //   ensureDm({ botId }): Promise<Bot>             … DM のチャンネルが無ければ作る
 //   ensurePlain(): Promise<Bot>                   … 組み込みの bot（plain: true。チャンネルのスレッドの「bot なし」）。無ければ Chats の既定の backend で作る。
@@ -42,7 +41,6 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
-import { inputWithCache } from '../usage.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
@@ -50,7 +48,6 @@ import { referencedSessions, shownTo } from './send-targets.mjs';
 import { looserThanDefault } from './approval.mjs';
 import { agentT } from '../i18n.mjs';
 
-const WEEK_MS = 7 * 24 * 3600_000;
 const DEFAULT_ICON = '';
 const ICON_INPUT_MAX = 1024 * 1024;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -196,16 +193,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     for (const id of await sessionIdsOf(bot.id)) await sessions.sync(id, bot).catch((e) => log('could not apply the change to a conversation:', String(e?.message ?? e)));
   }
 
-  // ---- 使用量・状態
-  async function usageFor(bot, sessionIdsByBot) {
-    const ids = sessionIdsByBot.get(bot.id) ?? [];
-    if (!ids.length || !host?.usageStore?.records) return { weekTokens: 0, cacheRatio: null };
-    const rows = await host.usageStore.records({ sessionIds: ids, since: now() - WEEK_MS }).catch(() => []);
-    let input = 0, output = 0, cached = 0;
-    for (const r of rows) { input += inputWithCache(r); output += r.outputTokens ?? 0; cached += Math.min(r.cachedTokens ?? 0, inputWithCache(r)); }
-    return { weekTokens: input + output, cacheRatio: input > 0 ? Math.min(1, cached / input) : null };
-  }
-
+  // ---- 状態
   async function stateByBot() {
     const out = new Map();
     const mark = async (sessionId, state) => {
@@ -517,21 +505,11 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       } finally { deleting.delete(botId); }
     },
 
-    async usage({ botId }) {
-      const bot = getBot(botId);
-      return usageFor(bot, new Map([[botId, await sessionIdsOf(botId)]]));
-    },
-
     async overview({ botId } = {}) {
       const bots = botId ? [getBot(botId)] : store.list();
-      const byBot = new Map();
-      if (host?.store?.getAll) {
-        const all = await host.store.getAll();
-        for (const [id, v] of Object.entries(all)) if (v?.bot?.botId) (byBot.get(v.bot.botId) ?? byBot.set(v.bot.botId, []).get(v.bot.botId)).push(id);
-      }
       const states = host?.runtime ? await stateByBot() : new Map();
       // restingUntil: 使用量の上限で休憩中なら解除の時刻（ms）。画面は作業中・あなた待ちを優先し、それ以外を「休憩中」と出す（ADR 0119）
-      return Promise.all(bots.map(async (bot) => ({ ...bot, usage: await usageFor(bot, byBot), state: states.get(bot.id) ?? 'idle', restingUntil: host?.restingUntil?.(bot) ?? null,
+      return Promise.all(bots.map(async (bot) => ({ ...bot, state: states.get(bot.id) ?? 'idle', restingUntil: host?.restingUntil?.(bot) ?? null,
         ...(botId ? { deletion: await service.deletionInfo({ botId }) } : {}),
         sendTargetDetails: await Promise.all(bot.sendTargets.map(async (sessionId) => ({ sessionId,
           title: (await host?.store?.get?.(sessionId))?.title || sessionId, source: bot.sendTargetSources?.[sessionId] ?? 'manual' }))) })));

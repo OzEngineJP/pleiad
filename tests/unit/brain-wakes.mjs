@@ -1,5 +1,5 @@
 // bot の予約（ADR 0140）: 作る（時刻の範囲・件数の上限）・時刻が来たら 1 回起こす・止まっていた間に重なった予約は 1 回にまとめて遅れて起こす・
-// 再起動しても残る・予算なし・休憩中は捨てずに待つ・家の無い DM だけの bot も 1 日のトークンの上限で待つ・止めたスレッドは起こさない・取り消し・タイマー・案内の 1 行。
+// 再起動しても残る・予算の値は効かない（ADR 0357）・休憩中は捨てずに待つ・家の無い DM だけの bot も起こす・止めたスレッドは起こさない・取り消し・タイマー・案内の 1 行。
 // チャンネルは本物のサービス、保存は一時のデータ置き場、dispatch は身代わり。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -7,12 +7,11 @@ import path from 'node:path';
 import { createChannelService } from '../../core/channels/service.mjs';
 import { createBrainStore } from '../../core/brain/store.mjs';
 import { createWakes, WakeError, WAKE_PENDING_MAX, WAKE_RETRY_MS, WAKE_TICK_MS } from '../../core/brain/wakes.mjs';
-import { createBudget, BRAIN_DAILY_TOKENS } from '../../core/bots/budget.mjs';
 import { normalizePulse } from '../../core/bots/store.mjs';
 import { botInstructions } from '../../core/bots/sessions.mjs';
 
 export const name = 'brain-wakes';
-export const title = 'bot の予約: 作る・時刻に 1 回起こす・重なった遅れは 1 回・再起動で残る・予算なし／休憩中は待つ・止めたスレッドは起こさない・取り消し・タイマー';
+export const title = 'bot の予約: 作る・時刻に 1 回起こす・重なった遅れは 1 回・再起動で残る・予算の値は効かない／休憩中は待つ・止めたスレッドは起こさない・取り消し・タイマー';
 
 const MIN = 60_000;
 
@@ -27,8 +26,6 @@ export default async function (t) {
   const channels = createChannelService({ dir: path.join(dir, 'channels'), now, listBots: bots.list });
   await channels.start();
   const brain = createBrainStore({ dataDir: dir, now });
-  const host = { currentLocale: () => 'ja', store: { getPrefs: async () => ({}) }, readQuota: async () => null, usageStore: {} };
-  const budget = createBudget({ channels, host, now, brain });
   const calls = [];
   let result = { ok: true };
   let resting = null;
@@ -36,12 +33,11 @@ export default async function (t) {
   const timers = [];
   const fakeClock = { now, setTimer: (fn, ms) => { const h = { fn, ms }; timers.push(h); return h; }, clearTimer: (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); } };
   const events = [];
-  const make = () => createWakes({ dataDir: dir, channels, bots, dispatch, budget, clock: fakeClock, now, emit: (e) => events.push(e), localeOf: () => 'ja' });
+  const make = () => createWakes({ dataDir: dir, channels, bots, dispatch, clock: fakeClock, now, emit: (e) => events.push(e), localeOf: () => 'ja' });
   let wakes = make();
   const human = { kind: 'human' };
   try {
     const dev = await channels.create({ name: 'dev', members: [bot.id] }, human);
-    await channels.update({ channelId: dev.id, budget: { daily: 5 } }, human);
     const root = await channels.post({ channelId: dev.id, text: 'リリースのワークフローを見ておいて' }, human);
     const where = { botId: bot.id, sessionId: 's_thread', channelId: dev.id, threadId: root.id };
 
@@ -62,7 +58,7 @@ export default async function (t) {
     clock += 21 * MIN;
     t.ok('時刻が来たら、その会話を 1 回起こす', (await wakes.tick()) === 1 && calls.length === 1);
     const c1 = calls[0];
-    t.ok('起こし方: 予約した会話・スレッド・チャンネルへ。本文に予約のメモ・黙ってよいこと・続けるならもう一度予約。予算の数え先はそのチャンネル', c1.sessionId === 's_thread' && c1.threadId === root.id && c1.channelId === dev.id && c1.homeChannelId === dev.id
+    t.ok('起こし方: 予約した会話・スレッド・チャンネルへ。本文に予約のメモ・黙ってよいこと・続けるならもう一度予約', c1.sessionId === 's_thread' && c1.threadId === root.id && c1.channelId === dev.id && c1.homeChannelId === undefined
       && c1.text.includes('予約した時刻になったので起きました') && c1.text.includes('CI の結果を確かめて') && c1.text.includes('brain.wakeAdd') && !c1.text.includes('遅れて'));
     t.ok('起こした予約は fired（もう一度は起こさない）', wakes.get(w1.id).status === 'fired' && wakes.get(w1.id).firedAt === clock && (await wakes.tick()) === 0 && calls.length === 1);
 
@@ -88,49 +84,38 @@ export default async function (t) {
     await wakes.tick();
     t.ok('次の tick では重ねて起こさない', calls.length === 2);
 
-    // ---- 予算なし: 捨てずに待ち、戻ったら起こす
+    // ---- 予算の値は効かない（bot 専用の使用量の仕組みは無い。ADR 0357）: budget を渡されても、時刻が来れば起こす
     calls.length = 0;
-    const w2 = wakes.add({ ...where, at: clock + 2 * MIN, note: '予算が無いときの予約' });
+    const w2 = wakes.add({ ...where, at: clock + 2 * MIN, note: '予算の値が 0 のときの予約' });
     await channels.update({ channelId: dev.id, budget: { daily: 0 } }, human);
     clock += 3 * MIN;
     await wakes.tick();
-    t.ok('予算が 0 なら起こさず、待たせる（waiting: budget。見直しは 10 分後）', calls.length === 0 && wakes.get(w2.id).status === 'pending' && wakes.get(w2.id).waiting === 'budget' && wakes.get(w2.id).retryAt === clock + WAKE_RETRY_MS);
-    t.ok('待たせている間のタイマーは、過ぎた時刻で 1 秒ごとに起きない（見直しの時刻か確かめる間隔まで眠る）', timers.length === 1 && timers[0].ms === WAKE_TICK_MS);
-    await channels.update({ channelId: dev.id, budget: { daily: 5 } }, human);
-    clock += MIN;
-    await wakes.tick();
-    t.ok('見直しの時刻の前は、予算が戻っても待つ', calls.length === 0);
-    clock += WAKE_RETRY_MS;
-    await wakes.tick();
-    t.ok('見直しの時刻に予算が戻っていれば起こす（遅れたことも書く）', calls.length === 1 && wakes.get(w2.id).status === 'fired' && !('waiting' in wakes.get(w2.id)) && calls[0].text.includes('遅れて'));
+    t.ok('予算の値（0）を渡されても、時刻が来れば起こす（waiting: budget は無い）', calls.length === 1 && wakes.get(w2.id).status === 'fired' && !('waiting' in wakes.get(w2.id)) && wakes.get(w2.id).reason === undefined);
 
-    // ---- 休憩中（使用量の上限）: 待つ
+    // ---- 休憩中（サービスの使用量の上限）: 捨てずに待ち、明けたら起こす
     calls.length = 0;
     const w3 = wakes.add({ ...where, at: clock + 2 * MIN, note: '休憩中の予約' });
     resting = clock + 60 * MIN;
     clock += 3 * MIN;
     await wakes.tick();
-    t.ok('休憩中の bot は起こさず待たせる（waiting: resting）', calls.length === 0 && wakes.get(w3.id).waiting === 'resting' && wakes.get(w3.id).status === 'pending');
+    t.ok('休憩中の bot は起こさず待たせる（waiting: resting。見直しは 10 分後）', calls.length === 0 && wakes.get(w3.id).waiting === 'resting' && wakes.get(w3.id).status === 'pending' && wakes.get(w3.id).retryAt === clock + WAKE_RETRY_MS);
+    t.ok('待たせている間のタイマーは、過ぎた時刻で 1 秒ごとに起きない（見直しの時刻か確かめる間隔まで眠る）', timers.length === 1 && timers[0].ms === WAKE_TICK_MS);
     resting = null;
+    clock += MIN;
+    await wakes.tick();
+    t.ok('見直しの時刻の前は、休憩が明けても待つ', calls.length === 0);
     clock += WAKE_RETRY_MS;
     await wakes.tick();
-    t.ok('休憩が明けたら起こす', calls.length === 1 && wakes.get(w3.id).status === 'fired');
+    t.ok('見直しの時刻に休憩が明けていれば起こす（遅れたことも書く）', calls.length === 1 && wakes.get(w3.id).status === 'fired' && !('waiting' in wakes.get(w3.id)) && calls[0].text.includes('遅れて'));
 
-    // ---- 家のチャンネルが無い DM だけの bot: チャンネルの % の数え先は無いが、bot の 1 日のトークンの上限で止まる（自分の予約で自分を起こし続けない）
+    // ---- 家のチャンネルが無い DM だけの bot の予約も、そのまま起こす（チャンネルを引く先は要らない）
     calls.length = 0;
     const lonerDm = await channels.createDm({ bot: loner });
     const lonerWhere = { botId: loner.id, sessionId: 's_loner_dm', channelId: lonerDm.id, threadId: null };
     const w7 = wakes.add({ ...lonerWhere, at: clock + 2 * MIN, note: 'DM で約束した確かめ' });
     clock += 3 * MIN;
     await wakes.tick();
-    t.ok('家の無い DM だけの bot の予約も、上限の内なら起こす（予算の数え先は bot だけ: homeChannelId は null）', calls.length === 1 && calls[0].homeChannelId === null && wakes.get(w7.id).status === 'fired');
-    calls.length = 0;
-    await budget.chargeBrain({ channelId: null, botId: loner.id, usage: { inputTokens: BRAIN_DAILY_TOKENS } });
-    const w8 = wakes.add({ ...lonerWhere, at: clock + 2 * MIN, note: '上限を使い切った後の予約' });
-    clock += 3 * MIN;
-    await wakes.tick();
-    t.ok('1 日のトークンの上限を使い切ったら、家の無い DM の bot も起こさず待たせる（waiting: budget）', calls.length === 0 && wakes.get(w8.id).status === 'pending' && wakes.get(w8.id).waiting === 'budget');
-    wakes.cancel(loner.id, w8.id);
+    t.ok('家の無い DM だけの bot の予約も起こす（家のチャンネルは渡さない）', calls.length === 1 && calls[0].homeChannelId === undefined && wakes.get(w7.id).status === 'fired');
 
     // ---- dispatch が断った: 待てるもの（resting）は待ち、ほかは閉じる
     calls.length = 0;
