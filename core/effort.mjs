@@ -48,7 +48,7 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
  * 一覧を引けない・知らないモデルは levels が [] になる（振り分けでは「調整なし」として何も送らない）
  */
 export async function effortCapability(backend, model = '', cwd, endpoint = null) {
-  // 互換の接続先の候補（ADR 0360）は接続先の段（モデル ID に段を持たない）
+  // 互換の接続先の候補（ADR 0361）は接続先の段（モデル ID に段を持たない）
   if (endpoint) return { levels: Object.keys(await effortOptions(backend, model, cwd, endpoint)).filter(Boolean), fixed: null };
   if (backend.traits?.effortInModelId) {
     const entry = (typeof backend.models === 'function' ? await backend.models(cwd).catch(() => null) : null)?.[model];

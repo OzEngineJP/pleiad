@@ -309,7 +309,7 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
  * window はアカウント全体の枠（five_hour など）で止まったときの枠の名前（model は null）
  * inTiers(b) は委譲の段ごとの候補に入っているそのエージェントのアカウント（Set。ログイン中は ''）。アカウントの行に inTiers を付ける
  * （true なら自動の選択・account を省いた固定の委譲で使われうる。false は account を書いたときだけ使われる。ADR 0264）
- * endpoints(b) はそのエージェントの互換の接続先（[{ id, name, kind, models, ready, inTiers, held? }]。ADR 0360）。
+ * endpoints(b) はそのエージェントの互換の接続先（[{ id, name, kind, models, ready, inTiers, held? }]。ADR 0361）。
  * 使用量は読めないので usage: 'not_reported' を付ける。キーの値は渡さない
  */
 export async function agentUsage({ backend, list, get, read, locale, accounts, held, inTiers, endpoints }) {

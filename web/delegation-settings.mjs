@@ -439,7 +439,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     if (!account) return row?.sameAs ? t('routing.settings.accountLoginSame', { name: row.sameAs }) : t('routing.settings.accountLogin');
     return row?.name ?? account;
   }
-  // ---- 互換の接続先（ADR 0360）。候補は `backend@<接続先>:model`（モデルは接続先の ID をそのまま）。
+  // ---- 互換の接続先（ADR 0361）。候補は `backend@<接続先>:model`（モデルは接続先の ID をそのまま）。
   // 一覧と状態はサーバーの data.endpoints（エージェントごと。state は ready / check_failed / key_unreadable）
   const endpointsOf = backend => data.endpoints?.[backend] ?? [];
   const endpointInfo = id => Object.values(data.endpoints ?? {}).flat().find(e => e.id === id) ?? null;
@@ -720,7 +720,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
     const model = candidateName(candidate);
     const effort = candidateEffort({ settings: data.settings, tier, candidate,
       capability, conversation: conversation ?? conversationOf(backend) }).value ?? '';
-    // 互換の接続先の候補は ◇（入力欄のチップと同じ印。ADR 0360）
+    // 互換の接続先の候補は ◇（入力欄のチップと同じ印。ADR 0361）
     paintWhoChip(chip, { backend, model, effort, endpoint: Boolean(endpoint) });
     const label = t('routing.settings.candidateChange', { tier: levelName(tier), position: position + 1,
       candidate: [labelOf(backend), model, effort].filter(Boolean).join(t('routing.line.join')) });
@@ -894,7 +894,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
         const next = kind === 'model' ? (endpoint ? endpointCandidate(backend, value, endpoint) : candidateOf(backend, value, account)) : candidateOf(backend, model, value);
         return duplicate(next) ? duplicateText() : null;
       };
-      // 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先 → 接続先を管理…。入力欄と同じ並び。ADR 0359・0360）
+      // 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先 → 接続先を管理…。入力欄と同じ並び。ADR 0359・0361）
       const epRows = endpointsOf(backend);
       const epRow = endpoint ? epRows.find(e => e.id === endpoint) ?? null : null;
       const where = e => `${KIND_LABEL[e.kind ?? KIND[e.agent ?? backend]] ?? ''} · ${String(e.baseUrl ?? '').replace(/^https?:\/\//, '')}`;
@@ -1123,7 +1123,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
   return {
     refresh,
     /**
-     * 使用量だけの通知と、互換の接続先が変わった通知（endpoints。ADR 0360）では、開いたメニューと入力欄を作り直さない。
+     * 使用量だけの通知と、互換の接続先が変わった通知（endpoints。ADR 0361）では、開いたメニューと入力欄を作り直さない。
      * 種類のない旧サーバーの通知は全体を取り直す
      */
     async event(ev) {

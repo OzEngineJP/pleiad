@@ -778,7 +778,7 @@ export default async function (t) {
   t.ok('人が選び直した記録は強さを引く段を持つ（段が無ければ付けない）', manual.effortTier === 't3'
     && !('effortTier' in manualRouting({ kind: 'implement', candidate: 'claude:sonnet', check: { ok: true, account: '', checkedAt: NOW }, of: 'ply-task-x', from: null })));
 
-  // ---- 互換の接続先の候補（ADR 0360）
+  // ---- 互換の接続先の候補（ADR 0361）
   {
   const EP = 'ep-0123456789ab';
   const epCand = `codex@${EP}:vendor/fake-large`;

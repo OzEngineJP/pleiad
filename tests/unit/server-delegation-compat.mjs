@@ -1,4 +1,4 @@
-// 委譲の候補に互換の接続先（ADR 0360）をサーバー越しに確かめる。codex の身代わり（tests/lib/fake-codex.mjs）と偽の互換 API（tests/lib/fake-compat-api.mjs）だけと話す。LLM は呼ばない。
+// 委譲の候補に互換の接続先（ADR 0361）をサーバー越しに確かめる。codex の身代わり（tests/lib/fake-codex.mjs）と偽の互換 API（tests/lib/fake-compat-api.mjs）だけと話す。LLM は呼ばない。
 //   ply_usage の endpoints（inTiers・held・キーを出さない）→ ply_delegate の endpoint（id・名前）で子が接続先で走り、routing.target に接続先の名前 →
 //   断る（登録に無い・2 つに当たる・別のエージェント・account と一緒・host と一緒・確認に失敗）→ 段の候補 codex@ep-…:model を自動の選択が上から順に選ぶ
 //   （使用量は読めないので後回しにしない）→ 確認に失敗・直近の 429 の候補だけ飛ばす → 同じエージェントの委譲は親の接続先を継ぐ →

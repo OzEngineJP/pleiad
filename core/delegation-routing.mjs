@@ -91,18 +91,18 @@ export function parseCandidate(id) {
   if (mark < 0) return { backend: head, model, account: null };
   const account = head.slice(mark + 1);
   if (mark === 0 || !ACCOUNT_ID.test(account)) return null;
-  // 互換の接続先（ADR 0360）。`@` の後ろが ep- で始まれば接続先の id（アカウントの id は acct-…）。
+  // 互換の接続先（ADR 0361）。`@` の後ろが ep- で始まれば接続先の id（アカウントの id は acct-…）。
   // 古い版はこれを登録の無いアカウントとして no_account で飛ばす（レベルを既定に戻さない）
   if (isEndpointRef(account)) return { backend: head.slice(0, mark), model, account: null, endpoint: account };
   return { backend: head.slice(0, mark), model, account };
 }
 
-/** 互換の接続先の id か（core/compat-endpoints.mjs の ep-<16 進>。ADR 0360） */
+/** 互換の接続先の id か（core/compat-endpoints.mjs の ep-<16 進>。ADR 0361） */
 export const isEndpointRef = s => typeof s === 'string' && s.startsWith('ep-');
 
 /**
  * 候補の id を組む。account が ''・null（ログイン中・アカウントを持たない）なら `backend:model`。
- * endpoint（互換の接続先の id）を渡せば `backend@<接続先>:model`（account は見ない。ADR 0360）
+ * endpoint（互換の接続先の id）を渡せば `backend@<接続先>:model`（account は見ない。ADR 0361）
  */
 export function candidateId(backend, model, account = null, endpoint = null) {
   const scope = endpoint || account;
@@ -131,7 +131,7 @@ export function tierAccounts(settings, backend) {
   return out;
 }
 
-/** レベルに入っている互換の接続先の id（Set。ADR 0360） */
+/** レベルに入っている互換の接続先の id（Set。ADR 0361） */
 export function tierEndpoints(settings, backend = null) {
   const out = new Set();
   for (const list of Object.values(settings?.tiers ?? {})) for (const c of list) {
@@ -474,7 +474,7 @@ export function sameIdentity(a, b) {
 export function checkCandidate(candidate, { usage, settings, now, blocked = () => null, endpoints = [] }) {
   const parsed = parseCandidate(candidate);
   const entry = parsed ? usage?.[parsed.backend] : null;
-  // 互換の接続先の候補は公式の使用量を使わない（ADR 0360）。使用量をまだ一度も取っていない（取り置きが空）ときも接続先の状態で決める。
+  // 互換の接続先の候補は公式の使用量を使わない（ADR 0361）。使用量をまだ一度も取っていない（取り置きが空）ときも接続先の状態で決める。
   // 止めるのは、エージェントが入っていない・無効と分かっているときだけ
   if (parsed?.endpoint && (entry?.available || (!entry && !Object.keys(usage ?? {}).length))) return checkEndpoint(parsed, { endpoints, blocked });
   // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
@@ -512,7 +512,7 @@ function endpointOf(parsed, endpoints) {
   return { account: null, endpoint: parsed.endpoint, endpointLabel: endpointRow(parsed, endpoints)?.name ?? null };
 }
 /**
- * 互換の接続先の候補（ADR 0360）。使用量は読めないので、使用量では後回しにしない（使える）。
+ * 互換の接続先の候補（ADR 0361）。使用量は読めないので、使用量では後回しにしない（使える）。
  * 飛ばすのは、登録に無い・別のエージェントの接続先（no_endpoint）、確認に失敗した（check_failed）、キーを読めない（key_unreadable）、
  * 直近に 429 を返した（blocked の枠のアカウントは endpoint:<id>）ときだけ
  */
@@ -569,7 +569,7 @@ export function pinnedRouting({ kind, backend, model = null, account = null, acc
     target: { backend, model: model ?? null, account: account ?? null, ...(accountLabel ? { accountLabel } : {}), ...endpointFields({ endpoint, endpointLabel }) },
     skipped: [], usageAt: null, fallback: null };
 }
-/** target・飛ばした行の接続先の欄（互換の接続先のときだけ。ADR 0360） */
+/** target・飛ばした行の接続先の欄（互換の接続先のときだけ。ADR 0361） */
 const endpointFields = c => c?.endpoint ? { endpoint: c.endpoint, ...(c.endpointLabel ? { endpointLabel: c.endpointLabel } : {}) } : {};
 
 // ---- 子の思考の強さ（ADR 0164） -----------------------------------------------------
@@ -654,7 +654,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   };
   const soft = [];
   // アカウントを持つ候補（アカウントを書いた候補・登録のあるエージェントの候補）は、飛ばした行にアカウントを添える
-  // 互換の接続先の候補は、アカウントの代わりに接続先を添える（ADR 0360）
+  // 互換の接続先の候補は、アカウントの代わりに接続先を添える（ADR 0361）
   const scopedOf = parsed => Boolean(parsed) && !parsed.endpoint && (parsed.account != null || Array.isArray(usage?.[parsed.backend]?.accounts));
   const inspect = (tier, chooseSoft) => {
     const localSoft = [];
@@ -717,7 +717,7 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked, en
   return ids.map(candidate => {
     const parsed = parseCandidate(candidate);
     const check = checkCandidate(candidate, { usage, settings, now, blocked, endpoints });
-    // 互換の接続先の候補（ADR 0360）: 使用量は読めない（windows は空）。画面は「使用量は読めない」と出す
+    // 互換の接続先の候補（ADR 0361）: 使用量は読めない（windows は空）。画面は「使用量は読めない」と出す
     if (parsed?.endpoint) {
       return { candidate, backend: parsed.backend, model: parsed.model, account: null, endpoint: parsed.endpoint, endpointLabel: check.endpointLabel ?? null,
         tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
@@ -762,7 +762,7 @@ export function settingsWarnings({ settings, usage }) {
   for (const candidate of [...new Set(Object.values(settings.tiers ?? {}).flat())]) {
     const parsed = parseCandidate(candidate);
     const entry = usage?.[parsed.backend];
-    // 互換の接続先の候補は、エージェントが使えるかだけ（接続先の状態は候補の行に出す。モデルは接続先が決める。ADR 0360）
+    // 互換の接続先の候補は、エージェントが使えるかだけ（接続先の状態は候補の行に出す。モデルは接続先が決める。ADR 0361）
     if (parsed.endpoint) { if (!entry?.available) out.push({ candidate, reason: 'unavailable' }); continue; }
     const missingAccount = Array.isArray(entry?.accounts) ? !entry.accounts.some(a => a.account === (parsed.account ?? '')) : Boolean(parsed.account);
     if (!entry?.available) out.push({ candidate, reason: 'unavailable' });

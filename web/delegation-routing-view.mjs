@@ -48,7 +48,7 @@ export const isAutoRouting = routing => routing?.mode === 'auto';
 /**
  * 候補の id（backend:model・backend@account:model）を分ける。model に : や @ が入っても最初の : で分ける。
  * account はアカウントを書いた候補だけ（書かない候補はログイン中のアカウントか、アカウントを持たないエージェント。ADR 0264）。
- * @ の後が ep- で始まる候補は互換の接続先の候補で、account ではなく endpoint に入れる（backend@ep-…:model。ADR 0360）
+ * @ の後が ep- で始まる候補は互換の接続先の候補で、account ではなく endpoint に入れる（backend@ep-…:model。ADR 0361）
  */
 export function splitCandidate(id) {
   const s = String(id ?? '');
@@ -91,7 +91,7 @@ function untilOf(skipped) {
 /** 飛ばした候補の一言（「Sonnet は週次 73% で飛ばした」） */
 export function skippedPhrase(skipped, names = defaultNames) {
   const { backend, model, account, endpoint } = splitCandidate(skipped.candidate);
-  // 互換の接続先の候補は「z-ai/glm-4.6 · OpenRouter」（ADR 0360）
+  // 互換の接続先の候補は「z-ai/glm-4.6 · OpenRouter」（ADR 0361）
   const where = endpoint || skipped.endpoint ? [skipped.endpointLabel || skipped.endpoint || endpoint] : skipped.account !== undefined ? [accountName(skipped)] : [];
   const name = [(endpoint ? model : names.model(backend, model, skipped.account ?? account ?? '')) || model, ...where].filter(Boolean).join(t('routing.line.join'));
   const w = skipped.window;
@@ -247,7 +247,7 @@ export function parseRoutingFailure(text) {
     if (!m) continue;
     const [, candidate, scopeLabel, tier, reason, detail, label, used, pace, until] = m;
     const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
-    // [ ] の中は、アカウントの候補ならアカウントの見出し、互換の接続先の候補なら接続先の名前（ADR 0360）
+    // [ ] の中は、アカウントの候補ならアカウントの見出し、互換の接続先の候補なら接続先の名前（ADR 0361）
     const endpoint = splitCandidate(candidate).endpoint;
     skipped.push({ candidate, ...(scopeLabel ? endpoint ? { endpoint, endpointLabel: scopeLabel } : { accountLabel: scopeLabel } : {}), tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}), ...(until ? { until } : {}) });
   }
@@ -373,7 +373,7 @@ function candidateCard({ n, backend, model, used, skipped, account, accountLabel
   const card = el('div', 'rt-cand' + (used ? ' used' : ''));
   const head = el('div', 'rt-cand-head');
   const modelAccount = account ?? (skipped ? splitCandidate(skipped.candidate).account : undefined) ?? '';
-  // 互換の接続先の候補は ◇ と「モデル · 接続先」（ADR 0360。入力欄のチップと同じ印）
+  // 互換の接続先の候補は ◇ と「モデル · 接続先」（ADR 0361。入力欄のチップと同じ印）
   head.append(el('span', 'rt-n', String(n)), endpoint ? el('span', 'row-be compat-mark', '◇') : logo(backend));
   const where = endpoint ? [endpointLabel || endpoint] : account !== undefined ? [accountName({ account, accountLabel })] : [];
   head.append(el('b', null, [(endpoint ? model : names.model(backend, model, modelAccount)) || model, ...where].filter(Boolean).join(t('routing.line.join'))));
@@ -512,7 +512,7 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
     const text = el('span', 'rt-option-text');
     const title = el('span', 'rt-option-name');
     title.append(c.endpoint ? el('span', 'row-be compat-mark', '◇') : logo(c.backend), el('span', null, candidateName(c, names)));
-    // 互換の接続先は使用量を読めない（「エージェント · 使用量は読めない」。ADR 0360）
+    // 互換の接続先は使用量を読めない（「エージェント · 使用量は読めない」。ADR 0361）
     const sub = [...(c.tiers ?? []).map(tierText), ...(c.endpoint ? [names.backend(c.backend), t('routing.settings.endpointNoUsage')] : []),
       ...(c.deferred ? [t('routing.retry.lowHeadroom', { reason: skipText(c.reason) })] : []), usageSummary(c)].filter(Boolean).join(t('routing.line.join'));
     text.append(title, el('small', null, sub));

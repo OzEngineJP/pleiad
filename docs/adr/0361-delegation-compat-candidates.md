@@ -1,4 +1,4 @@
-# 0360 委譲の候補に互換の接続先を入れる
+# 0361 委譲の候補に互換の接続先を入れる
 
 - 状態: 承認（2026-11-26）
 - 関係: [ADR 0264](0264-delegation-account-scope.md)（委譲の候補はアカウントの単位。決定 1・8 を一部置き換え）・[ADR 0359](0359-connections-unify.md)（接続先を 1 つに。決定 6 を置き換え）・[ADR 0011](0011-compat-endpoints.md)（互換の接続先）・[ADR 0022](0022-delegation-routing.md)（委譲先の自動選択）・[ADR 0040](0040-delegation-routing-headroom.md)（使用量の後回し）・[ADR 0229](0229-opencode-limit-retry-wait.md)（上限で止まった枠）

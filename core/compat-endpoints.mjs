@@ -506,7 +506,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       return (await read()).endpoints.some(e => e.id === id && (!agent || e.agent === agent));
     },
     /**
-     * 委譲の振り分けが見る接続先の状態（ADR 0360）。[{ id, agent, name, state: 'ready' | 'check_failed' | 'key_unreadable' }]。
+     * 委譲の振り分けが見る接続先の状態（ADR 0361）。[{ id, agent, name, state: 'ready' | 'check_failed' | 'key_unreadable' }]。
      * ids を渡せば、その接続先だけキーを読めるか確かめる（ほかは確認の結果だけ）。キーの値は返さない
      */
     async routingStates(ids = null) {
@@ -524,7 +524,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       return out;
     },
     /**
-     * ply_delegate の endpoint（接続先の id か名前。ADR 0360）に当たる接続先。id が当たればそれ 1 つ、
+     * ply_delegate の endpoint（接続先の id か名前。ADR 0361）に当たる接続先。id が当たればそれ 1 つ、
      * 無ければ名前が同じもの（大文字小文字を区別しない）を全部返す。キーの値は持たない
      */
     async lookup(ref) {

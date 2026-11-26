@@ -743,7 +743,7 @@ function subView(ctx) {
       return wrap(title, [
         plist(opts.map((o) => optRow({ key: o.key, sel: o.key === sel, ic: o.warn ? glyph(...WARN) : null, name: o.label, note: o.note, two: Boolean(o.note), warn: o.warn,
           tag: o.isDefault ? DEFAULT_TAG() : "", meta: o.kind === "account" ? weekMeta(o.usage) : null, title: o.title,
-          // 選べない理由（設定 › 委譲の候補の面だけが渡す。確認に失敗した互換の接続先・同じ候補。ADR 0360）
+          // 選べない理由（設定 › 委譲の候補の面だけが渡す。確認に失敗した互換の接続先・同じ候補。ADR 0361）
           disabledReason: o.key !== sel && !o.gone ? ctx.blocked?.(o.kind, o.value) : null,
           onPick: () => ctx.pick("conn", () => choose(o)) })), title),
         ep?.row && ep.lost ? pnote(t("composer.endpoint.lost", { items: ep.lost })) : null,
