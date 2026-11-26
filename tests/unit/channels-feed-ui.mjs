@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { mentionToken, filterCandidates } from '../../web/channels/mention-complete.mjs';
 import { pillsOf, withReaction, isMine } from '../../web/channels/reactions.mjs';
 import { whenText, dayText } from '../../web/channels/post.mjs';
+import { findMentionBlocks } from '../../web/channels/mention-blocks.mjs';
 
 export const name = 'channels-feed-ui';
 export const title = 'チャンネルの流れ: @ の補完の判定・候補の絞り込み・リアクションの札・時刻の文言・スレッドを開く口の配線';
@@ -26,6 +27,15 @@ export default function (t) {
   t.ok('空の問いは全部（元の並び）', names('') === 'Owl,Lynx,Kit,Howler,あなた');
   t.ok('前方一致が先、部分一致が後（大小を区別しない）', names('o') === 'Owl,Howler' && names('OW') === 'Owl,Howler' && names('ow') === 'Owl,Howler');
   t.ok('全角・日本語も当たる。当たらなければ空', names('Ｏｗ') === 'Owl,Howler' && names('あな') === 'あなた' && names('zzz') === '');
+
+  // ---- 入力欄の宛先の塊（本文の `@名前` のうち bot の名前に当たるもの。ADR 0359）
+  const bots = [{ id: 'b_owl', name: 'Owl' }, { id: 'b_owlet', name: 'Owlet' }, { id: 'b_ru', name: 'ルナ' }];
+  const blk = (s, caret = null) => findMentionBlocks(s, bots, { caret }).map((m) => `${m.bot.id}@${m.start}-${m.end}`).join(',');
+  t.ok('名前の後に空白・句読点・行末が来たら塊にする。長い名前を先に見る', blk('@Owl お願い') === 'b_owl@0-4' && blk('@Owlet お願い') === 'b_owlet@0-6' && blk('見て@ルナ、どう？') === 'b_ru@2-5');
+  t.ok('複数の宛先はそれぞれ塊（全員に届く）', blk('@Owl @ルナ お願い') === 'b_owl@0-4,b_ru@5-8');
+  t.ok('打っている途中（キャレットが名前の直後）・名前の続き・メールの形は塊にしない', blk('@Owl', 4) === '' && blk('@Owlx') === '' && blk('a@Owl ') === '' && blk('@Owl_x') === '' && blk('@Owl', null) === 'b_owl@0-4');
+  t.ok('bot がいない・名前の無い bot は塊にしない', findMentionBlocks('@Owl ', [], {}).length === 0 && findMentionBlocks('@ ', [{ id: 'x', name: ' ' }], {}).length === 0);
+  t.ok('全角・大小の違いは同じ名前として数える（サーバーの解析と同じ）', blk('@ＯＷＬ ') === 'b_owl@0-4' && blk('@owl ') === 'b_owl@0-4');
 
   // ---- リアクションの札
   const you = { kind: 'human' }, owl = { kind: 'bot', botId: 'b_owl' }, lynx = { kind: 'bot', botId: 'b_lynx' };

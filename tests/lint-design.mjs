@@ -37,10 +37,11 @@ const FAM = {
   shadow:  n => n === '--shadow',
   diff:    n => n.startsWith('--diff-'),   /* git の差分と状態の文字だけ（ADR 0135）。使える場所は DIFF_FILE */
   glow:    n => n.startsWith('--glow-'),   /* 通話中のメインの背景（radial-gradient）だけ（ADR 0150）。使える場所は GLOW_FILE */
+  bot:     n => /^--bc\d$/.test(n) || n === '--bot-color',   /* bot の色（--bc1〜8）と、それを受けて要素に置く --bot-color。bot の顔と @ の宛先の塊だけ（ADR 0359）。面にだけ使える（ALLOW） */
 };
 /* プロパティごとに許す族。ここに無い族のトークンを色のプロパティに書いたら落とす。 */
 const ALLOW = {
-  background: ['surface', 'fill', 'diff'],
+  background: ['surface', 'fill', 'diff', 'bot'],
   color:      ['ink', 'onfill', 'diff'],
   border:     ['line', 'surface', 'shadow', 'fill'],   /* 主要ボタンの枠だけ fill を許す */
   svg:        ['line', 'ink', 'fill', 'surface'],

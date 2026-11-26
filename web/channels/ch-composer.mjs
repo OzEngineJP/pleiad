@@ -10,6 +10,7 @@ import { promptMaxHeight } from '../composer-layout.mjs';
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
+import { setupMentionBlocks } from './mention-blocks.mjs';
 import { createChAttachments } from './ch-attachments.mjs';
 import { DRAFT_STORE, parseDrafts, serializeDrafts } from './ch-attach-model.mjs';
 
@@ -31,6 +32,7 @@ const SAVE_WAIT_MS = 400;
  * @param {object} o.host setupChannels の host（cmd・whenOnline・openImage・filePreview を添付が使う）
  * @param {() => string|null} o.bucket 添付の置き場の分け先（チャンネルの id）
  * @param {() => object[]} o.candidates @ の候補（mention-complete.mjs の形）
+ * @param {() => { id: string, name: string, color?: number }[]} [o.blockBots] 本文の `@名前` を「顔＋名前」の塊に見せる bot（mention-blocks.mjs。呼べる bot の全員）
  * @param {() => { id: string, name: string, icon: string }|null} [o.suggest] 誰も @ していないときに勧める bot（無ければ提案を出さない）
  * @param {(backend: string) => string} [o.backendLabel]
  * @param {(text: string) => Promise<{required: boolean, botIds: string[]}>} [o.wakePreview] 集団宛てを投稿前に数える
@@ -38,7 +40,7 @@ const SAVE_WAIT_MS = 400;
  * @returns {{ el: HTMLFormElement, input: HTMLElement, focus(): void, setPlaceholder(text: string): void, setDisabled(on: boolean, reason?: string): void, refresh(): void, clear(): void,
  *   setDraftKey(key: string|null): void, saveDraft(): void, bindDropZone(zone: HTMLElement): void }}
  */
-export function createChComposer({ id, host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, idPrefix = id }) {
+export function createChComposer({ id, host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, backendLabel, wakePreview, onSend, idPrefix = id }) {
   const form = el('form', 'ch-composer');
   form.id = id;
   form.noValidate = true;
@@ -118,6 +120,8 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   const editor = createMarkdownEditor(input, { resolve: () => null, ...attach.editorOptions });
   attach.bind(editor, input);
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${idPrefix}-mention`, backendLabel, onChange: () => paintHint() });
+  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0359）
+  const blocks = setupMentionBlocks({ input, bots: blockBots });
 
   // ---- 高さ。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（Chats の fitPrompt と同じ決まり）
   function fit() {
@@ -217,6 +221,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   input.addEventListener('keydown', (e) => {
     if (isComposingKey(e)) return;
     if (mention.keydown(e)) return;
+    if (blocks.keydown(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
   });
   input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy()) say(''); paintHint(); saveDraftSoon(); });
@@ -247,7 +252,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       say(on ? reason : '', true);
       paintHint();
     },
-    refresh() { paintHint(); fit(); },
+    refresh() { blocks.decorate(); paintHint(); fit(); },
     /** 入力欄の下の一行（失敗など）。sticky でなければ数秒で消える */
     say,
     clear() { dismissWake(); input.value = ''; attach.clear(); say(''); saveDraft(); paintHint(); },
@@ -265,6 +270,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       attach.restore(d?.attached);   // 添付の実体が先（本文の印は、ここにあるものだけが札になる）
       input.editor.restoreDraft(d?.text ?? '', d?.editing);
       attach.placeTail();   // 文中に無い添付は末尾に札で（一覧の面が無いので）
+      blocks.decorate();
       say(failures.get(key ?? '') ?? '', true);
       failures.delete(key ?? '');
       send.disabled = disabled || busy();

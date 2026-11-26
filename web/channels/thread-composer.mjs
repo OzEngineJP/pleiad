@@ -9,6 +9,7 @@
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
+import { setupMentionBlocks } from './mention-blocks.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
 import { el } from '../dom.mjs';
@@ -26,6 +27,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip'
  * @param {object} o.host setupChannels の host
  * @param {() => string|null} o.bucket 添付の置き場の分け先（チャンネルの id）
  * @param {() => object[]} o.candidates @ の候補
+ * @param {() => { id: string, name: string, color?: number }[]} [o.blockBots] 本文の `@名前` を「顔＋名前」の塊に見せる bot（mention-blocks.mjs）
  * @param {() => object|null} [o.suggest] 誰も @ していないときに勧める bot
  * @param {(backend: string) => string} [o.backendLabel]
  * @param {(text: string) => Promise<{required: boolean, botIds: string[]}>} [o.wakePreview]
@@ -39,7 +41,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip'
  * @param {() => void} [o.onStop] 送信の横の ■（作業中の返事を止める。通常の会話の中断と同じ形。出し入れは setStop）
  * @param {object} [o.edit] 「編集して再送信」の持ち分（web/composer/edit-mode.mjs の host）: target(id) → { time, tail } か null、send(ctx)、branch(ctx)、decorate(id, on, tail)、locate(id)
  */
-export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, receiver = () => null, session = () => null, onStop = () => {},
+export function createThreadComposer({ host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, backendLabel, wakePreview, onSend, receiver = () => null, session = () => null, onStop = () => {},
   schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
@@ -112,6 +114,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const got = await host.invoke('drafts.load', { key }).catch(() => null);
     if (draftKey !== key || input.value.trim() || !got?.text) return;
     input.editor.restoreDraft(got.text, got.editing);
+    blocks.decorate();
     c.fit();
   }
 
@@ -130,12 +133,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       onChange: () => { dismissWake(); saveDraft(); paintHint(); },
     },
     wait: { runMark, onChange: () => syncSend() },
-    keys: [(e) => mention.keydown(e), (e) => c.slash?.keydown(e)],
+    keys: [(e) => mention.keydown(e), (e) => blocks.keydown(e), (e) => c.slash?.keydown(e)],
     onSubmit: () => submit(),
     onSchedule: () => c.sendMenu?.open(),
   });
   const att = c.attach;
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${PREFIX}-mention`, backendLabel, onChange: () => paintHint() });
+  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0359）
+  const blocks = setupMentionBlocks({ input, bots: blockBots });
   // 送信の日時（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。ADR 0103）。時刻が来たら人の投稿として 1 回だけ投稿する（channels.schedulePost）
   c.useSchedule({
     context: () => ({ available: Boolean(input.value.trim() || att.items.length) && !disabled }),
@@ -149,7 +154,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),
     host: {
       read: () => ({ text: input.value, attached: att.ordered(), editing: input.editor.snapshotEditing() }),
-      write: ({ text, attached, editing }) => { c.shell?.reset?.(); att.restore(attached); input.editor.restoreDraft(text, editing); att.placeTail(); c.fit(); paintHint(); },
+      write: ({ text, attached, editing }) => { c.shell?.reset?.(); att.restore(attached); input.editor.restoreDraft(text, editing); att.placeTail(); blocks.decorate(); c.fit(); paintHint(); },
       send: (ctx) => editHost.send(ctx), branch: (ctx) => editHost.branch(ctx),
       decorate: (id, on, tail) => editHost.decorate?.(id, on, tail), locate: (id) => editHost.locate?.(id),
       change: () => saveDraftSoon(),
@@ -358,7 +363,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       say(on ? reason : '', true);
       paintHint();
     },
-    refresh() { paintHint(); paintSchedules(); c.fit(); },
+    refresh() { blocks.decorate(); paintHint(); paintSchedules(); c.fit(); },
     /** 送信の横の ■ を出し入れする。disabled は止めている最中 */
     setStop({ show = false, disabled = false } = {}) {
       els.abort.hidden = !show;
@@ -383,6 +388,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       att.restore(d?.attached);
       input.editor.restoreDraft(d?.text ?? '', d?.editing);
       att.placeTail();
+      blocks.decorate();
       // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
       if (d?.edit) pendingEdit = d.edit;
       if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）

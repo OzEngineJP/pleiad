@@ -112,7 +112,9 @@
       "head": "bot とメンバー",
       "label": "@ の候補",
       "here": "このスレッドで話した bot",
-      "everyone": "チャンネルの bot 全員"
+      "everyone": "チャンネルの bot 全員",
+      "remove": "宛先から外す",
+      "added": "{{names}}をメンバーに足しました"
     },
     "wakeConfirm": {
       "label": "bot を起こす確認",

@@ -114,7 +114,9 @@
       "head": "Bots and members",
       "label": "@ suggestions",
       "here": "Bots who spoke in this thread",
-      "everyone": "All bots in this channel"
+      "everyone": "All bots in this channel",
+      "remove": "Remove from recipients",
+      "added": "Added {{names}} to the channel members"
     },
     "wakeConfirm": {
       "label": "Confirm waking bots",

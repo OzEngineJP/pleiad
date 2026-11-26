@@ -20,6 +20,7 @@ import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { headingButton } from './routine-entry.mjs';
 import { shownBot } from './plain-bot.mjs';
+import { notify } from '../file-actions.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
 
 const PAGE = 50;
@@ -55,6 +56,7 @@ export function createFeed(host) {
     host,
     bucket: () => S.id,
     candidates: () => candidates(),
+    blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.id, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
@@ -99,19 +101,27 @@ export function createFeed(host) {
 
   // i18n-dynamic: channels:feed.botState.
   const stateHint = (bot) => (bot.state === 'working' || bot.state === 'waiting' ? t(`channels:feed.botState.${bot.state}`) : '');
+  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0359） */
+  const allBots = () => [...S.bots.values()].filter((b) => !b.plain);
+  /** @ の一覧に出す bot: チャンネルのメンバー。メンバーがまだいないチャンネルは、いる bot の全員（選べば投稿のときメンバーに足される） */
+  const callableBots = () => (memberBots().length ? memberBots() : allBots());
   function candidates() {
     if (!S.channel || S.channel.kind !== 'channel') return [];
+    const bots = callableBots();
     return [
-      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
-      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, backend: b.backend ?? null, hint: stateHint(b) })),
+      // @here・@everyone は、呼べる bot が 1 体もいないとき（0 体で 0 人宛てになる）は出さない
+      ...(memberBots().length ? [
+        { id: 'here', name: 'here', icon: '@', glyph: true, hint: t('channels:feed.mention.here') },
+        { id: 'everyone', name: 'everyone', icon: '@', glyph: true, hint: t('channels:feed.mention.everyone') },
+      ] : []),
+      ...bots.map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, color: b.color, backend: b.backend ?? null, hint: stateHint(b) })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
     ];
   }
-  /** 誰も呼ばれていない文に勧める bot。この流れで最後に返事をした bot、無ければ先頭のメンバー */
+  /** 誰も呼ばれていない文に勧める bot。この流れで最後に返事をした bot、無ければ先頭のメンバー（メンバーがいなければ先頭の bot） */
   function suggestion() {
     if (!S.channel || S.channel.kind !== 'channel') return null;
-    const members = memberBots();
+    const members = callableBots();
     const last = [...S.posts].reverse().find((p) => p.author?.kind === 'bot' && members.some((b) => b.id === p.author.botId));
     return (last && S.bots.get(last.author.botId)) || members[0] || null;
   }
@@ -330,6 +340,12 @@ export function createFeed(host) {
     // 送り先は押した時のチャンネル。応答を待つ間に別のチャンネルへ移ったら、流れへの追加・スクロール・スレッドを開くのは移った先に持ち込まない
     const channelId = S.id, dm = S.channel?.kind === 'dm';
     const made = await host.invoke('channels.post', { channelId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}) });
+    // @ で選んだ bot がメンバーでなかったので足した（サーバーが投稿の前に足す）。足したことを知らせ、候補にも反映する
+    if (made?.addedMembers?.length) {
+      const names = made.addedMembers.map((id) => S.bots.get(id)?.name).filter(Boolean);
+      if (names.length) notify(t('channels:feed.mention.added', { names: names.join('、') }));
+      if (S.channel?.id === channelId) S.channel.members = [...new Set([...(S.channel.members ?? []), ...made.addedMembers])];
+    }
     if (S.id !== channelId) return;   // 投稿は届いた知らせ（channels の更新）で、そのチャンネルを開いたときに載る
     if (made?.id && !S.index.has(made.id) && !made.threadId) addPost(made);
     toBottom();

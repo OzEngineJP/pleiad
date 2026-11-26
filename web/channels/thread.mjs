@@ -13,6 +13,7 @@ import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from '
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
 import { shownBot } from './plain-bot.mjs';
+import { notify } from '../file-actions.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
 import { postMenu, setupPostMenu, menuPoint } from './post-menu.mjs';
@@ -93,6 +94,7 @@ export function createThread(host) {
     host,
     bucket: () => S.channelId,
     candidates: () => candidates(),
+    blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.channelId, threadId: S.threadId, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
@@ -291,12 +293,19 @@ export function createThread(host) {
   function threadReadOnly() {
     return Boolean(S.thread?.deletedBot && !Object.keys(S.thread.sessions ?? {}).some(id => S.bots.has(id)));
   }
+  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0359） */
+  const allBots = () => [...S.bots.values()].filter((b) => !b.plain);
+  /** @ の一覧に出す bot: チャンネルのメンバー。メンバーがまだいないチャンネルは、いる bot の全員（選べば投稿のときメンバーに足される） */
+  const callableBots = () => (memberBots().length || S.channel?.kind !== 'channel' ? memberBots() : allBots());
   function candidates() {
     const live = new Set(liveBots().map((b) => b.id));
     return [
-      { id: 'here', name: 'here', icon: '@', hint: t('channels:feed.mention.here') },
-      { id: 'everyone', name: 'everyone', icon: '@', hint: t('channels:feed.mention.everyone') },
-      ...memberBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, backend: b.backend ?? null,
+      // @here・@everyone は、メンバーの bot がいないとき（呼ぶ相手が 0 体）は出さない
+      ...(memberBots().length ? [
+        { id: 'here', name: 'here', icon: '@', glyph: true, hint: t('channels:feed.mention.here') },
+        { id: 'everyone', name: 'everyone', icon: '@', glyph: true, hint: t('channels:feed.mention.everyone') },
+      ] : []),
+      ...callableBots().map((b) => ({ id: b.id, name: b.name, icon: b.icon, iconImage: b.iconImage, color: b.color, backend: b.backend ?? null,
         // i18n-dynamic: channels:feed.botState.
         hint: live.has(b.id) ? t(`channels:feed.botState.${S.posts.findLast((p) => p.turn?.botId === b.id && LIVE.has(p.state))?.state ?? 'working'}`) : '' })),
       { id: 'you', name: t('channels:feed.you'), icon: youInitial(), you: true, hint: '' },
@@ -306,7 +315,7 @@ export function createThread(host) {
   function suggestion() {
     if (liveBots().length === 1) return null;
     const last = S.posts.findLast((p) => p.author?.kind === 'bot' && S.bots.has(p.author.botId));
-    return (last && S.bots.get(last.author.botId)) || memberBots()[0] || null;
+    return (last && S.bots.get(last.author.botId)) || callableBots()[0] || null;
   }
   function paintPlaceholder() {
     voiceView?.refresh();
@@ -637,6 +646,12 @@ export function createThread(host) {
       return;
     }
     const made = await host.invoke('channels.post', { channelId, threadId, text, ...(attachments?.length ? { attachments } : {}), ...(confirmedWake ? { confirmedWake } : {}), ...(clientId ? { clientId } : {}) });
+    // @ で選んだ bot がメンバーでなかったので足した（サーバーが投稿の前に足す）。足したことを知らせ、候補にも反映する
+    if (made?.addedMembers?.length) {
+      const names = made.addedMembers.map((id) => S.bots.get(id)?.name).filter(Boolean);
+      if (names.length) notify(t('channels:feed.mention.added', { names: names.join('、') }));
+      if (S.channel?.id === channelId) S.channel.members = [...new Set([...(S.channel.members ?? []), ...made.addedMembers])];
+    }
     if (!here()) return;
     if (made?.id && !S.index.has(made.id) && made.threadId === threadId) { addPost(made); afterPosts(); }
     toBottom();

@@ -171,10 +171,24 @@
 .mention-list li.it{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:var(--r-s);cursor:pointer;white-space:nowrap;color:var(--ink)}
 .mention-list li.it:hover{background:var(--surface-hover)}
 .mention-list li.it.on{background:var(--surface-sel)}
+/* bot の行は、選んでいる間その bot の色を薄く敷いて左に色の棒（--bot-color は mention-complete.mjs が行に置く） */
+.mention-list li.it[data-bot]{position:relative;--bot-color:var(--bc1)}
+.mention-list li.it[data-bot].on{background:color-mix(in srgb,var(--bot-color) 14%,var(--surface-paper))}
+.mention-list li.it[data-bot].on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--bot-color)}
 .mention-av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:11px;line-height:1;flex:none}
 .mention-av.you{background:var(--surface-3);font-size:9px;font-weight:600}
 .mention-list .lbl{font-weight:600}
 .mention-list .hint{margin-left:auto;padding-left:12px;color:var(--ink-weak);font-size:var(--fs-xs)}
+/* ---- 宛先の塊（ADR 0359）。入力欄では .mb（mention-blocks.mjs。末尾の × で塊ごと外す）、送った投稿では .mt（post.mjs）。
+   bot の色（--c）の淡い面に、顔＋名前。文書は `@名前` のままなので、`@` は見えない字で残す（コピーすると `@名前`） */
+.md-b .mb,.post-body .mention.mt{--bot-color:var(--bc1);display:inline-flex;align-items:center;gap:4px;height:22px;border-radius:6px;vertical-align:top;white-space:nowrap;font-weight:600;font-size:13px;color:var(--ink-strong);
+  background:color-mix(in srgb,var(--bot-color) 16%,transparent)}
+.md-b .mb{padding:0 2px 0 4px;margin:0 1px;user-select:all;cursor:default}
+.post-body .mention.mt{padding:0 6px 0 4px;margin-right:2px}
+.mb-at,.mt-at{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.mb .mx{width:16px;height:16px;padding:0;margin-left:1px;border:0;border-radius:4px;background:transparent;display:grid;place-items:center;color:var(--ink-weak);cursor:pointer}
+.mb .mx:hover{background:color-mix(in srgb,var(--bot-color) 26%,transparent);color:var(--ink-strong)}
+.mb .mx svg{width:10px;height:10px}
 
 /* ---- メモ・設定（見出しの ⋯。追加・編集のシートと同じ白い dialog） */
 .ch-settings{position:fixed;inset:0;margin:auto;max-height:calc(100dvh - 48px);width:min(560px,calc(100vw - 32px));padding:24px;border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow);overflow:auto}
