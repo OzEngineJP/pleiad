@@ -138,7 +138,7 @@ import { streamMessages } from './stream-messages.mjs';
 import { createComposerWait } from './composer-wait.mjs';
 import { createSlowClient } from './slow-client.mjs';
 import { createConnectionStatus } from './connection-status.mjs';
-import { attentionCounts, paintOpenSidebar, paintOpenList } from './open-sidebar-mark.mjs';
+import { attentionCounts, paintOpenSidebar, paintOpenSidebars, setOpenSidebarsExpanded, paintOpenList } from './open-sidebar-mark.mjs';
 import { createWorkSide, SIDE_STORE as WORK_SIDE_STORE } from './work-side.mjs';
 import { setupNotificationInbox } from './notification-inbox.mjs';
 import { createConversationNav } from './conversation-nav-view.mjs';
@@ -319,7 +319,9 @@ applyDom(document);
 // 入力欄の骨組みを写しておく（スレッドの入力欄はこの写しから作る。web/composer/composer.mjs）
 rememberComposerTemplate($("composer"));
 // 「サイドバーを開く」の名前は件数を入れて書く（web/open-sidebar-mark.mjs）ので、HTML の data-i18n には置かない。一覧が届くまでは件数なし
-paintOpenSidebar($("openSidebar"), {}, t);
+paintOpenSidebars({}, t);
+// 開閉の状態（aria-expanded）も始めから全部の ≡ に持たせる（引き出しは閉じて始まる。以後は setDrawer が写す）
+setOpenSidebarsExpanded(document.documentElement.classList.contains("side-open"));
 // 作業のダイアログの一覧の開け閉め（web/work-side.mjs）。ボタンの名前は ◆ の有無で替わるので、HTML の data-i18n には置かない。
 // 右の欄の幅の測り直しは filePreview（後で作る）へ。Ctrl+B はダイアログが開いている間、この一覧を開け閉めする（脇には効かない）
 const workSide = createWorkSide({
@@ -5633,7 +5635,7 @@ function renderSessions() {
   // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない。閉じたレールの P の印にも同じ印を付ける
   lastAttention = attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
     busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) });
-  paintOpenSidebar($("openSidebar"), lastAttention, t);
+  paintOpenSidebars(lastAttention, t);
   paintSideChrome();
   if (!(listLoaded.sessions && listLoaded.threads)) side.skeleton();
   else side.render(listed, {
@@ -8329,7 +8331,7 @@ function setDrawer(open, { refocus = true } = {}) {
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
-  $("openSidebar").setAttribute("aria-expanded", String(open));
+  setOpenSidebarsExpanded(open);
   // 押された時点の居場所（閉じるときの戻し先の判断に使う）。続けて何度か切り替わったら最初の分を持つ
   const from = drawerSettle?.from ?? document.activeElement;
   if (drawerSettle) { cancelAnimationFrame(drawerSettle.frame); clearTimeout(drawerSettle.timer); clearTimeout(drawerSettle.safety); }
@@ -8356,8 +8358,10 @@ function settleDrawer() {
     close.focus({ preventScroll: true });
     if (document.activeElement !== close) requestAnimationFrame(() => { if (drawerOpen() && !$("sidebar").contains(document.activeElement)) close.focus({ preventScroll: true }); });
   }
-  else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) $("openSidebar").focus({ preventScroll: true });
+  else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) visibleOpener().focus({ preventScroll: true });
 }
+/** 今見えている ≡（Chats・チャンネル・スレッドの頭のどれか）。Channels の面に覆われた Chats の頭（inert）は数えない。見えていなければ Chats の #openSidebar */
+const visibleOpener = () => [...document.querySelectorAll(".side-opener")].find(b => b.getClientRects().length && !b.closest("[inert]")) ?? $("openSidebar");
 
 /** 広い画面で脇がレールに畳まれている（閉じている）間か。狭い画面の引き出しと設定の間は数えない */
 const sideClosedRail = () => !narrowView.matches && document.documentElement.classList.contains("side-closed") && !document.body.classList.contains("settings");
@@ -8426,7 +8430,7 @@ function setSidebar(open) {
   // 押したボタンは消える。居場所を body に落とさず、反対側のボタンへ移す（閉じると P の印、開くと閉じるボタン）
   const from = document.activeElement;
   if (!open && $("sidebar").contains(from)) $("sideMark").focus();
-  else if (open && (from === $("sideMark") || from === $("openSidebar"))) $("closeSidebar").focus();
+  else if (open && (from === $("sideMark") || from?.matches?.(".side-opener"))) $("closeSidebar").focus();
   // 動き終わったら動きを外し、会話の幅が変わった分だけプレビューの幅と枝のグラフを測り直す。--dur（240ms）より少し待つ
   clearTimeout(sidebarMoving);
   sidebarMoving = setTimeout(() => { document.body.classList.remove("side-moving"); filePreview.layout(); relayoutBranches(); }, motionDuration(240) + 40);

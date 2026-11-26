@@ -136,8 +136,14 @@ export default async function (t) {
   // 開閉のタップでは印だけ付け、一覧の描き直し・背後の inert・フォーカスは開き始めた後（rAF の次の timer）へ回す
   const setDrawerBody = drawer.slice(drawer.indexOf("function setDrawer("), drawer.indexOf("function settleDrawer("));
   const settleBody = drawer.slice(drawer.indexOf("function settleDrawer("));
+  // aria-expanded は全部の ≡（.side-opener）に写す setOpenSidebarsExpanded を通す。その中身も印を付けるだけかを見る
+  const mark = fs.readFileSync(new URL("../../web/open-sidebar-mark.mjs", import.meta.url), "utf8");
+  const expandedStart = mark.indexOf("export function setOpenSidebarsExpanded(");
+  const expandedBody = mark.slice(expandedStart, mark.indexOf("\n}", expandedStart));
+  const setsExpanded = /aria-expanded/.test(setDrawerBody)
+    || (/setOpenSidebarsExpanded\(open\)/.test(setDrawerBody) && /setAttribute\('aria-expanded'/.test(expandedBody) && !/redraw|\.inert|\.focus\(/.test(expandedBody));
   t.ok("引き出しの開閉: タップの中では side-open と aria-expanded だけ。描き直し・inert・フォーカスは入れない",
-    /classList\.toggle\("side-open", open\)/.test(setDrawerBody) && /aria-expanded/.test(setDrawerBody)
+    /classList\.toggle\("side-open", open\)/.test(setDrawerBody) && setsExpanded
       && !/side\.redraw|\.inert|\.focus\(/.test(setDrawerBody)
       && /requestAnimationFrame\(\(\) => \{ pending\.timer = setTimeout\(settleDrawer, 0\)/.test(setDrawerBody) && /pending\.safety = setTimeout\(settleDrawer/.test(setDrawerBody));
   t.ok("開閉の後始末は今の状態に合わせるだけ（開いていれば一覧を描き直し、背後を inert に）",

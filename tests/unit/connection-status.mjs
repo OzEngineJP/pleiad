@@ -193,7 +193,10 @@ export default async function (t) {
     const client = await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8');
     const tag = /<button[^>]*id="openSidebar"[^>]*>/.exec(html)?.[0] ?? '';
     t.ok('「サイドバーを開く」に data-i18n-aria-label を置かない（訳し直すと件数の無い名前に戻っていた）', tag && !/data-i18n-aria-label/.test(tag) && /data-i18n-title="app\.openSidebarTitle"/.test(tag));
-    t.ok('起動時に件数なしの名前を書く（applyDom の直後）', /applyDom\(document\);[\s\S]{0,200}paintOpenSidebar\(\$\("openSidebar"\), \{\}, t\);/.test(client));
+    const chTag = /<button[^>]*id="chOpenSidebar"[^>]*>/.exec(html)?.[0] ?? '';
+    t.ok('Channels の ≡ も同じ（data-i18n-aria-label を置かない・共通の .side-opener）', chTag && !/data-i18n-aria-label/.test(chTag) && /\bside-opener\b/.test(chTag));
+    // 全部の ≡（.side-opener。会話・Channels・スレッド）に同じ名前を書く（web/open-sidebar-mark.mjs の paintOpenSidebars）
+    t.ok('起動時に件数なしの名前を書く（applyDom の直後）', /applyDom\(document\);[\s\S]{0,200}paintOpenSidebars\(\{\}, t\);/.test(client));
   }
   // ---- 閉じたレール（P の印・レール・下端。docs/design-system.md「脇」）
   {

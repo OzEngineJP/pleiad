@@ -20,6 +20,13 @@ export const collapseAllIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="
 // 操作のメニューを開く「…」は、どこでも縦の 3 点（⋮。docs/design-system.md「「…」の形」）。点は太めの線で打つ
 export const MORE_PATH = 'M12 5v.01M12 12v.01M12 19v.01';
 export const moreIcon = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${MORE_PATH}" stroke-width="2.6"/></svg>`;
+// メインの頭の行（Chats・チャンネル・DM・スレッド・bot のページ）で共通の絵。index.html の静的な頭も同じパスを書く
+// （tests/unit/main-head-icons.mjs が見比べる）。≡ は脇を開く入口、虫眼鏡は会話内の検索、✦ は題の候補
+export const MENU_PATH = 'M4 7h16M4 12h16M4 17h16';
+export const menuIcon = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${MENU_PATH}"/></svg>`;
+export const searchIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg>';
+export const WAND_PATH = 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z';
+export const wandIcon = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${WAND_PATH}"/></svg>`;
 // 差分の畳んだ行（隠れている行がある）の印。メニューではないので横の 3 点のまま
 export const gapIcon = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="2.6"/></svg>';
 // バックグラウンドの入口: 裏のコマンド・端末の絵（ターミナルの >_）

@@ -512,7 +512,9 @@ body.settings .settings-view{display:flex;flex-direction:column;position:absolut
 body.side-moving > #sidebar > :not(.side-pm):not(.side-rail):not(.side-avb){transition:opacity var(--dur-fast) linear}
 :root.side-closed body:not(.settings) > #sidebar > :not(.side-pm):not(.side-rail):not(.side-avb){opacity:0}
 /* 開くボタンは 700px 以下の引き出しだけ（広い画面の開閉は P の印 #sideMark が持つ） */
-#openSidebar{display:none;position:relative}
+#openSidebar{display:none}
+/* ≡ は面ごとに 1 つ（会話の #openSidebar・Channels の #chOpenSidebar・スレッドの .th-side）。印・aria-expanded・位置は .side-opener で共通 */
+.side-opener{position:relative}
 @media (min-width:701px){
   /* 脇が隠れても P の印・レール・Plus の丸は残す（visibility は子が visible を上書きできる） */
   :root.side-closed body:not(.settings) > #sidebar > :is(.side-pm,.side-rail,.side-avb){visibility:visible}
@@ -704,7 +706,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .side-skel-row{display:flex;flex-direction:column;gap:8px}
 .side-skel-row .history-line:last-child{height:9px}
 /* 考えている間。押されたことと動いていることが分かる必要がある。押せないのでホバーの面と色の変化も出さない */
-#titleWand.busy{color:var(--ink-blue);cursor:progress;background:transparent;transition:none}
+:is(#titleWand,.th-wand).busy{color:var(--ink-blue);cursor:progress;background:transparent;transition:none}
 
 /* ---- 会話と溝。#log の左の余白は 8px（溝の外側）。溝は 72px: 筋 x=20（24px の当たり判定を左端 8px から置く）
    + 曲線の横幅 30 + 3 本目までの逃げ 16 + 端の余白 6。溝の中には筋・節・分岐点の曲線しか置かない ---- */
@@ -2163,7 +2165,6 @@ main.dropping #log{background:var(--surface-1)}
 @media (max-width:700px){
   /* 脇は会話の上に重ねる引き出し（下の「狭い画面・タッチ」）。幅は画面の 86% まで */
   body{--side-w:min(86vw,320px)}
-  .top{padding-left:10px;padding-right:10px;gap:4px}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])){flex-wrap:wrap}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
   .composer,#composer{--cpad-l:4px;--cpad-r:4px}
@@ -2375,7 +2376,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   /* 設定の帯では「← 会話に戻る」が左端に来るので P の印は出さない（広い画面は出したまま） */
   body.settings #sidebar > .side-pm{display:none}
   /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない）。44px の丸を画面の左端から 8px 離す（hover の丸が端に触れない。引き出しの ✕ と同じ） */
-  #openSidebar{display:inline-flex;margin-left:4px}
+  #openSidebar{display:inline-flex}
+  .side-opener{margin-left:4px}
   /* 引き出しの下端のアカウントと設定の一行（60px）。丸は 30px で名の左に入れる（重ね置きの #sideAvatar は出さない） */
   .side-foot{height:60px;padding:0 4px 0 6px}
   .side-me{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px 0 10px}
@@ -2462,13 +2464,13 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:700px){
   #titleWand{display:none}
   main > .top:has(#titleEdit:focus,#titleWand:focus) #titleWand:not([hidden]){display:inline-flex}
-  main > .top{min-width:0;overflow:hidden}
+  .top{min-width:0;overflow:hidden}
   .title-col{flex-direction:column;align-items:stretch;gap:0}
   .title-col .title-field{flex:0 1 auto;min-width:0}
   /* 題は 24px に固定する（タッチでは字が 16px になるので、行の高さで決めると 26px に伸びる） */
   .title-col .title-field input{width:100%;min-width:0;padding:1px 5px;height:24px;line-height:22px;box-sizing:border-box}
   /* 頭の高さは 60px。題の列（題 24px + 2 行目 24px）と 44px のボタンを縦の中央に揃える。2 行目の語は押せる高さ 24px（WCAG 2.5.8）。ADR 0256 */
-  main > .top,:root.remote-mobile main > .top{min-height:60px;padding-top:2px;padding-bottom:0}
+  .top,:root.remote-mobile main > .top{min-height:60px;padding-top:2px;padding-bottom:0}
   .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-meta);white-space:nowrap}
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
@@ -2482,7 +2484,6 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-sub .remote-origin{font-size:inherit;flex-basis:auto;order:0;white-space:nowrap}
 }
 @media (max-width:480px){
-  main > .top{gap:4px}
   #sessionMore{position:relative}
 }
 
@@ -2529,16 +2530,16 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
    字・アイコン・押せる大きさは tokens.css の役割の変数（--fs-body … --hit）から取り、ここは部品への当てはめだけ。
    押せる所は実体の 44px の箱にし、擬似要素で広げない（隣の当たりと重ならない） */
 @media (max-width:700px){
-  /* 上部: 44px のボタンと題の列を 60px の中で縦の中央に */
-  main > .top{gap:var(--sp-1);padding-left:var(--sp-1);padding-right:var(--sp-1)}
-  main > .top > .btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
-  main > .top > .btn-icon > svg.i{width:var(--icon);height:var(--icon)}
-  main > .top > .btn-icon::before,.crow > :is(.btn-icon,.chip,.abort,.send)::before{content:none}
+  /* 上部: 44px のボタンと題の列を 60px の中で縦の中央に。頭の行（.top）は会話・Channels・スレッド・bot のページで 1 つの部品 */
+  .top{gap:var(--sp-1);padding-left:var(--sp-1);padding-right:var(--sp-1)}
+  .top > .btn-icon,.top > .th-entries > .btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
+  .top > .btn-icon > svg.i,.top > .th-entries > .btn-icon > svg.i{width:var(--icon);height:var(--icon)}
+  .top > .btn-icon::before,.top > .th-entries > .btn-icon::before,.crow > :is(.btn-icon,.chip,.abort,.send)::before{content:none}
   /* 変更ありの点・操作中の弧・脇の印は、20px のアイコンの右上に寄せたまま */
   main > .top .entry-dot{top:10px;right:10px}
   main > .top .entry-run.run{top:3px;right:2px}
-  main > .top .side-mark[data-kind=unread]{top:8px;right:7px}
-  main > .top .side-mark[data-kind=wait]{top:4px;right:0}
+  .top .side-mark[data-kind=unread]{top:8px;right:7px}
+  .top .side-mark[data-kind=wait]{top:4px;right:0}
   /* 入力欄の下の行: 添付・チップ・中断・送信を 44px に */
   .crow > :is(.btn-icon,.send,.abort){width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
   .crow > :is(.btn-icon,.send) > svg.i{width:var(--icon);height:var(--icon)}
