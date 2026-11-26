@@ -1,6 +1,6 @@
 # 0359 「ログイン」「アカウント」「接続先」を 1 つの「接続先」にまとめ、bot も互換の接続先で動かせるようにする
 
-- 状態: 承認（2026-11-26）
+- 状態: 承認（2026-11-26）。決定 6 の「委譲の候補はアカウントの単位のまま（互換の接続先は候補にしない）」は [ADR 0361](0361-delegation-compat-candidates.md) で置き換え（互換の接続先も候補にできる。同じエージェントの委譲が接続先を継ぐ動きは残す）
 - 関係: [ADR 0011](0011-compat-endpoints.md)（互換の接続先）・[ADR 0224](0224-bot-account.md)（bot のアカウント）・[ADR 0264](0264-delegation-account-scope.md)（委譲の候補はアカウントの単位）・[ADR 0329](0329-claude-per-account-model-catalog.md)（アカウントごとのモデル一覧）・[ADR 0353](0353-claude-single-login-remove-setup-token.md)（Claude のアカウントのログインは 1 つ）・[ADR 0222](0222-agent-accounts-and-provider-quota.md)（登録アカウントと使用枠）
 
 ## 状況

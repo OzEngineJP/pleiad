@@ -288,4 +288,62 @@ export default async function (t) {
     t.ok('まだ id の無い新しいセッションは、今までどおり下書きの状態へ',
       context.state.draft.status === 'B' && calls.some((c) => c[0] === 'renderSessions'), JSON.stringify(calls));
   }
+
+  // ---- 「状態を変更」の候補は、脇の見出しと同じもの・同じ順だけ（side.statusChoices。docs/design-system.md §4.1「状態の候補」）
+  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['codex'] } }]) {
+    const d = installDom(prefs);
+    try {
+      const side = createSide({});
+      side.setDirectory({ channels: [{ id: 'home', kind: 'channel', name: 'home', home: true }, { id: 'c1', kind: 'channel', name: 'dev' }] });
+      side.keep('この画面で作った');
+      side.render([
+        { id: 's1', title: 'a', status: 'A', backend: 'fake', lastModified: 3000 },
+        { id: 's2', title: 'z', status: 'Z', backend: 'fake', lastModified: 2900 },
+        // bot の会話（Bots の行に出て、一時チャットの見出しは作らない）
+        { id: 'bot1', title: 'bot', status: 'bot だけ', backend: 'fake', lastModified: 2800, bot: { botId: 'b1', kind: 'dm' } },
+      ], {
+        // 既出順。「子だけ」は履歴に残る語（今は委譲の子にしか付いていない。子は web/client.mjs の listed で脇へ渡らない）
+        statuses: [{ status: 'Z' }, { status: '子だけ' }, { status: '残した器', kept: true }, { status: 'A' }, { status: '消した名前' }],
+        threads: [
+          { id: 'thread:home:t1', title: 'home', thread: { channelId: 'home', threadId: 't1' }, status: '一時チャットのスレッド', lastModified: 2700 },
+          { id: 'thread:c1:t2', title: 'dev', thread: { channelId: 'c1', threadId: 't2' }, status: 'チャンネルのスレッドだけ', lastModified: 2600 },
+        ],
+      });
+      const want = ['Z', '残した器', 'A', '一時チャットのスレッド', 'この画面で作った'];
+      const got = side.statusChoices();
+      t.ok(`候補は見出しと同じ状態を同じ順で（子・bot・チャンネルのスレッドにだけある状態と履歴の旧名は出さない）${prefs.filter ? '・絞り込みに関わらない' : ''}`,
+        JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+      if (!prefs.filter) {
+        const root = d.els.get('groups');
+        const heads = [];
+        walk(find(root, (n) => n.dataset.sideKey === 'chsec:home'), (n) => { const k = n.dataset.sideKey; if (k?.startsWith('group:') && k !== 'group:') heads.push(k.slice(6)); });
+        t.ok('候補と一時チャットの見出しが一致する', JSON.stringify(heads) === JSON.stringify(want), JSON.stringify(heads));
+      }
+    } finally { d.restore(); }
+  }
+
+  // ---- 4 つのメニュー（スレッドの行・一時チャットの流れ・グループの見出し・会話の行）は、どれも side.statusChoices を使う
+  {
+    const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+    const body = (head) => { const at = source.indexOf(head); return source.slice(at, source.indexOf('\n}\n', at) + 2); };
+    const menus = ['function threadMenu(', 'function homeStatusItems(', 'function familyMenu(', 'function rowMenu('];
+    t.ok('状態の候補を組む 4 つのメニューが side.statusChoices を使い、state.sessions から候補を集めない',
+      menus.every((m) => body(m).includes('side.statusChoices()') && !/state\.sessions\.map\(\(z\) => z\.status\)/.test(body(m))),
+      menus.filter((m) => !body(m).includes('side.statusChoices()')).join());
+
+    // スレッドの行のメニューを実際に組み、候補の項目が statusChoices どおりで、今の状態（候補に無い）は hint に出ることを見る
+    const shown = [];
+    const context = vm.createContext({
+      side: { statusChoices: () => ['A', '残した器'] },
+      showMenu: (x, y, items) => shown.push(items),
+      viewAddress: { go: () => {} }, threadCwd: () => null, copy: () => {}, setThreadStatusOf: () => {},
+      t: (key) => key,
+    });
+    vm.runInContext(body('function threadMenu('), context);
+    vm.runInContext('threadMenu', context)({ id: 'thread:c1:t1', thread: { channelId: 'c1', threadId: 't1' }, title: 'x', status: 'チャンネルのスレッドだけ' }, 0, 0);
+    const change = shown[0]?.find((i) => i.label === 'session.menu.changeStatus');
+    const labels = change?.sub().filter((i) => i.label && !i.input).map((i) => i.label);
+    t.ok('メニューの候補は statusChoices の順。候補に無い今の状態は足さず hint で示す',
+      JSON.stringify(labels) === JSON.stringify(['A', '残した器', 'session.menu.clearStatus']) && change.hint === 'チャンネルのスレッドだけ', JSON.stringify({ labels, hint: change?.hint }));
+  }
 }

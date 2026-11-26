@@ -4194,7 +4194,10 @@
       "disabled": "無効",
       "not_installed": "未インストール",
       "no_token": "認証情報なし",
-      "no_account": "接続先が登録に無い"
+      "no_account": "接続先が登録に無い",
+      "no_endpoint": "接続先が登録に無い",
+      "check_failed": "確認に失敗",
+      "key_unreadable": "キーを読めない"
     },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",
@@ -4362,6 +4365,9 @@
       "accountLoginSame": "CLI のログイン（{{name}}）",
       "relogin": "ログインし直す",
       "reloginLabel": "{{account}} にログインし直す（設定 › エージェント設定）",
+      "endpointNoUsage": "使用量は読めない",
+      "recheck": "確認し直す",
+      "recheckLabel": "{{name}} を確認し直す",
       "empty": "候補がありません",
       "tableTitle": "作業の種類 × 難しさ",
       "tableKind": "作業の種類",
