@@ -1172,7 +1172,8 @@
     "notEditable": "このメッセージは変更できません",
     "invalidAction": "不正な操作です",
     "undelivered": "エージェントに渡る前にターンが終わりました",
-    "uncertain": "エージェントに届いたか分からないままターンが終わりました"
+    "uncertain": "エージェントに届いたか分からないままターンが終わりました",
+    "worktreeRenewFailed": "委譲の子の作業場所（worktree）は片付いていて、作り直せなかったので送っていません。元の場所では走らせていません（理由: {{reason}}）。直してから［再送する］を押してください"
   },
   "review": {
     "needFake": "審査モード（AGENT_HOST_REVIEW=1）は、有効なバックエンドが fake だけのときに使えます（今: {{backends}}）。起動しません。",

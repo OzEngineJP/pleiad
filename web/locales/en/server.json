@@ -1175,7 +1175,8 @@
     "notEditable": "This message cannot be changed.",
     "invalidAction": "Invalid action.",
     "undelivered": "The turn ended before the message reached the agent.",
-    "uncertain": "The turn ended without confirming whether the agent received the message."
+    "uncertain": "The turn ended without confirming whether the agent received the message.",
+    "worktreeRenewFailed": "This delegated child's worktree had been cleaned up and couldn't be recreated, so the message wasn't sent and nothing ran in the original location (reason: {{reason}}). Fix it, then press Resend."
   },
   "review": {
     "needFake": "Review mode (AGENT_HOST_REVIEW=1) requires fake to be the only enabled backend (now: {{backends}}). This process will not start.",
