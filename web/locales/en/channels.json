@@ -30,7 +30,7 @@
     "openBot": "Open bot page",
     "dm": "DM",
     "home": "Chats",
-    "face": { "label": "List to show", "chats": "Chats", "channels": "Bots" },
+    "face": { "label": "List to show", "chats": "Chats", "channels": "Bots", "waiting": "{{name}} · Waiting for you", "working": "{{name}} · Working", "waitingTip": "Waiting for you", "workingTip": "Working" },
     "newChat": "New chat",
     "newChatTitle": "New chat ({{key}})",
     "newInChannel": "New thread in {{name}}",

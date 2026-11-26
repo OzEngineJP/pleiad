@@ -4,13 +4,43 @@
 
 
 /* ---- 脇の 2 面（チャット / bot。web/channels/side-tabs.mjs） */
-.side-face{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:2px 10px 8px;padding:3px;border-radius:var(--r-pill);background:var(--surface-3);flex:none}
+.side-face{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin:2px 10px 8px;padding:3px;border-radius:var(--r-pill);background:var(--surface-3);flex:none;position:relative}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .side-face{background:var(--surface-1)}}
 :root[data-theme="dark"] .side-face{background:var(--surface-1)}
-.side-face button{height:26px;border-radius:var(--r-pill);color:var(--ink-weak);font-size:var(--fs-ui);display:flex;align-items:center;justify-content:center;gap:5px;background:transparent}
-.side-face button[aria-pressed="true"]{background:var(--surface-paper);color:var(--ink-strong);font-weight:700}
-:root[data-theme="dark"] .side-face button[aria-pressed="true"]{background:var(--surface-3)}
+.side-face-plate{position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 4px);border-radius:var(--r-pill);background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow);transition:transform var(--dur) var(--ease-out);z-index:0;pointer-events:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .side-face-plate{background:var(--surface-3)}}
+:root[data-theme="dark"] .side-face-plate{background:var(--surface-3)}
+.side-face[data-on="channels"] .side-face-plate{transform:translateX(calc(100% + 2px))}
+.side-face button{height:26px;min-width:0;border-radius:var(--r-pill);color:var(--ink-weak);font-size:var(--fs-ui);display:flex;align-items:center;justify-content:center;gap:5px;background:transparent;position:relative;z-index:1;cursor:pointer;white-space:nowrap}
+.side-face button[aria-pressed="true"]{color:var(--ink-strong);font-weight:700}
+.side-face button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px;z-index:2}
 .face-mark{font-size:9px;color:var(--ink-mark);width:10px;text-align:center}
 .face-mark.working{color:var(--ink-blue)}
+.side-face-ico{width:16px;height:16px;flex:none;overflow:visible}
+.side-face-chat .sf-body{fill:currentColor}
+.side-face-chat .sf-dot{fill:var(--surface-3)}
+.side-face button[aria-pressed="true"] .side-face-chat .sf-dot{fill:var(--surface-paper)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .side-face-chat .sf-dot{fill:var(--surface-1)}
+  :root:not([data-theme="light"]) .side-face button[aria-pressed="true"] .side-face-chat .sf-dot{fill:var(--surface-3)}
+}
+:root[data-theme="dark"] .side-face-chat .sf-dot{fill:var(--surface-1)}
+:root[data-theme="dark"] .side-face button[aria-pressed="true"] .side-face-chat .sf-dot{fill:var(--surface-3)}
+.side-face-bot .sf-body{fill:var(--ink-weak)}
+.side-face button[aria-pressed="true"] .side-face-bot .sf-body{fill:var(--fill-primary)}
+/* 切り替えの 1 回だけの動き（A: bot はまばたき 180ms、チャットは点が 240ms・60ms ずつ遅れて弾む） */
+.side-face-ico .sf-eyes,.side-face-ico .sf-dot{transform-box:fill-box;transform-origin:center}
+.side-face-ico.play .sf-eyes{animation:side-face-blink calc(var(--dur) * .75) var(--ease-out)}
+.side-face-ico.play .sf-dot{animation:side-face-wave var(--dur) var(--ease-out) both}
+.side-face-ico.play .sf-dot:nth-of-type(2){animation-delay:calc(var(--dur) * .25)}
+.side-face-ico.play .sf-dot:nth-of-type(3){animation-delay:calc(var(--dur) * .5)}
+@keyframes side-face-blink{0%,100%{transform:scaleY(1)}45%{transform:scaleY(.1)}}
+@keyframes side-face-wave{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+@media (pointer:coarse){.side-face button{height:36px}}
+@media (prefers-reduced-motion:reduce){
+  .side-face-plate{transition:none}
+  .side-face-ico.play,.side-face-ico.play *{animation:none!important}
+}
 /* bot の面の Bots。1 行は 20px の顔・名前・状態。DM と一時チャットの bot スレッドは下に畳む */
 .botsec-head .chsec-ic{width:16px}
 .bot-face-av{width:20px;height:20px;flex:none;display:inline-grid;place-items:center}

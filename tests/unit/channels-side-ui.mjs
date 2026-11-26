@@ -2,7 +2,10 @@
 // 描画・キー操作は tests/browser/session-list-keys.cjs（Chats の一覧）と目視（temporary/screenshots/bots-w1-side-*）。
 import { readFileSync } from 'node:fs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from '../../web/channels/side-model.mjs';
+import { createSideTabs } from '../../web/channels/side-tabs.mjs';
+import { setReducedMotion } from '../../web/motion.mjs';
 import { parseTerms } from '../../web/session-find.mjs';
+import { N, installDomStub } from '../lib/dom-stub.mjs';
 
 export const name = 'channels-side-ui';
 export const title = '脇の Channels: 並べ方・bot の状態・タブの点・検索の行・開く先・配線';
@@ -80,4 +83,70 @@ export default function (t) {
   t.ok('bot の会話の印: 一覧が無くても会話の題からチャンネル名を取り、id は出さない', /botTitleParts\(s\)\.channel/.test(side) && !/s\.bot\.channelId \?\? |#\$\{s\.bot\.channelId/.test(side));
   t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く（スレッドの行は状態を持つので落とせる）', /if \(!interactive \|\| \(s\.bot && !s\.thread\)\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
   t.ok('検索: チャンネルの当たりを混ぜ、出どころを添える', /connectChannels\(link\)/.test(side) && /channelsLink\.matchNames/.test(side) && /"row-src"/.test(side));
+
+  // ---- 脇の切り替え（節 05: 板 1 枚・アイコン・まばたき/弾む・reducedMotion・◆/◌ の読み上げ）
+  const html = read('web/index.html');
+  t.ok('index.html の #sideFace に板 1 枚とチャット/bot のアイコンがある',
+    /id="sideFace"[^>]*data-on="chats"/.test(html) && html.includes('class="side-face-plate"')
+    && /id="faceChats"[\s\S]*?side-face-chat/.test(html) && /id="faceChannels"[\s\S]*?side-face-bot/.test(html));
+  const prevDoc = globalThis.document, prevLoc = globalThis.location, prevStorage = globalThis.localStorage;
+  try {
+    installDomStub();
+    const store = new Map();
+    globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+    const mk = (tag, id, cls = '') => { const n = new N(tag); if (id) n.id = id; if (cls) n.className = cls; return n; };
+    document.documentElement = mk('html');
+    document.body = mk('body');
+    document.querySelector = () => null;
+    const faceGroup = mk('div', 'sideFace', 'side-face');
+    const faceChats = mk('button', 'faceChats'); faceChats.dataset.face = 'chats';
+    const chatIco = mk('svg', '', 'side-face-ico side-face-chat');
+    const faceChatsMark = mk('span', 'faceChatsMark', 'face-mark');
+    faceChats.append(chatIco, faceChatsMark);
+    const faceChannels = mk('button', 'faceChannels'); faceChannels.dataset.face = 'channels';
+    const botIco = mk('svg', '', 'side-face-ico side-face-bot');
+    const faceChannelsMark = mk('span', 'faceChannelsMark', 'face-mark');
+    faceChannels.append(botIco, faceChannelsMark);
+    faceGroup.append(faceChats, faceChannels);
+    faceGroup.querySelectorAll = (sel) => (sel === '[data-face]' ? [faceChats, faceChannels] : N.prototype.querySelectorAll.call(faceGroup, sel));
+    const byId = new Map([['sideFace', faceGroup], ['faceChatsMark', faceChatsMark], ['faceChannelsMark', faceChannelsMark]]);
+    document.getElementById = (id) => byId.get(id) ?? null;
+
+    setReducedMotion(false);
+    const tabs = createSideTabs();
+    t.ok('初期表示では data-on が chats で、アイコンは動かない（play が付かない）',
+      faceGroup.dataset.on === 'chats' && faceChats.getAttribute('aria-pressed') === 'true'
+      && !chatIco.classList.contains('play') && !botIco.classList.contains('play'));
+
+    tabs.set('channels');
+    t.ok('bot へ切り替えると data-on が channels になり、bot 側だけに play が付く',
+      faceGroup.dataset.on === 'channels' && faceChannels.getAttribute('aria-pressed') === 'true'
+      && botIco.classList.contains('play') && !chatIco.classList.contains('play'));
+
+    tabs.set('chats');
+    t.ok('チャットへ戻すと data-on が chats になり、チャット側だけに play が付く',
+      faceGroup.dataset.on === 'chats' && chatIco.classList.contains('play') && !botIco.classList.contains('play'));
+
+    setReducedMotion(true);
+    tabs.set('channels');
+    t.ok('reducedMotion では切り替えても play が付かない',
+      faceGroup.dataset.on === 'channels' && !botIco.classList.contains('play') && !chatIco.classList.contains('play'));
+
+    tabs.setDot('chats', 'mark');
+    t.ok('見ていない側の ◆ は見た目と位置を残し、ボタンに読み上げ名と title を付ける',
+      faceChatsMark.textContent === '◆' && !faceChatsMark.hidden && faceChatsMark.getAttribute('aria-hidden') === 'true'
+      && faceChats.getAttribute('aria-label')?.includes('チャット') && faceChats.attrs.title?.length > 0);
+    tabs.setDot('chats', 'working');
+    t.ok('見ていない側の ◌ も残し、作業中の読み上げ名と title を付ける',
+      faceChatsMark.textContent === '◌' && faceChatsMark.classList.contains('working')
+      && faceChats.getAttribute('aria-label')?.includes('作業中'));
+    tabs.setDot('chats', null);
+    t.ok('印が消えたら aria-label と title も外す',
+      faceChatsMark.hidden && !faceChats.hasAttribute('aria-label') && !faceChats.hasAttribute('title'));
+  } finally {
+    setReducedMotion(null);
+    globalThis.document = prevDoc;
+    globalThis.location = prevLoc;
+    if (prevStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = prevStorage;
+  }
 }

@@ -29,7 +29,7 @@
     "openBot": "bot のページを開く",
     "dm": "DM",
     "home": "チャット",
-    "face": { "label": "表示する一覧", "chats": "チャット", "channels": "bot" },
+    "face": { "label": "表示する一覧", "chats": "チャット", "channels": "bot", "waiting": "{{name}} · あなたを待っているものがあります", "working": "{{name}} · 作業中", "waitingTip": "あなたを待っているものがあります", "workingTip": "作業中" },
     "newChat": "新しいチャット",
     "newChatTitle": "新しいチャット（{{key}}）",
     "newInChannel": "{{name}} に新しいスレッド",

@@ -1,14 +1,18 @@
-// メインの面の切り替え（会話の面 / Channels の面 #channelsView）。脇の札はやめた（脇は 1 本の置き場所の木。docs/design-system.md「脇」）。
-// 面は開いたもので決まる: 会話を開けば会話の面、チャンネル・スレッド・bot のページを開けば Channels の面。切り替えは body.channels の付け外しで、
-// 最後の面は覚える（再読み込みで同じ面に戻す。場所は web/view-address.mjs）。札の点の口（setDot）は残すが何もしない。
+// メインの面の切り替え（会話の面 / Channels の面 #channelsView）。
+// 最後の面は覚える（再読み込みで同じ面に戻す。場所は web/view-address.mjs）。見ていない面の ◆・◌ とその読み上げ名も更新する。
+import { t } from '../i18n.mjs';
+import { reducedMotion } from '../motion.mjs';
+
 const KEY = 'agent-host-side-tab';
 const TABS = ['chats', 'channels'];
+const LABEL_KEYS = { chats: 'channels:side.face.chats', channels: 'channels:side.face.channels' };
 
 export function createSideTabs({ onChange = () => {} } = {}) {
   const root = document.documentElement;
   const side = document.getElementById('channelsSide');
   const view = document.getElementById('channelsView');
-  const faceButtons = [...(document.getElementById('sideFace')?.querySelectorAll('[data-face]') ?? [])];
+  const faceGroup = document.getElementById('sideFace');
+  const faceButtons = [...(faceGroup?.querySelectorAll('[data-face]') ?? [])];
   const marks = { chats: document.getElementById('faceChatsMark'), channels: document.getElementById('faceChannelsMark') };
   const dotState = { chats: null, channels: null };
   // 会話の頭・筋・入力欄。Channels を見ている間はキーボードと読み上げを届かせない（設定の画面と同じ手。web/onboarding.mjs）
@@ -23,6 +27,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     if (side) side.hidden = true;
     for (const node of covered()) node.inert = on;
     if (view) view.inert = !on;
+    if (faceGroup) faceGroup.dataset.on = tab;
     for (const b of faceButtons) b.setAttribute('aria-pressed', String(b.dataset.face === tab));
     for (const [name, mark] of Object.entries(marks)) {
       if (!mark) continue;
@@ -30,6 +35,32 @@ export function createSideTabs({ onChange = () => {} } = {}) {
       mark.hidden = !kind;
       mark.className = `face-mark${kind ? ` ${kind}` : ''}`;
       mark.textContent = kind === 'mark' ? '◆' : kind === 'working' ? '◌' : '';
+      mark.setAttribute('aria-hidden', 'true');
+      const btn = faceButtons.find((b) => b.dataset.face === name);
+      if (!btn) continue;
+      if (kind === 'mark') {
+        btn.setAttribute('aria-label', t('channels:side.face.waiting', { name: t(LABEL_KEYS[name]) }));
+        btn.title = t('channels:side.face.waitingTip');
+      } else if (kind === 'working') {
+        btn.setAttribute('aria-label', t('channels:side.face.working', { name: t(LABEL_KEYS[name]) }));
+        btn.title = t('channels:side.face.workingTip');
+      } else {
+        btn.removeAttribute('aria-label');
+        btn.removeAttribute('title');
+      }
+    }
+  }
+
+  function playSwitchIcon() {
+    const reduce = reducedMotion();
+    for (const b of faceButtons) {
+      const ico = b.querySelector('.side-face-ico');
+      if (!ico) continue;
+      ico.classList.remove('play');
+      if (!reduce && b.dataset.face === tab) {
+        void ico.getBoundingClientRect?.();
+        ico.classList.add('play');
+      }
     }
   }
 
@@ -39,6 +70,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     tab = next;
     paint();
     if (changed) {
+      playSwitchIcon();
       try { localStorage.setItem(KEY, tab); } catch { /* 覚えられなくても切り替わる */ }
       onChange(tab);
     }
