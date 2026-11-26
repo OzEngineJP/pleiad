@@ -351,6 +351,11 @@ export default async function (t) {
     await device.close(hostId);
     const plusDevice = (await remoteHost.status()).devices.find(d => d.via === 'plus');
     await remoteHost.revoke(plusDevice.id);
+    // 取り消された鍵の裏のつなぎ直し（admit）は、窓を出さずに revoked で断る（承認を省かない）
+    const quietAfterRevoke = await rejects(device.admit({ hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID }));
+    const windowsQuiet = (await remoteHost.status()).pairing.requests.filter(r => r.via === 'plus');
+    t.ok('取り消された鍵の裏のつなぎ直し（admit）は窓を出さずに revoked で断る（承認を省かない）',
+      quietAfterRevoke?.code === 'revoked' && windowsQuiet.length === 0, `${quietAfterRevoke?.code ?? String(quietAfterRevoke)} windows=${windowsQuiet.length}`);
     const pairAgain = () => device.admit({ hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID, mode: 'pair', onCode: () => {} });
     const asking = rejects(pairAgain());
     const freshReq = await until(async () => (await remoteHost.status()).pairing.requests.find(r => r.via === 'plus'), 10_000, '取り消し後の承認の窓');
