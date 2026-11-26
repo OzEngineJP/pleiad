@@ -302,7 +302,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const cursor = (cut >= fresh.length ? fresh.at(-1) : cut > 0 ? fresh[cut - 1] : null)?.id ?? sb?.postCursor ?? null;
     // 引き継ぎで起きたターンの印（流れに残す結果の行・外から来た文の印）。複数なら最初のもの
     const inner = innerItems.length ? { ...innerItems[0].inner } : null;
-    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? '')].join('\n'), triggers, inner, heardOnly, reactions };
+    // 宛先として届いた投稿があるか（聞こえただけ・リアクションだけ・引き継ぎだけのターンは false）。無ければターンの投稿を後で作る
+    const addressed = triggers.some((p) => !heardIds.has(p.id));
+    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? '')].join('\n'), triggers, inner, heardOnly, addressed, reactions };
   }
 
   // ------------------------------------------------------------ 起こす
@@ -855,7 +857,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const ids = items.map((i) => i.id);
     if (!built.triggers.length && !built.inner && !built.reactions) { await inbox.remove(ids); return; }
     await inbox.mark(ids, 'delivering');
-    starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, callers: callersOf(items) });
+    starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, callers: callersOf(items) });
     refreshThread(channel.id, threadId);
     const key = threadKeyOf(channel.id, threadId);
     // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
@@ -968,8 +970,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       // 自分の心拍から起きたターン（inner: 結果の行の印）と、心拍が動いている bot か（呼ばれたターンの後にも流れへ 1 行足す。ADR 0126）
       inner: pre?.inner ?? null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
-      // 聞こえた投稿だけで始まったターン（ADR 0128）は、見せるもの（文・提示・承認待ち）ができるまでターンの投稿（「…」）を作らない。黙って終えたら何も残らない
-      deferPost: Boolean(pre?.heardOnly),
+      // 宛先の投稿で起きたのでないターンは、見せるもの（文・提示・承認待ち）ができるまでターンの投稿（「…」）を作らない。黙って終えたら何も残らない。
+      // 聞こえた投稿だけ（ADR 0128）・リアクションだけ・心拍の引き継ぎや予約した起こし（inner）で起きたターンと、
+      // Pleiad が内部で始めたターン（pre の無い userInitiated: false。子の完了の知らせ・上限でモデルを切り替えた続き・設定の切り替えの続き）。
+      // 人が会話の画面から書いたターン（userInitiated）と、呼び出しの印の無い古い呼び方は、これまでどおり始まりに作る
+      deferPost: Boolean(channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || sb.threadId)) && (pre ? !pre.addressed : turn.userInitiated === false),
       cur: '', last: '', parts: [], sawText: false, presents: [],
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(),
@@ -1061,13 +1066,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (!channelId && !['pulse', 'learner'].includes(sb.kind)) return false;
     const threadId = sb.threadId ?? null;
     const page = channelId ? await channels.read({ channelId, ...(threadId ? { threadId } : {}), limit: 100 }).catch(() => ({ posts: [] })) : { posts: [] };
-    const post = (page.posts ?? []).find(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id) ?? null;
+    // 付け直すのは書き途中のターンの投稿（作業中・あなた待ち）。同じ会話の前のターンの、書き終えた投稿を拾わない（拾うと黙って終えたときに消してしまう）
+    const post = (page.posts ?? []).findLast(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id && !p.deletedAt && ['working', 'waiting'].includes(p.state)) ?? null;
     const rec = {
       sessionId, botId: bot.id, kind: sb.kind, channelId, threadId, taint: sb.taint ?? undefined,
       postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
       inner: null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
-      deferPost: !post && ['pulse', 'learner'].includes(sb.kind),
+      // 投稿がまだ無かったターン（後で作るターンだった）は、付け直しても見せるものができるまで作らない
+      deferPost: !post && (['pulse', 'learner'].includes(sb.kind) || (POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || Boolean(threadId)))),
       cur: '', last: '', parts: [], sawText: false, presents: [],
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(card?.waits ?? []),
       state: card?.waits?.length ? 'waiting' : 'working', postedState: post?.state ?? 'working',
@@ -1401,15 +1408,16 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   /**
    * ターンが終わったら、結果を思考の流れに 1 行足す（呼ばれたターンも、自分で起きたターンも）。自分で起きたターンは、頼んだ行（actSeq）につなぐ。
-   * 話しかけた・黙った・失敗・止められた。外から来た文のターンの行には taint が付く
+   * 話しかけた・黙った・失敗・使用量の上限で終わった・止められた。外から来た文のターンの行には taint が付く
    */
   async function noteResult(rec, { outcome, interrupted, reply }) {
     const lng = locale();
-    const state = outcome === 'ok' ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
+    // 上限で終わったターンは「止められた」と書かない（人が［止める］を押したように読める）
+    const state = outcome === 'ok' ? 'done' : outcome === 'limited' ? 'limited' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
     const channel = await channels.get({ channelId: rec.channelId }).catch(() => null);
     const where = channel ? channelLabel(channel) : '';
     const text = oneLine(reply?.text, 100);
-    const key = state === 'failed' ? 'failed' : state === 'stopped' ? 'stopped'
+    const key = state === 'failed' || state === 'limited' || state === 'stopped' ? state
       : rec.inner ? (text ? 'spoke' : 'silent') : (text ? 'answered' : 'answeredSilent');
     brain.append(rec.botId, {
       kind: 'result', text: agentT(lng, `brain.line.${key}`, { where, text }), taint: rec.taint ?? null,
@@ -1519,8 +1527,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const hasBody = Boolean(text || (bodyByBot && current.text !== PLACEHOLDER && current.text.trim()));
     if (!text && state === 'failed' && !bodyByBot) text = agentT(lng, 'channel.turn.failed', { error: rec.error ?? '' });
     // 使用量の上限で終わったターンは、bot の発言に「止めました」も上限の文も書かない（知らせは Pleiad の投稿。ADR 0119）。bot が書いた分は残す
-    // 何も言わずに終わった（文章を書かずにリアクションだけ・黙ってやめる。ADR 0119）・上限で何も書けなかった: 投稿は残さない
-    if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.remove({ channelId: rec.channelId, postId: rec.postId }, botAuthor(rec.botId)); return none; }
+    // 何も言わずに終わった（文章を書かずにリアクションだけ・黙ってやめる。ADR 0119）・上限で何も書けなかった: 投稿は残さない。
+    // 消す（remove）と「削除された投稿」の行が残るので、取り下げる（withdraw。流れ・スレッド・bot の文脈のどれからも消える）
+    if (!text && !bodyByBot && !rec.presents.length && (state === 'done' || limited)) { await channels.withdraw({ channelId: rec.channelId, postIds: [rec.postId] }); return none; }
     const edit = { channelId: rec.channelId, postId: rec.postId, state };
     if (state === 'failed' && hasBody) edit.failedWithBody = true;
     // 返事の無い失敗: 理由は投稿の failure に持つ。画面は本文でなく「✕ 失敗 · 理由」と［やり直す］を返事の場所に出す（本文の失敗文は、画面の外の読み手のために残す）

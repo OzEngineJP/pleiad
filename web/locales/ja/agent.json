@@ -2176,6 +2176,7 @@
       "answeredSilent": "（呼ばれたが黙った：{{where}}）",
       "failed": "（失敗した：{{where}}）",
       "stopped": "（止められた：{{where}}）",
+      "limited": "（使用量の上限で途中で終わった：{{where}}）",
       "handoffFailed": "（頼めなかった：{{reason}}）"
     },
     "wake": {

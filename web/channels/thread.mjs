@@ -9,7 +9,7 @@ import { el } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText, vanishedTurnPost } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
 import { shownBot } from './plain-bot.mjs';
@@ -582,7 +582,8 @@ export function createThread(host) {
       ]);
       if (seq !== S.seq) return;
       S.channel = channel;
-      S.posts = page.posts ?? [];
+      // 黙って終えたターンの消えた投稿は並べない（「削除された投稿」の行を残さない。post.mjs の vanishedTurnPost）
+      S.posts = (page.posts ?? []).filter((p) => p.id === threadId || !vanishedTurnPost(p));
       S.index = new Map(S.posts.map((p) => [p.id, p]));
       S.thread = (page.threads ?? []).find((th) => th.threadId === threadId) ?? null;
       S.nextBefore = page.nextBefore ?? null;
@@ -623,7 +624,7 @@ export function createThread(host) {
     try {
       const page = await host.invoke('channels.read', { channelId: S.channelId, threadId: S.threadId, before: S.nextBefore, limit: PAGE });
       if (seq !== S.seq) return;
-      const olderPosts = (page.posts ?? []).filter((p) => !S.index.has(p.id));
+      const olderPosts = (page.posts ?? []).filter((p) => !S.index.has(p.id) && !vanishedTurnPost(p));
       const before = log.scrollHeight - log.scrollTop;
       S.posts = [S.posts[0], ...olderPosts, ...S.posts.slice(1)];
       for (const p of olderPosts) S.index.set(p.id, p);
@@ -1011,6 +1012,8 @@ export function createThread(host) {
       const p = ev.post;
       if (!p) return;
       if (ev.op === 'withdraw') { if (p.threadId === S.threadId) { withdrawPost(p.id); refreshPendingSoon(); } return; }
+      // 黙って終えたターンが消した投稿は、取り下げと同じく列から消す（「削除された投稿」の行を残さない）
+      if (ev.op === 'delete' && p.threadId === S.threadId && vanishedTurnPost(p)) { withdrawPost(p.id); refreshPendingSoon(); return; }
       if (p.threadId === S.threadId) refreshPendingSoon();
       if (p.threadId === S.threadId) onReply(ev.op, p);
       else if (!p.threadId && p.id === S.threadId) onRoot(ev.op, p);

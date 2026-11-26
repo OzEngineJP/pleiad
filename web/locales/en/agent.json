@@ -2177,6 +2177,7 @@
       "answeredSilent": "(was called but stayed silent: {{where}})",
       "failed": "(failed: {{where}})",
       "stopped": "(was stopped: {{where}})",
+      "limited": "(ended early at the usage limit: {{where}})",
       "handoffFailed": "(could not ask: {{reason}})"
     },
     "wake": {
