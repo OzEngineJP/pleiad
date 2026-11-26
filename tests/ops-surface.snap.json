@@ -3369,7 +3369,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "861c78dcef55"
+      "input": "b4124fc241a9"
     },
     {
       "id": "memory.forget",
@@ -3516,7 +3516,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "619d48f70b75"
+      "input": "e77f1a2c1c42"
     },
     {
       "id": "notifications.count",

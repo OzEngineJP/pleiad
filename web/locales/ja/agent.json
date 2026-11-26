@@ -1962,6 +1962,8 @@
         "kind": "種類（任意）: stop（やめたこと）・promise（約束）・decision（決めたこと）・share（分担）・pref（好み・直し）・note（その他）。会話の始まりに渡す記憶の並びと、薄れる速さに効く。",
         "weight": "印象の強さ 1〜3（任意。省くと種類の既定）。3 は、やめたこと・約束・決めたこと、または人が「覚えて」「絶対」などと強く言ったときだけ（そうでなければ 2 に下がる）。",
         "status": "約束の状態（任意）: open（まだ）・done（済んだ。済んだ約束は早く薄れる）。",
+        "tier": "段（任意）: always（いつも）・workspace（その作業場所の会話で）・archive（保存だけ）。省くと、会話の場所が git のリポジトリなら workspace、そうでなければ always。",
+        "workspace": "作業場所（任意。/ 区切り・末尾の / なし・500 字まで）。tier が workspace のときの場所で、省くとこの会話の git の本体の場所。",
         "sources": "出どころ。人の発言を 1 つ以上含める。AI の発言を根拠にするなら、それを採用した人の発言も一緒に挙げる。",
         "source": {
           "kind": "post（チャンネルの投稿）か message（会話の発言）。",
@@ -1981,6 +1983,8 @@
         "kind": "種類（write の kind と同じ）。",
         "weight": "印象の強さ 1〜3（write の weight と同じ）。",
         "status": "約束の状態（open か done）。",
+        "tier": "段（write の tier と同じ）。人が書いた行の段を AI が変えるときは承認が要る。",
+        "workspace": "作業場所（write の workspace と同じ）。",
         "sources": "本文を変える根拠（write の sources と同じ）。",
         "confirm": "人が書いた記憶を、AI が書き換えます。"
       },
@@ -2081,6 +2085,9 @@
       "injection": "指示のような文は記憶に書けません（事実のメモだけ）。",
       "tombstone": "人が忘れさせた記憶と同じ内容です。",
       "duplicate": "同じ記憶がすでにあります。",
+      "tier": "段は always・workspace・archive のどれかです。",
+      "workspace": "作業場所の形が正しくありません（/ 区切り・末尾の / なし・500 字まで）。",
+      "workspaceUnknown": "作業場所が決まりません。この会話の場所が git のリポジトリではないので、workspace を渡すか、段を always か archive にしてください。",
       "layer": "この層には書けません（user か、自分の層）。",
       "notFound": "その記憶・投稿・発言が見つかりません。",
       "quote": "引用が、実際の発言に見つかりません。",

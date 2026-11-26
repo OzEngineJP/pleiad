@@ -1963,6 +1963,8 @@
         "kind": "Kind (optional): stop (something we stopped doing), promise, decision, share (who does what), pref (a preference or correction), note (anything else). It sets the order of the memory given at the start of a conversation and how fast the line fades.",
         "weight": "How strong the impression is, 1-3 (optional; the kind's default when omitted). 3 only for stop, promise and decision, or when a human said it strongly (\"remember\", \"never\", \"always\"); otherwise it is lowered to 2.",
         "status": "State of a promise (optional): open or done (a kept promise fades faster).",
+        "tier": "Tier (optional): always, workspace (only in conversations from that workspace) or archive (stored only). When omitted: workspace if this conversation's folder is inside a git repository, otherwise always.",
+        "workspace": "Workspace (optional; slash-separated, no trailing slash, up to 500 characters). The place used when tier is workspace; when omitted it is the git root of this conversation.",
         "sources": "Grounds. Include at least one human's words. To rely on an AI's output, also cite the human's words that adopted it.",
         "source": {
           "kind": "post (a channel post) or message (a line in a conversation).",
@@ -1982,6 +1984,8 @@
         "kind": "Kind (same as write's kind).",
         "weight": "How strong the impression is, 1-3 (same as write's weight).",
         "status": "State of a promise (open or done).",
+        "tier": "Tier (same as write's tier). An AI changing the tier of a line a person wrote needs approval.",
+        "workspace": "Workspace (same as write's workspace).",
         "sources": "Grounds for changing the text (same as write's sources).",
         "confirm": "An AI is rewriting a memory that a person wrote."
       },
@@ -2082,6 +2086,9 @@
       "injection": "Instruction-like text cannot be written to memory (factual notes only).",
       "tombstone": "This is the same as a memory a human had forgotten.",
       "duplicate": "The same memory already exists.",
+      "tier": "The tier must be always, workspace or archive.",
+      "workspace": "The workspace is not in the right form (slash-separated, no trailing slash, up to 500 characters).",
+      "workspaceUnknown": "The workspace cannot be decided. This conversation's folder is not a git repository, so pass workspace or use the always or archive tier.",
       "layer": "You cannot write to this layer (user or your own).",
       "notFound": "That memory, post or message was not found.",
       "quote": "The quote does not appear in the actual words.",

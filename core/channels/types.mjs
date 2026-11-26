@@ -106,7 +106,9 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   sources: { kind: 'post'|'message', channelId?: string, postId?: string, sessionId?: string, messageId?: string, quote: string, at: number }[],
  *   at: number, updatedAt: number,
  *   by: Author,                                           // 今の本文を書いた者
- *   origBy?: Author }} MemoryEntry */                     // 書き手が替わる直し（人の行を AI が直すなど）のとき、元の書き手（最初の者）
+ *   tier?: 'always'|'workspace'|'archive',                // 段（core/memory/store.mjs。無いものは未振り分けで、従来どおり渡る）。markdown のキーは tier
+ *   workspace?: string,                                   // 作業場所（git の本体。スラッシュ形・末尾なし・500 字まで）。markdown のキーは ws
+ *   origBy?: Author }} MemoryEntry */                    // 書き手が替わる直し（人の行を AI が直すなど）のとき、元の書き手（最初の者）
 
 /** @typedef {{
  *   id: string, name: string, botId: string, channelId: string, prompt: string,

@@ -321,6 +321,15 @@
       "pref": "Preference",
       "note": "Note"
     },
+    "tier": {
+      "none": "Unsorted",
+      "always": "Always",
+      "workspace": "In this workspace",
+      "archive": "Stored only"
+    },
+    "tierLabel": "Given when",
+    "workspaceLabel": "Workspace",
+    "workspacePlaceholder": "Slash-separated place (e.g. D:/dev/app)",
     "learn": {
       "label": "Nightly organizing",
       "running": "organizing now",

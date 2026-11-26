@@ -1171,6 +1171,8 @@ const SUITES = [
   './unit/memory-tail.mjs',
   // 記憶の強さ（重み × 新しさ・種類）・markdown の後方互換（知らないキーを捨てない）・核の写しは強さの順で薄れたものを外す（ADR 0118）
   './unit/memory-strength.mjs',
+  // 記憶の段と作業場所（tier / workspace。markdown の tier / ws・git の本体の canonical・既定・updatedAt を進めない振り分け・AI が人の行の段を変えるときの承認）
+  './unit/memory-tier.mjs',
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-dispatch.mjs',

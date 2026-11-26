@@ -14,9 +14,12 @@
 //   list({ layer }): Promise<MemoryEntry[]>                       … layer は 'user' か botId。ファイルの順。各行に今の強さ strength と faded（核の写しに入らない）を付ける
 //   get({ id }): Promise<MemoryEntry|null>
 //   search({ query, layer?, layers?, limit }): Promise<MemoryEntry[]>   … 各 150 トークンまで。layer 省略なら layers（無ければ全層）
-//   write({ layer, text, why?, sources, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
+//   write({ layer, text, why?, sources, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>   … 出どころの検査（MEMORY_SOURCE・MEMORY_REJECTED）はここ。
 //       kind・weight・status は記憶の種類・重み・状態（strength.mjs。ADR 0118）。AI の重み 3 は guard.capWeight が根拠を見て 2 に抑える
-//   edit({ id, text?, why?, sources?, kind?, weight?, status? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
+//       tier・workspace は段と作業場所（store.mjs）。省いたときの既定: 人は always。bot・AI は ctx.sessionCwd（会話の cwd）に git の本体があれば
+//       workspace + その場所、無ければ always。tier=workspace で場所が決まらなければ MEMORY_REJECTED（workspaceUnknown）。workspace だけ渡せば tier は workspace
+//   edit({ id, text?, why?, sources?, kind?, weight?, status?, tier?, workspace? }, author, ctx): Promise<MemoryEntry>・forget({ id }, author, ctx): Promise<MemoryEntry>・unforget({ id }, author, ctx): Promise<MemoryEntry>
+//       … edit の workspace は null で外せる。tier・workspace だけの直しは updatedAt を進めない
 //       … 人も AI も使える（edit は write、forget は guarded）。誰がしたかは log.jsonl の by に残す。無い id は MEMORY_NOT_FOUND
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, sessionId?, incomingText, now?, locale? }):
@@ -26,7 +29,8 @@
 import path from 'node:path';
 import { agentT } from '../i18n.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
-import { createMemoryStore, fingerprintOf, isLayer, oneLine, USER_LAYER } from './store.mjs';
+import { canonicalWorkspace, slashPath } from '../git-root.mjs';
+import { createMemoryStore, fingerprintOf, isLayer, isTier, isWorkspace, oneLine, USER_LAYER } from './store.mjs';
 import { createMemoryIndex } from './index.mjs';
 import { MemoryError, checkText, checkSources, sourceResolvers, capWeight } from './guard.mjs';
 import { strengthOf, FADED_BELOW } from './strength.mjs';
@@ -55,7 +59,7 @@ const clip = (entry) => {
   return { ...entry, text: `${text.join('')}…` };
 };
 
-export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {}, withLayer = (_layer, fn) => fn() } = {}) {
+export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {}, withLayer = (_layer, fn) => fn(), workspaceOf = canonicalWorkspace } = {}) {
   const dir = path.join(dataDir, 'memory');
   const titleOf = (layer) => (layer === USER_LAYER ? agentT(localeOf(), 'memory.title.user') : agentT(localeOf(), 'memory.title.bot'));
   const store = createMemoryStore({ dir, now, titleOf });
@@ -84,6 +88,50 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const notFound = (id) => new MemoryError('MEMORY_NOT_FOUND', 'notFound', id);
   const needLayer = (layer) => { if (!isLayer(layer)) throw new MemoryError('MEMORY_REJECTED', 'layer', String(layer)); };
   const isHuman = (author) => author?.kind === 'human';
+  const rejected = (reason, detail) => new MemoryError('MEMORY_REJECTED', reason, detail);
+
+  /** 外から来た作業場所の形をそろえて検査する（\ は / へ・末尾の / は落とす。形が合わなければ MEMORY_REJECTED）。空は「無し」（null） */
+  const placeOf = (value) => {
+    if (value == null || value === '') return null;
+    const place = slashPath(typeof value === 'string' ? value.trim() : value);
+    if (!isWorkspace(place)) throw rejected('workspace');
+    return place;
+  };
+  /** 会話の cwd の作業場所（git の本体。git の外・読めなければ null） */
+  const hereOf = async (ctx) => (typeof ctx?.sessionCwd === 'string' && ctx.sessionCwd ? (await workspaceOf(ctx.sessionCwd).catch(() => null)) ?? null : null);
+
+  /** 新しい記憶の段と作業場所（省いたときの既定は冒頭の write の説明） */
+  async function newPlacement({ tier, workspace }, human, ctx) {
+    if (tier != null && !isTier(tier)) throw rejected('tier');
+    const given = placeOf(workspace);
+    if (tier == null) {
+      if (given) return { tier: 'workspace', workspace: given };
+      if (human) return { tier: 'always' };
+      const here = await hereOf(ctx);
+      return here ? { tier: 'workspace', workspace: here } : { tier: 'always' };
+    }
+    if (tier !== 'workspace') return { tier };
+    const place = given ?? await hereOf(ctx);
+    if (!place) throw rejected('workspaceUnknown');
+    return { tier, workspace: place };
+  }
+
+  /** 直しの段と作業場所。今の行から変わるものだけを返す（無ければ空）。workspace は null で外す */
+  async function editedPlacement({ tier, workspace }, old, ctx) {
+    if (tier != null && !isTier(tier)) throw rejected('tier');
+    const given = workspace === null ? null : placeOf(workspace);
+    const effective = tier ?? (given ? 'workspace' : old.tier);   // workspace だけ渡したら、write と同じく workspace の段にする
+    const out = {};
+    if (effective != null && effective !== old.tier) out.tier = effective;
+    if (workspace === null && effective !== 'workspace') { if (old.workspace) out.workspace = null; }
+    else if (given && effective === 'workspace' && given !== old.workspace) out.workspace = given;
+    if (effective === 'workspace' && !(out.workspace ?? old.workspace)) {
+      const place = await hereOf(ctx);
+      if (!place) throw rejected('workspaceUnknown');
+      out.workspace = place;
+    }
+    return out;
+  }
 
   /** 出どころの検査（人でなければ必須）。返りは { sources: 確かめた出どころ, humanQuotes: そのうち人の発言の引用 } */
   async function verified(sources, author, ctx) {
@@ -138,17 +186,18 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return (await index.search({ query, ...(scope ? { layers: scope } : {}), limit })).map((e) => withStrength(clip(e), at));
     },
 
-    async write({ layer, text, why, sources, kind, weight, status } = {}, author, ctx = {}) {
+    async write({ layer, text, why, sources, kind, weight, status, tier, workspace } = {}, author, ctx = {}) {
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
+      const placement = await newPlacement({ tier, workspace }, human, ctx);
       const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
       const note = why == null || why === '' ? undefined : checkText(why, { human, isTombstoned: null }).slice(0, 300);
       const proven = await verified(sources, author, ctx);
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
-      const tags = { kind, weight: capWeight(weight, { human, kind, humanQuotes: proven.humanQuotes }), status };
+      const tags = { kind, weight: capWeight(weight, { human, kind, humanQuotes: proven.humanQuotes }), status, ...placement };
       const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, ...tags });
       if (added.duplicate) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const { entry } = added;
@@ -157,11 +206,13 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return entry;
     },
 
-    async edit({ id, text, why, sources, kind, weight, status } = {}, author, ctx = {}) {
+    async edit({ id, text, why, sources, kind, weight, status, tier, workspace } = {}, author, ctx = {}) {
       await catchUp();
       const old = store.get(id);
       if (!old) throw notFound(id);
       const human = isHuman(author);
+      const placement = await editedPlacement({ tier, workspace }, old, ctx);
+      const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;
       const budget = changing ? ensureBudget(old.layer, author, ctx) : null;
       const clean = text === undefined ? undefined : checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
@@ -173,8 +224,11 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
         if (store.entries(old.layer).some((e) => e.id !== id && fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       }
       const cappedWeight = capWeight(weight, { human, kind: kind ?? old.kind ?? null, humanQuotes: proven.humanQuotes });
+      // 段・作業場所だけの依頼で何も変わらないときは、記録も updatedAt も動かさない
+      const others = [clean, note, kind, cappedWeight, status].some((v) => v !== undefined) || proven.sources.length > 0;
+      if (placing && !others && !Object.keys(placement).length) return old;
       const done = await store.edit({ id, text: clean, why: note, sources: proven.sources.length ? proven.sources : undefined, by: author, via: ctx.sessionId,
-        kind, weight: cappedWeight, status });
+        kind, weight: cappedWeight, status, ...placement });
       if (!done) throw notFound(id);
       bump(budget);
       announce(done.entry.layer);

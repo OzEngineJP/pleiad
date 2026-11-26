@@ -317,6 +317,15 @@
       "pref": "好み",
       "note": "メモ"
     },
+    "tier": {
+      "none": "未振り分け",
+      "always": "いつも",
+      "workspace": "この作業場所で",
+      "archive": "保存だけ"
+    },
+    "tierLabel": "渡す範囲",
+    "workspaceLabel": "作業場所",
+    "workspacePlaceholder": "/ 区切りの場所（例: D:/dev/app）",
     "learn": {
       "label": "夜の整理",
       "running": "整理しています",

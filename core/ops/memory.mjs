@@ -9,7 +9,8 @@ import { z } from 'zod';
 import { OpError, defineOp } from './registry.mjs';
 import { agentT } from '../i18n.mjs';
 import { MemoryError, QUOTE_MIN } from '../memory/guard.mjs';
-import { USER_LAYER, oneLine } from '../memory/store.mjs';
+import { slashPath } from '../git-root.mjs';
+import { USER_LAYER, MEMORY_TIERS, WORKSPACE_MAX, oneLine } from '../memory/store.mjs';
 import { MEMORY_KINDS, MEMORY_STATUSES, WEIGHT_MIN, WEIGHT_MAX } from '../memory/strength.mjs';
 
 const D = (id, key) => `agent:ops.memory.${id}.${key}`;
@@ -29,15 +30,20 @@ const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
   kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
+  tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
 });
 const tagInputs = (id) => ({
   kind: z.enum(MEMORY_KINDS).optional().describe(D(id, 'kind')),
   weight: z.number().int().min(WEIGHT_MIN).max(WEIGHT_MAX).optional().describe(D(id, 'weight')),
   status: z.enum(MEMORY_STATUSES).optional().describe(D(id, 'status')),
+  tier: z.enum(MEMORY_TIERS).optional().describe(D(id, 'tier')),
+  workspace: z.string().max(WORKSPACE_MAX).optional().describe(D(id, 'workspace')),
 });
-/** 種類・重み・状態のうち、今の行から変わるものがあるか */
-const changesTags = (entry, args) => ['kind', 'weight', 'status'].some((key) => args[key] !== undefined && args[key] !== entry[key]);
+const TAG_KEYS = ['kind', 'weight', 'status', 'tier', 'workspace'];
+/** 種類・重み・状態・段・作業場所のうち、今の行から変わるものがあるか（作業場所は \ と末尾の / をそろえて比べる） */
+const changesTags = (entry, args) => TAG_KEYS.some((key) => args[key] !== undefined
+  && (key === 'workspace' ? slashPath(args[key]) : args[key]) !== entry[key]);
 
 const learnStatusOut = z.object({
   at: z.string(), enabled: z.boolean(), summaryEnabled: z.boolean(), paused: z.boolean(), running: z.boolean(), lastRunAt: z.number().nullable(), nextAt: z.number().nullable(),
@@ -91,7 +97,11 @@ async function visibleEntry(ctx, who, id) {
   return entry;
 }
 
-const callCtx = (ctx, who) => ({ sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale });
+/** service へ渡す呼び出しの文脈。sessionCwd は書いた会話の cwd（無い・読めなければ null。記憶の作業場所の既定に使う） */
+const callCtx = async (ctx, who) => ({
+  sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale,
+  sessionCwd: who.sessionId ? (await ctx.sessionCwd?.(who.sessionId).catch(() => null)) ?? null : null,
+});
 
 export const memoryOps = [
   defineOp({
@@ -144,8 +154,9 @@ export const memoryOps = [
       // 組み込みの bot（bot なし）は記憶を持たない（ADR 0157）
       if (who.botId && (await ctx.bots?.get({ botId: who.botId }).catch(() => null))?.plain) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'the built-in agent has no memory' }));
       const layer = layerOf(ctx, who, args.layer);
-      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
-        who.author, callCtx(ctx, who)));
+      const call = await callCtx(ctx, who);
+      return guarded(ctx, () => ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
+        tier: args.tier, workspace: args.workspace }, who.author, call));
     },
   }),
 
@@ -162,10 +173,10 @@ export const memoryOps = [
       ...tagInputs('edit'),
     }),
     output: entryOut,
-    // 人が書いた行の本文・種類・重み・状態を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
-    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0118）
+    // 人が書いた行の本文・種類・重み・状態・段・作業場所を AI が変えるときだけ承認（自分・ほかの AI が書いた行、理由だけの直しは write）。
+    // 重みと種類は、その記憶が会話の始まりに渡るか（薄れるか）を決めるので、本文と同じに扱う（ADR 0118）。段と作業場所も渡し先を決めるので同じ
     riskOf: async (ctx, args) => {
-      if (ctx.principal?.by !== 'agent' || (args.text === undefined && args.kind === undefined && args.weight === undefined && args.status === undefined)) return 'write';
+      if (ctx.principal?.by !== 'agent' || (args.text === undefined && TAG_KEYS.every((key) => args[key] === undefined))) return 'write';
       const who = await whoIs(ctx, { write: false });
       const entry = await ctx.memory.get({ id: args.id });
       if (!entry || (who.botId && entry.layer !== USER_LAYER && entry.layer !== who.botId)) return 'write';   // 見えない記憶は handler が MEMORY_NOT_FOUND にする
@@ -176,7 +187,7 @@ export const memoryOps = [
       const entry = await ctx.memory.get({ id: args.id });
       const rows = [
         ...(args.text !== undefined ? [{ path: 'text', before: entry?.text ?? null, after: oneLine(args.text) }] : []),
-        ...['kind', 'weight', 'status'].filter((key) => args[key] !== undefined).map((key) => ({ path: key, before: entry?.[key] ?? null, after: args[key] })),
+        ...TAG_KEYS.filter((key) => args[key] !== undefined).map((key) => ({ path: key, before: entry?.[key] ?? null, after: key === 'workspace' ? slashPath(args[key]) : args[key] })),
       ];
       return { note: agentT(ctx.locale, 'ops.memory.edit.confirm'), before: entry?.text ?? null, loosens: false, rows };
     },
@@ -184,8 +195,9 @@ export const memoryOps = [
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
       await visibleEntry(ctx, who, args.id);
-      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status },
-        who.author, callCtx(ctx, who)));
+      const call = await callCtx(ctx, who);
+      return guarded(ctx, () => ctx.memory.edit({ id: args.id, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
+        tier: args.tier, workspace: args.workspace }, who.author, call));
     },
   }),
 
@@ -203,7 +215,7 @@ export const memoryOps = [
     handler: async (ctx, { id }) => {
       const who = await whoIs(ctx);
       await visibleEntry(ctx, who, id);
-      return guarded(ctx, () => ctx.memory.forget({ id }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, async () => ctx.memory.forget({ id }, who.author, await callCtx(ctx, who)));
     },
   }),
 
@@ -245,7 +257,7 @@ export const memoryOps = [
       if (gone && who.botId && gone.layer !== USER_LAYER && gone.layer !== who.botId) {
         throw new OpError('MEMORY_NOT_FOUND', agentT(ctx.locale, 'ops.errors.MEMORY_NOT_FOUND', { id }));
       }
-      return guarded(ctx, () => ctx.memory.unforget({ id }, who.author, callCtx(ctx, who)));
+      return guarded(ctx, async () => ctx.memory.unforget({ id }, who.author, await callCtx(ctx, who)));
     },
   }),
 ];
