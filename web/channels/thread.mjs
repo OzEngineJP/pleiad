@@ -13,6 +13,7 @@ import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from '
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
 import { shownBot } from './plain-bot.mjs';
+import { createWorkPlaces } from './work-places.mjs';
 import { notify } from '../file-actions.mjs';
 import { threadDraftKey } from './ch-attach-model.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
@@ -60,6 +61,7 @@ export function createThread(host) {
   const cards = new Map();      // 承認の id -> .mw
   let windows = new Map();
   const tools = createToolSource({ cmd: (command, args) => host.cmd(command, args) });
+  const places = createWorkPlaces({ host });   // bot が実際に動く場所（会話がまだ無いときの返信先の作業場所。core の pickCwd と同じ判定）
 
   // ---------------------------------------------------------------- DOM
   const root = el('section', 'ch-thread');
@@ -345,13 +347,17 @@ export function createThread(host) {
     const id = lastSpoke ?? Object.keys(S.thread?.sessions ?? {}).find((b) => S.bots.has(b));
     return id ? S.bots.get(id) : null;
   }
-  /** 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact）。会話がまだ無ければ作業場所だけ */
+  /**
+   * 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact）。会話がまだ無ければ作業場所だけ。
+   * 会話がまだ無いときの作業場所は、サーバーが会話を作るときの決め方（pickCwd）と同じ判定で推す: チャンネルの cwd は bot のフォルダーの中のときだけ使う
+   */
   function receiverSession() {
     const bot = receiver();
     if (!bot) return null;
     const sessionId = S.thread?.sessions?.[bot.id] ?? null;
     const row = sessionId ? host.state?.sessions?.find((x) => x.id === sessionId) : null;
-    return { sessionId, cwd: row?.cwd ?? S.channel?.cwd ?? bot.folders?.[0]?.path ?? host.state?.homeDir ?? '' };
+    if (!row?.cwd) places.warm([bot]);
+    return { sessionId, cwd: row?.cwd || places.of(bot, S.channel?.cwd).cwd };
   }
 
   /** そのスレッドの bot の会話（右パネルの作業場所の基準・git・ブラウザー）。最後に動いた bot の会話 */

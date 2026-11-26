@@ -15,6 +15,7 @@ import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from '.
 import { retrySource, retryFailed } from './retry.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
+import { createFeedSkills } from './feed-skills.mjs';
 import { feedDraftKey } from './ch-attach-model.mjs';
 import { openChannelSettings } from './feed-settings.mjs';
 import { openEmojiPicker } from '../emoji-picker.mjs';
@@ -51,6 +52,13 @@ export function createFeed(host) {
   const jump = el('button', 'ch-jump', t('channels:feed.newer'));
   jump.type = 'button';
   jump.hidden = true;
+  // 「/」のスキル候補: 宛先の bot（@ した bot。居なければ呼べるメンバー。DM は DM の bot）が動く場所のスキル（web/channels/feed-skills.mjs）
+  const feedSkills = createFeedSkills({
+    host,
+    allBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
+    fallback: () => (S.channel?.kind === 'dm' ? memberBots() : callableBots()),
+    channelCwd: () => S.channel?.cwd ?? null,
+  });
   const composer = createChComposer({
     id: 'chFeedComposer',
     host,
@@ -58,6 +66,7 @@ export function createFeed(host) {
     candidates: () => candidates(),
     blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
+    skills: feedSkills,
     wakePreview: (text) => host.invoke('channels.wakePreview', { channelId: S.id, text }),
     backendLabel: (id) => host.state?.backends?.find((b) => b.id === id)?.label ?? id,
     onSend: (draft) => post(draft),
@@ -93,6 +102,7 @@ export function createFeed(host) {
     try {
       const got = await host.invoke('bots.list');
       S.bots = new Map((got?.bots ?? []).map((b) => [b.id, shownBot(b, t)]));
+      feedSkills.warm();
     } catch { /* bot の操作がまだ無い・失敗しても投稿は読める。発言者は名前を持たない扱い */ }
   }
 

@@ -70,8 +70,11 @@ export function filterSkills(skills, q) {
  * @param {() => string} [o.cwd] 今の作業ディレクトリ
  * @param {() => number} [o.now] 取得した時刻の測り方（テストのためだけに差し替えられる）
  * @param {string} [o.idPrefix] 候補の行の id の頭（入力欄ごとに違える）
+ * @param {boolean} [o.compact] 先頭に会話を圧縮する /compact の行を足すか（会話を持つ入力欄だけ。既定は足す）
+ * @param {(key:string) => Node|string|null} [o.headLabel] 見出しの「スキル」の代わりに出すもの（取れた候補の元の key を渡す。例: 「Owl のスキル · パス」）
+ * @param {(skill:object) => Node|null} [o.badge] 行の先頭（名前の前）に足すもの（例: そのスキルを持つ bot の顔）
  */
-export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, compactNote = () => "", now = () => Date.now(), off = () => false, idPrefix = "slash-option" }) {
+export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, compactNote = () => "", now = () => Date.now(), off = () => false, idPrefix = "slash-option", compact = true, headLabel = () => null, badge = () => null }) {
   // 同じ作業ディレクトリなら使い回す。ただし古くなったら取り直す（編集中に足したスキルを拾う）
   const FRESH_MS = 60_000;
   let skills = [], skillsKey = null, skillsAt = 0, loadingKey = null;
@@ -110,7 +113,8 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     // スキルの組の見出しは件数付き（コマンドの組ができる前と同じ形）
     const skillHead = () => {
       const h = el("li", "head");
-      h.append(el("span", null, t("chat.composer.skills")), el("span", "n", String(items.filter(item => !item.command).length)));
+      const label = headLabel(skillsKey);
+      h.append(label == null ? el("span", null, t("chat.composer.skills")) : typeof label === "string" ? el("span", "lead", label) : label, el("span", "n", String(items.filter(item => !item.command).length)));
       return h;
     };
     const head = items.some(item => item.command) ? el("li", "head", t("compaction.commandGroup")) : skillHead();
@@ -125,6 +129,8 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
       li.setAttribute("aria-selected", String(i === active));
       if (s.command && !canCompact()) li.setAttribute('aria-disabled', 'true');
       const name = el("span", "name");
+      const face = s.command ? null : badge(s);
+      if (face) name.append(face);
       name.append(el("span", null, "/"), ...parts(s.name, q));
       if (s.hint) name.append(el("span", "args", s.hint));
       li.append(name, el("span", "from", s.from ?? ""));
@@ -141,7 +147,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
   };
 
   const render = (q) => {
-    items = filterSkills([{ name: 'compact', command: true, from: '', description: t('compaction.compact') }, ...skills], q);
+    items = filterSkills([...(compact ? [{ name: 'compact', command: true, from: '', description: t('compaction.compact') }] : []), ...skills], q);
     if (active >= items.length) active = 0;
     paint(q);
   };

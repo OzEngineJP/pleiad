@@ -98,9 +98,9 @@
     },
     "composer": {
       "label": "投稿の本文",
-      "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ",
+      "placeholder": "#{{name}} へ投稿 · @ で bot を呼ぶ · / でスキル",
       "shortPlaceholder": "#{{name}} へ投稿",
-      "dm": "{{name}} にメッセージ",
+      "dm": "{{name}} にメッセージ · / でスキル",
       "send": "投稿（{{sendKeys}}）",
       "sendKeys": "{{sendKeys}} で送信",
       "failed": "投稿できませんでした: {{error}}"
@@ -126,13 +126,25 @@
       "nobody": "誰も呼ばれていないので、bot は反応しません",
       "call": "@{{name}} を呼ぶ"
     },
+    "skills": {
+      "one": "{{name}} のスキル",
+      "some": "{{names}} のスキル",
+      "members": "メンバーのスキル"
+    },
     "settings": {
       "open": "メモ・設定",
       "title": "{{name}} のメモ・設定",
       "name": "名前",
       "purpose": "目的",
       "cwd": "既定の作業フォルダー",
-      "cwdHint": "空なら bot それぞれの作業フォルダーを使います。",
+      "cwdHint": "bot は、このフォルダーが自分のフォルダーの中にあるときだけここで動きます。外にあるときや空のときは、bot それぞれのフォルダーで動きます。",
+      "cwdNone": "指定しない",
+      "cwdRecent": "最近",
+      "cwdBrowse": "ほかのフォルダーを開く…",
+      "cwdPicker": "作業フォルダーの候補",
+      "where": "各 bot が動く場所",
+      "whereHome": "ホームフォルダー",
+      "whereOutside": "このフォルダーは {{name}} の作業場所の外なので、{{name}} は自分のフォルダーで動きます",
       "members": "メンバー",
       "membersHint": "メンバーは一覧に載る bot です。bot を起こすには、投稿で @ を付けます。",
       "noBots": "bot はまだありません。",

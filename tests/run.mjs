@@ -1240,6 +1240,10 @@ const SUITES = [
   './unit/channels-composer-ui.mjs',
   // bot のページの決まりごと（フォルダーを限れないモードは範囲 full だけ・承認モードの選び直し・使用量・記憶の出どころの行き先）。画面の打鍵は tests/browser/bot-page.cjs
   './unit/bot-page-model.mjs',
+  // 作業場所の判定（web/work-place.mjs）: 中か外かのパス比較（Windows・UNC・`..`）・理由・core の pickCwd と web の「各 bot の動く場所」が同じ答え・既定のモードの選び方が core と同じ
+  './unit/work-place.mjs',
+  // 流れの入力欄の「/」候補（web/channels/feed-skills.mjs）: 宛先の bot（@ か呼べるメンバー）・動く場所ごとの取得と名前でのまとめ・見出しと行頭の顔・印の安定
+  './unit/feed-skills.mjs',
   // 毎晩の整理の状態（web/memory-model.mjs）: 実効の入切（欠損は OFF）・確定の未ログインと受動の未確認・停止/失敗を未確認で隠さない優先順・導線の短い状態
   './unit/memory-model.mjs',
   // スレッドと空間モデル (W3): 窓の状態（feed・split・solo）の判定・題とトークンの文言・道具の呼び出しを引く範囲・配線。描画・動き・承認のカードは tests/browser/thread-deck.cjs
