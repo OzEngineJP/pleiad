@@ -459,7 +459,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "e273dc2b33f3"
+      "input": "3d21002b270a"
     },
     {
       "id": "bots.delete",
@@ -578,7 +578,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "ca8d9169efc1"
+      "input": "42515683c2f6"
     },
     {
       "id": "brain.beat",
@@ -1489,31 +1489,6 @@
       },
       "legacyCommand": null,
       "input": "d0c50b27cff0"
-    },
-    {
-      "id": "channels.threadSettings",
-      "risk": "write",
-      "riskOf": false,
-      "scope": "global",
-      "modeGate": true,
-      "hostScreenOnly": false,
-      "surfaces": {
-        "ui": true,
-        "mcp": "catalog",
-        "cli": {
-          "path": [
-            "channels",
-            "thread-settings"
-          ],
-          "positional": [
-            "channelId",
-            "threadId",
-            "botId"
-          ]
-        }
-      },
-      "legacyCommand": null,
-      "input": "96f81ac19d49"
     },
     {
       "id": "channels.update",
@@ -3349,6 +3324,26 @@
       "input": "f16d1746215b"
     },
     {
+      "id": "memory.coreFit",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "core-fit"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "914a9abc7d0e"
+    },
+    {
       "id": "memory.edit",
       "risk": "write",
       "riskOf": true,
@@ -3369,7 +3364,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "861c78dcef55"
+      "input": "b4124fc241a9"
     },
     {
       "id": "memory.forget",
@@ -3481,6 +3476,71 @@
       "input": "730dd7ff714a"
     },
     {
+      "id": "memory.sortStart",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "sort-status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortStop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortUndo",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "memory.unforget",
       "risk": "write",
       "riskOf": false,
@@ -3516,7 +3576,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "619d48f70b75"
+      "input": "e77f1a2c1c42"
     },
     {
       "id": "notifications.count",
@@ -6436,15 +6496,6 @@
       ]
     },
     {
-      "id": "channels.threadSettings",
-      "path": "channels thread-settings",
-      "positional": [
-        "channelId",
-        "threadId",
-        "botId"
-      ]
-    },
-    {
       "id": "channels.setThreadStatus",
       "path": "channels thread-status",
       "positional": [
@@ -6965,6 +7016,11 @@
       "positional": []
     },
     {
+      "id": "memory.coreFit",
+      "path": "memory core-fit",
+      "positional": []
+    },
+    {
       "id": "memory.edit",
       "path": "memory edit",
       "positional": [
@@ -7001,6 +7057,11 @@
       "positional": [
         "query"
       ]
+    },
+    {
+      "id": "memory.sortStatus",
+      "path": "memory sort-status",
+      "positional": []
     },
     {
       "id": "memory.unforget",

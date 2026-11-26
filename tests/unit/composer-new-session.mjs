@@ -91,8 +91,6 @@ export default async function (t) {
     voiceUi: { sync() {} },
     // Chats の面か（web/channels/index.mjs）と、見ている場所のアドレス（web/view-address.mjs）。会話を開くと残す。このテストの対象外
     channelsUi: { tab: 'chats', onEvent: () => false }, viewAddress: { note: () => {} },
-    // まだ送っていない会話の宛先のチップ（web/composer/home-dest.mjs）。このテストは bot なし（ふつうの会話）だけ
-    homeDest: { bot: null, paint: noop, reset: noop, botsChanged: noop },
     state, $, cmd, refresh, performance, draftRevision: 'initial', provisionalByMessage: new Map(), provisionalPresent: item => item,
     composerSelection: () => {
       const session = state.sessions.find(s => s.id === state.current);

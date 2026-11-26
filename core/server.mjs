@@ -9097,8 +9097,6 @@ botHost = createBotHost({
   accountBackend: (backend, accountId) => scopedOrUnavailable(backend, accountId),
   sessionBusy: id => sessionBusy(id),
   refuseBotDelete: id => refuseDelete(id, { bot: true }),
-  // スレッドの bot の会話の設定を、このスレッドだけ変える（channels.threadSettings。ADR 0157）。走っていれば次のターンから（nextSettings）
-  reserveTurnSettings: (args) => reserveTurnSettings(args),
   // スレッドを分ける（channels.branchThread）: bot の会話の発言（分けた行）を読み、切り口で会話を分ける
   readMessages: async (id) => { const backend = await resolveBackendForSession(id); return backend?.getMessages ? backend.getMessages(id) : []; },
   forkSession: ({ sessionId, beforeMessageId }) => forkConversation({ sessionId, ...(beforeMessageId ? { beforeMessageId } : {}), reason: 'branch' }, { by: 'human' }),

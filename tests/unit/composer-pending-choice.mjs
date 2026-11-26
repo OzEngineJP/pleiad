@@ -54,7 +54,7 @@ const onBackend = ${onBackend[1]};`;
   };
   const elements = new Map();
   const context = vm.createContext({
-    state, composerAccount, homeDest: { bot: null, paint: noop }, bootHold: null, unsentHere: () => false,
+    state, composerAccount, bootHold: null,
     $: (id) => { if (!elements.has(id)) elements.set(id, { value: '', textContent: '' }); return elements.get(id); },
     syncRemoteOriginLine: noop, rememberTitle: noop, syncTitleControls: noop, syncSettingsHold: noop, refreshGit: async () => {}, refreshWorktree: async () => {},
     headerUsage: { show: noop }, controls: { paint: () => painted.push({ shown: state.shownBackend, model: state.model }) },

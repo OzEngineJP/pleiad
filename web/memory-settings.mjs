@@ -7,12 +7,20 @@
 // 失敗の文・OAuth の URL・スタックは画面に出さない（raw の message は使わない）。
 // i18n-dynamic: settings.memory.status.
 // i18n-dynamic: settings.memory.act.
+// i18n-dynamic: settings.memory.sort.status.
+// i18n-dynamic: settings.memory.sort.sub.
+// i18n-dynamic: settings.memory.sort.act.
 // i18n-dynamic: channels:memory.learn.
 // i18n-dynamic: channels:memory.learn.reason.
+//
+// 振り分け（一度きり。memory.sortStatus・sortStart・sortStop・sortUndo）: 自動整理の入切と関係なく、人が［始める］を押したときだけ走る。
+// 画面は数・内訳・失敗の数だけを出す（記憶の本文・失敗の文は出さない）。走っている間は数秒ごとに状態を読み直す。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { learnStatusView, shortTime } from './channels/bot-model.mjs';
-import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView } from './memory-model.mjs';
+import { learnEnabledOf, authOutOf, authUnconfirmedOf, learnPanelView, coreFitView, sortPanelView } from './memory-model.mjs';
+
+const SORT_POLL_MS = 2000;
 
 export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, learnBackend, onLogin }) {
   const $ = (id) => document.getElementById(id);
@@ -24,8 +32,17 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
   const statusSub = $('memoryLearnStatusSub');
   const actionsBox = $('memoryLearnActions');
   const saved = $('memoryLearnSaved');
-  let status = null;        // memory.learnStatus の返り（読めていなければ null）
+  const sortText = $('memorySortStatusText');
+  const sortSub = $('memorySortStatusSub');
+  const sortActions = $('memorySortActions');
+  const sortSaved = $('memorySortSaved');
+  let sort = null;          // memory.sortStatus の返り（読めていなければ null）
+  let sortBusy = false;     // 振り分けの操作を送っている間
+  let sortTimer = null;     // 走っている間の読み直し
+  let status = null;       // memory.learnStatus の返り（読めていなければ null）
+  let fit = null;           // memory.coreFit（user 層）の返り。会話の始まりに入りきらない記憶の件数（読めていなければ null。出さないだけで失敗にはしない）
   let seq = 0;              // 読み直しの番号（遅い返事を捨てる）
+  let sortSeq = 0;          // 振り分けの読み直しの番号
   let busy = false;         // learnNow・接続の確認を動かしている間
   let busyKind = null;      // 動かしている操作の種類（接続の確認中に「整理しています」と出さないため）
 
@@ -46,8 +63,16 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
 
   /** 最後に走った様子の短い文（raw のエラー文は出さない。failed・paused・next・skipped はパネル側の状態が担うのでここでは抜く。
       skipped の運用カウンタは OFF 期間の古い印が ON の補足に残り誤解を生むので出さない。履歴は API（learnStatus.skip）に残る） */
+  /** 会話の始まりに入りきらない記憶の件数の文（無ければ空。入りきらない記憶は関係する話のときに渡る） */
+  function fitParts() {
+    const view = coreFitView(fit);
+    if (!view) return [];
+    const tiers = view.parts.map((p) => t(`settings.memory.status.fitTier.${p.tier}`, { n: p.n })).join(' · ');
+    return [t('settings.memory.status.fit', { tiers })];
+  }
+
   function subParts(view) {
-    if (view.mode === 'off') return [t('settings.memory.status.offSub')];
+    if (view.mode === 'off') return [t('settings.memory.status.offSub'), ...fitParts()];
     const parts = [];
     const lv = status ? learnStatusView(status) : null;
     if (lv) {
@@ -67,7 +92,7 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
     // 止まった状態の脇の注記は「もう一度」が要る旨（停止はログインだけでは戻らない）。本体がログイン待ちのときはログインで再開する
     if (authNote === 'authWait') parts.push(t(view.mode === 'halted' || view.mode === 'failed' ? 'settings.memory.status.authWaitStoppedSub' : 'settings.memory.status.authWaitSub', { agent }));
     else if (authNote === 'unconfirmed') parts.push(t('settings.memory.status.unconfirmedSub', { agent }));
-    return parts;
+    return [...parts, ...fitParts()];
   }
 
   function actionButton(kind, backend) {
@@ -134,13 +159,70 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, setAuth, l
   epSw.onclick = () => flipSwitch(epSw, 'memoryEpisodeSummary');
   timeIn.onchange = () => flip('memoryLearnAt', timeIn.value);
 
+  /** 振り分けの 1 行・内訳・操作（数だけ。読めていなければ欄を空にする） */
+  function paintSort() {
+    const view = sortPanelView(sort);
+    if (!view) {
+      sortText.textContent = '';
+      sortSub.textContent = '';
+      sortActions.replaceChildren();
+      return;
+    }
+    sortText.textContent = t(`settings.memory.sort.status.${view.mode}`);
+    sortText.parentElement.classList.toggle('warn', view.warn);
+    sortSub.textContent = view.parts.map((p) => t(`settings.memory.sort.sub.${p.key}`, p.params)).join(' · ');
+    sortActions.replaceChildren(...(sortBusy ? [] : view.actions.map(sortButton)));
+    // 走っている間だけ読み直す（止まったら timer も止まる）
+    clearTimeout(sortTimer);
+    sortTimer = view.poll ? setTimeout(refreshSort, SORT_POLL_MS) : null;
+  }
+
+  function sortButton(kind) {
+    const op = kind === 'stop' ? 'memory.sortStop' : kind === 'undo' ? 'memory.sortUndo' : 'memory.sortStart';
+    const b = el('button', 'btn', t(`settings.memory.sort.act.${kind}`));
+    b.type = 'button';
+    b.onclick = async () => {
+      sortBusy = true;
+      sortSaved.textContent = '';
+      paintSort();
+      try {
+        const r = await invoke(op, {});
+        if (r?.skipped === 'running') sortSaved.textContent = t('settings.memory.sort.act.skippedRunning');
+      } catch {
+        // 失敗の詳細は出さない（固定の文＋再取得した状態の操作で示す）
+        sortSaved.textContent = t('settings.memory.sort.act.failed');
+      } finally {
+        sortBusy = false;
+        await refreshSort();
+      }
+    };
+    return b;
+  }
+
+  async function refreshSort() {
+    const mine = ++sortSeq;
+    try {
+      const s = await invoke('memory.sortStatus', {});
+      if (mine !== sortSeq) return;
+      sort = s;
+    } catch {
+      if (mine !== sortSeq) return;
+      sort = null;   // 読めないときは欄を空にする（自動整理の行は別に出る）
+    }
+    paintSort();
+  }
+
   async function refresh() {
     paintSwitches();
     const mine = ++seq;
+    refreshSort();
     try {
       const s = await invoke('memory.learnStatus', {});
+      // 入りきらない件数は補足。読めなくても状態の行は出す
+      const f = await invoke('memory.coreFit', { layer: 'user' }).catch(() => null);
       if (mine !== seq) return;
       status = s;
+      fit = f;
       paintStatus();
     } catch {
       if (mine !== seq) return;

@@ -21,21 +21,39 @@
 .bp-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
 .bp-id{min-width:0}
 .bp-spacer{flex:1}
-.bp-av{position:relative;width:56px;height:56px;padding:0;border-radius:50%;display:grid;place-items:center;flex:none;font-size:30px;line-height:1;background:var(--surface-1);
+/* 顔は 64px（32 の形を拡げる）。押すと 8 色の面（ADR 0362） */
+.bp-av{position:relative;width:64px;height:64px;padding:0;border-radius:50%;display:grid;place-items:center;flex:none;background:transparent;
   cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
-.bp-av:hover{background:var(--surface-2)}
-.bp-av-icon,.bp-av-face{width:100%;height:100%;border-radius:inherit;display:grid;place-items:center}
-.bp-av-face.bot-icon-initial{font-size:24px}
+.bp-av:hover{background:var(--surface-1)}
+.bp-av-face{width:100%;height:100%;display:grid;place-items:center}
+.bp-av-face .bot-face-svg,.bp-ob-av .bot-face-svg{width:100%;height:100%}
 .bp-av-edit{position:absolute;right:-2px;bottom:-2px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:var(--surface-2);color:var(--ink-weak);box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .bp-av-edit svg.i{width:13px;height:13px}
-.bp-icon-dialog{position:fixed;inset:0;margin:auto;box-sizing:border-box;width:300px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow:auto;border:0;padding:16px;border-radius:var(--r-m);background:var(--surface-paper);color:var(--ink);box-shadow:0 8px 28px var(--shadow)}
-.bp-icon-dialog::backdrop{background:var(--surface-veil)}
-.bp-icon-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
-.bp-icon-head .btn-icon{width:44px;height:44px}
-.bp-icon-choice{display:block;width:100%;min-height:44px;text-align:left;padding:10px 12px;border:0;background:transparent;color:inherit;border-radius:var(--r-s);font:inherit;font-size:var(--fs-ui);cursor:pointer}
-.bp-icon-choice:hover{background:var(--surface-hover)}
-.bp-icon-choice[aria-pressed=true]{background:var(--surface-sel)}
-.bp-icon-help{margin:8px 12px;color:var(--ink-weak);font-size:var(--fs-s)}
+/* 8 色の面（顔の面と、作る 3 段の 2 段目で同じ部品） */
+.bp-color-pop{padding:12px}
+.bp-color-t{margin:0 0 8px 2px;font-size:var(--fs-s);font-weight:700;color:var(--ink-strong)}
+.bp-swatches{display:grid;grid-template-columns:repeat(4,40px);gap:10px}
+.bp-swatch{width:40px;height:40px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:transparent;cursor:pointer}
+.bp-swatch:hover{background:var(--surface-1)}
+.bp-swatch[aria-pressed=true]{box-shadow:0 0 0 2px var(--surface-paper),0 0 0 4px var(--fill-primary)}
+/* 作る 3 段（名前 → 色 → 人格） */
+.bp-ob{width:100%;max-width:330px;margin:0 auto;padding:44px 18px 18px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center}
+.bp-ob[hidden]{display:none}
+.bp-ob-face{width:64px;height:64px;display:grid;place-items:center}
+.bp-ob-av{width:64px;height:64px;display:grid;place-items:center}
+.bp-ob-t{margin:14px 0 6px;font-size:18px;color:var(--ink-strong)}
+.bp-ob-dots{display:flex;gap:6px;margin-bottom:18px}
+.bp-ob-dots i{width:6px;height:6px;border-radius:50%;background:var(--surface-3);transition:width var(--dur-fast) var(--ease-out)}
+.bp-ob-dots i.on{width:18px;border-radius:3px;background:var(--fill-primary);color:var(--on-fill)}
+.bp-ob-step{width:100%}
+.bp-ob-step .bp-swatches{justify-content:center}
+.bp-ob-l{display:block;margin:0 0 6px;font-size:var(--fs-s);font-weight:700;color:var(--ink)}
+.bp-ob-in{display:block;box-sizing:border-box;width:100%;height:38px;padding:0 12px;border:0;border-radius:var(--r-m);background:var(--surface-1);color:var(--ink);font:inherit;font-size:14px;outline:0}
+.bp-ob-in:focus{box-shadow:0 0 0 2px var(--line-blue)}
+.bp-ob-in::placeholder{color:var(--ink-weak)}
+textarea.bp-ob-in{height:96px;padding:9px 12px;resize:none;line-height:1.55}
+.bp-ob-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.bp-ob .bp-err{width:100%;margin:12px 0 0}
 .bp-name{display:block;font:700 20px/1.4 var(--font);color:var(--ink);padding:2px 8px;margin-left:-8px;border-radius:var(--r-s);width:min(100%,12em);outline:none;background:transparent}
 .bp-name:hover,.bp-name:focus{background:var(--surface-1)}
 .bp-name::placeholder{color:var(--ink-weak);font-weight:400}
@@ -51,7 +69,6 @@
 .bp-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
 .bp-col{min-width:0}
 .bp-col>.bp-blk+.bp-blk{margin-top:16px}
-.bot-page.is-new .bp-grid{grid-template-columns:minmax(0,1fr);max-width:640px}
 .bp-blk{background:var(--surface-1);border-radius:var(--r-l);padding:14px 16px;min-width:0}
 .bp-blk h4{margin:0 0 8px;font-size:var(--fs-s);color:var(--ink-weak);font-weight:600;display:flex;align-items:center;gap:8px}
 .bp-blk h4 .r{margin-left:auto;font-weight:400}
@@ -142,6 +159,12 @@
 .mem-route[hidden]{display:none}
 .mem .mem-kind{display:inline-block;padding:0 6px;margin-right:2px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.6;vertical-align:1px}
 .mem.faded .tx-text{color:var(--ink-weak)}
+.mem .mem-kind.mem-tier{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+.mem .mem-place{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:2px}
+.mem .memtier,.mem .memws{background:var(--surface-1);color:var(--ink);border-radius:var(--r-s);padding:3px 8px;font:400 var(--fs-xs)/1.55 var(--font);outline:none}
+.mem .memws{flex:1;min-width:140px}
+.mem .memws[hidden]{display:none}
+.mem .memtier:focus-visible,.mem .memws:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
 
 
 /* ---- 狭い画面（モックの 360 幅）: 1 列、記憶の［直す］［忘れる］は常に見せて 2 行目へ */

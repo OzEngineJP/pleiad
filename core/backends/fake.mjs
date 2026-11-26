@@ -1203,6 +1203,18 @@ export const backend = {
         return learned ? [{ action: 'add', layer: 'user', text: learned, sourceIndexes: [item.index] }] : [];
       }) }), usage };
     }
+    // 一度きりの振り分け（<pleiad-memory-sort>）: 本文の言葉だけで決める固定の台本（保存だけ → 保存だけ / この作業場所 → 作業場所 / それ以外 → いつも）。
+    // 本文に「判断不能」とあれば答えを返さない（段なしのままになる）
+    if (p.startsWith('<pleiad-memory-sort>')) {
+      const line = p.split('\n').find((part) => part.startsWith('Memories: '));
+      const memories = JSON.parse(line?.slice('Memories: '.length) ?? '[]');
+      return { text: JSON.stringify({ items: memories.flatMap((item) => {
+        const body = String(item.body ?? '');
+        if (body.includes('判断不能')) return [];
+        const tier = /保存だけ|済み|終わった/.test(body) ? 'archive' : /この作業場所|このプロジェクト/.test(body) ? 'workspace' : 'always';
+        return [{ id: item.id, tier, reason: tier }];
+      }) }), usage };
+    }
     // 静かなスレッドの要約（<pleiad-memory-episode>）: 最初の人の発言を要約にし、覚えて: を候補にする
     if (p.startsWith('<pleiad-memory-episode>')) {
       const line = p.split('\n').find((part) => part.startsWith('Posts: '));

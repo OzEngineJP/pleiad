@@ -5,36 +5,19 @@ async (page, { url = page.url() } = {}) => {
   const results = [];
   const check = (ok, text) => { if (!ok) throw Error(text); results.push(text); };
   await page.evaluate(() => { localStorage.removeItem('agent-host-side'); localStorage.removeItem('agent-host-side-routines-open'); });
-  // Tall enough that a drag between two status groups needs no scrolling (rows are two lines; the Bots strip sits above the tree).
+  // Tall enough that a drag between two status groups needs no scrolling (rows are two lines).
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(url);
   await page.locator('#closeOnboarding').click({ timeout: 1500 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
   await page.locator('#groups .chsec').first().waitFor();
   check(await page.locator('#sideOrder').count() === 0, 'one tree without the order switch');
+  // The side has two faces (ADR 0362). The chat face shows only chats: no bots, no routines, no channels.
+  check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true', 'the chat face is shown first');
   const home = page.locator('[data-side-key="chsec:home"]');
-  const headings = await page.locator('#groups > .chsec > .grp-head .chsec-name').allTextContents();
-  check(headings[0] === 'ルーティン' && headings[1] === '一時チャット' && headings.slice(2).join() === [...headings.slice(2)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join(), 'routines, home, then channels by name (ADR 0288)');
-  const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
-  check(order.indexOf('channels') === order.indexOf('chsec:home') + 1, 'the 「チャンネル ＋」 label sits between home and the channels');
-  check(await page.locator('#groups .cs-sec[data-sec="bots"]').count() === 0 && await page.locator('#botStrip .bt').count() > 0, 'bots are a strip above the tree, not a tree section');
-  // A narrow strip folds the rest into "+N". In its menu an image icon (iconImage) gets the same small circle as an emoji, so rows line up.
-  await page.locator('#botStrip').evaluate(n => { n.style.width = '150px'; });
-  await page.locator('#botStrip .bt.more').click();
-  const menu = page.locator('.pop.menu').last();
-  await menu.locator('.li .bt-menu-av').first().waitFor();
-  const icons = await menu.evaluate(async m => {
-    const avs = [...m.querySelectorAll('.li .bt-menu-av')];
-    // The same markup botIcon() makes for an image bot, with a 256px picture
-    const c = document.createElement('canvas'); c.width = c.height = 256;
-    const img = document.createElement('img'); img.className = 'bot-icon-image'; img.src = c.toDataURL();
-    avs[0].replaceChildren(img);
-    await img.decode();
-    return avs.map(a => [a.getBoundingClientRect().width, a.getBoundingClientRect().height, a.closest('.li').getBoundingClientRect().height]);
-  });
-  check(icons.length >= 2 && icons.every(([w, h]) => w <= 20 && h <= 20) && icons.every(([, , r]) => Math.abs(r - icons[0][2]) < 1), 'the +N menu shows image and emoji bot icons at one small size with even rows');
-  await page.keyboard.press('Escape');
-  await page.locator('#botStrip').evaluate(n => { n.style.width = ''; });
+  const chatHeadings = await page.locator('#groups > .chsec > .grp-head .chsec-name').allTextContents();
+  check(chatHeadings.join() === 'チャット' && await page.locator('#groups .botsec, #groups [data-sec="routines"], #groups [data-sec="channels"]').count() === 0, 'the chat face has only the チャット section');
+  check(await page.locator('#botStrip').count() === 0, 'there is no Bots strip');
   check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 
@@ -49,7 +32,7 @@ async (page, { url = page.url() } = {}) => {
   await source.dragTo(review.locator(':scope > .grp-head'));
   await review.locator(`.row[data-session="${id}"]`).waitFor();
   check(await review.locator(`.row[data-session="${id}"]`).count() === 1, 'dragging a quick chat changes its status');
-  // The tree starts below the Bots strip, so put both ends of the drag on screen first (scrolling mid-drag cancels it).
+  // Put both ends of the drag on screen first (scrolling mid-drag cancels it).
   const bothShown = await page.evaluate(sid => {
     const g = document.getElementById('groups'), box = g.getBoundingClientRect();
     const head = document.querySelector('[data-side-key="group:進行中"] > .grp-head').getBoundingClientRect();
@@ -62,20 +45,10 @@ async (page, { url = page.url() } = {}) => {
   await review.locator(`.row[data-session="${id}"]`).dragTo(inProgress.locator(':scope > .grp-head'));
   await inProgress.locator(`.row[data-session="${id}"]`).waitFor();
 
-  const channel = page.locator('#groups > .chsec:not([data-side-key="chsec:home"]):not(.cs-sec)').first();
-  check(await channel.locator('.row[data-thread]').count() > 0 && await channel.locator('.row.more').count() === 0, 'channels show every thread without an N more row');
-  const thread = channel.locator('.row[data-thread]').first();
-  check(await thread.getAttribute('draggable') !== 'true' && await thread.locator('.row-status[aria-label]').count() === 1, 'channel rows have status icons and do not drag');
-  await thread.click({ button: 'right' });
-  await page.getByText('状態を変更', { exact: true }).waitFor();
-  await page.keyboard.press('Escape');
-  check(true, 'thread status is available from its menu');
-
   // Keyboard nesting: home -> status -> row, then back to both parent headings.
   await page.locator('#groups').focus();
   await page.keyboard.press('Home');
-  check(await page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key) === 'c:routines', 'Home reaches the routines heading first');
-  await page.keyboard.press('ArrowDown');
+  check(await page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key) === 'c:home', 'Home reaches the チャット heading first');
   await page.keyboard.press('ArrowRight');
   const activeLevel = () => page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.getAttribute('aria-level'));
   check(await activeLevel() === '2', 'right arrow enters the home status headings');
@@ -97,8 +70,7 @@ async (page, { url = page.url() } = {}) => {
 
   await page.locator('#filterBtn').click();
   await page.locator('#filterPop .li', { hasText: '進行中' }).click();
-  check(await home.locator('.grp').count() === 1 && await page.locator('#groups .cs-sec').count() === 0, 'status filter keeps matching statuses and hides Bots/routines');
-  check(await page.locator('#groups .row-status').evaluateAll(ns => ns.every(n => n.getAttribute('aria-label') === '進行中')), 'status filter applies to channel threads too');
+  check(await home.locator('.grp').count() === 1 && await page.locator('#groups .cs-sec').count() === 0, 'status filter keeps matching statuses');
   await page.locator('#fchips .x').first().click();
   await page.locator('#filterBtn').click();
   await page.locator('#filterPop [data-backend="fake"]').click();
@@ -152,9 +124,31 @@ async (page, { url = page.url() } = {}) => {
   await page.evaluate(async id => { await window.__sidebarCmd('resolvePermission', { id, allow: false }); await window.__sidebarAsk; }, permission.id);
   await waitFor(() => !document.querySelector('#notifBell .bell-badge .mark'));
   check(true, 'answering the approval removes the waiting diamond');
+  // The bot face: routines → 「Bots ＋」 → one row per bot (20px face, name, state) → 「チャンネル ＋」 → channels by name.
+  await page.locator('#faceChannels').click();
+  await page.locator('#groups .botsec').first().waitFor();
+  check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true' && await home.count() === 0, 'the bot face hides the チャット section');
+  const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
+  const firstBot = order.findIndex(k => k?.startsWith('chsec:bot:'));
+  check(order[0] === 'routines' && order[1] === 'bots-head' && firstBot === 2 && order.indexOf('channels') > firstBot, 'routines, Bots, bot rows, then channels (ADR 0362)');
+  const faces = await page.locator('#groups .botsec-head .bot-face-av').evaluateAll(ns => ns.map(n => [n.getBoundingClientRect().width, n.getBoundingClientRect().height]));
+  check(faces.length > 0 && faces.every(([w, h]) => w === 20 && h === 20), 'bot rows show a 20px face');
+  const names = await page.locator('#groups > .chsec:not(.botsec):not([data-sec]) > .grp-head .chsec-name').allTextContents();
+  check(names.join() === [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join(), 'channels are sorted by name');
+  const channel = page.locator('#groups > .chsec:not(.botsec):not([data-sec])').first();
+  check(await channel.locator('.row[data-thread]').count() > 0 && await channel.locator('.row.more').count() === 0, 'channels show every thread without an N more row');
+  const thread = channel.locator('.row[data-thread]').first();
+  check(await thread.getAttribute('draggable') !== 'true' && await thread.locator('.row-status[aria-label]').count() === 1, 'channel rows have status icons and do not drag');
+  await thread.click({ button: 'right' });
+  await page.getByText('状態を変更', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  check(true, 'thread status is available from its menu');
+  await page.locator('#faceChats').click();
+  await home.waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(400);
   if (!await home.isVisible()) await page.locator('#openSidebar').click();
   check(await home.isVisible() && await home.locator('.grp').count() >= 2, '390px drawer uses the same tree');
+  check(await page.locator('#sideFace').isVisible(), '390px drawer has the same face switch');
   return { passed: true, results };
 }

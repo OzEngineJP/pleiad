@@ -6,6 +6,8 @@
 // 各行に種類の札（約束・やめたこと…）と、薄れた記憶（会話の始まりには渡さないが、探せば出る）の印。
 // i18n-dynamic: channels:memory.route.
 // i18n-dynamic: channels:memory.kind.
+// i18n-dynamic: channels:memory.tier.
+// 各行に段（いつも・この作業場所で・保存だけ。未振り分けも）の札と、直すときに段と作業場所を変える欄（memory.edit の tier / workspace）。
 //
 //   createMemoryList(host, { lookup, openSource }) → { el, route, setBot(bot), refresh(layer?), layers() }
 //     route … 「自動整理: …」の導線ボタン（bot のページの見出しへ置く。memory.learnStatus から短い状態を出す）
@@ -21,6 +23,8 @@ import { learnEnabledOf, learnRouteView } from '../memory-model.mjs';
 export const UNDO_MS = 12000;
 const FADE_MS = 240;
 const TEXT_MAX = 300;
+const WORKSPACE_MAX = 500;
+const TIERS = ['always', 'workspace', 'archive'];
 
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
@@ -34,6 +38,8 @@ export function createMemoryList(host, { lookup, openSource }) {
     own: { entries: null, error: '' },
     editing: null,   // 直している行の id
     draft: '',       // 直している途中の字（別の端末の変更で描き直しても消さない）
+    draftTier: '',   // 直している途中の段（'' = 変えない）と作業場所
+    draftWs: '',
     focusEdit: false,
     seq: {},         // 層ごとの読み込みの番号
   };
@@ -107,6 +113,44 @@ export function createMemoryList(host, { lookup, openSource }) {
     return box;
   }
 
+  /** 行の段の札（作業場所の段は場所の最後の名前を添え、全体は title に） */
+  function tierNode(entry) {
+    const tier = TIERS.includes(entry.tier) ? entry.tier : 'none';
+    const place = tier === 'workspace' && entry.workspace ? entry.workspace : '';
+    const name = place.split('/').filter(Boolean).pop() ?? '';
+    const node = el('span', 'mem-kind mem-tier', name ? `${t(`channels:memory.tier.${tier}`)} · ${name}` : t(`channels:memory.tier.${tier}`));
+    node.dataset.tier = tier;
+    if (place) node.title = place;
+    return node;
+  }
+
+  /** 直すときの段と作業場所の欄。段は 'none'（未振り分け）を選べず、選ばなければ変えない */
+  function placeControls(entry, onKey) {
+    const box = el('span', 'mem-place');
+    const select = el('select', 'fin memtier');
+    select.setAttribute('aria-label', t('channels:memory.tierLabel'));
+    for (const value of [...(entry.tier ? [] : ['']), ...TIERS]) {
+      const option = el('option', '', t(`channels:memory.tier.${value || 'none'}`));
+      option.value = value;
+      select.append(option);
+    }
+    select.value = S.draftTier;
+    const ws = el('input', 'fin memws');
+    ws.type = 'text';
+    ws.maxLength = WORKSPACE_MAX;
+    ws.autocomplete = 'off';
+    ws.placeholder = t('channels:memory.workspacePlaceholder');
+    ws.setAttribute('aria-label', t('channels:memory.workspaceLabel'));
+    ws.value = S.draftWs;
+    const show = () => { ws.hidden = select.value !== 'workspace'; };
+    select.addEventListener('change', () => { S.draftTier = select.value; show(); });
+    ws.addEventListener('input', () => { S.draftWs = ws.value; });
+    ws.addEventListener('keydown', onKey);
+    show();
+    box.append(select, ws);
+    return box;
+  }
+
   function rowNode(key, entry) {
     const row = el('div', 'mem');
     row.dataset.id = entry.id;
@@ -129,12 +173,13 @@ export function createMemoryList(host, { lookup, openSource }) {
       save.type = 'button';
       cancel.onclick = () => stopEditing();
       save.onclick = () => saveEdit(key, entry, input.value);
-      input.addEventListener('keydown', (e) => {
+      const onKey = (e) => {
         if (isComposingKey(e)) return;
         if (e.key === 'Enter') { e.preventDefault(); saveEdit(key, entry, input.value); }
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stopEditing(); }
-      });
-      tx.append(input, sourceNode(entry));
+      };
+      input.addEventListener('keydown', onKey);
+      tx.append(input, placeControls(entry, onKey), sourceNode(entry));
       acts.append(cancel, save);
       if (S.focusEdit) {
         S.focusEdit = false;
@@ -142,6 +187,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       }
     } else {
       const textLine = el('span', 'tx-text');
+      textLine.append(tierNode(entry), ' ');
       if (entry.kind) {
         const kindKey = entry.kind === 'promise' && entry.status === 'done' ? 'promiseDone' : entry.kind;
         textLine.append(el('span', 'mem-kind', t(`channels:memory.kind.${kindKey}`)), ' ');
@@ -160,7 +206,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       fix.type = 'button';
       fix.dataset.act = 'edit';
       fix.setAttribute('aria-label', t('channels:memory.editAria', { text: entry.text }));
-      fix.onclick = () => { S.editing = entry.id; S.draft = ''; S.focusEdit = true; showError(''); paint(); };
+      fix.onclick = () => { S.editing = entry.id; S.draft = ''; S.draftTier = entry.tier ?? ''; S.draftWs = entry.workspace ?? ''; S.focusEdit = true; showError(''); paint(); };
       const gone = el('button', 'btn forget', t('channels:memory.forget'));
       gone.type = 'button';
       gone.dataset.act = 'forget';
@@ -229,15 +275,24 @@ export function createMemoryList(host, { lookup, openSource }) {
   }
 
   // ---------------------------------------------------------------- 直す・忘れる
-  function stopEditing() { S.editing = null; S.draft = ''; paint(); }
+  function stopEditing() { S.editing = null; S.draft = ''; S.draftTier = ''; S.draftWs = ''; paint(); }
 
+  /** 本文・段・作業場所のうち、今の行から変わるものだけを memory.edit へ送る（無ければ何も送らず閉じる） */
   async function saveEdit(key, entry, raw) {
     const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
-    if (!text || text === entry.text) { stopEditing(); return; }
+    const args = {};
+    if (text && text !== entry.text) args.text = text;
+    const tier = S.draftTier || entry.tier || '';
+    if (tier && tier !== entry.tier) args.tier = tier;
+    const ws = S.draftWs.trim();
+    if (tier === 'workspace' && ws && ws !== entry.workspace) args.workspace = ws;
+    if (!Object.keys(args).length) { stopEditing(); return; }
     try {
-      const done = await host.invoke('memory.edit', { id: entry.id, text });
+      const done = await host.invoke('memory.edit', { id: entry.id, ...args });
       S.editing = null;
       S.draft = '';
+      S.draftTier = '';
+      S.draftWs = '';
       const s = S[key];
       if (s.entries) s.entries = s.entries.map((e) => (e.id === entry.id ? { ...e, ...done } : e));
       showError('');
@@ -306,6 +361,8 @@ export function createMemoryList(host, { lookup, openSource }) {
       S.own = { entries: null, error: '' };
       S.editing = null;
       S.draft = '';
+      S.draftTier = '';
+      S.draftWs = '';
       clearUndo();
       showError('');
       paint();

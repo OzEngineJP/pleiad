@@ -1,18 +1,15 @@
 // スレッドの入力欄（docs/design-system.md「入力欄と上端」「スレッドの空間モデル」、ADR 0157）。Chats の会話の入力欄と同じ部品
 // （web/composer/composer.mjs。骨組みは Chats の欄の写しで、id の頭は th: thPrompt・thSend…）に、スレッドの持ち物を足す:
-//   - 宛先のチップ（行の先頭。このスレッドの bot → ほかのメンバー）。選ぶと channels.post の to で送る（本文の @ が先に効く）
-//   - 「@」の補完（mention-complete.mjs）・誰も @ していない文への提案・@here / @everyone の人数の確認（ADR 0121）
+//   - 「@」の補完と宛先の塊（mention-complete.mjs・mention-blocks.mjs）・誰も @ していない文への提案・@here / @everyone の人数の確認（ADR 0121）
 //   - 書きかけはスレッドごとに端末へ（流れの入力欄と同じ入れ物。ch-composer.mjs の draftStore）
-//   - 宛先の bot の設定のチップ（作業フォルダー・モデルとエフォート・承認モード）。宛先の bot の、このスレッドの会話の値を出し、
-//     変えるとこのスレッドだけに効く（channels.threadSettings。bot の既定と違えば「変更あり」の点）
+// 宛先のチップと、スレッドごとの設定のチップ（作業フォルダー・モデル・承認モード）は持たない。宛先は本文の @ だけで決まり、
+// @ が無ければ前に答えた bot が受ける。設定は bot のページでだけ変える（ADR 0362）。行は添付と送信だけ。
 // まだ使わない部品（送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
-import { chipCaret, chipGlyph, defaultModeOf, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
-import { weekUsage } from '../header-usage.mjs';
-import { compatModelLabel } from '../compat-models.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
+import { setupMentionBlocks } from './mention-blocks.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
 import { el } from '../dom.mjs';
@@ -23,22 +20,20 @@ const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
 const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip', 'nextSettings',
-  'resumeNote', 'armedNote', 'draftFail', 'connNote'];
+  'resumeNote', 'armedNote', 'draftFail', 'connNote', 'cwdChip', 'modelChip'];
 
 /**
  * @param {object} o
  * @param {object} o.host setupChannels の host
  * @param {() => string|null} o.bucket 添付の置き場の分け先（チャンネルの id）
  * @param {() => object[]} o.candidates @ の候補
+ * @param {() => { id: string, name: string, color?: number }[]} [o.blockBots] 本文の `@名前` を「顔＋名前」の塊に見せる bot（mention-blocks.mjs）
  * @param {() => object|null} [o.suggest] 誰も @ していないときに勧める bot
  * @param {(backend: string) => string} [o.backendLabel]
  * @param {(text: string) => Promise<{required: boolean, botIds: string[]}>} [o.wakePreview]
- * @param {(post: { text: string, attachments: object[], confirmedWake?: string[], to?: string }) => Promise<void>} o.onSend
- * @param {() => { inThread: object[], others: object[], fallback: string|null }} [o.dest] 宛先の候補（bot は { id, name, icon, iconImage, state }）と、選んでいないときの宛先
- * @param {() => void} [o.onDestChange] 宛先が替わった（placeholder を合わせる）
- * @param {(botId: string) => ({ backend: string, values: { model, effort, mode, cwd }, defaults: { model, effort, mode }, folders: string[] }|null)} [o.settings]
- *   宛先の bot のこのスレッドの会話の設定（無ければ bot の既定）。チップに出す
- * @param {(botId: string, patch: object) => Promise<void>} [o.onSettings] 設定を変えた（このスレッドだけ）
+ * @param {(post: { text: string, attachments: object[], confirmedWake?: string[] }) => Promise<void>} o.onSend
+ * @param {() => object|null} [o.receiver] @ の無い文を受ける bot（前に答えた bot。DM ならその bot）。いなければ null（誰も起きない）
+ * @param {() => ({ sessionId: string|null, cwd: string }|null)} [o.session] 受ける bot の、このスレッドの会話（「/」の候補・`!`・/compact が使う）
  * @param {() => object[]} [o.schedules] このスレッドへの返信の予定（schedule.json の kind post。時刻順）
  * @param {(sessionId: string) => Promise<void>} [o.compact] 宛先の bot の会話を圧縮する（/compact）
  * @param {() => { id: string, text: string }[]} [o.pending] bot へ届く前のあなたの投稿（送信待ちの行。投稿の順）
@@ -46,8 +41,8 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip'
  * @param {() => void} [o.onStop] 送信の横の ■（作業中の返事を止める。通常の会話の中断と同じ形。出し入れは setStop）
  * @param {object} [o.edit] 「編集して再送信」の持ち分（web/composer/edit-mode.mjs の host）: target(id) → { time, tail } か null、send(ctx)、branch(ctx)、decorate(id, on, tail)、locate(id)
  */
-export function createThreadComposer({ host, bucket = () => null, candidates, suggest = () => null, backendLabel, wakePreview, onSend, dest = () => ({ inThread: [], others: [], fallback: null }), onDestChange = () => {}, onStop = () => {},
-  settings = () => null, onSettings = async () => {}, schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
+export function createThreadComposer({ host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, backendLabel, wakePreview, onSend, receiver = () => null, session = () => null, onStop = () => {},
+  schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -77,14 +72,6 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   els.cbox.before(hint, wakeCard, list);
   const input = els.prompt;
   input.setAttribute('aria-controls', list.id);
-
-  // ---- 宛先のチップ（行の先頭、添付の後）
-  const destChip = el('button', 'chip model who dest');
-  destChip.type = 'button';
-  destChip.hidden = true;   // 描くのはスレッドを開いてから（setDraftKey・refresh。作る時点では候補を読めない）
-  destChip.setAttribute('aria-haspopup', 'dialog');
-  els.attach.after(destChip);
-  let chosen = null;   // 人が選んだ宛先（null = 選んでいない。このスレッドの決まりで決まる）
 
   let disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null, pendingEdit = null;
   // 送っている持ち主（スレッド）。送信中はそのスレッドだけのもの: 別のスレッドへ移れば、そこではすぐ書いて送れる
@@ -127,6 +114,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const got = await host.invoke('drafts.load', { key }).catch(() => null);
     if (draftKey !== key || input.value.trim() || !got?.text) return;
     input.editor.restoreDraft(got.text, got.editing);
+    blocks.decorate();
     c.fit();
   }
 
@@ -145,12 +133,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       onChange: () => { dismissWake(); saveDraft(); paintHint(); },
     },
     wait: { runMark, onChange: () => syncSend() },
-    keys: [(e) => mention.keydown(e), (e) => c.slash?.keydown(e)],
+    keys: [(e) => mention.keydown(e), (e) => blocks.keydown(e), (e) => c.slash?.keydown(e)],
     onSubmit: () => submit(),
     onSchedule: () => c.sendMenu?.open(),
   });
   const att = c.attach;
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${PREFIX}-mention`, backendLabel, onChange: () => paintHint() });
+  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0362）
+  const blocks = setupMentionBlocks({ input, bots: blockBots });
   // 送信の日時（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。ADR 0103）。時刻が来たら人の投稿として 1 回だけ投稿する（channels.schedulePost）
   c.useSchedule({
     context: () => ({ available: Boolean(input.value.trim() || att.items.length) && !disabled }),
@@ -164,16 +154,16 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),
     host: {
       read: () => ({ text: input.value, attached: att.ordered(), editing: input.editor.snapshotEditing() }),
-      write: ({ text, attached, editing }) => { c.shell?.reset?.(); att.restore(attached); input.editor.restoreDraft(text, editing); att.placeTail(); c.fit(); paintHint(); },
+      write: ({ text, attached, editing }) => { c.shell?.reset?.(); att.restore(attached); input.editor.restoreDraft(text, editing); att.placeTail(); blocks.decorate(); c.fit(); paintHint(); },
       send: (ctx) => editHost.send(ctx), branch: (ctx) => editHost.branch(ctx),
       decorate: (id, on, tail) => editHost.decorate?.(id, on, tail), locate: (id) => editHost.locate?.(id),
       change: () => saveDraftSoon(),
     },
   });
-  // 欄の「/」のスキル候補。候補は宛先の bot の会話の作業フォルダーから（/compact は宛先の bot の会話を圧縮する）
-  const destSession = () => { const bot = destNow().bot; return bot ? settings(bot.id) : null; };
+  // 欄の「/」のスキル候補。候補は受ける bot の会話の作業フォルダーから（/compact は受ける bot の会話を圧縮する）
+  const destSession = () => session();
   c.useSlash({
-    cwd: () => destSession()?.values?.cwd ?? '',
+    cwd: () => destSession()?.cwd ?? '',
     canCompact: () => Boolean(destSession()?.sessionId),
     load: (cwd) => host.cmd('slashSkills', { cwd: cwd || undefined }),
     off: () => c.editor.inCode(),
@@ -181,7 +171,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   // 欄の `!`: 宛先の bot の、このスレッドの会話の作業場所で走らせる（結果は次の配達に付く。ADR 0157・0054）
   c.useShell({
     availability: () => (destSession()?.sessionId ? { ok: true } : { ok: false, text: t('channels:thread.shellNoSession') }),
-    where: () => ({ cwd: destSession()?.values?.cwd ?? '' }),
+    where: () => ({ cwd: destSession()?.cwd ?? '' }),
     touch: () => matchMedia('(pointer:coarse)').matches,
     onAsText: () => submit(),
     onChange: () => c.fit(),
@@ -193,7 +183,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     input.value = '';
     c.shell.exit();
     saveDraft();
-    try { await host.cmd('runShell', { sessionId: s.sessionId, runId: `th-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, command, ...(s.values?.cwd ? { cwd: s.values.cwd } : {}) }); say(''); }
+    try { await host.cmd('runShell', { sessionId: s.sessionId, runId: `th-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, command, ...(s.cwd ? { cwd: s.cwd } : {}) }); say(''); }
     catch (err) { c.shell.enter(); input.value = command; say(t('chat.shell.runFailed', { error: err?.message ?? String(err) }), true); }
   }
   // このスレッドへの返信の予定の行（送信待ちの行と同じ部品。今すぐ送る・編集・取り消す）
@@ -233,198 +223,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
 
   function syncSend() { els.send.disabled = busy() || disabled || Boolean(att.blockReason()); }
 
-  // ---- 宛先
-  const destNow = () => {
-    const d = dest();
-    const all = [...(d.inThread ?? []), ...(d.others ?? []), ...(d.plain ? [d.plain] : [])];
-    // 「bot なし」（'plain'）を選んだ後に組み込みの bot ができたら、その bot を指す
-    const want = chosen === 'plain' ? all.find((b) => b.plain)?.id ?? chosen : chosen;
-    const id = want && all.some((b) => b.id === want) ? want : d.fallback;
-    return { bot: all.find((b) => b.id === id) ?? null, all, d };
-  };
-  // ---- 宛先の bot の設定のチップ（モックの 02。押すと一覧が浮く。選んだものはこのスレッドだけに効く）
-  // 承認モードのチップはスレッドだけが持つ（Chats の入力欄はモデルの面の下端で切り替える。ADR 0252）。宛先の bot ごとの承認モードを選ぶ一覧
-  const modeChip = el('button', 'chip mode');
-  modeChip.type = 'button';
-  els.cwdChip.after(modeChip);
-  const chips = { cwd: els.cwdChip, model: els.modelChip, mode: modeChip };
-  chips.model.hidden = true;
-  for (const chip of Object.values(chips)) { chip.removeAttribute('aria-controls'); chip.setAttribute('aria-haspopup', 'menu'); }
-  let destinationPanel = null;
-  let effortKey = '', threadEfforts = {};
-  const quotaAsked = new Set();   // 開いている面で使用量を頼んだ backend（開くたびに読み直す。結果は host.onUsage で届く）
-  host.onUsage?.(() => repaintPanel());
-  const fitThreadRow = () => fitComposerRow(destChip.parentElement, { cwd: chips.cwd, who: destChip });
-  addEventListener('resize', fitThreadRow);
-  const rowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fitThreadRow) : null;
-  rowObserver?.observe(destChip.parentElement);
-  let vocabFor = null, vocab = { models: {}, modes: {} };
-  const loadVocab = async (backend, cwd = '', account = '') => {
-    // モデルの一覧はアカウントと作業場所で変わりうる（Claude はアカウントの資格情報と場所の設定が行を変える）ので、鍵に両方を入れる
-    const key = JSON.stringify([backend, account ?? '', cwd ?? '']);
-    if (!backend || vocabFor === key) return;
-    vocabFor = key;
-    vocab = (await host.vocab?.(backend, cwd, account).catch(() => null)) ?? { models: {}, modes: {} };
-    paintSettings();
-  };
-  // 互換の接続先で動く bot（bots.setAccount の endpoint。ADR 0359）は、アカウントを使わない（サーバーは接続先を先に見る）。
-  // 接続先の行は、その bot の接続先だけの読むだけの行（変えるのは bot のページ）。モデルはその接続先のもの
-  const acctOf = (s) => (s.endpoint ? '' : s.account ?? '');
-  const endpointOf = (s) => {
-    if (!s.endpoint) return null;
-    const view = host.conn?.endpointView(s.backend, s.endpoint) ?? null;
-    return view ? { ...view, options: view.options.filter((o) => o.value === s.endpoint).map((o) => ({ ...o, isDefault: false })), manage: null } : null;
-  };
-  /** 接続先の一覧を、backend ごとに 1 度だけ読む（読み終えたら描き直す。invalidateVocab で忘れる）。消えた接続先でも繰り返さない */
-  const connAsked = new Set();
-  const askConn = (s) => {
-    if (!s.endpoint || !host.conn || connAsked.has(s.backend)) return;
-    connAsked.add(s.backend);
-    Promise.resolve(host.conn.load(s.backend)).catch(() => {}).finally(() => paintSettings());
-  };
-  const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
-  const chipKind = (chip) => (chip === chips.cwd ? 'cwd' : chip === chips.model ? 'model' : 'mode');
-  const chipBody = (chip, text, changed) => {
-    chip.replaceChildren(chipGlyph(chipKind(chip)), el('span', 'v', text), chipCaret());
-    if (changed) { const dot = el('span', 'entry-dot'); dot.setAttribute('aria-hidden', 'true'); chip.append(dot); }
-    chip.classList.toggle('changed', Boolean(changed));
-  };
-  function paintSettings() {
-    const bot = destNow().bot;
-    const s = bot ? settings(bot.id) : null;
-    for (const chip of [chips.cwd, chips.mode]) chip.hidden = !s;
-    if (!s) {
-      destChip.replaceChildren(chipGlyph('model'), el('span', 'v', t('composer.destination.title')));
-      destChip.setAttribute('aria-label', t('composer.destination.title'));
-      fitThreadRow();
-      return;
-    }
-    loadVocab(s.backend, s.values?.cwd ?? '', acctOf(s));
-    askConn(s);
-    const v = s.values, d = s.defaults;
-    // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す。互換の接続先はその接続先の表示名
-    const row = endpointOf(s)?.row ?? null;
-    const modelLabel = row ? compatModelLabel(v.model || row.roles?.main || '').text
-      : (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
-    const changed = { model: (v.model ?? '') !== (d.model ?? '') || (v.effort ?? '') !== (d.effort ?? ''), mode: (v.mode ?? '') !== (d.mode ?? '') };
-    chipBody(chips.cwd, leaf(v.cwd) || '~', false);
-    chips.cwd.title = v.cwd ?? '';
-    paintWhoChip(destChip, { bot: bot.plain ? null : bot, backend: s.backend, backendLabel: backendLabel?.(s.backend) ?? s.backend,
-      model: modelLabel, effort: v.effort || (row ? '' : resolvedModel(vocab.models, v.model).entry?.defaultEffort) || '', changed: changed.model });
-    // 承認モードを決めていない（bot なしで会話を作る前）は、エージェントの既定の承認モード
-    const modeLabel = vocab.modes?.[v.mode || defaultModeOf(vocab.modes)]?.label ?? v.mode ?? '';
-    chipBody(chips.mode, modeLabel, changed.mode);
-    const modeValue = chips.mode.querySelector('.v');
-    modeValue.replaceChildren(el('span', 'full', modeLabel), el('span', 'short', modeLabel.slice(0, 2)));
-    const note = t('channels:thread.settings.note');
-    chips.mode.title = `${vocab.modes?.[v.mode]?.label ?? v.mode ?? ''}${changed.mode ? ` · ${t('channels:thread.settings.changed')}` : ''}`;
-    chips.mode.setAttribute('aria-label', `${t('chat.composer.mode')}: ${chips.mode.title}. ${note}`);
-    chips.cwd.setAttribute('aria-label', `${t('chat.composer.cwd')}: ${v.cwd ?? ''}`);
-    fitThreadRow();
-    if (destinationPanel?.open) loadPanelData();
-    repaintPanel();
-  }
-  /** 開いている面を描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す） */
-  function repaintPanel() {
-    if (!destinationPanel?.open) return;
-    const key = els.modelPop.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
-    destinationPanel.render(); destinationPanel.place();
-    if (key) els.modelPop.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
-  }
-  const apply = async (patch) => {
-    const bot = destNow().bot;
-    if (!bot) return;
-    try { await onSettings(bot.id, patch); } catch (err) { say(t('channels:thread.settings.failed', { error: err?.message ?? String(err) }), true); }
-    paintSettings();
-  };
-  const menuAt = (chip, items, title) => { const r = chip.getBoundingClientRect(); host.showMenu(r.left, r.top - 4, items, title); };
-  const noteItem = () => ({ head: t('channels:thread.settings.note'), wrap: true });
-  // i18n-dynamic: channels:side.botState.
-  const stateText = (b) => t(`channels:side.botState.${['working', 'waiting', 'resting'].includes(b.state) ? b.state : 'idle'}`);
-  function modelTarget() {
-    const { bot, d } = destNow();
-    const s = bot && settings(bot.id);
-    // 組み込みの bot（このスレッドで話した後も）は「bot なし」と、そのスレッドで動くエージェントのロゴ
-    const options = (list) => list.map((b) => {
-      const backend = b.plain ? settings(b.id)?.backend ?? b.backend : b.backend;
-      return { id: b.id, name: b.plain ? t('channels:homeDest.none') : b.name, bot: b.plain ? null : b,
-        backend, backendLabel: backendLabel?.(backend) ?? backend, state: stateText(b), waiting: b.state === 'waiting', working: b.state === 'working' };
-    });
-    const groups = [];
-    if (d.inThread?.length) groups.push({ heading: t('channels:thread.dest.inThread'), options: options(d.inThread) });
-    if (d.others?.length) groups.push({ heading: d.inThread?.length ? t('channels:thread.dest.others') : t('channels:thread.dest.members'), options: options(d.others) });
-    // bot なし: そのとき動くエージェントのロゴ（選んでいなければ Chats の既定）
-    if (d.plain) groups.push({ options: [{ id: d.plain.id, name: t('channels:homeDest.none'), bot: null, backend: settings(d.plain.id)?.backend }] });
-    const pick = (id) => { chosen = id; paintDest(); onDestChange(); };
-    if (!s) return { destination: { selected: null, groups, chooseOnly: true, onPick: pick } };
-    const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
-    return {
-      backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
-      backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
-      agentView: (id) => host.agentView?.(id) ?? null,
-      models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
-      effortDisabled: Object.keys(threadEfforts).length <= 1,
-      ...(s.endpoint && endpointOf(s) ? { endpoint: endpointOf(s), connLocked: true } : {}),
-      destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
-        backendLabel: (id) => backendLabel?.(id) ?? id,
-        // エージェントの一覧の下の「使用量」（使用量の画面を開く）
-        openUsage: host.openUsage,
-        changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
-        onPick: pick },
-    };
-  }
-  destinationPanel = panel(destChip, els.modelPop, {
-    align: 'left', width: 360,
-    render: () => { const target = modelTarget(); if (target) renderModel({ pop: els.modelPop, target,
-      on: { backend: v => apply({ backend: v, model: '', effort: '' }), model: v => apply({ model: v }), effort: v => apply({ effort: v }) },
-      hide: () => destinationPanel.hide() }); },
-    onShow: () => loadPanelData(true),
-  });
-  /** 面のエフォートの段と使用量を取る。宛先・エージェント・モデルが替わったら取り直す（使用量は開くたび） */
-  function loadPanelData(opening = false) {
-    const s = destNow().bot && settings(destNow().bot.id);
-    if (!s) return;
-    const key = JSON.stringify([s.backend, s.endpoint ?? '', acctOf(s), s.values.model ?? '', s.values.cwd ?? '']);
-    if (key !== effortKey) {
-      effortKey = key; threadEfforts = {};
-      const request = host.efforts?.({ backend: s.backend, ...(s.endpoint ? { endpoint: s.endpoint } : s.account ? { account: s.account } : {}), model: s.values.model ?? '', cwd: s.values.cwd || undefined });
-      request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; repaintPanel(); } }).catch(() => {});
-    }
-    if (opening) quotaAsked.clear();
-    if (quotaAsked.has(s.backend)) return;
-    quotaAsked.add(s.backend);
-    host.quota?.(s.backend).catch(() => {});
-  }
-  chips.mode.onclick = async () => {
-    const bot = destNow().bot;
-    const s = bot && settings(bot.id);
-    if (!s) return;
-    await loadVocab(s.backend, s.values?.cwd ?? '', acctOf(s));
-    const items = Object.entries(vocab.modes ?? {}).map(([id, m]) => ({
-      label: m.label ?? id, hint: id === s.defaults.mode ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.mode,
-      onClick: () => apply({ mode: id }),
-    }));
-    menuAt(chips.mode, [...items, { sep: true }, noteItem()], t('chat.composer.mode'));
-  };
-  chips.cwd.onclick = () => {
-    const bot = destNow().bot;
-    const s = bot && settings(bot.id);
-    if (!s) return;
-    const items = s.folders.map((p) => ({ label: leaf(p) || p, hint: p, checked: p === s.values.cwd, onClick: () => apply({ cwd: p }) }));
-    menuAt(chips.cwd, [...items, { sep: true }, noteItem()], t('chat.composer.cwd'));
-  };
-
-  function paintDest() {
-    const { bot, all } = destNow();
-    destChip.hidden = !all.length;
-    destChip.classList.toggle('chosen', Boolean(chosen));
-    paintSettings();
-  }
-
-  // ---- 提案（誰も @ していない文に）。宛先のチップに bot が出ているとき（その bot が受ける）は出さない
+  // ---- 提案（誰も @ していない文に）。@ が無くても受ける bot がいる（前に答えた bot・DM の bot）ときは出さない
   function paintHint() {
     const text = input.value.trim();
-    const bot = text && !disabled && !chosen && !destNow().bot ? suggest() : null;
+    const bot = text && !disabled && !receiver() ? suggest() : null;
     if (!bot || /@/.test(text)) { hint.hidden = true; return; }
     hint.replaceChildren(el('span', null, t('channels:feed.hint.nobody')));
     const b = el('button', null, t('channels:feed.hint.call', { name: bot.name }));
@@ -444,7 +246,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   // 送り直しの id はスレッドごと（並べて送ったほかのスレッドの応答で消さない）
   const attempts = new Map();
   const clientIdOf = (owner, body, at) => {
-    const key = JSON.stringify([body, at ?? null, chosen]);
+    const key = JSON.stringify([body, at ?? null]);
     if (attempts.get(owner)?.key !== key) attempts.set(owner, { key, id: `th-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` });
     return attempts.get(owner).id;
   };
@@ -468,10 +270,9 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     if (owner) host.invoke('drafts.save', { key: owner, text: '', at: Date.now() }).catch(() => {});
   }
   async function sendBody(body, confirmedWake, at = null) {
-    // 送り先（持ち主）・宛先・版は押した時に決める。応答を待つ間に別のスレッドへ移っても、片付けと失敗の知らせはこのスレッドへ
+    // 送り先（持ち主）と版は押した時に決める。応答を待つ間に別のスレッドへ移っても、片付けと失敗の知らせはこのスレッドへ
     const owner = draftKey ?? '';
     const version = versionOf(input.value, c.attach.items);
-    const to = chosen;
     const clientId = clientIdOf(owner, body, at);
     sending.add(owner);
     failures.delete(owner);
@@ -479,7 +280,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     wakeButton.disabled = true;
     say('');
     try {
-      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), ...(to ? { to } : {}), clientId, ...(at ? { at } : {}) });
+      await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), clientId, ...(at ? { at } : {}) });
       attempts.delete(owner);
       clearSent(owner, version);
     } catch (err) {
@@ -501,7 +302,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     if (!body.text.trim() && !body.attachments.length) return;
     const block = att.blockReason();
     if (block) { say(block); att.flash(); return; }
-    // /compact: 宛先の bot の、このスレッドの会話を圧縮する（投稿にはしない）
+    // /compact: 受ける bot の、このスレッドの会話を圧縮する（投稿にはしない）
     if (body.text.trim() === '/compact' && !body.attachments.length) {
       const s = destSession();
       if (!s?.sessionId) { say(t('channels:thread.compactNoSession')); return; }
@@ -562,14 +363,13 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       say(on ? reason : '', true);
       paintHint();
     },
-    refresh() { paintHint(); paintDest(); paintSchedules(); c.fit(); },
+    refresh() { blocks.decorate(); paintHint(); paintSchedules(); c.fit(); },
     /** 送信の横の ■ を出し入れする。disabled は止めている最中 */
     setStop({ show = false, disabled = false } = {}) {
       els.abort.hidden = !show;
       els.abort.disabled = disabled;
       c.fit();
     },
-    invalidateVocab() { vocabFor = null; effortKey = ''; connAsked.clear(); paintDest(); },
     /** 予定が動いた */
     paintSchedules,
     /** 送信待ちの投稿の下の［編集］［取り消す］ */
@@ -577,8 +377,6 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     say,
     clear() { dismissWake(); input.value = ''; att.clear(); say(''); saveDraft(); paintHint(); },
     mention,
-    /** 宛先: 今の宛先の bot（選んでいなければこのスレッドの決まりの bot）と、人が選んだか */
-    get dest() { const { bot } = destNow(); return { bot, chosen: Boolean(chosen) }; },
     setDraftKey(key) {
       if (key === draftKey) return;
       dismissWake();
@@ -586,11 +384,11 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       edit.reset();
       pendingEdit = null;
       draftKey = key;
-      chosen = null;   // 宛先はスレッドごと（別のスレッドへ移ったら、そのスレッドの決まりに戻る）
       const d = key ? draftStore().get(key) : null;
       att.restore(d?.attached);
       input.editor.restoreDraft(d?.text ?? '', d?.editing);
       att.placeTail();
+      blocks.decorate();
       // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
       if (d?.edit) pendingEdit = d.edit;
       if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）
@@ -598,7 +396,6 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       failures.delete(key ?? '');
       syncSend();
       paintHint();
-      paintDest();
     },
     saveDraft,
     /** 「編集して再送信」の状態（begin・cancel など） */
@@ -619,7 +416,6 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     bindDropZone: (zone) => att.bindDropZone(zone),
     /** 通話モードの差し込み口の composer（web/voice/index.mjs）。マイクとスピーカーは送信の左のスロット */
     voiceSlot: () => c.voiceSlot(),
-    destroy() { saveDraft(); document.removeEventListener('visibilitychange', onHidden); removeEventListener('pagehide', saveDraft);
-      removeEventListener('resize', fitThreadRow); rowObserver?.disconnect(); destinationPanel?.hide(false); c.destroy(); },
+    destroy() { saveDraft(); document.removeEventListener('visibilitychange', onHidden); removeEventListener('pagehide', saveDraft); c.destroy(); },
   };
 }

@@ -306,7 +306,12 @@ export default async function (t) {
     const w = async (args, author = owl, c = { ...ctx, sessionId: `sw-${args.text}` }) => svc2.write({ layer: 'user', ...args }, author, c);
     t.ok('ADR 0118: AI が好みに重み 3 を付けても、根拠が普通の発言なら 2 に下がる', (await w({ text: '重みの試し: テストは先', sources: plain, kind: 'pref', weight: 3 })).weight === 2);
     t.ok('ADR 0118: 人の強い合図（〜ないでほしい）が根拠なら、AI の重み 3 はそのまま', (await w({ text: '重みの試し: 金曜は出さない', sources: g, kind: 'pref', weight: 3 })).weight === 3);
-    t.ok('ADR 0118: 約束・やめたこと・決めたことは、AI でも重み 3 を付けられる', (await w({ text: '重みの試し: 約束の行', sources: plain, kind: 'promise', weight: 3, status: 'open' })).weight === 3);
+    t.ok('ADR 0118: やめたこと・決めたことは、AI でも重み 3 を付けられる', (await w({ text: '重みの試し: やめたことの行', sources: plain, kind: 'stop', weight: 3 })).weight === 3);
+    t.ok('ADR 0363: AI は約束を記憶に書けない（MEMORY_REJECTED: promiseLoop。保存もされない）', await (async () => {
+      try { await w({ text: '重みの試し: 約束の行', sources: plain, kind: 'promise', weight: 3, status: 'open' }); return false; }
+      catch (e) { return e.code === 'MEMORY_REJECTED' && e.reason === 'promiseLoop' && !svc2.store.entries('user').some((x) => x.text === '重みの試し: 約束の行'); }
+    })());
+    t.ok('ADR 0363: 人は約束に重み 3 を付けて書ける', (await w({ text: '重みの試し: 約束の行', kind: 'promise', weight: 3, status: 'open' }, HUMAN, {})).weight === 3);
     t.ok('ADR 0118: 人は重み 1〜3 をそのまま付けられる', (await w({ text: '重みの試し: 人の軽いメモ', kind: 'note', weight: 1 }, HUMAN, {})).weight === 1);
     const listed = (await svc2.list({ layer: 'user' })).find((e) => e.text === '重みの試し: 約束の行');
     t.ok('ADR 0118: 一覧の行に種類・重み・状態と今の強さが付く', listed.kind === 'promise' && listed.weight === 3 && listed.status === 'open' && listed.strength === 3 && listed.faded === false);

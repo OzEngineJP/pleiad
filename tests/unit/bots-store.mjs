@@ -3,7 +3,7 @@
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createBotStore, normalizeBot, normalizeFolders, nameProblem, iconProblem, personaProblem, nameKey, BotStoreError, PERSONA_MAX_CHARS } from '../../core/bots/store.mjs';
+import { createBotStore, normalizeBot, normalizeFolders, nameProblem, iconProblem, colorProblem, personaProblem, nameKey, BotStoreError, PERSONA_MAX_CHARS } from '../../core/bots/store.mjs';
 
 export const name = 'bots-store';
 export const title = 'bot の定義の保存: 名前の一意・予約名・読めない bots.json は上書きしない・同時の作成の直列化・保存失敗の巻き戻し';
@@ -40,6 +40,7 @@ export default async function (t) {
       ['', ' a', 'a b', 'a@b', 'a,b', 'a。', 'あ'.repeat(33), 'you', 'あなた', 'YOU', 'here', 'everyone', 'ＨＥＲＥ'].every((n) => nameProblem(n) !== null));
     t.ok('名前: 普通の名前・日本語・絵文字を含まない記号は通る', ['Owl', 'ふくろう', 'bot-1', 'レビュアー_2'].every((n) => nameProblem(n) === null));
     t.ok('アイコン: 未設定または絵文字 1 つ', iconProblem('🦉') === null && iconProblem('') === null && iconProblem('🦉🦊') !== null && iconProblem('a') !== null);
+    t.ok('色: 1〜8 の整数', colorProblem(1) === null && colorProblem(8) === null && colorProblem(0) !== null && colorProblem(9) !== null && colorProblem(1.5) !== null);
     t.ok('人格: 上限を超えると断る', personaProblem('あ'.repeat(PERSONA_MAX_CHARS)) === null && personaProblem('あ'.repeat(PERSONA_MAX_CHARS + 1)) !== null);
 
     // ---- update は直列化の中で現在の値を読む
@@ -66,6 +67,18 @@ export default async function (t) {
     // ---- 削除
     t.ok('remove は消した bot を返し、無ければ null', (await again.remove('b_1'))?.id === 'b_1' && (await again.remove('b_1')) === null && again.get('b_1') === null);
     t.ok('消した名前は使い回せる', (await code(() => again.put(bot('b_9', 'Owl')))) === null);
+
+    // ---- 前の版（色を持たない）の bot は、作った順の色を読み込みで補う。次の保存で残り、消しても既存の色はずれない
+    const legacyFile = path.join(dir, 'legacy', 'bots.json');
+    await fs.mkdir(path.dirname(legacyFile), { recursive: true });
+    await fs.writeFile(legacyFile, JSON.stringify({ version: 1, bots: [
+      bot('b_late', 'Late', { createdAt: 20, updatedAt: 20 }), bot('b_early', 'Early', { createdAt: 10, updatedAt: 10 }), bot('b_plain', 'Agent', { createdAt: 5, updatedAt: 5, plain: true })] }));
+    const legacy = createBotStore({ file: legacyFile });
+    await legacy.load();
+    t.ok('色の無い前の版の bot は createdAt 順に 1・2（plain は付けない）', legacy.get('b_early').color === 1 && legacy.get('b_late').color === 2 && legacy.get('b_plain').color === null);
+    await legacy.update('b_early', (b) => ({ ...b, persona: '色を残す' }));
+    const legacySaved = JSON.parse(await fs.readFile(legacyFile, 'utf8'));
+    t.ok('補った色は次の保存で bots.json に残る', legacySaved.bots.find((b) => b.id === 'b_early')?.color === 1 && legacySaved.bots.find((b) => b.id === 'b_late')?.color === 2);
 
     // ---- 読めない bots.json は上書きしない
     const brokenFile = path.join(dir, 'broken', 'bots.json');
