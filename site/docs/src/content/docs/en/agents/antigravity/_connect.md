@@ -12,6 +12,7 @@
 
 - Pressing "Sign out" on "CLI sign-in" asks you to confirm. Confirming signs out both the Antigravity app on this PC and the `agy` in your terminal (the first sign-in lives in the OS credential store and is shared by the app and `agy`). "Sign out" appears only when your `agy` supports it; if it is missing, run `agy update`.
 - If sign-out fails, the reason appears inside the card you pressed.
+- With an older `agy` that has no "Sign out", Pleiad cannot sign you out: the "CLI login" card shows "To sign out, use the Antigravity CLI (Pleiad can't sign you out)" instead. Run `agy update` to update.
 - To stop waiting for sign-in, press "Cancel".
 
 ## Adding a second Google account
