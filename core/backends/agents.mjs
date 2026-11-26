@@ -28,6 +28,7 @@ import path from 'node:path';
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
  * contextAt   エージェントが自分で読む指示・Skills・MCP の設定を読み込む時点。'turn' は始まっている会話にも次のターンから届く、
  *             'conversation' は会話を始めるときだけ読む（始まっている会話には届かない）。画面の保存の知らせ（ADR 0337 §7）が引く
+ * accountAddNotice  2 つ目以降のアカウントを足す前に画面が出す注意のモーダルの文言の鍵（web の ui の辞書。<鍵>.title・.body・.ok）。null なら出さない
  * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0227 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
  *             （能力の印 nativeShellOff が無いエージェントは 'native' のまま）
  * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
@@ -60,6 +61,7 @@ export const AGENTS = {
     shellTools: ['Bash', 'PowerShell'],
     shellDefault: 'native',
     contextAt: 'turn',
+    accountAddNotice: null,
   },
   codex: {
     module: './codex.mjs',
@@ -74,6 +76,7 @@ export const AGENTS = {
     shellTools: ['commandExecution'],
     shellDefault: 'native',
     contextAt: 'turn',
+    accountAddNotice: null,
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -95,6 +98,7 @@ export const AGENTS = {
     shellTools: ['run_command'],
     shellDefault: 'native',
     contextAt: 'conversation',
+    accountAddNotice: 'agentAccounts.addNotice.antigravity',
   },
   opencode: {
     module: './opencode.mjs',
@@ -117,6 +121,7 @@ export const AGENTS = {
     shellTools: ['bash', 'shell'],
     shellDefault: 'ply',
     contextAt: 'turn',
+    accountAddNotice: null,
   },
   devin: {
     module: './devin.mjs',
@@ -138,6 +143,7 @@ export const AGENTS = {
     shellTools: [],
     shellDefault: 'native',
     contextAt: 'turn',
+    accountAddNotice: null,
   },
   grok: {
     module: './grok.mjs',
@@ -160,6 +166,7 @@ export const AGENTS = {
     shellTools: [],
     shellDefault: 'native',
     contextAt: 'conversation',
+    accountAddNotice: null,
   },
   fake: {
     module: './fake.mjs',
@@ -174,10 +181,11 @@ export const AGENTS = {
     shellTools: ['fake_shell'],
     shellDefault: 'native',
     contextAt: 'turn',
+    accountAddNotice: null,
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
@@ -229,5 +237,5 @@ export const agentShortNames = (ids) => Object.fromEntries([...ids].map((id) => 
 /** 画面に渡す記述（describeBackends に載せる分） */
 export function agentPresentation(id) {
   const a = agentOf(id);
-  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id), contextAt: a?.contextAt ?? null };
+  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id), contextAt: a?.contextAt ?? null, accountAddNotice: a?.accountAddNotice ?? null };
 }

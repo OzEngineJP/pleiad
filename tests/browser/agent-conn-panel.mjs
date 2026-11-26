@@ -3,7 +3,9 @@
 //   ［既定にする］で「· 新しい会話の既定」の印が 1 か所だけ移る。［＋ 接続先を追加］→ 種類（公式・互換のプリセット）→ 追加の欄。
 //   カードの描き直し（［状態を再確認］など。renderAuth）を挟んでも、管理の面（アカウント・接続先）が枠から消えない。
 //   「開く → 閉じる → ［状態を再確認］ → 開く」と「開いたまま［状態を再確認］」の後に、枠に面の中身があり、「null」が出ず、ページの例外が無い。
-//   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode のそれぞれで確かめる。
+//   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode・Antigravity のそれぞれで確かめる。
+//   Antigravity だけ、追加の前に注意のモーダル（2 つ目の Google アカウント）が出る: やめる → 名前の欄は開かない、理解して追加する → 名前の欄。360px に収まる。
+//   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）を PNG で保存する。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
 // 本物のサーバー（Claude・Codex・OpenCode の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import fs from 'node:fs';
@@ -14,7 +16,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
-const AGENTS = (process.env.CONN_PANEL_AGENTS || 'claude,codex,opencode').split(',');
+const AGENTS = (process.env.CONN_PANEL_AGENTS || 'claude,codex,opencode,antigravity').split(',');
 const results = [];
 const check = (ok, label, detail) => { if (!ok) throw new Error(`${label}${detail === undefined ? '' : ` ${JSON.stringify(detail)}`}`); results.push(label); };
 
@@ -35,7 +37,8 @@ const home = path.join(dataDir, 'home');
 for (const d of ['.claude', '.codex']) fs.mkdirSync(path.join(home, d), { recursive: true });
 let server, browser;
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode', AGENT_HOST_LOCALE: 'ja',
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity', AGENT_HOST_LOCALE: 'ja',
+    AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
     AGENT_HOST_CODEX_BIN: fakeBin('fake-codex.mjs'), FAKE_CODEX_LOG: path.join(dataDir, 'fake-codex.log'),
     AGENT_HOST_OPENCODE_BIN: fakeBin('fake-opencode.mjs'), AGENT_HOST_OPENCODE_DATA: ocData,
@@ -77,7 +80,14 @@ try {
     return { sec: s.dataset.sec, panel: Boolean(panel && !panel.hidden), text: slot.textContent.trim().slice(0, 80),
       visible: !s.closest('.agent-conn').hidden };
   }), card(id));
-  const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'] };
+  const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'], antigravity: ['accounts'] };
+  // 追加の前に注意のモーダルが出るエージェントは、［理解して追加する］まで進める（出ないものは何もしない）
+  const confirmNotice = async (page, id) => {
+    if (id !== 'antigravity') return;
+    await page.waitForSelector(`${card(id)} dialog.aa-notice[open], dialog.aa-notice[open]`, { timeout: 5000 });
+    await page.locator('dialog.aa-notice [data-act="notice-ok"]').click();
+    await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+  };
   const filled = (page, id, label) => slots(page, id).then(list => {
     check(list.length === expect[id].length && list.every((s, i) => s.sec === expect[id][i]), `${label}: 節が ${expect[id].join('・')}`, list);
     check(list.every(s => s.visible && s.panel), `${label}: どの枠にも面がある`, list);
@@ -116,6 +126,7 @@ try {
         check(await page.evaluate(sel => document.activeElement === document.querySelector(`${sel} .conn-kinds .mp-preset`), card(id)), `${id}: 種類の最初の候補へフォーカスが行く`);
         await page.locator(`${card(id)} [data-kind="official"]`).click();
       }
+      await confirmNotice(page, id);
       check(await page.locator(`${card(id)} [data-add]`).count() === 0, `${id}: 追加の欄が開いている間は［＋ 接続先を追加］を出さない`);
       await page.locator(`${card(id)} ${form.name}`).fill('打ちかけ');
       await recheck(page, { keepFocus: true });
@@ -152,6 +163,7 @@ try {
       } else {
         await page.locator(`${card(id)} [data-add]`).click();
         if (expect[id].includes('endpoints')) await page.locator(`${card(id)} [data-kind="official"]`).click();
+        await confirmNotice(page, id);
         await page.locator(`${card(id)} #aaName`).fill('仕事');
         await page.locator(`${card(id)} #aaName`).press('Enter');
         await page.waitForFunction(sel => [...document.querySelectorAll(`${sel} .conn-sec[data-sec="accounts"] .cc .mp-name strong`)].some(n => n.textContent.trim() === '仕事'), card(id), { timeout: 15000 });
@@ -190,6 +202,43 @@ try {
       await page.waitForTimeout(600);
       check(await on('[data-add]'), `${id}: 追加を Esc でやめると、フォーカスは［＋ 接続先を追加］へ戻る`);
       check(await page.locator(`${card(id)} .agent-conn`).isVisible(), `${id}: Esc は 1 層だけ閉じ、設定の画面や接続先の一覧は閉じない`);
+    }]);
+  }
+  // Antigravity: 追加の前の注意のモーダル（文面・やめる・理解して追加する・360px）
+  if (AGENTS.includes('antigravity')) {
+    scenes.push(['antigravity: 追加の前の注意のモーダル', async page => {
+      const id = 'antigravity';
+      const shots = process.env.SHOT_DIR;
+      await toggle(page, id);
+      await page.locator(`${card(id)} [data-add]`).click();
+      await page.waitForSelector('dialog.aa-notice[open]', { timeout: 5000 });
+      const dlg = page.locator('dialog.aa-notice');
+      const text = await dlg.innerText();
+      check(text.includes('2 つ目の Google アカウントを追加します') && text.includes('サポート対象外とされています'), 'antigravity: 注意の題と本文（ja）', text);
+      check(await dlg.getByRole('button', { name: '理解して追加する' }).count() === 1 && await dlg.getByRole('button', { name: 'やめる' }).count() === 1, 'antigravity: ボタンは［理解して追加する］［やめる］');
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: 確認の前は名前の欄が開かない');
+      if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'antigravity-add-notice-ja-1280.png') }); }
+      await page.setViewportSize({ width: 360, height: 740 });
+      await page.waitForTimeout(300);
+      const box = await dlg.boundingBox();
+      check(box && box.x >= 0 && box.x + box.width <= 360 && box.y >= 0 && box.y + box.height <= 740, 'antigravity: 360px にモーダルが収まる', box);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= 360 && document.querySelector('dialog.aa-notice').scrollWidth <= document.querySelector('dialog.aa-notice').clientWidth), 'antigravity: 360px で横にあふれない');
+      if (shots) await page.screenshot({ path: path.join(shots, 'antigravity-add-notice-ja-360.png') });
+      await dlg.getByRole('button', { name: 'やめる' }).click();
+      await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: やめると名前の欄は開かない');
+      await page.waitForTimeout(400);
+      check(await page.evaluate(sel => document.activeElement === document.querySelector(sel), `${card(id)} [data-add]`), 'antigravity: やめると［＋ 接続先を追加］へフォーカスが戻る');
+      await page.locator(`${card(id)} [data-add]`).click();
+      await page.waitForSelector('dialog.aa-notice[open]', { timeout: 5000 });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: Esc もやめると同じ');
+      await page.locator(`${card(id)} [data-add]`).click();
+      await confirmNotice(page, id);
+      check(await page.locator(`${card(id)} #aaForm`).isVisible(), 'antigravity: ［理解して追加する］で名前の欄が開く');
+      const form = await page.locator(`${card(id)} #aaForm`).boundingBox();
+      check(form && form.x >= 0 && form.x + form.width <= 360, 'antigravity: 360px で名前の欄も収まる', form);
     }]);
   }
   const failed = [];

@@ -4129,7 +4129,8 @@ function connAddArea(b) {
   const official = () => {
     connAddOpen = '';
     if (kind === 'token') claudeAccounts.add().then(() => renderAuth());
-    else if (kind === 'agent') { agentAccounts.add(); renderAuth(); }
+    // 記述に注意（accountAddNotice）があるエージェントは、モーダルで［理解して追加する］を押してから名前の欄が開く
+    else if (kind === 'agent') agentAccounts.add({ notice: b.accountAddNotice ?? null }).then(() => renderAuth());
   };
   const closeKinds = () => { connAddOpen = ''; renderAuth(); $("authSec").querySelector(`[data-agent="${b.id}"] [data-add]`)?.focus(); };
   if (connAddOpen !== b.id) {
@@ -4371,7 +4372,7 @@ function renderAuth() {
     // 行は初回の案内・会話の中の一覧と同じ部品（web/agent-row.mjs）。ここだけが持つ操作（ログアウト・状態を確認・接続）は行の右の列へ足す
     const rowEl = agentRows.build(rowAgent(b), { near: plan.near });
     const actions = rowEl.querySelector(".ar2-a");
-    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Antigravity・Devin の頭の行は今のまま（ADR 0359）
+    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Devin の頭の行は今のまま（ADR 0359。Antigravity は 2 つ目以降のアカウントを持つので Claude・Codex と同じ）
     const accounts = b.capabilities?.accounts && st.installed !== false;
     const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
     const conns = Boolean(accounts || endpoints);

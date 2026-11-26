@@ -127,6 +127,10 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
         body.push(actions(cancel));
         break;
       }
+      case 'message':
+        // URL もコマンドも無く、メッセージだけ届いた段（ブラウザーが別に開く・agy が自分で開く）。どのエージェントにも効く
+        body.push(el('p', null, flow.message || t('agentAccounts.flow.openBrowser')), actions(cancel));
+        break;
       case 'command': {
         body.push(el('p', null, t('agentAccounts.flow.runCommand')));
         const line = el('p', 'mp-note'); line.append(el('code', null, flow.command ?? ''));
@@ -203,7 +207,8 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
       if (/^https:\/\//.test(ev.url ?? '')) {
         flow.phase = 'url'; flow.url = ev.url; flow.message = ev.message ?? '';
         if (flow.popup) { try { flow.popup.location.href = ev.url; } catch {} }
-      } else { flow.phase = 'command'; flow.command = ev.url ?? ''; flow.message = ev.message ?? ''; closePopup(flow); }
+      } else if (!ev.url) { flow.phase = 'message'; flow.message = ev.message ?? ''; }
+      else { flow.phase = 'command'; flow.command = ev.url; flow.message = ev.message ?? ''; closePopup(flow); }
     } else if (ev.phase === 'error') { flow.phase = 'error'; flow.message = ev.message ?? ''; closePopup(flow); }
     drawFlow();
   }
@@ -255,7 +260,37 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     finally { if (sameForm()) $('aaSubmit').disabled = false; }
   };
   const close = () => { panel.hidden = true; view = null; $('aaForm').hidden = true; resetForm(); void cancelFlow(); };
-  const add = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
+  const openForm = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
+  /**
+   * 足す前の注意のモーダル（エージェントの記述の accountAddNotice の鍵。<鍵>.title・.body・.ok）。［理解して追加する］で true、［やめる］・Esc で false。
+   * 面の中に置く（試験が見つけやすく、閉じれば消える）。showModal が無い環境でも open で出す
+   */
+  // i18n-dynamic: agentAccounts.addNotice.
+  function confirmNotice(key) {
+    return new Promise((resolve) => {
+      const dialog = el('dialog', 'rm-dialog aa-notice');
+      dialog.setAttribute('aria-labelledby', 'aaNoticeTitle');
+      const title = el('h2', null, t(`${key}.title`)); title.id = 'aaNoticeTitle';
+      const done = (yes) => { try { dialog.close?.(); } catch {} dialog.remove(); resolve(yes); };
+      const no = button(t('agentAccounts.cancel'), () => done(false));
+      const yes = button(t(`${key}.ok`), () => done(true), 'btn btn-primary');
+      yes.dataset.act = 'notice-ok'; no.dataset.act = 'notice-cancel';
+      const actions = el('div', 'mp-actions'); actions.append(no, yes);
+      dialog.append(title, el('p', 'rm-dialog-hint', t(`${key}.body`)), actions);
+      dialog.addEventListener('cancel', (e) => { e.preventDefault?.(); done(false); });
+      // Esc は 1 層だけ閉じる（設定の画面まで閉じない。追加の欄の Esc と同じ）
+      dialog.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || e.isComposing) return; e.preventDefault(); e.stopPropagation(); done(false); });
+      panel.append(dialog);
+      if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+      yes.focus?.();
+    });
+  }
+  /** 追加の欄を開く。notice（記述の accountAddNotice）があるときは、先に注意のモーダルを出し、［理解して追加する］のときだけ名前の欄へ進む */
+  const add = async ({ notice = null } = {}) => {
+    if (notice && !(await confirmNotice(notice))) { onAddEnd(); return false; }
+    openForm();
+    return true;
+  };
   $('aaCancel').onclick = () => {
     const was = editingId, adding = !was;
     $('aaForm').hidden = true; resetForm();
