@@ -3,7 +3,7 @@
 //   - 「@」の補完と宛先の塊（mention-complete.mjs・mention-blocks.mjs）・誰も @ していない文への提案・@here / @everyone の人数の確認（ADR 0121）
 //   - 書きかけはスレッドごとに端末へ（流れの入力欄と同じ入れ物。ch-composer.mjs の draftStore）
 // 宛先のチップと、スレッドごとの設定のチップ（作業フォルダー・モデル・承認モード）は持たない。宛先は本文の @ だけで決まり、
-// @ が無ければ前に答えた bot が受ける。設定は bot のページでだけ変える（ADR 0359）。行は添付と送信だけ。
+// @ が無ければ前に答えた bot が受ける。設定は bot のページでだけ変える（ADR 0362）。行は添付と送信だけ。
 // まだ使わない部品（送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
@@ -139,7 +139,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
   });
   const att = c.attach;
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${PREFIX}-mention`, backendLabel, onChange: () => paintHint() });
-  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0359）
+  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0362）
   const blocks = setupMentionBlocks({ input, bots: blockBots });
   // 送信の日時（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。ADR 0103）。時刻が来たら人の投稿として 1 回だけ投稿する（channels.schedulePost）
   c.useSchedule({

@@ -73,7 +73,7 @@ export function setupChannels(host) {
   parts.push(createRoutineSheet(host));
 
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
-  // 面を切り替えたら、メインはその面で最後に開いたものへ戻る（ADR 0359）。bot の面で何も開いていなければ最初の bot の DM か初めての bot の段
+  // 面を切り替えたら、メインはその面で最後に開いたものへ戻る（ADR 0362）。bot の面で何も開いていなければ最初の bot の DM か初めての bot の段
   let showing = false;   // show() の中の切り替え（開く先はその show が決める）
   const tabs = createSideTabs({ onChange: (tab) => {
     each('sideTabChanged', tab);
@@ -90,7 +90,7 @@ export function setupChannels(host) {
       return CHANNEL_EVENTS.has(ev?.type);
     },
     show(view) {
-      // 一時チャットの流れは無い（ADR 0359）。前の回のアドレス・古いリンクの 'home' はチャットの面へ
+      // 一時チャットの流れは無い（ADR 0362）。前の回のアドレス・古いリンクの 'home' はチャットの面へ
       if (view?.kind === 'channel' && view.id === 'home' && !view.threadId) { tabs.set('chats'); return; }
       showing = true; try { tabs.set('channels'); } finally { showing = false; } each('show', view); host.noteView(view?.threadId ? view : { kind: view?.kind, id: view?.id }); },
     hide() { each('hide'); tabs.set('chats'); },

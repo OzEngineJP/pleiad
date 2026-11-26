@@ -1,6 +1,6 @@
 // playwright-cli -s=sidebar-create run-code --filename=tests/browser/sidebar-create.cjs
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7434・トークン sidebar-create）を開いてから実行する。
-// 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288・0359）:
+// 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288・0362）:
 //   「チャンネル ＋」の ＋ で名前の欄が出て、Enter で本物の channels.create が作り、木に出てそのチャンネルが開く・同じ名前は欄の下に理由が出て字が残る・Esc で閉じて ＋ へ戻る・
 //   見出しの文字を押しても欄が出る・打った名前は絞り込みを掛けて外しても残る・欄の中でも Ctrl+Shift+O が効く・
 //   木のキーボードで「チャンネル」の見出しに来て Enter でも欄が出る・
@@ -40,7 +40,7 @@ async page => {
   await page.reload();
   await page.locator('#closeOnboarding').click({ timeout: 2000 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
-  // 「チャンネル ＋」は bot の面、新しいチャットの ＋ はチャットの面にある（ADR 0359）
+  // 「チャンネル ＋」は bot の面、新しいチャットの ＋ はチャットの面にある（ADR 0362）
   const face = async which => { await page.locator(which === 'bot' ? '#faceChannels' : '#faceChats').click(); };
   await face('bot');
   await page.locator('#csChannelsLabel').waitFor();

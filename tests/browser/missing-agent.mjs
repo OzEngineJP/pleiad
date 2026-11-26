@@ -583,7 +583,7 @@ try {
     const { page } = s;
     await page.waitForSelector('#prompt', { timeout: 20_000 });
     await settled(page);
-    // 作る 3 段はエージェントを既定のまま作る（ADR 0359）。画面と同じ WS で作ってから、その bot のページで確かめる
+    // 作る 3 段はエージェントを既定のまま作る（ADR 0362）。画面と同じ WS で作ってから、その bot のページで確かめる
     const botId = await page.evaluate(() => new Promise((resolve, reject) => {
       const token = new URL(location.href).searchParams.get('token') ?? '';
       const ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);

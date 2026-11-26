@@ -1,9 +1,9 @@
 // bot のページと作成（W4。ADR 0109・docs/channels.md「bot のページ」・承認済みのモック 05）。
 // #channelsBody の中に section#botView.bot-page を作る。見せるのは show({ kind: 'bot', id }) のとき。
-// id が 'new' なら作る 3 段（名前 → 色 → 人格。エージェント・モデル・承認モードは既定。作ったら DM を開く。ADR 0359）。
+// id が 'new' なら作る 3 段（名前 → 色 → 人格。エージェント・モデル・承認モードは既定。作ったら DM を開く。ADR 0362）。
 //
 // 設定は Chats の入力欄と同じ程度に簡単にする:
-//   名前・色（顔を押すと 8 色の面）・人格（自由文）… 離れたときに bots.update。前の版の絵文字・画像は保存に残すが読まない（ADR 0359）
+//   名前・色（顔を押すと 8 色の面）・人格（自由文）… 離れたときに bots.update。前の版の絵文字・画像は保存に残すが読まない（ADR 0362）
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
 //   アカウント … モデルの面の最後の節（入力欄と同じ行・週の使用量つき）。bots.setAccount（人だけ。ADR 0224）
@@ -48,7 +48,7 @@ function glyph(paths, cls = 'i') {
 const caret = () => { const g = glyph(CARET); g.classList.add('caret'); return g; };
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
 const show = (node, on) => { node.hidden = !on; };
-// 8 色の名前（作る順: 青 → 橙 → 緑 → 桃 → 紫 → 黄 → 青緑 → 赤。ADR 0359）
+// 8 色の名前（作る順: 青 → 橙 → 緑 → 桃 → 紫 → 黄 → 青緑 → 赤。ADR 0362）
 // i18n-dynamic: channels:bot.color.
 const COLOR_NAMES = ['blue', 'orange', 'green', 'pink', 'purple', 'yellow', 'teal', 'red'].map((k) => `channels:bot.color.${k}`);
 /** 8 色の見本（作る 3 段の 2 段目と、bot のページの顔の面で同じもの）。押した色を onPick に渡す */
@@ -138,7 +138,7 @@ export function createBotPage(host) {
   const head = el('div', 'bp-head');
   head.append(av, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn);
 
-  // 作る 3 段（名前 → 色 → 人格）。右の面の中ほどに置く。段は点で示す（ADR 0359）
+  // 作る 3 段（名前 → 色 → 人格）。右の面の中ほどに置く。段は点で示す（ADR 0362）
   const obFace = el('div', 'bp-ob-face');
   const obDots = el('div', 'bp-ob-dots');
   obDots.setAttribute('aria-hidden', 'true');
@@ -652,7 +652,7 @@ export function createBotPage(host) {
     });
   }
 
-  // ---------------------------------------------------------------- 作る 3 段（名前 → 色 → 人格。ADR 0359）
+  // ---------------------------------------------------------------- 作る 3 段（名前 → 色 → 人格。ADR 0362）
   let createBusy = false;
   const obButton = (label, primary, onClick) => {
     const b = el('button', primary ? 'btn btn-primary' : 'btn', label);

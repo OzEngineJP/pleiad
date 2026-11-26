@@ -430,7 +430,7 @@ export const channelOps = [
           if (targets.length && JSON.stringify(confirmedWake) !== JSON.stringify(targets)) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: 'wake targets changed; confirm again' }));
           groupMentions = expandGroups(mentions, group.botIds);
         }
-        // @ の一覧で選んだ（本文に @名前 と書いた）bot がチャンネルのメンバーでなければ、投稿の前にメンバーへ足す（ADR 0359）。DM・一時チャットには無い
+        // @ の一覧で選んだ（本文に @名前 と書いた）bot がチャンネルのメンバーでなければ、投稿の前にメンバーへ足す（ADR 0362）。DM・一時チャットには無い
         if (channel.kind === 'channel' && !channel.home) {
           const outside = [...new Set(mentions)].filter((id) => !['you', 'here', 'everyone'].includes(id) && !(channel.members ?? []).includes(id));
           if (outside.length) {

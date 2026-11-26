@@ -12,7 +12,7 @@ async (page, { url = page.url() } = {}) => {
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
   await page.locator('#groups .chsec').first().waitFor();
   check(await page.locator('#sideOrder').count() === 0, 'one tree without the order switch');
-  // The side has two faces (ADR 0359). The chat face shows only chats: no bots, no routines, no channels.
+  // The side has two faces (ADR 0362). The chat face shows only chats: no bots, no routines, no channels.
   check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true', 'the chat face is shown first');
   const home = page.locator('[data-side-key="chsec:home"]');
   const chatHeadings = await page.locator('#groups > .chsec > .grp-head .chsec-name').allTextContents();
@@ -130,7 +130,7 @@ async (page, { url = page.url() } = {}) => {
   check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true' && await home.count() === 0, 'the bot face hides the チャット section');
   const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
   const firstBot = order.findIndex(k => k?.startsWith('chsec:bot:'));
-  check(order[0] === 'routines' && order[1] === 'bots-head' && firstBot === 2 && order.indexOf('channels') > firstBot, 'routines, Bots, bot rows, then channels (ADR 0359)');
+  check(order[0] === 'routines' && order[1] === 'bots-head' && firstBot === 2 && order.indexOf('channels') > firstBot, 'routines, Bots, bot rows, then channels (ADR 0362)');
   const faces = await page.locator('#groups .botsec-head .bot-face-av').evaluateAll(ns => ns.map(n => [n.getBoundingClientRect().width, n.getBoundingClientRect().height]));
   check(faces.length > 0 && faces.every(([w, h]) => w === 20 && h === 20), 'bot rows show a 20px face');
   const names = await page.locator('#groups > .chsec:not(.botsec):not([data-sec]) > .grp-head .chsec-name').allTextContents();

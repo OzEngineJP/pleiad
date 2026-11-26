@@ -120,7 +120,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   const editor = createMarkdownEditor(input, { resolve: () => null, ...attach.editorOptions });
   attach.bind(editor, input);
   const mention = setupMentionComplete({ input, list, candidates, idPrefix: `${idPrefix}-mention`, backendLabel, onChange: () => paintHint() });
-  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0359）
+  // 本文の `@名前` を、顔＋名前の 1 つの塊に見せる（文書は `@名前` のまま。ADR 0362）
   const blocks = setupMentionBlocks({ input, bots: blockBots });
 
   // ---- 高さ。1 行から始めて中身に合わせて伸び（CSS）、上限はマウス 10 行・タッチ 6 行（Chats の fitPrompt と同じ決まり）

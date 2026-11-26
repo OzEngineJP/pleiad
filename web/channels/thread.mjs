@@ -88,7 +88,7 @@ export function createThread(host) {
   subsButton.setAttribute('aria-controls', 'workDialog');
   subs.append(subsButton);
   const subsChip = createBackgroundChip(subsButton);
-  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。宛先は本文の @ だけ（ADR 0359）
+  // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。宛先は本文の @ だけ（ADR 0362）
   let voiceView = null;
   const composer = createThreadComposer({
     host,
@@ -293,7 +293,7 @@ export function createThread(host) {
   function threadReadOnly() {
     return Boolean(S.thread?.deletedBot && !Object.keys(S.thread.sessions ?? {}).some(id => S.bots.has(id)));
   }
-  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0359） */
+  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0362） */
   const allBots = () => [...S.bots.values()].filter((b) => !b.plain);
   /** @ の一覧に出す bot: チャンネルのメンバー。メンバーがまだいないチャンネルは、いる bot の全員（選べば投稿のときメンバーに足される） */
   const callableBots = () => (memberBots().length || S.channel?.kind !== 'channel' ? memberBots() : allBots());
@@ -334,7 +334,7 @@ export function createThread(host) {
   }
 
   /**
-   * @ の無い返信を受ける bot（サーバーの宛先の決まりと同じ。ADR 0117・0359）。DM はその bot、スレッドは作業中の 1 体 →
+   * @ の無い返信を受ける bot（サーバーの宛先の決まりと同じ。ADR 0117・0362）。DM はその bot、スレッドは作業中の 1 体 →
    * 最後に答えた bot → 会話を持つ bot。いなければ null（チャンネルでまだ bot が答えていないスレッドは、誰も起きない）
    */
   function receiver() {

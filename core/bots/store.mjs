@@ -93,7 +93,7 @@ export function normalizeBot(raw, now = Date.now()) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id || typeof raw.name !== 'string' || !raw.name) return null;
   return {
     id: raw.id, name: raw.name, icon: str(raw.icon), iconImage: str(raw.iconImage), persona: str(raw.persona),
-    // 顔の色（1〜8。無い行は load が作った順に補う。色だけを選べ、絵文字・画像は残っていても画面では読まない。ADR 0359）
+    // 顔の色（1〜8。無い行は load が作った順に補う。色だけを選べ、絵文字・画像は残っていても画面では読まない。ADR 0362）
     color: colorValue(raw.color),
     backend: str(raw.backend), model: str(raw.model), effort: str(raw.effort), mode: str(raw.mode),
     // bot のエージェントのアカウントの id（'' = ログイン中のアカウント）。人だけが bots.setAccount で変える。capabilities.accounts を持たない backend では使わない

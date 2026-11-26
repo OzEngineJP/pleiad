@@ -74,7 +74,7 @@ function mentionPill(bot, text) {
 
 /**
  * bot の名前を、@ の呼びかけとして色付けする。コード（code・pre）と、すでにリンクの中は触らない。
- * bots（宛先になった bot の定義）に当たる名前は、顔＋名前の塊にする（ADR 0359）。それ以外（@あなた など）は字の色だけ
+ * bots（宛先になった bot の定義）に当たる名前は、顔＋名前の塊にする（ADR 0362）。それ以外（@あなた など）は字の色だけ
  */
 export function highlightMentions(root, names, bots = []) {
   const byName = new Map((bots ?? []).filter((b) => b?.name).map((b) => [foldName(b.name), b]));

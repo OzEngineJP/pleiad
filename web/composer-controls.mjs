@@ -60,7 +60,7 @@ function nameBox(chip) {
 
 const FIT_CLASSES = ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fit-nomodel", "fit-cwd-icon", "fit-mode-icon", "fit-model-icon"];
 /**
- * 入力欄の下の行を 1 行に収める（Chats の入力欄。docs/design-system.md「入力欄の設定」。スレッドの欄はチップを持たない。ADR 0359）。
+ * 入力欄の下の行を 1 行に収める（Chats の入力欄。docs/design-system.md「入力欄の設定」。スレッドの欄はチップを持たない。ADR 0362）。
  * ① ブランチ・段を外す・承認モードを短い名前に ② bot なら「· モデル」を外して名前だけ
  * ③ 作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで … で詰める
  * ④ それでも入らなければ 作業ディレクトリ → 承認モード → 宛先とモデル の順にアイコンだけ。送信は常に右端

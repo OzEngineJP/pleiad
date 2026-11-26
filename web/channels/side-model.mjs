@@ -25,7 +25,7 @@ export function botState(bot, { sessions = [], runningIds = new Set(), waitingId
 }
 
 /**
- * 脇の面の切り替え（チャット / bot）の印。見ていない面にだけ付ける（ADR 0359）。あなたを待っているもの（承認待ちの bot・あなた宛ての投稿）が
+ * 脇の面の切り替え（チャット / bot）の印。見ていない面にだけ付ける（ADR 0362）。あなたを待っているもの（承認待ちの bot・あなた宛ての投稿）が
  * あれば 'mark'（◆）、作業中のものがあれば 'working'（弧）、どちらも無ければ null。未読だけでは付けない
  * @param {{ tab: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, running: boolean } }} o
  */

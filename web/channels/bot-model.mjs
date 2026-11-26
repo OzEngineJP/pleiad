@@ -90,7 +90,7 @@ export function nextColor(bots) {
   return first;
 }
 
-/** 作る 3 段（名前 → 色 → 人格）の下書きの初期値。エージェント・モデル・承認モードは既定のまま作る（ADR 0359） */
+/** 作る 3 段（名前 → 色 → 人格）の下書きの初期値。エージェント・モデル・承認モードは既定のまま作る（ADR 0362） */
 export function newDraft(bots) {
   return { step: 1, name: '', color: nextColor(bots), persona: '' };
 }

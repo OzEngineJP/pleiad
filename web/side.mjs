@@ -443,7 +443,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   // ---- 置き場所の木 ---------------------------------------------------
   // チャットの面: 会話（状態ごと）だけ。bot の面: 畳めるルーティン（channelExtras）→「Bots ＋」→ bot の行（下に DM のスレッド）
-  // →「チャンネル ＋」（channelExtras）→ チャンネルごとに開閉できる見出しとスレッド（全部）。ADR 0359
+  // →「チャンネル ＋」（channelExtras）→ チャンネルごとに開閉できる見出しとスレッド（全部）。ADR 0362
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
   // 質問への回答だけを待っている会話は「回答待ち」（Issue #231。通知の一覧の「あなた待ち」の質問と同じ見分け）
@@ -624,7 +624,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return sec;
   }
 
-  // 脇の 2 面（ADR 0359）: チャットの面は会話だけ（bot は出さない）。bot の面はルーティン → Bots（bot ごとに DM と、前の一時チャットで
+  // 脇の 2 面（ADR 0362）: チャットの面は会話だけ（bot は出さない）。bot の面はルーティン → Bots（bot ごとに DM と、前の一時チャットで
   // 話しかけたスレッドを下に畳む）→ チャンネル。bot の分からない一時チャットのスレッドだけは、行き場が無いのでチャットの面に残す
   function buildPlaces(wanted) {
     const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));

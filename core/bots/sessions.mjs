@@ -179,7 +179,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       const modes = backend.modes();
       // ルーティンの会話の承認モードはルーティンの mode（core/routines/runner.mjs）。人が bot のモードを変えても、実行中・過去の実行の強さは変えない
       // 心拍の会話は読み取りのモードで作る（ADR 0126）。人が bot のモードを変えても替えない
-      // スレッドごとの上書き（以前の sidecar の overrides）は読まない。どのスレッドの会話も bot の設定に揃える（ADR 0359）
+      // スレッドごとの上書き（以前の sidecar の overrides）は読まない。どのスレッドの会話も bot の設定に揃える（ADR 0362）
       if (modes[bot.mode] && meta.mode !== bot.mode && meta.bot?.kind !== 'routine' && meta.bot?.kind !== 'pulse') await host.store.setMode(sessionId, bot.mode);
       const cwd = meta.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
       const model = await host.resolveModel(null, bot.model || undefined, backend, cwd, '');

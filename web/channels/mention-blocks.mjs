@@ -1,4 +1,4 @@
-// 入力欄の bot の宛先の塊（ADR 0359）。本文の `@名前` のうち、今の bot の名前に当たるものを、顔＋名前の 1 つの塊（span.mb）に見せる。
+// 入力欄の bot の宛先の塊（ADR 0362）。本文の `@名前` のうち、今の bot の名前に当たるものを、顔＋名前の 1 つの塊（span.mb）に見せる。
 // 文書（Markdown）は `@名前` のまま変えない。塊は contenteditable=false の span で、中の字（隠した `@` と名前）は
 // web/md-editor.mjs の読みではただの字として数える（span・button は書式の印ではないので透ける。walk・Range.toString）。
 // 塊の中にキャレットは置かない（md-editor の posToDom が手前か後ろへ寄せる）。

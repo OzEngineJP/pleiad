@@ -111,7 +111,7 @@ export default async function (t) {
     });
     const root = dom.els.get('groups');
     t.ok('状態ごとの節（A と B）が描かれる', Boolean(sectionOf(root, 'A') && sectionOf(root, 'B')));
-    t.ok('チャットの面: 会話は状態の節の中、チャンネルのスレッドは出さない（bot の面に出す。ADR 0359）',
+    t.ok('チャットの面: 会話は状態の節の中、チャンネルのスレッドは出さない（bot の面に出す。ADR 0362）',
       Boolean(rowOf(sectionOf(root, 'A'), 's1')) && !rowOf(root, threadRow.id));
     side.setFace('channels');
     const threadEl = rowOf(root, threadRow.id);
@@ -174,7 +174,7 @@ export default async function (t) {
       home.children[0].treeExpand(false);
       t.ok('チャットも畳むと待ちの印', !!find(find(root, n => n.dataset.sideKey === 'chsec:home').children[0], n => n.classList.contains('wait')));
       t.ok('あなたを待っている区画は無い', !find(root, n => n.classList.contains('bot-waits')));
-      t.ok('チャットの面はチャットの見出しだけ（ルーティン・チャンネルは bot の面。ADR 0359）', root.children.map(n => n.dataset.sec ?? n.dataset.sideKey).join() === 'chsec:home');
+      t.ok('チャットの面はチャットの見出しだけ（ルーティン・チャンネルは bot の面。ADR 0362）', root.children.map(n => n.dataset.sec ?? n.dataset.sideKey).join() === 'chsec:home');
       side.setFace('channels');
       const channel = find(root, n => n.dataset.sideKey === 'chsec:a');
       if (prefs.filter?.dir || prefs.filter?.backends) {
@@ -184,7 +184,7 @@ export default async function (t) {
         t.ok('スレッドの行の状態アイコンに名前がある', !!find(channel, n => n.classList.contains('row-status') && n.getAttribute('aria-label') === 'A'));
       }
       const order = root.children.map(n => n.dataset.sec ?? n.dataset.sideKey);
-      t.ok('bot の面: ルーティン・Bots・「チャンネル ＋」・チャンネルの順（ADR 0359）', prefs.filter ? true : order.join() === 'routines,bots-head,channels,chsec:a,chsec:z', order.join());
+      t.ok('bot の面: ルーティン・Bots・「チャンネル ＋」・チャンネルの順（ADR 0362）', prefs.filter ? true : order.join() === 'routines,bots-head,channels,chsec:a,chsec:z', order.join());
       t.ok('フィルター中はルーティンと「チャンネル ＋」を隠す', prefs.filter ? !root.children.includes(routinesSec) && !root.children.includes(channelsSec) : root.children.includes(routinesSec) && root.children.includes(channelsSec));
       t.ok('状態の絞り込みでは空のチャンネルを出さない', !prefs.filter || !find(root, n => n.dataset.sideKey === 'chsec:z'));
     } finally { d.restore(); }

@@ -19,7 +19,7 @@
 .deck > .ch-thread{will-change:transform}
 @media (prefers-reduced-motion:reduce){.deck{--dur-deck:0ms}}
 /* 板の境目。線ではなく、面の階調の細い棒（上下は余白を空ける） */
-/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）はチップを持たない（行は添付と送信だけ。ADR 0359）。
+/* スレッドの入力欄（Chats の入力欄と同じ部品。web/channels/thread-composer.mjs）はチップを持たない（行は添付と送信だけ。ADR 0362）。
    委譲の子の入力欄（web/composer/work-controls.mjs）のチップは、既定と違えば「変更あり」の点（チップの右上） */
 .wk-composer .crow > .chip{position:relative}
 .wk-composer .chip > .entry-dot{position:absolute;top:3px;right:3px}

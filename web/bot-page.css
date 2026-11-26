@@ -21,7 +21,7 @@
 .bp-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
 .bp-id{min-width:0}
 .bp-spacer{flex:1}
-/* 顔は 64px（32 の形を拡げる）。押すと 8 色の面（ADR 0359） */
+/* 顔は 64px（32 の形を拡げる）。押すと 8 色の面（ADR 0362） */
 .bp-av{position:relative;width:64px;height:64px;padding:0;border-radius:50%;display:grid;place-items:center;flex:none;background:transparent;
   cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
 .bp-av:hover{background:var(--surface-1)}

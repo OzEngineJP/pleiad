@@ -179,7 +179,7 @@
 .mention-av.you{background:var(--surface-3);font-size:9px;font-weight:600}
 .mention-list .lbl{font-weight:600}
 .mention-list .hint{margin-left:auto;padding-left:12px;color:var(--ink-weak);font-size:var(--fs-xs)}
-/* ---- 宛先の塊（ADR 0359）。入力欄では .mb（mention-blocks.mjs。末尾の × で塊ごと外す）、送った投稿では .mt（post.mjs）。
+/* ---- 宛先の塊（ADR 0362）。入力欄では .mb（mention-blocks.mjs。末尾の × で塊ごと外す）、送った投稿では .mt（post.mjs）。
    bot の色（--c）の淡い面に、顔＋名前。文書は `@名前` のままなので、`@` は見えない字で残す（コピーすると `@名前`） */
 .md-b .mb,.post-body .mention.mt{--bot-color:var(--bc1);display:inline-flex;align-items:center;gap:4px;height:22px;border-radius:6px;vertical-align:top;white-space:nowrap;font-weight:600;font-size:13px;color:var(--ink-strong);
   background:color-mix(in srgb,var(--bot-color) 16%,transparent)}

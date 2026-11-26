@@ -101,7 +101,7 @@ export function createFeed(host) {
 
   // i18n-dynamic: channels:feed.botState.
   const stateHint = (bot) => (bot.state === 'working' || bot.state === 'waiting' ? t(`channels:feed.botState.${bot.state}`) : '');
-  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0359） */
+  /** 入力欄の `@名前` を顔＋名前の塊にする bot（今ある bot の全員。メンバーでない bot も、書けば投稿のときメンバーに足される。ADR 0362） */
   const allBots = () => [...S.bots.values()].filter((b) => !b.plain);
   /** @ の一覧に出す bot: チャンネルのメンバー。メンバーがまだいないチャンネルは、いる bot の全員（選べば投稿のときメンバーに足される） */
   const callableBots = () => (memberBots().length ? memberBots() : allBots());

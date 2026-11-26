@@ -28,7 +28,7 @@ export default function (t) {
   t.ok('前方一致が先、部分一致が後（大小を区別しない）', names('o') === 'Owl,Howler' && names('OW') === 'Owl,Howler' && names('ow') === 'Owl,Howler');
   t.ok('全角・日本語も当たる。当たらなければ空', names('Ｏｗ') === 'Owl,Howler' && names('あな') === 'あなた' && names('zzz') === '');
 
-  // ---- 入力欄の宛先の塊（本文の `@名前` のうち bot の名前に当たるもの。ADR 0359）
+  // ---- 入力欄の宛先の塊（本文の `@名前` のうち bot の名前に当たるもの。ADR 0362）
   const bots = [{ id: 'b_owl', name: 'Owl' }, { id: 'b_owlet', name: 'Owlet' }, { id: 'b_ru', name: 'ルナ' }];
   const blk = (s, caret = null) => findMentionBlocks(s, bots, { caret }).map((m) => `${m.bot.id}@${m.start}-${m.end}`).join(',');
   t.ok('名前の後に空白・句読点・行末が来たら塊にする。長い名前を先に見る', blk('@Owl お願い') === 'b_owl@0-4' && blk('@Owlet お願い') === 'b_owlet@0-6' && blk('見て@ルナ、どう？') === 'b_ru@2-5');

@@ -56,7 +56,7 @@ export default async function (t) {
     const gid = groupChannel.result.id;
     const root = await run(HUMAN, 'channels.post', { channelId: gid, text: '集団宛てのスレッド' });
     const emptyHere = await run(HUMAN, 'channels.wakePreview', { channelId: gid, threadId: root.result.id, text: '@here まだ誰もいない' });
-    t.ok('まだ bot が話していないスレッドの @here は 0 体。起こす bot がいないので確認も要らない（ADR 0359）', emptyHere.ok && !emptyHere.result.required && emptyHere.result.botIds.length === 0);
+    t.ok('まだ bot が話していないスレッドの @here は 0 体。起こす bot がいないので確認も要らない（ADR 0362）', emptyHere.ok && !emptyHere.result.required && emptyHere.result.botIds.length === 0);
     t.ok('0 体の @here は確認なしで投稿できる', (await run(HUMAN, 'channels.post', { channelId: gid, threadId: root.result.id, text: '@here まだ誰もいない' })).ok);
     await run(agent('s_bot'), 'channels.post', { channelId: gid, threadId: root.result.id, text: 'Owl の返事' });
     const hereArgs = { channelId: gid, threadId: root.result.id, text: '@here 続けて' };
@@ -79,7 +79,7 @@ export default async function (t) {
     // 発言者
     const byHuman = await run(HUMAN, 'channels.post', { channelId: cid, text: '人の投稿 @Owl' });
     t.ok('post: 画面の人は human', byHuman.ok && byHuman.result.author.kind === 'human' && byHuman.result.mentions.join() === 'b_owl', JSON.stringify(byHuman.result));
-    t.ok('post: メンバーでない bot を @ で選ぶと、メンバーに足して知らせを返す（ADR 0359）', byHuman.result.addedMembers?.join() === 'b_owl' && (await run(HUMAN, 'channels.get', { channelId: cid })).result.members.join() === 'b_owl', JSON.stringify(byHuman.result));
+    t.ok('post: メンバーでない bot を @ で選ぶと、メンバーに足して知らせを返す（ADR 0362）', byHuman.result.addedMembers?.join() === 'b_owl' && (await run(HUMAN, 'channels.get', { channelId: cid })).result.members.join() === 'b_owl', JSON.stringify(byHuman.result));
     const again = await run(HUMAN, 'channels.post', { channelId: cid, text: '二度目 @Owl' });
     t.ok('post: すでにメンバーなら足さない・知らせも出さない', again.ok && !again.result.addedMembers);
     const byBot = await run(agent('s_bot'), 'channels.post', { channelId: cid, text: 'bot の返事', threadId: byHuman.result.id });

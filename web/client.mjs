@@ -5077,7 +5077,7 @@ const controls = chatComposer.useControls({
       accounts: state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
       endpoint: endpointView(bid),
       modes: modelsReady ? state.modes : {}, modesPending: !modelsReady, mode: state.mode,
-      // 普通のチャットは bot を選ばない（bot の仕事は bot の面の DM から。ADR 0359）。エージェントの名前と「使用量」の口だけ
+      // 普通のチャットは bot を選ばない（bot の仕事は bot の面の DM から。ADR 0362）。エージェントの名前と「使用量」の口だけ
       destination: {
         sent: true, backendLabel: labelOf,
         // エージェントの一覧の下の「使用量」（使用量の画面を開く）

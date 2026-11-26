@@ -1,4 +1,4 @@
-// 脇の bot の面（docs/channels.md「画面」・docs/design-system.md「脇」、ADR 0107・0288・0359）。脇の 2 か所を描き、Bots の行に要るものを渡す:
+// 脇の bot の面（docs/channels.md「画面」・docs/design-system.md「脇」、ADR 0107・0288・0362）。脇の 2 か所を描き、Bots の行に要るものを渡す:
 //   Bots（bot の面の木。行は web/side.mjs の botSection）… 状態（作業中・あなた待ち）・右クリックのメニュー・選ばれた行を setDirectory で渡す
 //   ルーティン（木の一番上の畳める見出し）… 次に動く時刻の近い順に全部を 1 行ずつ（件数では絞らない。ADR 0260）。一時停止中は薄く、直近の失敗は「✕ 失敗」。
 //                                       畳んだ間は見出しに走っている弧と「✕N」。押すと編集のシート（routine-sheet.mjs）、＋で新規
@@ -180,7 +180,7 @@ export function createSidebar(host, getTabs) {
     paintDots();
   }
 
-  // ---- Bots（bot の面の木の行は web/side.mjs の botSection が描く。ここは状態・メニュー・選ばれた行を渡す。ADR 0359）
+  // ---- Bots（bot の面の木の行は web/side.mjs の botSection が描く。ここは状態・メニュー・選ばれた行を渡す。ADR 0362）
   // 組み込みの bot（bot なし）は出さない
   function paintBots() {
     side?.setDirectory?.({ channels: S.channels, bots: S.bots, stateOf: (b) => botState(b, live()), botMenu, selected: selectedRow(S.view, S.bots) });
@@ -369,7 +369,7 @@ export function createSidebar(host, getTabs) {
   // タブは setupChannels が部品を並べた直後に作る。それを待ってから描く
   queueMicrotask(() => { side?.setFace?.(getTabs?.()?.tab ?? 'chats'); paint(); load(); });
 
-  // bot の面で、まだ何も開いていない: 最初の bot の DM、bot が 0 なら初めての bot の段（ADR 0359）
+  // bot の面で、まだ何も開いていない: 最初の bot の DM、bot が 0 なら初めての bot の段（ADR 0362）
   let wantDefault = false;
   function openDefault() {
     if (!S.loaded) { wantDefault = true; return; }

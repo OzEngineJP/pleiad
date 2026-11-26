@@ -2,8 +2,8 @@
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
 //   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、アカウント更新イベントで S.vocab 破棄。
-//     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0359）
-//   - web/channels/thread-composer.mjs: 宛先・設定のチップを持たず、語彙を取りに行かない（ADR 0359）
+//     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0362）
+//   - web/channels/thread-composer.mjs: 宛先・設定のチップを持たず、語彙を取りに行かない（ADR 0362）
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -230,7 +230,7 @@ export default async function (t) {
       t.ok('delegation-routing-view: 結果行・省略理由・失敗内訳・やり直し候補で model(b, m, account) へ account を渡す', true);
     }
 
-    // ---- 3. bot-page.mjs: bot のページで account を替えると語彙を引き直し、モデルは bots.update で保存する。作るのは 3 段（ADR 0359）
+    // ---- 3. bot-page.mjs: bot のページで account を替えると語彙を引き直し、モデルは bots.update で保存する。作るのは 3 段（ADR 0362）
     {
       const body = el('div');
       body.id = 'channelsBody';
@@ -385,7 +385,7 @@ export default async function (t) {
       t.ok('bot-page: 作る 3 段（名前 → 色 → 人格）で bots.create を 1 回呼び、DM へ移る。落ちたら 3 段目に留まる', true);
     }
 
-    // ---- 4. thread-composer.mjs: 宛先と設定のチップを出さず、語彙もエフォートも取りに行かない（設定は bot のページだけ。ADR 0359）
+    // ---- 4. thread-composer.mjs: 宛先と設定のチップを出さず、語彙もエフォートも取りに行かない（設定は bot のページだけ。ADR 0362）
     {
       const templateForm = el('form', 'composer');
       templateForm.id = 'composer';
@@ -434,7 +434,7 @@ export default async function (t) {
         const shown = [...tc.el.querySelectorAll('.crow > *')].filter((n) => !n.hidden).map((n) => n.id);
         assert.ok(!shown.some((id) => /cwdChip|modelChip|modeChip/.test(id)), JSON.stringify(shown));
         assert.ok(!asked.some(([name]) => ['vocab', 'efforts', 'agentModes', 'agentModels'].includes(name)), JSON.stringify(asked));
-        t.ok('thread-composer: 宛先・設定のチップを出さず、語彙もエフォートも取りに行かない（ADR 0359）', true);
+        t.ok('thread-composer: 宛先・設定のチップを出さず、語彙もエフォートも取りに行かない（ADR 0362）', true);
       } finally {
         tc.destroy();
       }
