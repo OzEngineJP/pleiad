@@ -51,7 +51,8 @@
 //   終わりにターン中の assistant の文章を順番どおりまとめ、提示と state を決める。
 //   ターンの中で bot が channels.post で自分のスレッドへ書いたら、最初の 1 件はターンの投稿に入り、2 件目からは新しい投稿（ADR 0117）。
 //   assistant の文章は道具や Stop フックを挟んでも、順番どおりにターンの投稿へまとめる。途中送信でも投稿は分けない。
-//   生の流れ（text.delta）はチャンネルへ流さず、サーバーで投稿に畳む（ADR 0024 の 1 接続 1 購読）。
+//   保存は今のまま（1 秒に 1 回・文の切れ目まで）。生の流れ（text.delta）は全接続へは流さず、そのスレッドを開いている接続（server.mjs の「スレッド」の枠）にだけ、
+//   開いているスレッドの画面の書きかけとして流す（ADR 0364。ADR 0109・0024 の改め）。
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
@@ -1254,6 +1255,20 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return [...(active.get(sessionId)?.callers.values() ?? [])];
   }
 
+  /**
+   * その会話がいま書いているスレッド（{ channelId, threadId }）。スレッドの bot のターンでなければ null。
+   * 開いているスレッドの画面にだけ書きかけを流す枠（server.mjs の「スレッド」の枠。ADR 0364）の突き合わせに使う。DM・チャンネルの直の投稿・内部のターンは対象にしない。
+   */
+  function threadOfSession(sessionId) {
+    const rec = sessionId ? active.get(sessionId) : null;
+    return rec && !rec.ended && rec.threadId && !rec.inner ? { channelId: rec.channelId, threadId: rec.threadId } : null;
+  }
+
+  /** そのスレッドに書いている途中の bot の会話（走っているターンの会話 id）。スレッドを開いた接続へ、書きかけを流し直すのに使う */
+  function sessionsOfThread(channelId, threadId) {
+    return [...active.values()].filter((rec) => !rec.ended && !rec.inner && rec.threadId === threadId && rec.channelId === channelId).map((rec) => rec.sessionId);
+  }
+
   /** 提示（可視化・添付）のうち、スレッドに畳む分。人の添付と、git・作業場所の行は入れない。大きすぎるものは中身を落とす */
   function collectPresent(rec, event) {
     if (event.by === 'human' || event.kind === 'git' || event.kind === 'worktree') return;
@@ -1635,7 +1650,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (rows.length) await inbox.remove(rows.map(x => x.id));
     },
     channels, bots, memory, host, emit, now, inbox,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, threadOfSession, sessionsOfThread, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

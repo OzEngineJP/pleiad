@@ -31,10 +31,13 @@ import { createConversationToc } from '../conversation-toc.mjs';
 import { createBackgroundChip } from '../background-chip.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 import { retrySource, retryFailed } from './retry.mjs';
+import { createThreadStream } from './thread-stream.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
 const LIVE = new Set(['working', 'waiting']);
+/** 書きかけの流し（ADR 0364）に使う出来事。replay のときは使わない */
+const STREAM_TYPES = new Set(['text.delta', 'text.end', 'tool.start', 'turnEnd']);
 
 /** スレッドの題: 根の投稿の最初の行（先頭の @ の呼びかけは外す） */
 export function titleOf(root) {
@@ -256,7 +259,46 @@ export function createThread(host) {
       host.invoke('channels.markRead', { channelId: S.channelId, at: last.at }).catch(() => { readSent = 0; });
     }, 300);
   }
-  document.addEventListener('visibilitychange', () => { if (watching()) markRead(); });
+  document.addEventListener('visibilitychange', () => { syncWatch(); if (watching()) markRead(); });
+
+  // ---------------------------------------------------------------- 書きかけの流し（ADR 0364）
+  // 開いているスレッドの bot の返事の書きかけを、保存より先に流してもらう。サーバーの接続の「スレッド」の枠（watchSession の slot: 'thread'）。
+  // 見ている間だけ宣言し、閉じた・別のスレッドを開いた・Chats へ移った・隠れたら外す。宣言の返事に、いま書いている途中の分の写しが入っている
+  let watched = '';     // 宣言しているスレッド（`channelId\nthreadId`）。空は宣言なし
+  let watchSeq = 0;
+  function syncWatch({ force = false } = {}) {
+    const want = S.channelId && S.threadId && watching() ? `${S.channelId}\n${S.threadId}` : '';
+    if (!force && want === watched) return;
+    const seq = ++watchSeq;
+    watched = want;
+    streams.clear();
+    if (!want) { host.cmd('watchSession', { slot: 'thread', sessionId: '' }).catch(() => {}); return; }
+    host.cmd('watchSession', { slot: 'thread', channelId: S.channelId, threadId: S.threadId })
+      .then((got) => { if (seq === watchSeq && watched === want) streams.snapshot(got?.threadStream); })
+      .catch(() => { /* 流れが無くても、投稿は保存のたびに更新される */ });
+  }
+  /** 書きかけの流しの相手: その会話の最後の投稿（作業中のもの）と、その前に確定した同じ会話の投稿の本文（古い順） */
+  function streamChain(sessionId) {
+    let at = -1;
+    for (let i = S.posts.length - 1; i >= 0; i--) {
+      const p = S.posts[i];
+      if (p.turn?.sessionId === sessionId && !p.deletedAt) { at = i; break; }
+    }
+    const post = S.posts[at];
+    if (!post || !LIVE.has(post.state)) return null;
+    const before = [];
+    for (let i = at - 1; i >= 0 && before.length < 6; i--) {
+      const p = S.posts[i];
+      if (p.turn?.sessionId === sessionId && !p.deletedAt) before.unshift(p.text ?? '');
+    }
+    return { post, before };
+  }
+  const streams = createThreadStream({
+    chainFor: (sessionId) => (S.ready ? streamChain(sessionId) : null),
+    repaint: (id) => repaint(id),
+    nearBottom: () => nearBottom(),
+    follow: () => { log.scrollTop = log.scrollHeight; },
+  });
 
   // ---------------------------------------------------------------- 発言者・bot
   const ctx = {
@@ -265,6 +307,7 @@ export function createThread(host) {
     summaryOf: () => null,
     threadOf: () => null,
     sessionTitle: (id) => host.state?.sessions?.find((s) => s.id === id)?.title ?? null,
+    streaming: (p) => streams.streaming(p),   // 書きかけが出ている投稿（状態の行を「書いている」にする。web/channels/post.mjs）
     actions: {
       react: (p, emoji, on, had) => react(p, emoji, on, had),
       quick: (p, emoji) => react(p, emoji, true, false),
@@ -499,6 +542,8 @@ export function createThread(host) {
       }
       if (box.childElementCount) { bodyEl.after(box); below = box; }
     }
+    // 確定前の書きかけは本文のすぐ下（提示・作業ログより上。本文の続きとして読める位置）
+    if (p.turn?.sessionId) streams.attach(bodyEl, p);
     if (p.turn?.sessionId) {
       const slot = logSlot(p);
       if (slot) below.after(slot);
@@ -557,7 +602,7 @@ export function createThread(host) {
   // ---------------------------------------------------------------- 読み込み
   function reset() {
     Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
-    postEls.clear(); toolCache.clear(); cards.clear(); tools.forget();
+    postEls.clear(); toolCache.clear(); cards.clear(); tools.forget(); streams.forget();
     perms.replaceChildren();
     rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
     stopBusy = false; composer.setStop();
@@ -978,8 +1023,8 @@ export function createThread(host) {
       if (!cur) return;
       const was = cur.state;
       Object.assign(cur, p, op === 'delete' ? { deletedAt: p.deletedAt ?? Date.now() } : {});
-      repaint(p.id);
-      if (p.turn?.sessionId && was !== p.state && !LIVE.has(p.state)) tools.refresh(p.turn.sessionId, { force: true });
+      repaint(p.id);   // 保存された本文が伸びた分は、ここで本文に吸収され、書きかけの残りが縮む
+      if (p.turn?.sessionId && was !== p.state && !LIVE.has(p.state)) { tools.refresh(p.turn.sessionId, { force: true }); streams.settled(p.turn.sessionId); }
     }
     afterPosts();
     // 走っている間の道具の行は、投稿の更新（1 秒に 1 回まで）に合わせて取り直す（間隔は thread-tools の REFRESH_MS）
@@ -1061,6 +1106,11 @@ export function createThread(host) {
       // client.mjs が承認の残りを数え直した後に、答え済みのカードを外す
       if (S.threadId) setTimeout(settleCards, 0);
     },
+    // 書きかけの流し（ADR 0364）。スレッドの枠を宣言している間だけサーバーから届く。replay（会話を読み直した流し直し）は使わない（宣言の返事の写しがある）
+    'text.delta': (ev) => streams.event(ev),
+    'text.end': (ev) => streams.event(ev),
+    'tool.start': (ev) => streams.event(ev),
+    turnEnd: (ev) => streams.event(ev),
   };
 
   // ---------------------------------------------------------------- 開く・閉じる
@@ -1083,10 +1133,12 @@ export function createThread(host) {
       markSelected();
       composer.focus();
       flushReveal();
+      syncWatch();
       return;
     }
     S.seq++;
     reset();
+    syncWatch();   // 別のスレッドを開いたら、前のスレッドの枠は外れて、このスレッドの枠へ替わる
     composer.setDraftKey(threadDraftKey(channelId, threadId));   // 書きかけはスレッドごと（ほかのスレッドへ移っても残る）
     composer.refresh();
     toc.close();
@@ -1103,6 +1155,8 @@ export function createThread(host) {
     todo?.load(null);
     S.seq++;
     S.threadId = null;
+    syncWatch();   // 閉じたら書きかけの流しを外す
+    streams.forget();
     host.background?.watch([]);
     paintSubs();
     markSelected();
@@ -1118,16 +1172,20 @@ export function createThread(host) {
       S.channelId = view.id;
     },
     hide() { /* スレッドは開いたまま（Chats へ移って戻っても同じ所から） */ },
-    onEvent(ev) { events[ev?.type]?.(ev); },
+    onEvent(ev, replay = false) {
+      // 会話を読み直したときの流し直し（replay）の書きかけは使わない。スレッドの枠の返事の写しが、同じ分を重ならずに渡す
+      if (replay && STREAM_TYPES.has(ev?.type)) return;
+      events[ev?.type]?.(ev);
+    },
     /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
     schedulesChanged() { composer.paintSchedules(); },
     /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
-    reconnected() { todo?.reconnected(); },
+    reconnected() { todo?.reconnected(); syncWatch({ force: true }); },   // つなぎ直した接続には枠が無い: 宣言し直して、書きかけの写しをもらう
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };
     },
-    sideTabChanged() {},
+    sideTabChanged() { syncWatch(); },   // Chats へ移ったら流しを外し、戻ったら宣言し直す
     /** テスト・ほかの部品が見る */
     get state() { return { deck: deck.state, threadId: S.threadId, channelId: S.channelId }; },
   };

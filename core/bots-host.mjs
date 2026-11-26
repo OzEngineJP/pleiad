@@ -22,6 +22,8 @@
 //     turnExtras(turn): Promise<{ botInstructions: string|null, notes: string[], folders: object|null }>   … runArgs に足す（notes は既存の notes の後ろ。
 //                       folders は触れてよいフォルダーの渡し方 { all, additionalDirectories, writableRoots }。runArgs の botFolders になる）
 //     onTurnEvent(turn, event): void                 … makeEmit の中。bot の会話の分
+//     threadOfSession(sessionId): { channelId, threadId } | null     … 走っているスレッドの bot のターンの会話なら、その書いているスレッド（server.mjs の「スレッド」の枠の突き合わせ。ADR 0364）
+//     sessionsOfThread(channelId, threadId): string[]               … そのスレッドに書いている途中の bot の会話（スレッドを開いた接続への流し直し）
 //     onTurnEnd(turn, { outcome, interrupted, requeued }): Promise<void>    … endTurn の最後（ターンを手放した後。最終の返答は lastReply、提示は onTurnEvent の present）
 //                       dispatch がターンの投稿を確定した後に、ルーティンの実行なら routines.onTurnEnd が根の投稿の状態（終了・要確認・失敗・止めた）を決める
 //     onPermission(card, phase): void                … askPermission（phase: 'open' | 'settled'）。dispatch（作業中の印）と routines（承認待ちの期限・イベントのトリガ「あなた待ち」）の両方へ
@@ -173,6 +175,9 @@ export function createBotHost(deps) {
     liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
     itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
     callersFor: (sessionId) => dispatch.callersFor(sessionId),
+    // スレッドの枠（開いているスレッドの画面にだけ書きかけを流す。ADR 0364）。壊れても「配らない」だけにする
+    threadOfSession: guard('threadOfSession', (sessionId) => dispatch.threadOfSession(sessionId), null),
+    sessionsOfThread: guard('sessionsOfThread', (channelId, threadId) => dispatch.sessionsOfThread(channelId, threadId), []),
     onTurnEvent: guard('onTurnEvent', (turn, event, options) => dispatch.onTurnEvent(turn, event, options)),
     onTurnReplayEnd: guard('onTurnReplayEnd', (turn) => dispatch.onTurnReplayEnd(turn)),
     // ターンの投稿を確定した後で、ルーティンの実行なら根の投稿の状態（終了・要確認・失敗・止めた）を決める

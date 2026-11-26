@@ -731,6 +731,10 @@ const SUITES = [
   './unit/server-read.mjs',
   // 開いている会話の宣言（流れの出来事を絞る）と、会話の一覧の使い回し（ADR 0024）
   './unit/server-watch.mjs',
+  // スレッドの書きかけの流し（ADR 0364）: 3 つ目の窓口 thread。開いているスレッドの接続だけに届く・流し直し・伏せ・外せる・ほかの接続は増えない
+  './unit/server-thread-stream.mjs',
+  // スレッドの書きかけの組み立て（ADR 0364）: 写しの切り出し（core）と、画面の純粋な部品（出来事の取り込み・確定前の分の切り出し・黙る印の写し）
+  './unit/thread-stream-model.mjs',
   './unit/desktop-port.mjs',
   // 版ごとの実行場所（無停止の更新 1-3）: 置き場が $INSTDIR と前方一致しない・ハードリンクで組む・二重に組まない・壊れた写しの検出・掃除・使っている版を消さない・起動口
   './unit/desktop-runtime.mjs',

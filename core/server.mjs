@@ -454,6 +454,7 @@ import { INDEX_FILE as SEARCH_INDEX_FILE } from './session-search-index.mjs';
 import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptionNote, heldNoticeNote, settingsResumePrompt } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
+import { THREAD_STREAM_EVENTS, threadStreamSnapshot } from './bots/thread-stream.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS, isInternalConversationMeta } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 import { createInternalCalls, INTERNAL_UNAVAILABLE } from './internal-call.mjs';
@@ -3581,17 +3582,36 @@ const LIST_NEUTRAL_EVENTS = new Set([
 // 見る会話は接続ごとに 2 枠: main（メインの画面の会話）と modal（作業のダイアログで開いている子の会話）。
 // どちらかの枠に当たる分を送る（ADR 0024 の改訂）。絞るのは main を宣言した接続だけ（wanted の先頭）。main を宣言していない接続は
 // 今までどおり全部届くので、modal の枠だけを宣言しても絞りは変わらない（後から main を宣言した時点で modal の枠も効き始める）
+// 3 つ目の枠 thread: スレッドの画面が開いているスレッド（{ channelId, threadId }。会話の id ではない）。
+// そのスレッドに書いている途中の bot の会話の書きかけ（THREAD_STREAM_EVENTS）だけを、この枠の接続へ足して送る（ADR 0364。保存は今のまま）。
+// 枠を宣言していない接続への配信は変わらない（中継のスマホも、スレッドを開いた接続だけが増える）。
 const watching = new WeakMap();        // ws -> sessionId（main の枠）
 const watchingModal = new WeakMap();   // ws -> sessionId（modal の枠）
+const watchingThread = new WeakMap();  // ws -> { channelId, threadId }（thread の枠）
 const WATCH_EXEMPT = new Set(["turnEnd"]);
 /** slot: 'modal' なら modal の枠、それ以外は main の枠。sessionId が空ならその枠を外す */
 function setWatch(ws, slot, sessionId) {
   const map = slot === "modal" ? watchingModal : watching;
   if (typeof sessionId === "string" && sessionId) map.set(ws, sessionId); else map.delete(ws);
 }
+/** thread の枠: channelId と threadId の両方が文字のときだけ登録し、足りなければ外す。登録できたら true */
+function setWatchThread(ws, channelId, threadId) {
+  if (typeof channelId === "string" && channelId && typeof threadId === "string" && threadId) { watchingThread.set(ws, { channelId, threadId }); return true; }
+  watchingThread.delete(ws);
+  return false;
+}
 function wanted(ws, event) {
   if (!watching.has(ws) || !event?.sessionId || !streamEvents.has(event.type) || WATCH_EXEMPT.has(event.type)) return true;
-  return watching.get(ws) === event.sessionId || watchingModal.get(ws) === event.sessionId;
+  if (watching.get(ws) === event.sessionId || watchingModal.get(ws) === event.sessionId) return true;
+  const slot = watchingThread.get(ws);
+  if (!slot || !THREAD_STREAM_EVENTS.has(event.type)) return false;
+  const th = botHost?.threadOfSession?.(event.sessionId);
+  return th?.threadId === slot.threadId && th.channelId === slot.channelId;
+}
+/** thread の枠を宣言した接続へ返す、書きかけの流し直し（そのスレッドで書いている途中の会話の分。伏せたあとの写しから。ADR 0364） */
+function threadStreamFor(channelId, threadId) {
+  const sessions = botHost?.sessionsOfThread?.(channelId, threadId) ?? [];
+  return sessions.map((sessionId) => ({ sessionId, events: threadStreamSnapshot(runtime.turns.get(sessionId)?.stream?.events) })).filter((s) => s.events.length);
 }
 
 /** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
@@ -11837,7 +11857,13 @@ wss.on("connection", (ws, req) => {
         // 開いている会話を登録し直す（読み直しは要らないとき。loadSession の watch と同じ）
         case "watchSession": {
           // slot: 'modal' は作業のダイアログで開いた子の会話の枠（main は外れない。閉じるときは sessionId を空にして外す）
-          const { sessionId, slot } = msg.args ?? {};
+          // slot: 'thread' はスレッドの画面が開いているスレッド（{ channelId, threadId }。空なら外す）。そのスレッドの bot の書きかけを足して送り、
+          //   いま書いている途中の分は返事に載せる（枠を決めた同じ場所で写しを切るので、取りこぼしも重なりも無い。ADR 0364）
+          const { sessionId, slot, channelId, threadId } = msg.args ?? {};
+          if (slot === "thread") {
+            if (!setWatchThread(ws, channelId, threadId)) return reply(true, "ok");
+            return reply(true, { threadStream: threadStreamFor(channelId, threadId) });
+          }
           setWatch(ws, slot, sessionId);
           browserUnifyWs.snapshot(ws, sessionId);
           return reply(true, "ok");
