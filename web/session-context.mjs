@@ -30,7 +30,6 @@ import { unifySessionBox, unsupportedAgentText } from './hooks-unify-ui.mjs';
 
 const KEY = 'session-context';
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
-// backend-allow: 読み込み元（core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
 const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', devin: 'Devin', antigravity: 'Antigravity', grok: 'Grok', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 const SKILLS_SHOWN = 6;

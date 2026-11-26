@@ -37,8 +37,6 @@ const run = async (extra = {}) => {
 };
 
 export default async function (t) {
-  t.ok("巻き戻せる口を宣言する（resumeAt）", claude.capabilities.rewind === "resumeAt");
-
   {
     const { seen, restore } = fakeSdk();
     try {

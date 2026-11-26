@@ -30,7 +30,7 @@ export default async function (t) {
   // ---- 承認モードの既定: 無人で動くので「確認なし・制限なし」は写さない
   t.ok('bot が都度確認ならそれを使う', defaultRoutineMode(MODES, 'default') === 'default' && defaultRoutineMode(MODES, 'plan') === 'plan');
   t.ok('bot が全部自動なら、語彙の既定（default）にする', defaultRoutineMode(MODES, 'bypass') === 'default');
-  t.ok('語彙に default が無ければ強くないものの先頭。Antigravity（全部自動だけ）はそれしか無い', defaultRoutineMode({ ask: MODES.default, yolo: MODES.bypass }, 'yolo') === 'ask'
+  t.ok('語彙に default が無ければ強くないものの先頭。全部自動だけの語彙はそれしか無い', defaultRoutineMode({ ask: MODES.default, yolo: MODES.bypass }, 'yolo') === 'ask'
     && defaultRoutineMode({ yolo: MODES.bypass }, 'yolo') === 'yolo' && defaultRoutineMode({}, 'x') === '');
   t.ok('バックエンドを替えて語彙に無いモードは語彙の既定へ。あれば保つ', validRoutineMode(MODES, 'plan') === 'plan' && validRoutineMode({ yolo: MODES.bypass }, 'default') === 'yolo');
 

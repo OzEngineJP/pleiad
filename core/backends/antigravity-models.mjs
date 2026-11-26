@@ -1,6 +1,6 @@
 // Antigravity（`agy`）のモデル一覧とエフォートの対応。プロセスを起こさない純粋な関数だけを置く（テストから直接呼ぶ）。
 //
-// **agy のエフォートは「同じ基底モデルの段違いを選ぶ」だけ**（agy 1.2.8 で確認。docs/multi-backend.md §2.8 にも写した）:
+// **agy のエフォートは「同じ基底モデルの段違いを選ぶ」だけ**（agy 1.2.8 の `--effort` で確認。ACP の `thought_level` が同じ規則かは確かめていない。docs/multi-backend.md §2.8 にも写した）:
 //   - `agy models` は `id<TAB>表示名` を 1 行ずつ出す。段違いは別の id で並ぶ
 //     （gemini-3.8-flash-high「Gemini 3.8 Flash (High)」/ -medium / -low。gemini-3.1-pro は high / low だけ。gemini-4-hydrogen は xhigh もある）
 //   - `--effort` は「その基底モデルの段違いの id を選ぶ」フラグ（changelog 1.1.5: "select a model's reasoning-effort
@@ -8,7 +8,8 @@
 //   - 段違いが 1 つしか無いモデル（claude-sonnet-4-6、claude-opus-4-6-thinking、gpt-oss-120b-medium）には効かない
 //     （"Effort isn't adjustable for %s" / "--effort is not supported for model %q"）
 //   - 段付きの id と違う段を同時に渡すと失敗しうる（"--model %s conflicts with --effort=%s"）
-// そこで Pleiad は **`--model` と `--effort` を同時に渡さない**。段は同じ系統の段違いの id に解決して `--model` だけ渡す（agyTarget）。
+// そこで Pleiad は **モデルと段を別々に設定しない**。段は同じ系統の段違いの id に解決して `model`（ACP の session/set_config_option。ACP 以前は `--model`）だけ設定する（agyTarget）。
+// 段（`thought_level`）だけを設定するのは、モデルの id が分からないときの最後の手。
 //
 // 一覧の形（core/effort.mjs が読む）: 段違いはすべて id のまま載せ（保存済みの会話がどの id でも引ける）、
 // 系統（family）ごとに 1 つだけを表に出す（残りは hidden）。各 id の efforts は系統の段、defaultEffort はその id 自身の段。
@@ -17,10 +18,10 @@
 import { t } from "../i18n.mjs";
 
 /** agy の段の並び（弱い → 強い）。xhigh は Gemini 4 Hydrogen だけ（agy 1.5.7）。xhigh の無い系統は 3 段のまま。
- *  Pleiad は段を id に解決して `--model` だけ渡すので、`agy --effort` が xhigh を受けるかは関係ない */
+ *  Pleiad は段を id に解決して `model` だけ設定するので、`thought_level`・`agy --effort` が xhigh を受けるかは関係ない */
 export const AGY_LEVELS = ["low", "medium", "high", "xhigh"];
 
-/** `agy --effort` に渡してよい段（agy --help の (low|medium|high)）。xhigh は段の id（--model）でだけ選ぶ */
+/** 素の段（`thought_level`。ACP 以前は `agy --effort`）として渡してよい段（agy --help の (low|medium|high)）。xhigh は段の id（`model`）でだけ選ぶ */
 const AGY_FLAG_LEVELS = ["low", "medium", "high"];
 
 const NL = String.fromCharCode(10);
@@ -110,13 +111,13 @@ export function buildAgyModels(rows, defaultLabel = null) {
 }
 
 /**
- * 実際に agy へ渡す `--model` / `--effort`。**両方は渡さない**（冒頭のコメント）。
- *   - 段の指定が無い: `--model`。'' なら一覧の既定（resolvesTo）を明示して渡す。省くと agy はその時点の自分の既定を使い、
+ * 実際に agy へ設定する `model` / `thought_level`（session/set_config_option）。**両方は設定しない**（冒頭のコメント）。
+ *   - 段の指定が無い: `model`。'' なら一覧の既定（resolvesTo）を明示して設定する。省くと agy はその時点の自分の既定を使い、
  *     Pleiad が覚えた既定より後に agy 側で既定が変わっていると、画面の「既定（モデル名）」・使用量の枠と別のモデルで走る（issue #161）。
  *     既定が分からなければ何も渡さない（agy の既定）
- *   - 段の指定がある: 同じ系統の段違いの id を `--model` に。段の無いモデル・系統に無い段なら段を捨てる
- *   - 一覧に無い（一覧を引けていない・既定が分からない）: model があればそれだけ。model も無ければ `--effort` だけ
- *     （agy は素の --effort を選ばれているモデルに当てる。changelog 1.1.10）
+ *   - 段の指定がある: 同じ系統の段違いの id を `model` に。段の無いモデル・系統に無い段なら段を捨てる
+ *   - 一覧に無い（一覧を引けていない・既定が分からない）: model があればそれだけ。model も無ければ `thought_level` だけ
+ *     （agy は素の段を選ばれているモデルに当てる。`--effort` の changelog 1.1.10。ACP の `thought_level` で同じかは確かめていない）
  * @returns {{ model?: string, effort?: string }}
  */
 export function agyTarget(model, effort, models) {
@@ -129,7 +130,7 @@ export function agyTarget(model, effort, models) {
     return { model: sibling ?? m };
   }
   if (entry) return { model: m };
-  // 素の --effort は agy の (low|medium|high) だけ。xhigh は agy が受けるか確かめていないので、段の id に解決できないときは捨てる
+  // 素の段は agy の (low|medium|high) だけ。xhigh は agy が受けるか確かめていないので、段の id に解決できないときは捨てる
   if (m) return { model: m };
   return AGY_FLAG_LEVELS.includes(effort) ? { effort } : {};
 }

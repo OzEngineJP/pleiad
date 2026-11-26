@@ -14,7 +14,7 @@
 ## 確認
 
 - OpenCode 2.0.32 のローカル `/openapi.json` に v2 API があり、起動処理の検査も `/api/session` と `/api/event` を要求する。
-- Codex CLI 0.160.0 の `codex app-server generate-json-schema` が thread config に `model_auto_compact_token_limit` を出力する。設定の範囲と新規・再開への配達は `backend-delivery` で確かめる。
+- Codex CLI 0.160.0 の `codex app-server generate-json-schema` が thread config に `model_auto_compact_token_limit` を出力する。設定の範囲と新規・再開への配達は `backend-common`（当時は `backend-delivery`）で確かめる。
 - OpenCode の live model・live mode・提案の使い捨て session は `server-opencode` と `server-prompt-suggestions` で確かめる。
 
 ## 参考

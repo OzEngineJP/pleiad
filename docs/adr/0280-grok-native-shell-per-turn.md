@@ -24,4 +24,4 @@ ACP の `session/new` / `session/resume` に「ツール一覧」を渡す標準
 
 - 手元の Grok Build 1.0.62 で `grok agent --help` が `--agent-profile` を示し、実際の `grok agent stdio` が一時プロファイル付きで ACP `initialize` に応答することを確認。
 - `tests/unit/grok-backend.mjs` で新規・再開、読み取り専用モード、一時ファイル削除、別会話への非混入を確認。
-- `tests/lib/backend-delivery.mjs` で配達試験が `run_terminal_cmd` のプロファイル指定も確認する。
+- `tests/lib/backend-common.mjs` で配達試験が `run_terminal_cmd` のプロファイル指定も確認する。

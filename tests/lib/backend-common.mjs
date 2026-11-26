@@ -1,21 +1,28 @@
-// 配達物（runArgs の機能の渡し物）が、エージェントごとの偽のプロセス・プロトコルに実際に届いたかを見る道具（issue #146）。
+// 全エージェントに共通の試験（tests/unit/backend-common.mjs）の道具。宣言（core/backends/*.mjs の能力の印・agents.mjs）から回す。
 //
-// DELIVERY_CAPABILITIES: 配達物を持つ能力の印。core/backends/contract.mjs の RUN_ARG_FEATURES から作る（手で書かない）。
-// DELIVERY_PROBES: エージェント → 1 ターン流して、印ごとに「どこで受け取ったか」を返す関数。
-//   偽のプロセス（Devin・Grok・Antigravity・OpenCode）は、届いた mcpServers・環境変数・発言に足した指示を控える。
-//   Claude は SDK の query の options を、Codex は app-server の thread/start の config を身代わりにして見る。
-//   返りは { evidence: { 印: 証拠 }, seen: 何が届いたかの要約（落ちたときの文に出す） }。
-//   対応・補うの印は、届いていなければ false（または無い）。偽のプロセスに控えさせる口は tests/lib/fake-*.mjs。
+// RIGS: エージェントごとの身代わり（LLM を呼ばない）でサーバーを起こす形。エージェントを足すときは、身代わり（tests/lib/fake-<id>.mjs）を書き、
+//   ここに 1 つ足す。core/backends/agents.mjs のエージェント（fake を含む）に RIGS が無いと backend-contract が落とす。
+//   slow は中断されるまで終わらない発言、fail は失敗で終わる発言（エージェントごとの身代わりの合図）。
+//   running は、slow の発言が走り出したと見なすイベントの type（省くと会話の id が決まった時点。OpenCode は発言が渡る前の中断が error になるので tool.start まで待つ）。
+// 共通の流れ（checkConformance・checkAbort・checkError・checkResume）: 全エージェント（fake を含む）が、同じ検査を通る。
+// 配達物（runArgs の機能の渡し物）: エージェントごとの偽のプロセス・プロトコルに 1 ターン流して、どこで受け取ったかを見る（issue #146）。
+//   DELIVERY_PROBES: エージェント → 1 ターン流して { seen, evidence } を返す関数。evidence は { 印: 届いたか }。
+//     偽のプロセス（Devin・Grok・Antigravity・OpenCode）は、届いた mcpServers・環境変数・発言に足した指示を控える（tests/lib/fake-*.mjs）。
+//     Claude は SDK の query の options を、Codex は app-server の thread/start の config を身代わりにして見る。
+//   probeVerdict: 証拠を宣言に照らす。次の 3 つを落とす（tests/unit/backend-common.mjs）。
+//     (1) 対応（補う）の印の証拠が無い・偽 (2) 宣言が対応でない印なのに証拠が真（宣言が古い） (3) 知らない証拠が出ている
+//     証拠が要る印 = capability-marks.mjs の probe: true（PROBE_MARKS。runArgs の配達物の印は全部これ）+ そのエージェントの EXTRA_PROBES。
 //
 // 渡し物は server と同じく能力の印で絞る（gateRunArgs）。対応でない印の渡し物は最初から渡さない。
-// エージェントを足したら DELIVERY_PROBES にも足す（tests/unit/backend-contract.mjs が落とす）。
+// エージェントを足したら RIGS と DELIVERY_PROBES にも足す（tests/unit/backend-contract.mjs が落とす）。
 import fss from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from './server.mjs';
-import { RUN_ARG_FEATURES, gateRunArgs, isCapabilityState } from '../../core/backends/contract.mjs';
+import { installFakeClaude } from './fake-claude.mjs';
+import { AGENTS } from '../../core/backends/agents.mjs';
+import { CAPABILITIES, RUN_ARG_FEATURES, gateRunArgs, isCapabilityState } from '../../core/backends/contract.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { backend as codex } from '../../core/backends/codex.mjs';
 import { rpc as codexRpc } from '../../core/backends/codex-rpc.mjs';
@@ -26,12 +33,182 @@ import { backend as grok } from '../../core/backends/grok.mjs';
 import { opencodeRelay } from '../../core/opencode-relay.mjs';
 import { agyHooksFile, grokHooksFile } from '../../core/hooks-plan.mjs';
 
-/** 配達物を持つ印（runArgs で渡すもの）。RUN_ARG_FEATURES の値の集合 */
-export const DELIVERY_CAPABILITIES = Object.freeze([...new Set(Object.values(RUN_ARG_FEATURES))]);
+const node = (file) => `node "${path.join(ROOT, 'tests/lib', file)}"`;
+const dir = async (...parts) => { const p = path.join(...parts); await fs.mkdir(p, { recursive: true }); return p; };
 
-/** その印が「対応」か「補う」か（届くことを要求するか）。impossible・todo は要求しない */
+export const RIGS = {
+  fake: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_STATE_DIR: await dir(scratch, 'fake-state') }, prompt: (text) => text, slow: 'slow', fail: 'fail' }),
+  claude: async (scratch) => {
+    const cli = await installFakeClaude(path.join(scratch, 'cli'));
+    const config = await dir(scratch, 'claude-config');
+    return {
+      env: { AGENT_HOST_BACKENDS: 'claude', ...cli.env, CLAUDE_CONFIG_DIR: config }, prompt: (text) => text,
+      slow: `script:${JSON.stringify({ steps: [{ slow: true }, { text: 'never' }] })}`,
+      fail: `script:${JSON.stringify({ steps: [{ text: 'partial' }, { fail: true }] })}`,
+    };
+  },
+  // codex・opencode は身代わりの会話を state-dir に残す（サーバーを起こし直しても続きが出る）。agy は home の下に残す（実機と同じ置き場。本物の home を汚さない）
+  codex: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'codex', AGENT_HOST_CODEX_BIN: node('fake-codex.mjs'), FAKE_CODEX_STATE_DIR: await dir(scratch, 'codex-state') }, prompt: (text) => text, slow: 'slow', fail: 'fail-turn' }),
+  antigravity: async (scratch) => {
+    const home = await dir(scratch, 'agy-home');
+    return { env: { AGENT_HOST_BACKENDS: 'antigravity', AGENT_HOST_AGY_BIN: node('fake-agy.mjs'), USERPROFILE: home, HOME: home }, prompt: (text) => text, slow: 'slow', fail: 'fail' };
+  },
+  opencode: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: node('fake-opencode.mjs'), FAKE_OPENCODE_STATE_DIR: await dir(scratch, 'oc-state') }, prompt: (text) => text, slow: 'slow', fail: 'fail', running: 'tool.start' }),
+  devin: async () => ({ env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: node('fake-devin.mjs') }, prompt: (text) => text, slow: '[slow]', fail: '[fail]' }),
+  grok: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'grok', AGENT_HOST_GROK_BIN: node('fake-grok.mjs'), GROK_HOME: await dir(scratch, 'grok-home') }, prompt: (text) => text, slow: '[slow]', fail: '[fail]' }),
+};
+
+/** 各エージェントのラップ前のバックエンド（能力の印を読むだけ。ターンは始めない） */
+export async function loadNatives(ids = Object.keys(AGENTS)) {
+  const natives = {};
+  for (const id of ids) natives[id] = (await import(new URL(`../../core/backends/${AGENTS[id].module.replace(/^\.\//, '')}`, import.meta.url))).backend;
+  return natives;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 共通の流れ
+
+/**
+ * 全バックエンドが守る共通の契約。c は ws-client の接続。
+ * 確かめること: 新しい会話の 1 ターン（ok・会話の id・turnResult はちょうど 1 つ）、履歴の形と読み直しで変わらない uuid、一覧の行、
+ * 続きのターン（前の発言の uuid が変わらない）、タイトル（ネイティブでも Pleiad の控えでも）、発言の手前までの分岐（ネイティブでも Pleiad の写しでも）
+ */
+export async function checkConformance(t, c, { id, cwd, prompt }) {
+  const label = (s) => `${id}: ${s}`;
+  const first = await c.runTurn({ backend: id, cwd, prompt: prompt('contract alpha') }, { ms: 120_000 });
+  const sid = first.sessionId;
+  const results = first.events.filter((e) => e.type === 'turnResult' && e.sessionId === sid);
+  t.ok(label('新しい会話の 1 ターンが ok で終わり、会話の id が決まる'), first.outcome === 'ok' && typeof sid === 'string' && sid.length > 0, JSON.stringify({ outcome: first.outcome, sid }));
+  t.ok(label('turnResult はちょうど 1 つ'), results.length === 1, String(results.length));
+  t.ok(label('本文が流れる（text.delta）'), first.events.some((e) => e.type === 'text.delta' && e.sessionId === sid));
+  const firstDelta = first.events.findIndex((e) => e.type === 'text.delta' && e.sessionId === sid);
+  t.ok(label('送信から最初の応答まで稼働表示が出る'), firstDelta > -1 && first.events.slice(0, firstDelta).some((e) => e.type === 'activity'));
+
+  const load = () => c.cmd('loadSession', { sessionId: sid });
+  const a = await load();
+  const users = a.messages.filter((m) => m.role === 'user');
+  const assistants = a.messages.filter((m) => m.role === 'assistant');
+  t.ok(label('履歴に自分の発言と返答がある'), users.some((m) => String(m.text).includes('contract alpha')) && assistants.length >= 1, JSON.stringify(a.messages.map((m) => [m.role, m.text])));
+  t.ok(label('発言はどれも uuid と role を持つ'), a.messages.every((m) => typeof m.uuid === 'string' && m.uuid && ['user', 'assistant', 'system'].includes(m.role)));
+  t.ok(label('読み直しても履歴は同じ'), JSON.stringify(a.messages) === JSON.stringify((await load()).messages));
+
+  const row = (await c.cmd('listSessions')).find((s) => s.id === sid);
+  t.ok(label('一覧にこのエージェントの会話として出る'), row?.backend === id && row?.cwd === cwd, JSON.stringify(row));
+
+  const second = await c.runTurn({ sessionId: sid, prompt: prompt('contract beta') }, { ms: 120_000 });
+  const b = await load();
+  t.ok(label('続きのターンも ok'), second.outcome === 'ok' && b.messages.filter((m) => m.role === 'user').length === users.length + 1, JSON.stringify(b.messages.map((m) => [m.role, m.text])));
+  const secondDelta = second.events.findIndex((e) => e.type === 'text.delta' && e.sessionId === sid);
+  t.ok(label('続きのターンでも送信から最初の応答まで稼働表示が出る'), secondDelta > -1 && second.events.slice(0, secondDelta).some((e) => e.type === 'activity'));
+  t.ok(label('続きのターンで前の発言の uuid が変わらない'), a.messages.every((m, i) => b.messages[i]?.uuid === m.uuid), JSON.stringify([a.messages.map((m) => m.uuid), b.messages.map((m) => m.uuid)]));
+
+  await c.cmd('setTitle', { sessionId: sid, title: 'contract title' });
+  t.ok(label('タイトルを付けられる（ネイティブか Pleiad の控え）'), (await c.cmd('listSessions')).find((s) => s.id === sid)?.title === 'contract title');
+
+  const boundary = b.messages.findIndex((m) => m.role === 'assistant');
+  const fork = await c.cmd('fork', { sessionId: sid, upToMessageId: b.messages[boundary].uuid, title: 'contract fork' });
+  const child = await c.cmd('loadSession', { sessionId: fork.sessionId });
+  // uuid は同じとは限らない（Claude のネイティブの分岐は振り直す）。役割と本文が同じ
+  t.ok(label('発言の手前までの分岐は、その発言までをそのまま持つ'), child.messages.length === boundary + 1
+    && child.messages.every((m, i) => m.role === b.messages[i].role && m.text === b.messages[i].text), JSON.stringify(child.messages.map((m) => [m.role, m.text])));
+  t.ok(label('分岐しても元の会話は変わらない'), JSON.stringify(b) === JSON.stringify(await load()));
+  return { sessionId: sid };
+}
+
+/** 中断: 走っている最中に止めると、turnResult はちょうど 1 つで outcome は aborted（成功にも失敗にもならない） */
+export async function checkAbort(t, c, { id, cwd, rig }) {
+  const label = (s) => `${id}: ${s}`;
+  const mark = c.mark();
+  const turn = c.runTurn({ backend: id, cwd, prompt: rig.slow }, { ms: 60_000 });
+  turn.catch(() => {});
+  const started = await c.waitFor((e) => e.type === 'session', { ms: 30_000, from: mark });
+  const sid = started.sessionId;
+  // 発言がエージェントに渡って走り出すまで待つ（その前の中断は、エージェントによって error になる競り合いがある）
+  if (rig.running) await c.waitFor((e) => e.type === rig.running && e.sessionId === sid, { ms: 30_000, from: mark });
+  const stopped = await c.cmd('abort', { sessionId: sid });
+  const done = await turn;
+  const results = c.since(mark).filter((e) => e.type === 'turnResult' && e.sessionId === sid);
+  t.ok(label('走っているターンを中断できる'), stopped.aborted === 1, JSON.stringify(stopped));
+  t.ok(label('中断のターンの turnResult はちょうど 1 つで outcome は aborted'), results.length === 1 && results[0].outcome === 'aborted' && done.outcome === 'aborted', JSON.stringify(results.map((e) => e.outcome)));
+}
+
+/** エラー: 失敗のターンは turnResult に error を載せて終わり、サーバーは落ちずに後のターンに答える */
+export async function checkError(t, c, { id, cwd, rig }) {
+  const label = (s) => `${id}: ${s}`;
+  const mark = c.mark();
+  const failed = await c.runTurn({ backend: id, cwd, prompt: rig.fail }, { ms: 60_000 });
+  const results = c.since(mark).filter((e) => e.type === 'turnResult');
+  t.ok(label('失敗のターンは turnResult がちょうど 1 つで、outcome は error・error に理由が載る'),
+    results.length === 1 && results[0].outcome === 'error' && typeof results[0].error === 'string' && results[0].error.length > 0 && failed.outcome === 'error',
+    JSON.stringify(results.map((e) => [e.outcome, e.error])));
+  const later = await c.runTurn({ backend: id, cwd, prompt: rig.prompt('contract after error') }, { ms: 120_000 });
+  t.ok(label('失敗の後も、サーバーは生きていて新しいターンに答える'), later.outcome === 'ok' && later.events.some((e) => e.type === 'text.delta'), JSON.stringify({ outcome: later.outcome }));
+}
+
+/**
+ * 再起動の後の続き: サーバーを止めて同じデータ置き場・同じトークンで起こし直し、同じ会話の続きのターンが通る（履歴も残る）。
+ * state = { server, c } を新しいものに差し替える（呼び出し側が後片付けに使う）
+ */
+export async function checkResume(t, state, { id, cwd, rig, sessionId, dataDir, timeoutMs = 60_000 }) {
+  const label = (s) => `${id}: ${s}`;
+  const { startServer } = await import('./server.mjs');
+  const { open } = await import('./ws-client.mjs');
+  const { server: before, c: oldClient } = state;
+  oldClient.close();
+  await before.stop();
+  state.server = await startServer({ dataDir, env: { ...rig.env, AGENT_HOST_TOKEN: before.token }, timeoutMs });
+  state.c = await open({ port: state.server.port, token: state.server.token, autoAllow: true });
+  const c = state.c;
+  const loaded = await c.cmd('loadSession', { sessionId });
+  const users = loaded.messages.filter((m) => m.role === 'user');
+  t.ok(label('サーバーを起こし直しても、会話の履歴が残っている'), users.some((m) => String(m.text).includes('contract alpha')) && users.some((m) => String(m.text).includes('contract beta')),
+    JSON.stringify(loaded.messages.map((m) => [m.role, m.text])));
+  const resumed = await c.runTurn({ sessionId, prompt: rig.prompt('contract gamma') }, { ms: 120_000 });
+  const after = await c.cmd('loadSession', { sessionId });
+  t.ok(label('起こし直しの後も、同じ会話の続きのターンが ok で終わる'), resumed.outcome === 'ok' && resumed.sessionId === sessionId
+    && after.messages.filter((m) => m.role === 'user').length === users.length + 1, JSON.stringify({ outcome: resumed.outcome, sessionId: resumed.sessionId }));
+  void cwd;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// 配達物
+
+/** 配達物の印が、対応か補うか（届くことを要求するか）。impossible・todo は要求しない */
 export function deliveryRequired(value) {
   return isCapabilityState(value) ? value.state === 'covered' : Boolean(value);
+}
+
+/** 全エージェントで確かめる印（capability-marks.mjs の probe: true） */
+export const PROBE_MARKS = Object.freeze(Object.entries(CAPABILITIES).filter(([, spec]) => spec.probe).map(([key]) => key));
+
+/**
+ * 一部のエージェントだけが確かめる証拠。印（autoCompactWindow・nativeShellOff・compatEndpoints・shell）は対応のときだけ要求し、
+ * 印でないもの（会話の分離など）は常に要求する。エージェントの新しい証拠を足したら、ここにも書く（無いと「知らない証拠」で落ちる）
+ */
+export const EXTRA_PROBES = Object.freeze({
+  codex: ['autoCompactWindow'],
+  devin: ['nativeShellOff'],
+  grok: ['compatEndpoints'],
+  antigravity: ['shell', 'conversationIsolation', 'instructionsStayOutOfHistory'],
+});
+
+/**
+ * 証拠を宣言に照らす（純粋な関数）。caps はそのエージェントの能力の印、result は probe の返り。
+ *   required: 要る証拠 / missing: 要るのに無い / notDelivered: あるが偽（届いていない）
+ *   unknown: 知らない証拠 / stale: 宣言が対応でない印なのに証拠が真（宣言が古い）
+ */
+export function probeVerdict({ id, caps, result, extras = EXTRA_PROBES[id] ?? [] }) {
+  const evidence = result?.evidence ?? {};
+  const known = [...PROBE_MARKS, ...extras];
+  const required = known.filter((key) => !Object.hasOwn(CAPABILITIES, key) || deliveryRequired(caps?.[key]));
+  return {
+    required,
+    missing: required.filter((key) => !Object.hasOwn(evidence, key)),
+    notDelivered: required.filter((key) => Object.hasOwn(evidence, key) && !evidence[key]),
+    unknown: Object.keys(evidence).filter((key) => !known.includes(key)),
+    // 宣言が対応でない印は渡し物を絞って渡さないので、証拠は偽になる。真なら、宣言が古い（届くのに impossible・todo と書いている）
+    stale: Object.keys(evidence).filter((key) => known.includes(key) && !required.includes(key) && evidence[key] === true),
+  };
 }
 
 // 届いたかを見分ける印。値は偽のプロセスと指示の本文にそのまま出る
@@ -50,13 +227,10 @@ const runtime = (name) => MARK.runtime(name);
 const instr = (name) => `PLY-DELIVERY-${String(name).toUpperCase()}`;
 
 /**
- * deliveryArgs が渡す runArgs の配達物のキー。`RUN_ARG_FEATURES` にキーを足したら、ここにも足す
- * （backend-contract が、試験で渡していない配達物ができていないかを見る）
+ * deliveryArgs が渡す runArgs の配達物のキー。`RUN_ARG_FEATURES` から作る（手で写さない）。
+ * キーを足したら deliveryArgs にも足す（backend-contract が、deliveryArgs が全部のキーを渡すかを見る）
  */
-export const DELIVERY_ARG_KEYS = Object.freeze([
-  'browserEnv', 'browserInstructions', 'browserRuntime', 'computerRuntime', 'contextRuntime', 'controlRuntime',
-  'hooksRuntime', 'secretsRuntime', 'shellRuntime', 'agentRuntime', 'addedInstructions', 'visualizeInstructions',
-]);
+export const DELIVERY_ARG_KEYS = Object.freeze(Object.keys(RUN_ARG_FEATURES));
 
 /** 1 ターンに渡す配達物。能力の印で絞る（server の gateRunArgs と同じ） */
 export function deliveryArgs(caps, overrides = {}) {
@@ -214,7 +388,7 @@ async function probeCodex({ scratch, caps }) {
   await fs.mkdir(stateDir, { recursive: true });
   const hooks = await hookRuntime(scratch, 'codex');
   let sessionId = null;
-  await withEnv({ AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log, FAKE_CODEX_STATE_DIR: stateDir }, async () => {
+  await withEnv({ AGENT_HOST_CODEX_BIN: node('fake-codex.mjs'), FAKE_CODEX_LOG: log, FAKE_CODEX_STATE_DIR: stateDir }, async () => {
     try {
       const first = await codex.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks, autoCompactWindow: 183_000 }));
       sessionId = first.sessionId;
@@ -256,7 +430,7 @@ async function probeAntigravity({ scratch, caps }) {
   const events = { first: [], resumed: [], sibling: [] };
   let sessionId = null;
   try {
-    await withEnv({ AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`, FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_PROMPT_LOG: promptLog, FAKE_AGY_PID_FILE: pidFile }, async () => {
+    await withEnv({ AGENT_HOST_AGY_BIN: node('fake-agy.mjs'), FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_PROMPT_LOG: promptLog, FAKE_AGY_PID_FILE: pidFile }, async () => {
       const hooksRuntime = await hookRuntime(scratch, 'antigravity');
       const first = await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-RESULT'], hooksRuntime, emit: (e) => events.first.push(e) }));
       sessionId = first.sessionId;
@@ -264,14 +438,16 @@ async function probeAntigravity({ scratch, caps }) {
       await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-SIBLING'], visualizeInstructions: 'PLY-SIBLING-VISUALIZE-ONLY', hooksRuntime, emit: (e) => events.sibling.push(e) }));
     });
   } finally { await killAgy(pidFile); }
-  const seenEntry = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]')))?.[0] ?? {};
+  // 起こされた agy は全部ここに控えられる（--version・models・acp）。会話の agy は --agent を持つ 1 本目
+  const spawnedEntries = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]'))) ?? [];
+  const seenEntry = spawnedEntries.find((entry) => entry?.agent) ?? spawnedEntries.find((entry) => entry?.agentMd) ?? spawnedEntries[0] ?? {};
   const wires = Object.fromEntries(Object.entries(events).map(([key, value]) => [key, String(jsonOf(textOf(value))?.wire ?? '')]));
   const firstMessages = sessionId ? await antigravity.getMessages(sessionId).catch(() => []) : [];
   const siblingSessionId = events.sibling.find((event) => event.type === 'session')?.sessionId ?? null;
   const siblingMessages = siblingSessionId ? await antigravity.getMessages(siblingSessionId).catch(() => []) : [];
   const agentMd = String(seenEntry.agentMd ?? '');
   const env = seenEntry.env ?? {};
-  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wires.first.slice(0, 200) };
+  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wires.first.slice(0, 200), history: firstMessages.map((message) => `${message.role}: ${String(message.text ?? '').slice(0, 120)}`) };
   return {
     seen,
     evidence: {
@@ -284,7 +460,9 @@ async function probeAntigravity({ scratch, caps }) {
       shell: has(wires.first, 'PLY-DELIVERY-SHELL-RESULT') && has(wires.resumed, 'PLY-DELIVERY-SHELL-RESUMED'),
       conversationIsolation: has(wires.sibling, 'PLY-SIBLING-VISUALIZE-ONLY') && !has(wires.sibling, `${MARK.visualize}-RESUMED`)
         && !siblingMessages.some((message) => /PLY-DELIVERY-(?:VISUALIZE|SHELL-RESUMED)/.test(message.text ?? '')),
-      instructionsStayOutOfHistory: !firstMessages.some((message) => /PLY-DELIVERY-(?:INSTRUCTIONS|AGENTS|VISUALIZE)/.test(message.text ?? '')),
+      // 身代わりは受けた発言の全体（wire）を返答に写すので、見るのは自分の発言（user）の側だけ
+      instructionsStayOutOfHistory: firstMessages.some((message) => message.role === 'user')
+        && !firstMessages.some((message) => message.role === 'user' && /PLY-DELIVERY-(?:INSTRUCTIONS|AGENTS|VISUALIZE)/.test(message.text ?? '')),
       hooks: has(String(seenEntry.hooksJson ?? ''), 'pleiad-delivery-hook'),
       plyContext: envOf(env, 'PLY_CONTEXT_URL', runtime('context').url) && has(agentMd, '--context') && has(agentMd, instr('context')),
       computerUse: envOf(env, 'PLY_COMPUTER_URL', runtime('computer').url) && has(agentMd, '--computer') && has(agentMd, instr('computer')),
@@ -300,7 +478,7 @@ async function probeOpenCode({ scratch, caps }) {
   const events = [];
   let sessionId = null;
   try {
-    await withEnv({ AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"`, XDG_CONFIG_HOME: config, FAKE_OPENCODE_STATE_DIR: path.join(scratch, 'oc-state') }, async () => {
+    await withEnv({ AGENT_HOST_OPENCODE_BIN: node('fake-opencode.mjs'), XDG_CONFIG_HOME: config, FAKE_OPENCODE_STATE_DIR: path.join(scratch, 'oc-state') }, async () => {
       const hooks = await hookRuntime(scratch, 'opencode');
       try {
         const result = await opencode.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks, emit: (e) => events.push(e) }));
@@ -345,7 +523,7 @@ async function probeDevin({ scratch, caps }) {
   const events = [];
   const configCapture = path.join(scratch, 'devin-turn-config.json');
   try {
-    await withEnv({ AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home'),
+    await withEnv({ AGENT_HOST_DEVIN_BIN: node('fake-devin.mjs'), DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home'),
       FAKE_DEVIN_CONFIG_CAPTURE: configCapture }, async () => {
       await devin.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'smart', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'devin'), emit: (e) => events.push(e) }));
     });
@@ -366,7 +544,7 @@ async function probeDevin({ scratch, caps }) {
       hooks: config.hooks?.PreToolUse?.some(group => group.hooks?.some(h => h.type === 'command' && h.command.includes('delivery-hook.mjs')))
         && config.read_config_from?.claude === false,
       plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt),
-      nativeShellOff: !deliveryRequired(caps?.nativeShellOff) || ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'].every(name => config.disabled_tools?.includes(name)),
+      nativeShellOff: ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'].every(name => config.disabled_tools?.includes(name)),
       plyContext: (observed.mcpServers ?? []).includes('ply_context') && has(prompt, instr('context')),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },
@@ -379,7 +557,7 @@ async function probeGrok({ scratch, caps }) {
   const home = path.join(scratch, 'grok-home');
   await fs.mkdir(home, { recursive: true });
   try {
-    await withEnv({ AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: home, AGENT_HOST_GROK_HOME: home }, async () => {
+    await withEnv({ AGENT_HOST_GROK_BIN: node('fake-grok.mjs'), GROK_HOME: home, AGENT_HOST_GROK_HOME: home }, async () => {
       await grok.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'accept-edits', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'grok'),
         endpoint: { id: 'ep-0123456789ab', kind: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:43123/v1', key: 'delivery-key', roles: { main: 'delivery-model' } },
         emit: (e) => events.push(e) }));
@@ -418,7 +596,7 @@ export const DELIVERY_PROBES = Object.freeze({
   grok: probeGrok,
 });
 
-/** 印ごとの、どこに届くはずかの短い説明（落ちたときの文に出す） */
+/** 証拠ごとの、どこに届くはずかの短い説明（落ちたときの文に出す） */
 export const DELIVERY_HINTS = Object.freeze({
   plyInstructions: '発言の前に足す指示（Claude は systemPrompt.append、Codex は developerInstructions、ほかは発言の本文）',
   plyAgents: 'ply_agents の MCP の登録と、その instructions',
@@ -428,18 +606,12 @@ export const DELIVERY_HINTS = Object.freeze({
   visualize: '可視化の指示（visualizeInstructions）',
   hooks: 'Pleiad がそろえる Hooks（コールバック・config.hooks・hooks.json・ターンのプラグイン）',
   plyShell: 'ply_shell の MCP・使い方の指示（nativeOff ならエージェントのシェルを切る）',
-  compatEndpoints: 'GROK_MODELS_BASE_URL・XAI_API_KEY の会話限定の起動環境',
   plyContext: 'ply_context の MCP と、コンテキストの指示',
   computerUse: 'ply_computer の MCP と、使い方の指示',
+  compatEndpoints: 'GROK_MODELS_BASE_URL・XAI_API_KEY の会話限定の起動環境',
+  autoCompactWindow: '委譲の子の自動圧縮の閾値（thread/start・thread/resume の config の model_auto_compact_token_limit）',
+  nativeShellOff: 'エージェント自身のシェルのツールを切る（ACP の disabled_tools）',
+  shell: '入力欄の ! の結果を発言に足して渡す（shellAppends。再開でも届く）',
+  conversationIsolation: '会話ごとの足し物（可視化・シェルの結果）が、別の会話に漏れない',
+  instructionsStayOutOfHistory: '足した指示が、会話の履歴に残らない',
 });
-
-/**
- * 印が対応なのに、そのエージェントで届くことを確かめる試験が無いときの文（あれば null）。
- * tests/unit/backend-contract.mjs が、印の値と DELIVERY_PROBES から機械的に呼ぶ（エージェント・配達物を足したときに漏れない）
- */
-export function deliveryContractProblem({ key, id, suite, suites, probes = DELIVERY_PROBES, file = null }) {
-  if (typeof suite === 'string' && suites?.has(suite) && typeof probes?.[id] === 'function') return null;
-  return `どこに何を書くか: tests/lib/backend-delivery.mjs の DELIVERY_PROBES に ${id} の probe（1 ターン流して ${key} の届け方を返す）を書き、`
-    + `tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS.${key}.agents.${id} に 'backend-delivery' を書く。`
-    + `（印 ${key} が対応でないなら ${file ? `core/backends/${file}` : `core/backends/${id}.mjs`} の宣言を見直す）`;
-}

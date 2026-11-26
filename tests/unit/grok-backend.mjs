@@ -403,8 +403,6 @@ export default async function (t) {
     {
       mark = calls.length;
       assert.equal(typeof backend.suggestNext, 'undefined');
-      assert.equal(backend.capabilities.internalCall.state, 'impossible');
-      assert.equal(backend.capabilities.promptSuggestions.state, 'impossible');
       assert.equal(of('session/new', mark).length, 0, '候補のために新しいセッションを作らない');
       t.ok('Grok は候補の内部呼出しを持たず、候補のためにセッションを作らない', true);
     }

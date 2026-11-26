@@ -339,7 +339,6 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       if (spec.kinds.includes('skill')) await skills(path.join(base, '.agents', 'skills'), ctx);
       return;
     }
-    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
     const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome, devin: devinHome, antigravity: geminiHome, grok: grokHome }[source]
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       : path.join(base, source === 'devin' ? '.devin' : source === 'antigravity' ? '.gemini' : `.${source}`);

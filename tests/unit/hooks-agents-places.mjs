@@ -16,7 +16,6 @@ import { registry } from '../../core/ops/index.mjs';
 export const name = 'hooks-agents-places';
 export const title = 'Hook × エージェント（フォルダーごと）: 形式 2 への移行・行ごとの受け継ぎ・上書きと戻す・場所を消す・一覧の出どころ・追加ルートの Hooks';
 
-// backend-allow: エージェントの名前を試験の入力として並べる
 const [CLAUDE, CODEX] = ['claude', 'codex'];
 const BACKUP = 'hooks-agents.v1-backup.json';
 

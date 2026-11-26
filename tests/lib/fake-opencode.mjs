@@ -563,6 +563,7 @@ const server = http.createServer(async (req, res) => {
           const nid = id('msg'); remap.set(m.info.id, nid);
           f.messages.push({ info: { ...m.info, id: nid, sessionID: f.id, ...(m.info.parentID ? { parentID: remap.get(m.info.parentID) ?? m.info.parentID } : {}) }, parts: m.parts.map((p) => ({ ...p, id: id('prt'), messageID: nid, sessionID: f.id })) });
         }
+        persist(f.id); // state-dir を使うと lookup が控えで置き換えるので、写した発言も控えに書く
         return send(200, row(f));
       }
       if (action === 'summarize') {

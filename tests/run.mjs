@@ -259,19 +259,22 @@ const SUITES = [
   './unit/ops-policy.mjs',
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
-  // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
-  // 配達物（runArgs）が全エージェントに届くこと（印ごと・エージェントごとの偽のプロセス・プロトコル）、core/backends/ の外のエージェントの id の直書き（ラチェット）
+  // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・性質ごとの契約の試験・runArgs の絞り込み・配達物の証拠の照らし方・対応表（静的）
+  // （全エージェントに共通の試験 backend-common は下: 基本の流れ・中断・エラー・再起動の後の続きと、配達物が届くこと）
   './unit/backend-contract.mjs',
   // 「CLI のログイン」のカードの［ログアウト］は能力の印 logout で決める（外せない OpenCode は端末のコマンドを案内する）
   './unit/agent-logout-mark.mjs',
   // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
   './unit/docs-source.mjs',
-  './unit/backend-delivery.mjs',
   './unit/backend-registry.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',
   './unit/devin-models.mjs',
   './unit/devin-acp.mjs',
+  './unit/process-tree.mjs',
+  './unit/acp-client.mjs',
+  './unit/acp-held-conversation.mjs',
+  './unit/fake-agy-acp.mjs',
   './unit/devin-variants.mjs',
   './unit/devin-metadata-sessions.mjs',
   './unit/devin-config.mjs',
@@ -291,10 +294,9 @@ const SUITES = [
   './unit/grok-meter.mjs',
   // Devin・Grok のモデルの一覧の置き場（models() の TTL キャッシュ）: 取りかけの分け合い・失敗は覚えない・強制の取り直し
   './unit/backend-model-cache.mjs',
-  './unit/backend-conformance.mjs',
-  './unit/backends-lint.mjs',
-  // エージェントを足したときの一覧への入れ忘れ（core/backends/ の外）: 一覧の走査の lint と README・AGENTS.md の一致
-  './unit/agent-lists.mjs',
+  './unit/backend-common.mjs',
+  // エージェントの種類の漏れの lint（tests/lint-agents.mjs。core/backends/ の外）: id の直書きのラチェット・backend-allow の印の数と死んだ印・一覧への入れ忘れ・README・AGENTS.md の一致
+  './unit/agents-lint.mjs',
   // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
   './unit/child-process-lint.mjs',
   // Windows の標準の道具（whoami・icacls・taskkill・tasklist・powershell・cmd）は System32 の絶対パスで呼ぶ（core/win-system.mjs）: システムのフォルダーの決め方・PATH の先頭の同名の道具に当たらない・core/ に名前だけの呼び出しを残さない
@@ -888,7 +890,6 @@ const SUITES = [
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
   // agy を保持役に載せる部品（無停止の更新 段階 3）: 切り替え・agent の置き場（held-*）の掃除・付け直し（再生と続き・終わった子・札に無い発言）
-  './unit/antigravity-held.mjs',
   // agy の中継の再試行（無停止の更新 段階 3）: 口が数秒つながらなくても、つながる前の失敗だけやり直す。送った後の切れは二重に走らせない
   './unit/agy-relay-retry.mjs',
   // `!` の行を保持役に載せる（無停止の更新 段階 3）: 起動の復元で出力・完了・中断を引き継ぐ
@@ -932,6 +933,7 @@ const SUITES = [
   './unit/opencode-adopt.mjs',
   './unit/server-agent-account-restart.mjs',
   './unit/antigravity-accounts.mjs',
+  './unit/antigravity-account-login.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
   // 同じ設定の画面の差し替え（web/dom-patch.mjs）を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/dom-patch.mjs）
@@ -1008,8 +1010,6 @@ const SUITES = [
   './unit/server-computer-delivery.mjs',
   // インストールからログインまでの導線（未インストール -> 再起動なしで発見 -> 認可コード）
   './unit/antigravity-onboarding.mjs',
-  // 孤児の agy の掃除。**名前を確かめてからでないと落とさない**
-  './unit/antigravity-pids.mjs',
   './unit/antigravity-idle.mjs',
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
@@ -1167,7 +1167,7 @@ const SUITES = [
   './unit/bots-store.mjs',
   // 起動の読み込みと書き込みの競合（ルーティン・bot）と、agy の控えの rename の再試行
   './unit/store-load-races.mjs',
-  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・Antigravity は yolo だけ・削除
+  // bots.* の操作: 作成と DM・AI が見える操作と見えない操作・フォルダーを広げる向きは承認・承認モードは人だけ・モードが 1 つだけのバックエンド・削除
   './unit/ops-bots.mjs',
   './unit/bot-delete.mjs',
   './unit/bot-delete-guards.mjs',

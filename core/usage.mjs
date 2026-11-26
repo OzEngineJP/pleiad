@@ -30,13 +30,15 @@ export function usageWindow(label, used, resetsAt, minutes) {
 }
 const duration = minutes => minutes === 300 ? t('usage.window.fiveHour') : minutes === 10080 ? t('usage.window.weekly') : minutes ? t('usage.window.hours', { hours: minutes / 60 }) : t('usage.window.unknown');
 
+// Codex の使用枠の主の枠の limitId（app-server の rateLimitsByLimitId のキーと wham の rate_limit に付ける値。プロトコルの値）
+const CODEX_PRIMARY_LIMIT_ID = 'codex'; // backend-allow: Codex のプロトコルが主の枠に付ける limitId の値で、エージェントの分岐ではない
 export function codexQuota(data) {
   const buckets = Object.values(data?.rateLimitsByLimitId ?? {});
   if (!buckets.length && data?.rateLimits) buckets.push(data.rateLimits);
   const windows = buckets.flatMap(bucket => ['primary', 'secondary'].flatMap(key => {
     const w = bucket?.[key];
     if (!w) return [];
-    const label = `${bucket.limitName || (bucket.limitId !== 'codex' && bucket.limitId) || ''} ${duration(w.windowDurationMins)}`.trim();
+    const label = `${bucket.limitName || (bucket.limitId !== CODEX_PRIMARY_LIMIT_ID && bucket.limitId) || ''} ${duration(w.windowDurationMins)}`.trim();
     // limitId / limitName は委譲の振り分けがどのモデルに効く枠かを見分けるため（core/delegation-routing.mjs の windowsFor）
     return [{ ...usageWindow(label, w.usedPercent, number(w.resetsAt) == null ? null : w.resetsAt * 1000, w.windowDurationMins),
       ...(bucket.limitId ? { limitId: String(bucket.limitId) } : {}), ...(bucket.limitName ? { limitName: String(bucket.limitName) } : {}) }];
@@ -51,7 +53,7 @@ export function whamQuota(data) {
       return [key, w ? { usedPercent: w.used_percent, windowDurationMins: number(w.limit_window_seconds) == null ? null : w.limit_window_seconds / 60, resetsAt: w.reset_at } : null];
     })) });
   return codexQuota({ rateLimitsByLimitId: Object.fromEntries([
-    ['codex', convert(data?.rate_limit, 'codex')],
+    [CODEX_PRIMARY_LIMIT_ID, convert(data?.rate_limit, CODEX_PRIMARY_LIMIT_ID)],
     ...(data?.additional_rate_limits ?? []).map((b, i) => [String(i), convert(b.rate_limit, b.metered_feature, b.limit_name)]),
   ]) });
 }

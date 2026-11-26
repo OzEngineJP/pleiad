@@ -8,9 +8,15 @@
 // 性質だけは AGENT_TRAITS.fake に置く（値は環境で変わらない）。
 import { covered, impossible, todo } from './capability-marks.mjs';
 import { AGY_WAIT_SLICE_MS } from './computer-timing.mjs';
+import { definePerAgentMap } from './agents.mjs';
 
-/** 各エージェントの能力の印（CAPABILITY_KEYS の全部。値の意味は capability-marks.mjs） */
-export const CAPABILITY_STATES = {
+/**
+ * 各エージェントの能力の印（CAPABILITY_KEYS の全部。値の意味は capability-marks.mjs）。
+ * impossible の第 2 引数は原因（upstream: エージェント側に口が無い / design: Pleiad が意図して持たない）。
+ * 手段があるのに確かめていない・未実装のものは todo('#Issue')（#108: 走っているターンへの切り替え・シェルを切る口の調査、
+ * #180: 内部呼出しと次の発言の候補）。
+ */
+export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
   claude: {
     // server の compactConversation が /compact を発言として送る（compact() は持たない）
     compact: 'prompt',
@@ -66,9 +72,9 @@ export const CAPABILITY_STATES = {
     // 同じ会話で巻き戻せる（thread/revert。legacy は thread/fork { beforeTurnId }。下の rewind）
     rewind: 'thread',
     subagents: true,    // 子スレッド。thread/list { parentThreadId } と thread/read で読む
-    liveModel: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveMode: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveEffort: impossible('app-server に走っているターンのエフォートを変える口が無い（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveModel: impossible('app-server に走っているターンの切り替えの口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveMode: impossible('app-server に走っているターンの切り替えの口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveEffort: impossible('app-server に走っているターンのエフォートを変える口が無い（止めて次のターンで効かせる）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
     plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
@@ -82,9 +88,11 @@ export const CAPABILITY_STATES = {
     compatEndpoints: true,
     // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
     shell: 'native',
-    // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）
+    // ply_shell を受け取る。Codex のシェルはまだ切らない。口はある（thread/start の config の features.shell_tool: false を、
+    // 内部呼出しが既に会話ごとに使っている。codex 0.169.0 の features list で stable）。通常の会話で切ると、サンドボックスと安全判定も外れるので、
+    // 切ってよいか・切った後の代わりの判定を確かめてから対応にする（ADR 0227）
     plyShell: true,
-    nativeShellOff: impossible('Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeShellOff: todo('#108'),
     nativeMcpOff: true,
     forkMessage: covered,       // thread/fork は発言の途中では切れない（Pleiad が写す）
     approvals: 'interactive',
@@ -106,46 +114,49 @@ export const CAPABILITY_STATES = {
     title: covered,       // タイトルの口が無い -> sidecar が正本
     tag: covered,         // 状態タグも無い -> sidecar が正本
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
-    subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
-    liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveEffort: impossible('起動時のモデル id（段違い）だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
+    liveModel: true,        // session/set_config_option（model）で走らせたまま替える
+    liveMode: true,         // session/set_config_option（mode）で替える（yolo は起動の引数なので、yolo との行き来だけは起こし直し）
+    liveEffort: true,       // session/set_config_option（thought_level）で替える
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
-    // Pleiad 担当のコンテキスト（ply_context）は、Pleiad の置き場に作ったカスタムエージェント経由で渡す（antigravity-context.mjs）。
+    // Pleiad 担当のコンテキスト（ply_context）は、session/new の mcpServers に束ねた中継で渡す（制限した会話だけ、さらに Pleiad の置き場に作ったカスタムエージェントで指示を渡す。antigravity-context.mjs）。
     // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
     plyContext: "conversation",
-    alwaysAllow: impossible('対話の承認そのものが無い（approvals: none）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    alwaysAllow: true,      // session/request_permission の allow_always を使う
     login: true,
-    logout: impossible('agy には Pleiad から起こせるログアウトの口が無い（端末の agy 側で外す）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
-    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
+    logout: impossible('1 つ目のログインは OS の資格情報ストアにあり、Pleiad の画面からは外さない（ACP の logout は使わず、端末の agy 側で外す）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // ply_computer は束ねた 1 本の中継に載せて渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
+    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びなかった（stream-json で 1.2.14 の実測。ACP でも同じとみなして据え置く）ので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
     forkMessage: covered,
     rewind: covered,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
-    approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
+    approvals: 'interactive', // session/request_permission を Pleiad の承認カードへ繋ぐ
     mcpApproval: 'agent',
-    accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 次の発言の候補も内部呼出しで作る。agy の --print は会話を履歴に残し、道具・フックを止める保証も無いので出せない（Issue #180）
-    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。agy は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 使い捨てのホームでも agy の --print は会話を履歴に残し、CLI 内蔵の道具・フックを止める保証が無いので内部呼出しは持たない（Issue #180）
-    internalCall: impossible('使い捨てのホームでも agy --print は会話を履歴に残し、内蔵の道具・フックを止める保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
-    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
-    // 継続した会話でもそのターンの設定が届き、記録と実際が一致する）。カスタムエージェントが読まない作業場所の
-    // 指示ファイル（AGENTS.md・GEMINI.md）は、担当がエージェント任せの会話では Pleiad が読んで agent.md の本文へ足す
+    // 2 つ目以降のアカウントは、トークンをファイルに保存させて別の置き場に分ける（AGY_CLI_FORCE_FILE_TOKEN_STORAGE と --app-data-dir。1 つ目は OS の鍵束のまま。ADR 0222）
+    accounts: 'agent',
+    compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    compact: true,          // /compact を session/prompt で送る
+    autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 次の発言の候補も内部呼出しで作る。agy の --print は会話を履歴に残し、道具・フックを止める保証も無いので、
+    // 分離できるか確かめるまで出さない（Issue #180。ACP の口に替えても、この呼び出しは --print のまま）
+    promptSuggestions: todo('#180'),
+    // 使い捨てのホームでも agy の --print は会話を履歴に残し、CLI 内蔵の道具・フックを止める保証が無いので、
+    // 分離できるか確かめるまで内部呼出しは持たない（Issue #180）
+    internalCall: todo('#180'),
+    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じく session/new の mcpServers に束ねた中継で渡す。
+    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（継続した会話でもそのターンの設定が届き、記録と実際が一致する）。
+    // 制限した会話（Pleiad が Skills・MCP の担当）はカスタムエージェントで走るので、それが読まない作業場所の
+    // 指示ファイル（AGENTS.md・GEMINI.md）は Pleiad が読んで agent.md の本文へ足す
     // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
     plyAgents: true,
     plyInstructions: true,
     shell: 'host',          // Pleiad が実行し、その結果を次のターンの発言に含める（ADR 0054）
-    // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
-    plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    steer: impossible('agy の stream-json は走っているターンへ入力を足せない'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
+    // ply_shell はまだ渡さない（ADR 0227 の理由は stream-json の口のもので、ACP の mcpServers なら渡せる見込み。再判定は ADR 0365 の残る課題。それまで印は据え置く）
+    plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeMcpOff: impossible('会話ごとに 1 つずつ MCP を止める設定が無い（inheritMcp で全止めのみ）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    steer: true,            // 走っているターンへ追加の入力を足す（acp-steer.mjs）
+    handover: true,          // agy の子を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs の lifetime: 'conversation'）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
     // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに、可視化は各ターンの発言の前に渡す。
     // エージェント定義の指示は起動時にしか反映されないため、visualizeInstructions は本文に前置きする。
@@ -160,21 +171,21 @@ export const CAPABILITY_STATES = {
     subagents: true,        // task のツールが作る子の会話（/session/{id}/children）
     liveModel: true,            // POST /session/{id}/model は走っているターンにも反映
     liveMode: true,             // PATCH /session/{id} の permission 更新は走っているターンにも反映
-    liveEffort: impossible('走っているターンへエフォートだけを送る口が無い（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveEffort: impossible('走っているターンへエフォートだけを送る口が無い（止めて次のターンで効かせる）', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,        // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
     mcpApproval: 'agent',   // MCP のツールも権限の規則（*）を通り、OpenCode が聞く
     login: true,            // 端末で opencode auth login を案内して待つ
-    logout: impossible('OpenCode CLI の接続先は端末の opencode auth logout で外す。Pleiad から起こす口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    logout: impossible('OpenCode CLI の接続先は端末の opencode auth logout で外す。Pleiad から起こす口が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     accounts: 'agent',
-    compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // POST /session/{id}/summarize
-    autoCompactWindow: impossible('OpenCode 2.0.32 は compaction.buffer を全体設定でしか受けず、セッション別の自動圧縮閾値を設定する API が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 別 session を作って消す従来形は、接続先の履歴に残らない保証が無い（Issue #180）
-    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。OpenCode は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 一時 session を作り削除しても接続先の履歴に残らない保証が無い（削除の口の検証が済んでいない）
-    internalCall: impossible('一時 session を作り削除しても、接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    autoCompactWindow: impossible('OpenCode 2.0.32 は compaction.buffer を全体設定でしか受けず、セッション別の自動圧縮閾値を設定する API が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 別 session を作って消す従来形は、接続先の履歴に残らない保証が無いので、分離できるか確かめるまで出さない（Issue #180）
+    promptSuggestions: todo('#180'),
+    // 一時 session を作り削除しても接続先の履歴に残らない保証が無い（削除の口の検証が済んでいない。Issue #180）
+    internalCall: todo('#180'),
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
     plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
@@ -200,20 +211,21 @@ export const CAPABILITY_STATES = {
     subagents: true,                  // sessions.db の subagent_heads / message_nodes から一覧・履歴・発生元ツールを引く
     liveModel: true,                  // 実行中のターンへ session/set_config_option でモデルを送る
     liveMode: true,                   // 実行中のターンへ session/set_config_option で承認モードを送る
-    liveEffort: impossible('走っているターンへエフォートを送る口を確かめていない（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 口はある（session/set_config_option。モデル・承認モードと同じ経路の applyDevinSelection）。エフォートを走っているターンへ送る配線はまだ（Issue #108）
+    liveEffort: todo('#108'),
     hostTools: covered,               // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
     logout: true,
-    accounts: impossible('Devin CLI 3000.11.92 は APPDATA を会話別に変えても既存ログインで応答し、資格情報が共有される。CLI がアカウント別の認証プロファイルを提供するまで分離できない'), // i18n-ignore: 実物の認証分離を確認した開発者向け理由
-    compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
+    accounts: impossible('Devin CLI 3000.11.92 は APPDATA を会話別に変えても既存ログインで応答し、資格情報が共有される。CLI がアカウント別の認証プロファイルを提供するまで分離できない', 'upstream'), // i18n-ignore: 実物の認証分離を確認した開発者向け理由
+    compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）', 'upstream'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
-    autoCompactWindow: impossible('Devin CLI 3000.11.92 の公式設定項目・ACP configOptions に自動圧縮閾値が無い'), // i18n-ignore: CLI と公式資料の確認に基づく開発者向け理由
-    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、内部呼出しは持たない（Issue #180）
-    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。Devin は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    internalCall: impossible('ephemeral な ACP 会話が接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    autoCompactWindow: impossible('Devin CLI 3000.11.92 の公式設定項目・ACP configOptions に自動圧縮閾値が無い', 'upstream'), // i18n-ignore: CLI と公式資料の確認に基づく開発者向け理由
+    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、分離できるか確かめるまで内部呼出しは持たない（Issue #180）
+    promptSuggestions: todo('#180'),
+    internalCall: todo('#180'),
     plyInstructions: true,
     plyAgents: true,
     // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -244,7 +256,8 @@ export const CAPABILITY_STATES = {
     subagents: true,       // _x.ai/session_notification の subagent_spawned / finished を会話単位で控え、session/load で子の記録を読む
     liveModel: true,     // session/set_config_option
     liveMode: true,      // session/set_mode
-    liveEffort: impossible('走っているターンへエフォートを送る口を確かめていない（止めて次のターンで効かせる）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // 口はある（ACP の reasoning_effort の設定項目を session/set_config_option で送る）。走っているターンへ送る配線はまだ（Issue #108）
+    liveEffort: todo('#108'),
     hostTools: covered,  // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,
@@ -255,9 +268,9 @@ export const CAPABILITY_STATES = {
     compatEndpoints: true, // 会話専用の GROK_HOME/config.toml と XAI_API_KEY で OpenAI Chat Completions 互換へ接続
     compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す
     autoCompactWindow: true,          // GROK_CONFIG.session.auto_compact_threshold_percent に換算
-    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、内部呼出しは持たない（Issue #180）
-    promptSuggestions: impossible('次の発言の候補は内部呼出しで作る。Grok は内部呼出しを分離できないので出せない（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    internalCall: impossible('ephemeral な ACP 会話が接続先の履歴に残らない保証が無い（Issue #180）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // ephemeral の ACP 会話が接続先の履歴に残らない保証が無いので、分離できるか確かめるまで内部呼出しは持たない（Issue #180）
+    promptSuggestions: todo('#180'),
+    internalCall: todo('#180'),
     plyInstructions: true,
     plyAgents: true,
     plyContext: 'turn',         // ply_context の HTTP MCP をターンごとに渡す
@@ -267,7 +280,7 @@ export const CAPABILITY_STATES = {
     nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
     // disabled_mcp_servers は効くが、GROK_HOME を写しに替えると Grok の auth.json の更新（一時ファイルからの rename）が本物に届かず、
     // ログインが切れうる。写しのコードは入れていない。外す前に確かめることは ADR 0336 の「Grok の鍵を外す前に確かめること」
-    nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    nativeMcpOff: impossible('会話ごとにネイティブ設定の MCP を止める手段が無い', 'upstream'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。
@@ -275,20 +288,20 @@ export const CAPABILITY_STATES = {
     browser: true, plyControl: true, secrets: true, visualize: true,
     hooks: true,
   },
-};
+});
 
 /**
  * 各エージェントの性質（TRAIT_KEYS の全部。true / false だけ）。
  * 能力ではないので、false は「未対応」ではなく、そのエージェントの特徴（そろえる対象ではない）。
  */
-export const AGENT_TRAITS = {
+export const AGENT_TRAITS = definePerAgentMap('AGENT_TRAITS', {
   // 秘密情報は CLAUDE_ENV_FILE（値ファイルを読むスクリプト）で Bash のシェルにだけ届く。PowerShell ツールには渡らない（ADR 0284）
   claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: true },
   codex: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
-  // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡った合図は出せない
-  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: false, liveSecrets: false, secretsViaEnvFile: false },
+  // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡ったかは session/prompt を書く前後で区別できる
+  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
   devin: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   fake: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
-};
+}, { extra: ['fake'] });

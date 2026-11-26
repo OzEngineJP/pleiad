@@ -4,20 +4,38 @@ import { t } from '../i18n.mjs';
 // 間は "has been" だけに限り、離れた語の組み合わせまでは広げない。
 const USAGE_EXHAUSTED_TEXT = /\busage balance exhausted\b|\bcredit balance is too low\b|\binsufficient[ _](?:balance|funds|credits?|quota)\b|\b(?:usage limit|quota)(?: has been)? (?:reached|exceeded|exhausted)\b/i;
 
-/** Classify known provider failures without exposing RPC messages or data. */
-export function acpRequestFailure(error, agent, fallback) {
+/** 種別の名前（acp.errors.<名前> の文言） */
+const FAILURE_KINDS = new Set(['usageExhausted', 'paymentRequired', 'rateLimited']);
+
+/** data の構造化種別から、種別の名前を引く。vendorKinds は { <data のキー>: { <値>: 'usageExhausted' | 'paymentRequired' | 'rateLimited' } } */
+function vendorKindOf(data, vendorKinds) {
+  if (!vendorKinds || !data || typeof data !== 'object') return null;
+  for (const [key, values] of Object.entries(vendorKinds)) {
+    const value = data[key];
+    if (typeof value !== 'string' || !values || !Object.hasOwn(values, value)) continue;
+    if (FAILURE_KINDS.has(values[value])) return values[value];
+  }
+  return null;
+}
+
+/**
+ * Classify known provider failures without exposing RPC messages or data.
+ * 文面（402・429・quota など）の判定はどのエージェントにも共通。プロバイダ固有の構造化種別（Devin の cognition.ai/errorKind など）は、
+ * 呼び出し側が vendorKinds で渡す（core/backends/devin-acp.mjs の COGNITION_VENDOR_KINDS）
+ */
+export function acpRequestFailure(error, agent, fallback, { vendorKinds = null } = {}) {
   const data = error?.data;
   const text = [error?.message, data, data?.message, data?.details, data?.error, data?.error?.message]
     .filter(value => typeof value === 'string').map(value => value.slice(0, 16_384)).join('\n');
   const status = [error?.code, data?.status, data?.statusCode, data?.httpStatus];
+  const kind = vendorKindOf(data, vendorKinds);
   let message = fallback;
-  // cognition.ai/errorKind は Cognition（Devin）の構造化種別。resource_exhausted は rate limit と日次クォータ枯渇の両方。
-  // 実文言は "quota" と "exhausted" が離れるので、種別を先に見る。他プロバイダの data にはこのキーは無い。
-  if (data?.['cognition.ai/errorKind'] === 'resource_exhausted' || USAGE_EXHAUSTED_TEXT.test(text)) {
+  // 構造化種別を文面より先に見る（Cognition の resource_exhausted は、実文言の "quota" と "exhausted" が離れる）
+  if (kind === 'usageExhausted' || USAGE_EXHAUSTED_TEXT.test(text)) {
     message = t('acp.errors.usageExhausted', { agent });
-  } else if (status.includes(402) || /\b(?:status(?: code)?\s*[:=]?\s*402|402 Payment Required)\b/i.test(text)) {
+  } else if (kind === 'paymentRequired' || status.includes(402) || /\b(?:status(?: code)?\s*[:=]?\s*402|402 Payment Required)\b/i.test(text)) {
     message = t('acp.errors.paymentRequired', { agent });
-  } else if (status.includes(429) || /\brate[ _-]?limit(?:ed|[ _-]exceeded)?\b|\btoo many requests\b|\bstatus(?: code)?\s*[:=]?\s*429\b/i.test(text)) {
+  } else if (kind === 'rateLimited' || status.includes(429) || /\brate[ _-]?limit(?:ed|[ _-]exceeded)?\b|\btoo many requests\b|\bstatus(?: code)?\s*[:=]?\s*429\b/i.test(text)) {
     message = t('acp.errors.rateLimited', { agent });
   }
   return { message, code: Number.isSafeInteger(error?.code) ? error.code : -32000 };

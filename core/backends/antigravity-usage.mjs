@@ -1,4 +1,5 @@
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
+import { assertFileStorage } from './antigravity-acp.mjs';
 import { number, usageWindow } from '../usage.mjs';
 import { t } from '../i18n.mjs';
 
@@ -68,9 +69,9 @@ export function antigravityQuota(result) {
 // Bound both the lifetime and output, and only terminate our own child.
 // stderr は分類のためだけに見る（未認証「authentication required」を拾って、呼び出し側が 'out' に戻せるように）。
 // 本文は捨て、エラーにはコードだけを付ける（資格情報や URL を漏らさない）
-function capture(argv, args, timeoutMs) {
+function capture(argv, args, timeoutMs, env = null) {
   return new Promise((resolve, reject) => {
-    const proc = spawnCli(argv, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawnCli(argv, args, { stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env: { ...process.env, ...env } } : {}) });
     let output = '', stderr = '', bytes = 0, settled = false;
     const finish = (error) => {
       if (settled) return;
@@ -98,9 +99,13 @@ function capture(argv, args, timeoutMs) {
 
 // attempted: 実際に `--print /usage` を起こして読めたか（古い CLI の needsUpdate は false。呼び出し側が
 // 認証の成否を確かめる目印にする。バージョン確認の `--version` は認証しないので含めない）
-export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000 } = {}) {
+// profile（2 つ目以降のアカウント。agyLaunchProfile）があれば、その置き場とファイル保存の env で読み、ファイル保存の印がログに出たときだけ採る
+// （出なければ鍵束＝1 つ目のログインの使用量かもしれない）
+export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000, profile = null } = {}) {
   const version = await capture(argv, ['--version'], timeoutMs);
   if (!supportsUsage(version)) return { windows: [], attempted: false, message: t('antigravity.usage.needsUpdate') };
-  const output = await capture(argv, ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s'], timeoutMs);
+  const args = ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s'];
+  const output = profile?.topEnv ? await capture(argv, ['--log-file', profile.logFile, ...args], timeoutMs, profile.topEnv) : await capture(argv, args, timeoutMs);
+  if (profile?.topEnv) await assertFileStorage(profile);
   return { ...antigravityQuota(JSON.parse(output)), attempted: true };
 }

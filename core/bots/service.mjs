@@ -388,7 +388,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         if (modes && next.mode !== bot.mode) {
           row('mode', bot.mode, next.mode);
           const before = modesOf(bot.backend)?.[bot.mode];
-          if (strength(modes[next.mode]) > strength(before)) reasons.push('mode');   // 承認モードが強くなる（例: Antigravity は yolo だけ）
+          if (strength(modes[next.mode]) > strength(before)) reasons.push('mode');   // 承認モードが強くなる（例: Antigravity の default から yolo）
         }
       }
       if (input.model !== undefined && input.model !== next.model) { next.model = input.model; row('model', bot.model, next.model); }

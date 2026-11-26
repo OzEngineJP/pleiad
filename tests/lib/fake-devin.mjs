@@ -249,6 +249,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
         if (text.includes('[kill]')) process.exit(17);
+        // [fail]: このターンの session/prompt を JSON-RPC のエラーで終える（共通の契約のエラーの試験。tests/unit/backend-common.mjs）
+        if (text.includes('[fail]')) { running.delete(session.sessionId); write({ id: request.id, error: { code: -32000, message: 'fake devin failure' } }); return; }
         const gate = process.env.FAKE_DEVIN_GATE_DIR && /\[gate:([\w-]+)\]/.exec(text)?.[1];
         if (text.includes('[slow]') && gate && !token.stubborn) {
           // 試験が受理・決着を観測するまで保持する。負荷で固定秒数を越えても先に終わらない。

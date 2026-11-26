@@ -4,7 +4,7 @@
  */
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_AGENT_IDS } from './agents.mjs';
+import { DEFAULT_AGENT_IDS, definePerAgentMap } from './agents.mjs';
 
 export const DOC_AGENT_IDS = Object.freeze([...DEFAULT_AGENT_IDS]);
 
@@ -87,7 +87,9 @@ function claudeMdBeside(file) {
   return ['CLAUDE.md', path.join('.claude', 'CLAUDE.md'), 'CLAUDE.local.md'].some((f) => fsSync.existsSync(path.join(dir, f)));
 }
 
-const NATIVE_READERS = {
+// エージェントごとの表は definePerAgentMap で作る（AGENTS に足したエージェントの分が無いと読み込みで落ちる）。
+// 表の外の id（試験用の fake など）が来たときの扱いは、使う側の関数が明示する
+const NATIVE_READERS = definePerAgentMap('NATIVE_READERS', {
   claude(kind, origin) {
     // Claude Code は作業場所の AGENTS.md を、同じフォルダーに CLAUDE.md・.claude/CLAUDE.md・CLAUDE.local.md が無いときだけ代わりに読む
     // （2.1.322 で 4 つの置き方を本物で確かめた。2026-11-15）。CLAUDE.md を claudeMdExcludes で外すと読み始めるので、止めるときは mayReadNatively で外す
@@ -131,16 +133,17 @@ const NATIVE_READERS = {
   grok(_kind, origin) {
     return origin.source === 'grok' || origin.source === 'common' || origin.source === 'claude';
   },
-};
+});
 
 /**
  * Whether `agent` natively loads `entryOrSummary` without Pleiad injection.
  * Passing `'__workspace__'` returns true for every agent since workspace summaries aggregate CLAUDE.md/AGENTS.md and .claude/skills/.agents/skills.
+ * An id outside DOC_AGENT_IDS (the test-only fake) reads nothing by itself.
  */
 export function isEntryNativeTo(agent, kind, entryOrSummary) {
   if (entryOrSummary === '__workspace__') return true;
+  if (!Object.hasOwn(NATIVE_READERS, agent)) return false;
   const check = NATIVE_READERS[agent];
-  if (!check) return false;
   // 「探す場所」に足したフォルダー（entry.root）はどのエージェントも自分では読まない（main の nativeInstructionEntries も roots: [] で探す）
   return entryOrigins(entryOrSummary).some((o) => !o.custom && check(kind, o));
 }
@@ -161,14 +164,15 @@ export function nativeReaders(kind, entryOrSummary) {
 
 /** Whether Pleiad can deliver external file instructions/skills to `agent`. */
 export function canRelayDocToAgent(agent) {
-  return DOC_AGENT_TRAITS[agent]?.relay ?? true;
+  // DOC_AGENT_IDS の外（試験用の fake）は Pleiad が渡せる。表の中は relay を必ず持つ
+  return Object.hasOwn(DOC_AGENT_TRAITS, agent) ? DOC_AGENT_TRAITS[agent].relay : true;
 }
 
 function scopeLockReason(origins) {
   return origins.some((o) => o.scope === 'user') ? 'own' : 'workspace';
 }
 
-const LOCK_CHECKS = {
+const LOCK_CHECKS = definePerAgentMap('LOCK_CHECKS', {
   claude: () => null,
   // Codex の全体の指示（~/.codex/AGENTS.md・AGENTS.override.md）は project_doc_max_bytes では止まらず、main も止めていない
   codex(kind, entryOrSummary) {
@@ -211,7 +215,7 @@ const LOCK_CHECKS = {
     if (matching.length) return { lockedOn: true, reason: scopeLockReason(matching) };
     return null;
   },
-};
+});
 
 /**
  * Lock descriptor for an external instruction/skill cell `(agent, kind, entryOrSummary)`.
@@ -220,11 +224,13 @@ const LOCK_CHECKS = {
  * `ctx.devinImportsStopped` is true when Devin's imports stop at the place because Pleiad supplies hooks to Devin.
  */
 export function docCellLock(agent, kind, entryOrSummary, ctx = null) {
-  return LOCK_CHECKS[agent]?.(kind, entryOrSummary, ctx) ?? null;
+  // DOC_AGENT_IDS の外（試験用の fake）に鍵は無い
+  if (!Object.hasOwn(LOCK_CHECKS, agent)) return null;
+  return LOCK_CHECKS[agent](kind, entryOrSummary, ctx) ?? null;
 }
 
 /** Whether Claude uses native `claudeMdExcludes` per-file suppression (always true) or per-name skills list. */
-export const DOC_AGENT_TRAITS = Object.freeze({
+export const DOC_AGENT_TRAITS = definePerAgentMap('DOC_AGENT_TRAITS', {
   claude: { perFileInstructionExclude: true, perNameSkillList: true, customInstructionPath: true, relay: true },
   codex: { perFileInstructionExclude: false, perNameSkillList: false, perPathSkillDisable: true, customInstructionPath: true, relay: true },
   antigravity: { perFileInstructionExclude: false, perNameSkillList: false, customAgentRequired: true, relay: true },
@@ -241,7 +247,8 @@ export const docStopsNative = (doc) => Boolean(doc && !doc.untouchedNative && (d
 
 /** Determine whether `ply_context` should expose `load_skill` / `instructions_for_path` for `agent`. */
 export function docToolRequirements(agent, docs, conditionalCount = 0, instructionsCount = 0) {
-  const traits = DOC_AGENT_TRAITS[agent] ?? {};
+  // DOC_AGENT_IDS の外（試験用の fake）は、エージェントごとの特別な扱いが無い
+  const traits = Object.hasOwn(DOC_AGENT_TRAITS, agent) ? DOC_AGENT_TRAITS[agent] : {};
   const needLoadSkill = Boolean(docs?.skill && (docs.skill.legacyPly || docs.skill.deliver.length > 0));
   const needInstructionsForPath = Boolean(
     docs?.instruction

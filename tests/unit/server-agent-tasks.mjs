@@ -11,8 +11,8 @@ export default async function(t) {
 
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake,antigravity',
     AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` }, dataDir: scratch });
-  // 親より強い子を委譲するときは、親の会話で1回だけ承認カードが出る。
-  // それを数えたうえで許可する（止まったままだと委譲が始まらない）。
+  // 親より強い子を委譲するときは、親の会話で1回だけ承認カードが出る（fake の auto は範囲を強制できないので、親が auto の委譲で出る。
+  // agy も ACP の承認モードを持つので、agy の子では出ない）。それを数えたうえで許可する（止まったままだと委譲が始まらない）。
   // 承認の中継を測る節では答えを保留する（hold）。それ以外は今までどおり即許可する
   const escalations = [];
   const held = new Map();
@@ -115,17 +115,23 @@ export default async function(t) {
     const agyChild = rows.find(r => r.backend === 'antigravity');
     t.ok('委譲先 antigravity で子会話を開始し結果を受け取る', agyChild.status === 'completed' && agyChild.result.includes('agy-test-task'));
     const allSessions = await c.cmd('listSessions');
-    t.ok('antigravity の子は yolo モードで開始する', allSessions.find(s => s.id === agyChild.sessionId)?.mode === 'yolo');
-    const asked = escalations.find(e => e.toolName === 'ply_delegate');
-    t.ok('親より強い委譲は親の会話で1回だけ聞き、何をどの強さで動かすか見せる',
-      escalations.length === 1 && String(asked?.title ?? '').includes('Antigravity') && String(asked?.title ?? '').includes('yolo'), asked?.title ?? '聞かれなかった');
-    // 親が auto（聞かずに進む）なら、子も既定の default ではなく auto で始まる
+    // agy も ACP の承認モードを持つので、親より強くはならない。子の承認モードは親の強さに収まり（親が default なら plan 等）、聞かれもしない
+    const parentMode = allSessions.find(s => s.id === sid)?.mode;
+    t.ok('antigravity の子は親より強くない承認モード（yolo ではない）で開始し、親の会話で聞かない',
+      Boolean(parentMode) && ['default', 'plan'].includes(allSessions.find(s => s.id === agyChild.sessionId)?.mode) && escalations.length === 0,
+      `${parentMode} / ${allSessions.find(s => s.id === agyChild.sessionId)?.mode} / 聞かれた ${escalations.length} 件`);
+    // 親が auto（聞かずに進む）なら、子も既定の default ではなく auto で始まる。
+    // fake の auto は範囲を強制できない（enforced: false）ので、確認なしを渡す委譲は親の会話で 1 回だけ聞く（core/modes.mjs の unenforced-never）
     await idle(sid);
+    const askedBefore = escalations.length;
     await c.runTurn({ sessionId: sid, mode: 'auto', prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:INHERITED' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'echo:INHERITED' && r.notification === 'sent'));
     const inherited = rows.find(r => r.task === 'echo:INHERITED');
     t.ok('子は親の承認モードの強さを継ぐ', inherited.mode === 'auto',
       `${inherited.mode} / ${(await c.cmd('listSessions')).find(s => s.id === inherited.sessionId)?.mode}`);
+    const asked = escalations.slice(askedBefore);
+    t.ok('親より強い委譲は親の会話で1回だけ聞き、何をどの強さで動かすか見せる',
+      asked.length === 1 && asked[0].toolName === 'ply_delegate' && /[（(]auto[）)]/.test(asked[0].title ?? ''), asked.map(e => `${e.toolName}: ${e.title}`).join(' / ') || '聞かれなかった');
 
     // ---- 使用枠（ply_usage）。読むだけのツールで、設定の画面（providerUsage）と同じキャッシュを通す
     const usageTurn = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_usage', {}) });

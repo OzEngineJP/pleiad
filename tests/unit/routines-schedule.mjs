@@ -435,7 +435,7 @@ export default async function (t) {
       t.ok(`dryRun: 走り終えるのを ${DRY_RUN_WAIT_MS / MIN} 分までしか待たず、過ぎたら state: working と「まだ走っています」で返す`, cappedOut.state === 'working' && cappedOut.summary.includes('走っています'), JSON.stringify(cappedOut));
       // 計画のモードを持たないバックエンド
       const agy = await w.service.create(base(w, { name: 'agy', botId: 'b_agy', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false } }), { kind: 'human' });
-      t.ok('計画のモードを持たないバックエンド（Antigravity は yolo だけ）の試しは INVALID（安全に試せない）', await w.service.run({ routineId: agy.id, dryRun: true }, { kind: 'human' }).then(() => null, (e) => e.code) === 'INVALID');
+      t.ok('計画のモードを持たないバックエンド（身代わりの agy は yolo だけ）の試しは INVALID（安全に試せない）', await w.service.run({ routineId: agy.id, dryRun: true }, { kind: 'human' }).then(() => null, (e) => e.code) === 'INVALID');
       w.service.stop();
     }
 

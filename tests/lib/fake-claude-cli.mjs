@@ -8,6 +8,7 @@
 // 発言の台本: "script:" + JSON { steps: [...] }。それ以外の発言は "echo: <発言>" と答える。手順:
 //   { text }                    本文を書いて内部ターンを終える（result）。台本の最後に置く
 //   { tool, input?, result?, ask?, ms?, gate? }   ツールを呼ぶ。ask は承認（can_use_tool）を待つ。ms・gate（AGENT_HOST_FAKE_GATE_DIR のファイル）はツールの実行の長さ
+//   { slow: true }              中断（interrupt）が来るまで何もせず待つ。{ fail: true } はこのターンの result を失敗（error_during_execution）にする
 //   { mcp: { server, tool, arguments } }          SDK の MCP（in-process の host など）のツールを mcp_message で呼ぶ
 //   { http: { server, tool, arguments } }         --mcp-config の HTTP の MCP（ply_context など）のツールを呼ぶ。tool は説明の頭（"[fixture / count]" など）で探す
 //   { compact: true, gate? }    圧縮: PreCompact のコールバック（gate までは答えを待つ形にする）→ compact_boundary → PostCompact
@@ -119,7 +120,7 @@ const waitGate = async name => { while (!interrupted && !fs.existsSync(path.join
 
 // ---- 走っている状態
 const queue = [];            // 発言・途中送信 { text, uuid }
-let busy = false, ended = false, interrupted = false;
+let busy = false, ended = false, interrupted = false, failed = false;
 const background = new Map();   // task_id -> { task_id, task_type, description }
 const outputs = new Map();      // task_id -> { at, everyMs, prefill, endedAt }。裏のコマンドの出力（get_task_output）。終わった後も残す
 /** 裏のコマンドの出力。everyMs ごとに 1 行増える（色の制御文字つき）。本物と同じく末尾 8 KiB と全体の大きさを返す */
@@ -204,7 +205,8 @@ async function runTool(step) {
 function result() {
   spent.costUSD += 0.001; spent.inputTokens += 100; spent.outputTokens += 20;
   const total = cumulative();
-  out({ type: 'result', subtype: interrupted ? 'error_during_execution' : 'success', is_error: interrupted, duration_ms: 10, num_turns: 1, result: lastText, session_id: sessionId,
+  const failedTurn = interrupted || failed;
+  out({ type: 'result', subtype: failedTurn ? 'error_during_execution' : 'success', is_error: failedTurn, ...(failed ? { errors: ['fake claude failure'] } : {}), duration_ms: 10, num_turns: 1, result: lastText, session_id: sessionId,
     total_cost_usd: total.totalCostUSD, modelUsage: total.modelUsage, usage: { input_tokens: 100, output_tokens: 20 }, uuid: uuid() });
   // SDK は session_state_changed を一度見たら、idle を見るまで入力の終わり（stdin を閉じる）を待つ
   out({ type: 'system', subtype: 'session_state_changed', state: 'idle', session_id: sessionId, uuid: uuid() });
@@ -212,7 +214,7 @@ function result() {
 
 /** 内部ターン 1 つ（発言 1 つと、その間に折り込んだ途中送信） */
 async function turn(item) {
-  busy = true; interrupted = false; folded = [];
+  busy = true; interrupted = false; failed = false; folded = [];
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: MODEL, cwd, tools: [], mcp_servers: [], claude_code_version: VERSION, uuid: uuid() });
   out({ type: 'user', message: { role: 'user', content: item.text }, session_id: sessionId, parent_tool_use_id: null, uuid: item.uuid, isReplay: true });
   record({ type: 'user', uuid: item.uuid, message: { role: 'user', content: item.text } });
@@ -247,6 +249,12 @@ async function turn(item) {
       await fireHook('PreCompact', { trigger: 'manual' }, { gate: step.gate ?? null });
       out({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 5000, post_tokens: 500 }, session_id: sessionId, uuid: uuid() });
       await fireHook('PostCompact', { trigger: 'manual', compact_summary: 'fake summary' });
+    } else if (step.slow) {
+      // 中断（interrupt）が来るまで続く（共通の契約の中断の試験。tests/unit/backend-common.mjs）
+      while (!interrupted) await sleep(30);
+    } else if (step.fail) {
+      // ターンの失敗（result が error_during_execution の is_error。上限・認証・モデルの印は付けない）
+      failed = true;
     } else if (step.text != null) {
       await say(folded.length ? `${step.text}（受け取った: ${folded.join(' / ')}）` : step.text);
     } else if (step.tool || step.mcp || step.http) {

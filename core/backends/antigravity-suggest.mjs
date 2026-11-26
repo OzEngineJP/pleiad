@@ -48,7 +48,7 @@ export function suggestModel(models) {
   return ids.find((id) => /flash/i.test(id) && /-low$/i.test(id)) ?? ids.find((id) => /flash/i.test(id)) ?? null;
 }
 
-/** agy に渡す引数（本体の会話と同じ stream-json の形。antigravity-cli.mjs の args） */
+/** agy に渡す引数（旧 stream-json の形。本体は ACP に移った） */
 export function suggestArgs(model) {
   return ["--print=", "--input-format", "stream-json", "--output-format", "stream-json",
     "--print-timeout", `${Math.round(AGY_SUGGEST_TIMEOUT_MS / 1000)}s`, ...(model ? ["--model", model] : [])];
