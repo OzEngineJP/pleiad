@@ -126,6 +126,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   const addInbox = inbox.add;
   inbox.add = args => bots.withActivity ? bots.withActivity(args.botId, () => addInbox(args)) : addInbox(args);
   const active = new Map();        // sessionId → ターンの記録（begin から onTurnEnd まで）
+  const updateDeferred = new Set(); // 更新のリースで開始を見送った会話
   const starting = new Map();      // sessionId → 自分が始めたターンのうち、まだ turnExtras に届いていないもの
   const liveSteers = new Map();    // 途中送信の item id → 「渡った」合図を待っているもの
   const pumps = new Map();         // sessionId → 配る処理の直列化
@@ -769,21 +770,27 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     retries.set(sessionId, timer);
   }
 
+  function deferForUpdate(sessionId) {
+    updateDeferred.add(sessionId);
+    retryLater(sessionId);
+  }
+
   async function pumpOnce(sessionId) {
     if (closed) return;
     const pending = await inbox.list({ sessionId, status: 'pending' });
-    if (!pending.length) return;
+    if (!pending.length) { updateDeferred.delete(sessionId); return; }
     // 止めたスレッドの出来事は捨てる
     const live = [];
     const dropped = [];
     for (const item of pending) (await threadStopped(item.channelId, item.threadId) ? dropped : live).push(item);
     if (dropped.length) await inbox.remove(dropped.map((i) => i.id));
     // 起こさないリアクション（reaction.quiet）だけなら配らない。次に起きたときに一緒に渡す
-    if (!live.some((i) => !i.reaction?.quiet)) return;
+    if (!live.some((i) => !i.reaction?.quiet)) { updateDeferred.delete(sessionId); return; }
+    if (host.updating?.()) { deferForUpdate(sessionId); return; }
     const turn = rt()?.turns?.get(sessionId);
     // 自分の心拍から起きた出来事（inner）は途中送信しない。走っているターンが終わってから、新しいターンで渡す（ADR 0126）
     if (turn || starting.has(sessionId)) { const steerable = live.filter((i) => !i.inner); return steerable.length ? steerAll(sessionId, steerable, turn) : undefined; }
-    if (await host.noticeBlocked?.(sessionId)) { retryLater(sessionId); return; }
+    if (await host.noticeBlocked?.(sessionId)) { updateDeferred.delete(sessionId); retryLater(sessionId); return; }
     return startTurn(sessionId, live);
   }
 
@@ -848,19 +855,31 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   async function startTurn(sessionId, items) {
     const sb = await sidecarOf(sessionId);
     const channel = sb ? await channels.get({ channelId: items[0].channelId }).catch(() => null) : null;
-    if (!channel || channel.archivedAt) { await inbox.remove(items.map((i) => i.id)); return; }   // アーカイブされたチャンネルには、ターンの投稿も作れない
+    if (!channel || channel.archivedAt) {
+      updateDeferred.delete(sessionId);
+      await inbox.remove(items.map((i) => i.id));   // アーカイブされたチャンネルには、ターンの投稿も作れない
+      return;
+    }
     const threadId = items[0].threadId;
     const lng = await lngOf(sessionId);
     const built = await buildPrompt({ sessionId, sb, channel, threadId, items, lng });
     const ids = items.map((i) => i.id);
-    if (!built.triggers.length && !built.inner && !built.reactions) { await inbox.remove(ids); return; }
-    await inbox.mark(ids, 'delivering');
-    starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, callers: callersOf(items) });
-    refreshThread(channel.id, threadId);
-    const key = threadKeyOf(channel.id, threadId);
-    // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
-    Promise.resolve(host.runTurn({ sessionId, prompt: built.prompt }, () => {}, { internal: true, canStart: () => !(key && stoppedKeys.has(key)) }))
-      .then((result) => notStarted(sessionId, ids, result), (err) => notStarted(sessionId, ids, 'error', err));
+    if (!built.triggers.length && !built.inner && !built.reactions) { updateDeferred.delete(sessionId); await inbox.remove(ids); return; }
+    // 配達中の印を保存してから、サーバーがターンを確保するまで更新のリースを取らせない
+    const release = host.reserveBotStart ? host.reserveBotStart() : () => {};
+    if (!release) { deferForUpdate(sessionId); return; }
+    try {
+      await inbox.mark(ids, 'delivering');
+      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, callers: callersOf(items) });
+      refreshThread(channel.id, threadId);
+      const key = threadKeyOf(channel.id, threadId);
+      // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
+      Promise.resolve(host.runTurn({ sessionId, prompt: built.prompt }, () => {}, { internal: true, canStart: () => !(key && stoppedKeys.has(key)) }))
+        .then((result) => notStarted(sessionId, ids, result), (err) => notStarted(sessionId, ids, 'error', err));
+    } catch (e) {
+      updateDeferred.delete(sessionId);
+      throw e;
+    } finally { release(); }
   }
 
   /** runTurn が返った。ターンが始まらなかった（相手が忙しい・止めた・失敗）ものを片付ける */
@@ -875,6 +894,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       return;
     }
     starting.delete(sessionId);
+    updateDeferred.delete(sessionId);
     try {
       if (result === 'requeue') { await inbox.mark(ids, 'pending'); retryLater(sessionId); }
       else if (result === 'cancelled') await inbox.remove(ids);
@@ -978,6 +998,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       timer: null, lastFlush: 0, dirty: false, chain: Promise.resolve(),
     };
     active.set(sessionId, rec);
+    if (pre) updateDeferred.delete(sessionId);
     const key = threadKeyOf(channelId, rec.threadId);
     if (key) failedKeys.delete(key);
     // 止めたスレッドの、自分が始めたターンは始めない（canStart と turnExtras の間に止められたとき）
@@ -1063,7 +1084,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const page = channelId ? await channels.read({ channelId, ...(threadId ? { threadId } : {}), limit: 100 }).catch(() => ({ posts: [] })) : { posts: [] };
     const post = (page.posts ?? []).find(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id) ?? null;
     const rec = {
-      sessionId, botId: bot.id, kind: sb.kind, channelId, threadId, taint: sb.taint ?? undefined,
+      sessionId, botId: bot.id, kind: sb.kind, routineId: sb.routineId, channelId, threadId, taint: sb.taint ?? undefined,
       postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
       inner: null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
@@ -1086,6 +1107,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const recoverable = savedItems.filter(item => (botItemIds.has(item.id) || liveSteerIds.has(item.id)) && ['delivering', 'unknown'].includes(item.status));
     const initialItems = recoverable.filter(item => botItemIds.has(item.id));
     rec.itemIds = initialItems.map(item => item.id);
+    if (rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'sent');
     rec.callers = new Map([...(card?.botCallers ?? []), ...callersOf(associatedItems)].map(caller => [caller.botId, caller]));
     rec.inner = associatedItems.find(item => item.inner)?.inner ?? null;
     if (savedSteers.length) {
@@ -1461,6 +1483,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (resting.until(bot)) return { ok: false, reason: 'resting' };
     if (!sessionId || (await sidecarOf(sessionId))?.botId !== botId) return { ok: false, reason: 'nosession' };
     if (threadId && (stoppedKeys.has(threadKeyOf(channelId, threadId)) || (await threadStopped(channelId, threadId)))) return { ok: false, reason: 'stopped' };
+    if (host.updating?.()) return { ok: false, reason: 'updating' };
     await inbox.add({ sessionId, channelId, threadId, botId, postId: null, inner: { kind: 'wake', workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq: null, taint } });
     await pump(sessionId);
     return { ok: true, sessionId, channelId, threadId };
@@ -1599,7 +1622,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     for (const th of (await channels.threads.list?.()) ?? []) {
       if (th.state !== 'working' && th.state !== 'waiting') continue;
       await stale(th.channelId, th.threadId);
-      await channels.threads.update(th.channelId, th.threadId, { state: 'idle', live: {} }).catch(() => {});
+      await refreshThread(th.channelId, th.threadId);
     }
     for (const ch of (await channels.list().catch(() => [])).filter((c) => c.kind === 'dm')) await stale(ch.id, null);
   }
@@ -1608,7 +1631,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     closed = false;
     try {
       await inbox.load();
-      const { sessions } = await inbox.recover();
+      const keptIds = [
+        ...[...active.values()].flatMap(rec => rec.itemIds),
+        ...[...liveSteers.values()].flatMap(steer => steer.ids),
+      ];
+      const { sessions } = await inbox.recover(keptIds);
       await recoverStale();
       // サーバーが立ち上がりきってから配り直す
       const timer = setTimeout(() => { for (const id of sessions) pump(id); }, 0);
@@ -1621,6 +1648,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     for (const rec of active.values()) clearTimeout(rec.timer);
     for (const timer of retries.values()) clearTimeout(timer);
     retries.clear();
+    updateDeferred.clear();
     followers.clear();
     resting.stop();
   }
@@ -1635,6 +1663,17 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (rows.length) await inbox.remove(rows.map(x => x.id));
     },
     channels, bots, memory, host, emit, now, inbox,
+    isUpdateDeferred: (sessionId) => updateDeferred.has(sessionId),
+    initialDeliveredFor: (sessionId) => Boolean(active.get(sessionId)?.committed),
+    async routineSessionFor(routineId, threadId) {
+      const held = [...active.values()].find(rec => rec.kind === 'routine' && rec.routineId === routineId && rec.threadId === threadId);
+      if (held) return { sessionId: held.sessionId, channelId: held.channelId, started: true };
+      const pending = (await inbox.list({ status: 'pending' })).find(item => item.threadId === threadId && item.postId === threadId);
+      if (!pending) return null;
+      const sb = await sidecarOf(pending.sessionId);
+      if (sb?.kind !== 'routine' || sb.routineId !== routineId || sb.threadId !== threadId) return null;
+      return { sessionId: pending.sessionId, channelId: pending.channelId, started: false };
+    },
     start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,

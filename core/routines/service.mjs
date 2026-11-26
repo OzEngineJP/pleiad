@@ -257,19 +257,29 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
 
   // ------------------------------------------------------------ サービス
 
+  let recovery;
   const service = {
     dataDir, channels, bots, dispatch, host, emit, runner,
+
+    recover() {
+      return recovery ??= (async () => {
+        try { await store.load(); }
+        catch (e) { log('routines.json could not be loaded; routines are off until it is fixed:', errText(e)); return false; }
+        for (const r of store.list()) {
+          await runner.restoreRun(r).catch((e) => log('could not recover a run:', errText(e)));
+          await runner.settleLost(r).catch((e) => log('could not settle a run that was cut off:', errText(e)));
+        }
+        return true;
+      })();
+    },
 
     async start() {
       closed = false;
       runner.open();
-      try { await store.load(); }
-      catch (e) { log('routines.json could not be loaded; routines are off until it is fixed:', errText(e)); return; }
+      if (!await service.recover()) return;
       const missed = [];
-      for (const listed of store.list()) {
-        await runner.settleLost(listed).catch((e) => log('could not settle a run that was cut off:', errText(e)));
-        const r = store.get(listed.id);
-        if (!r || r.paused || !isTimed(r.trigger)) continue;
+      for (const r of store.list()) {
+        if (r.paused || !isTimed(r.trigger)) continue;
         const at = nextFireAt(r.trigger, baselineOf(r));
         if (at !== null && at <= clk.now()) missed.push(r.id);
       }

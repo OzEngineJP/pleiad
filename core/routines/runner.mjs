@@ -82,8 +82,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       prev.skipNoted = true;
       return skipped(routine, channel, { runId, reason: 'previousRunning', missed, note: source === 'webhook' ? '' : note }, { recordLast: false });
     }
-    const entry = { routineId: routine.id, runId, postId: null, channelId: routine.channelId, botId: routine.botId, sessionId: null, startedAt: clock.now(),
-      timeoutMin: routine.approvalTimeoutMin, timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null };
+    const entry = newEntry(routine, runId);
     running.set(routine.id, entry);     // 確保。以降の await の間に同じルーティンが重ならない
     try {
       const bot = await bots.get({ botId: routine.botId }).catch(() => null);
@@ -110,9 +109,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
         // dispatch の sessionFor は、ThreadState.sessions に登録済みの会話をそのまま使う（kind: 'routine' のまま）
         await channels.threads.update(channel.id, root.id, { sessions: { [bot.id]: made.sessionId } });
         await dispatch.wake({ botId: bot.id, channel, threadId: root.id, post: root });
-        if (!entry.ended) {
-          entry.startTimer = clock.setTimer(() => { entry.startTimer = null; started(entry).catch((e) => log('start check failed:', errText(e))); }, START_GRACE_MS);
-        }
+        if (!entry.ended) armStartCheck(entry);
       } catch (e) {
         log(`could not start ${routine.name}:`, errText(e));
         await systemPost(channel.id, root.id, agentT(locale(), 'channel.turn.failed', { error: errText(e) }));
@@ -125,10 +122,23 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     }
   }
 
+  function newEntry(routine, runId) {
+    return { routineId: routine.id, runId, postId: null, channelId: routine.channelId, sessionId: null,
+      timeoutMin: routine.approvalTimeoutMin, timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null };
+  }
+
+  function armStartCheck(entry) {
+    entry.startTimer = clock.setTimer(() => {
+      entry.startTimer = null;
+      started(entry).catch((e) => log('start check failed:', errText(e)));
+    }, START_GRACE_MS);
+  }
+
   /** bot を起こしたのにターンが走り始めなかった（始められなかった）なら、失敗で終える */
   async function started(entry) {
     if (entry.ended || closed) return;
     if (host.runtime?.turns?.has?.(entry.sessionId)) return;
+    if (dispatch.isUpdateDeferred?.(entry.sessionId)) { armStartCheck(entry); return; }
     log(`the turn of ${entry.routineId} did not start`);
     await finish(entry, 'failed');
   }
@@ -182,7 +192,10 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       return;
     }
     if (entry.timers.has(card.id)) return;
-    entry.timers.set(card.id, clock.setTimer(() => { entry.timers.delete(card.id); expire(entry).catch((e) => log('could not cancel an unanswered approval:', errText(e))); }, entry.timeoutMin * 60_000));
+    const askedAt = Date.parse(card.askedAt);
+    const elapsed = Number.isFinite(askedAt) ? Math.max(0, clock.now() - askedAt) : 0;
+    const remaining = Math.max(0, entry.timeoutMin * 60_000 - elapsed);
+    entry.timers.set(card.id, clock.setTimer(() => { entry.timers.delete(card.id); expire(entry).catch((e) => log('could not cancel an unanswered approval:', errText(e))); }, remaining));
   }
 
   /** 承認が期限までに無かった: スレッドに報告して、ターンを止める（理由 timeout） */
@@ -253,10 +266,23 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     await record(routine.id, { runId: last.runId, state: 'stopped' });
   }
 
+  async function restoreRun(routine) {
+    const last = routine.last;
+    if (last?.state !== 'working' || !last.postId || running.has(routine.id)) return;
+    const resumed = await dispatch.routineSessionFor?.(routine.id, last.postId);
+    if (!resumed) return;
+    const entry = Object.assign(newEntry(routine, last.runId), {
+      postId: last.postId, channelId: resumed.channelId, sessionId: resumed.sessionId,
+    });
+    running.set(routine.id, entry);
+    bySession.set(entry.sessionId, entry);
+    if (!resumed.started) armStartCheck(entry);
+  }
+
   return {
     run: (routine, options) => bots.withActivity ? bots.withActivity(routine.botId, () => run(routine, options)) : run(routine, options),
     dryRun: (routine, options) => bots.withActivity ? bots.withActivity(routine.botId, () => dryRun(routine, options)) : dryRun(routine, options),
-    onTurnEnd, onPermission, settleLost,
+    onTurnEnd, onPermission, restoreRun, settleLost,
     isRunning: (routineId) => running.has(routineId),
     open() { closed = false; },
     stop() {
