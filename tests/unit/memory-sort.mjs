@@ -195,9 +195,10 @@ export default async function (t) {
       if (nth === 2) return { text: JSON.stringify({ items: [{ id: batch[0].id, tier: 'always', reason: 'ok' }, { id: 'ghost', tier: 'always' }, { id: batch[0].id, tier: 'archive' }, { id: batch[1].id, tier: 'bogus' }] }), usage: null, callId: 'x2' };
       return { text: '{}', usage: null, callId: 'x3' };
     } });
-    const c0 = await add(c.memory, '一つ目の記憶');
-    const c1 = await add(c.memory, '二つ目の記憶');
-    const c2 = await add(c.memory, '三つ目の記憶');
+    // 時刻を分けて並びを決める（同じミリ秒だと乱数の id 順になり、batch[0] が c0 とは限らない）
+    const c0 = await add(c.memory, '一つ目の記憶', { at: 1000 });
+    const c1 = await add(c.memory, '二つ目の記憶', { at: 1001 });
+    const c2 = await add(c.memory, '三つ目の記憶', { at: 1002 });
     await c.learner.sortStart();
     await c.learner.sortIdle();
     const statusC = await c.learner.sortStatus();
