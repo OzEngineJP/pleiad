@@ -42,7 +42,7 @@ import crypto from 'node:crypto';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
-import { createBotStore, BotStoreError, nameProblem, iconProblem, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES } from './store.mjs';
+import { createBotStore, BotStoreError, nameProblem, iconProblem, colorProblem, colorValue, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES, BOT_COLOR_COUNT } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
 import { referencedSessions, shownTo } from './send-targets.mjs';
 import { looserThanDefault } from './approval.mjs';
@@ -164,6 +164,20 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
   const uniqueName = (name, exceptId = null) => {
     const hit = store.byName(name);
     if (hit && hit.id !== exceptId) throw new BotError('BOT_NAME_TAKEN', `the name is already used: ${name}`, { name });
+  };
+
+  /** 色を指定しない作成の色。新しい順の次へ進み、今いる bot と重ならないものを優先する（全部使っていれば順番どおり重ねる） */
+  const nextColor = () => {
+    const rows = store.list().filter((b) => !b.plain).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    if (!rows.length) return 1;
+    const last = colorValue(rows.at(-1).color) ?? ((rows.length - 1) % BOT_COLOR_COUNT) + 1;
+    const first = (last % BOT_COLOR_COUNT) + 1;
+    const used = new Set(rows.map((b) => colorValue(b.color)).filter(Boolean));
+    for (let step = 0; step < BOT_COLOR_COUNT; step++) {
+      const color = ((first - 1 + step) % BOT_COLOR_COUNT) + 1;
+      if (!used.has(color)) return color;
+    }
+    return first;
   };
 
   async function ensureDm({ botId }) {
@@ -295,7 +309,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       requireStore();
       const name = String(input?.name ?? '');
       const icon = input?.icon ?? DEFAULT_ICON, persona = input?.persona ?? '';
-      const problem = nameProblem(name) ?? iconProblem(icon) ?? personaProblem(persona);
+      const color = input?.color === undefined ? nextColor() : input.color;
+      const problem = nameProblem(name) ?? iconProblem(icon) ?? colorProblem(color) ?? personaProblem(persona);
       if (problem) throw invalid(problem);
       uniqueName(name);
       const backendId = input?.backend ?? host?.listBackends?.()[0]?.id ?? '';
@@ -308,7 +323,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const iconImage = input?.iconImage ? await makeIcon(input.iconImage, id) : '';
       let bot;
       try { bot = await store.put({
-        id, name, icon, iconImage, persona, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '',
+        id, name, icon, iconImage, persona, color, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '',
         mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
         dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
       });
@@ -338,6 +353,11 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         const problem = iconProblem(input.icon);
         if (problem) throw invalid(problem);
         next.icon = input.icon; row('icon', bot.icon, next.icon);
+      }
+      if (input.color !== undefined && input.color !== bot.color) {
+        const problem = colorProblem(input.color);
+        if (problem) throw invalid(problem);
+        next.color = input.color; row('color', String(bot.color ?? ''), String(next.color));
       }
       if (input.iconImage !== undefined && input.iconImage !== bot.iconImage) {
         if (input.iconImage !== null && (typeof input.iconImage !== 'string' || !path.isAbsolute(input.iconImage))) throw invalid('iconImage: absolute path or null required');
@@ -411,7 +431,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       return {
         bot, next, rows, reasons, loosens: reasons.length > 0, changed: rows.length > 0,
         // 受領証の元（承認のあとに読み直して、承認した変更と同じか確かめる）
-        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode, account: bot.account,
+        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, color: bot.color, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode, account: bot.account,
           folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets, pulse: bot.pulse },
       };
     },

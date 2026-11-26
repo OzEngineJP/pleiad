@@ -52,6 +52,9 @@
   --ink-danger:#b2303e;       /* 消す・元に戻せない操作の確定（削除…・消す）。--diff-del-ink と同じ赤を ink の族へ（ADR 0291） */
   --ink-qr:#0f1330;           /* ペアリングの QR の点。明暗テーマによらず濃い（白い地の上で読ませる） */
 
+  /* -- bot の顔の色（--bc1〜--bc8）。用途は bot の顔と @ の塊だけ。作った順に 1 から割り当て、9 体目から循環する（承認済み 2026-11-26、ADR 0359） -- */
+  --bc1:#3a6fd8;--bc2:#e07a2e;--bc3:#2f9a6a;--bc4:#d0559a;--bc5:#8a55d0;--bc6:#c99a12;--bc7:#1f9aa8;--bc8:#d64550;
+
   /* -- 線（line）。会話の筋・枝・フォーカスの輪・光の走り。枠を引くためのものではない -- */
   --line:#c9cee0;             /* 会話の筋・脇の枝 */
   --line-strong:#9eabde;      /* 分岐点の曲線・リンクの下線 */
@@ -145,6 +148,7 @@
     --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
     --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
     --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
+    --bc1:#6f9bf0;--bc2:#f0a060;--bc3:#5cc495;--bc4:#ec8cc0;--bc5:#b08cf0;--bc6:#e8c04a;--bc7:#52c4d0;--bc8:#f07c84;
     --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
     --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
     --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
@@ -166,6 +170,7 @@
   --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
   --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--on-fill:#f4f5ff;
   --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
+  --bc1:#6f9bf0;--bc2:#f0a060;--bc3:#5cc495;--bc4:#ec8cc0;--bc5:#b08cf0;--bc6:#e8c04a;--bc7:#52c4d0;--bc8:#f07c84;
   --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
   --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
   --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;

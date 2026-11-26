@@ -70,7 +70,8 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   updatedAt: number }} ThreadState */
 
 /** @typedef {{
- *   id: string, name: string, icon: string,               // icon は絵文字 1 つ
+ *   id: string, name: string, icon: string,               // icon は絵文字 1 つ（前の版の保存値。画面は読まない）
+ *   color?: number|null,                                  // 顔の色（1〜8。画面のアイコンはこの色だけ。ADR 0359）
  *   persona: string,                                      // 人格（自由文。1.5k トークンまで）
  *   iconImage?: string,                                   // 画像アイコンの写し（uploads/bot-icons/ の WebP）。空なら icon の絵文字を使う
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
