@@ -4004,7 +4004,7 @@ let openConnAgent = '';
 /** 「接続先の種類」（［＋ 接続先を追加］の次）を開いているエージェント（'' は閉じ） */
 let connAddOpen = '';
 
-/** 接続先の一覧の中の 1 節（管理の面が入る枠。見出しは置かない。ADR 0357） */
+/** 接続先の一覧の中の 1 節（管理の面が入る枠。見出しは置かない。ADR 0359） */
 function connSection(which) {
   const sec = el('section', 'conn-sec');
   sec.dataset.sec = which;
@@ -4013,7 +4013,7 @@ function connSection(which) {
 }
 
 /**
- * 新しい会話の既定の接続先（設定のカードの「· 新しい会話の既定」は 1 か所だけ。ADR 0357）。
+ * 新しい会話の既定の接続先（設定のカードの「· 新しい会話の既定」は 1 か所だけ。ADR 0359）。
  * 互換の既定があればそれ。無ければ既定のアカウント（無い・消えたなら CLI のログイン）。保存の形は今のまま（既定の接続先・既定のアカウント）
  */
 function connDefaultOf(bid) {
@@ -4071,7 +4071,7 @@ function connCounts(b, st) {
   return { n: 1 + accts.length + eps.length, fix };
 }
 
-/** CLI のログインの接続先のカード（一覧の先頭。［ログインする］［既定にする］［ログアウト］。ログイン中のメールは状態の行。ADR 0357） */
+/** CLI のログインの接続先のカード（一覧の先頭。［ログインする］［既定にする］［ログアウト］。ログイン中のメールは状態の行。ADR 0359） */
 function cliLoginCard(b, st) {
   const remote = Boolean(window.plyRemote);
   const isDef = connIsDefault(b.id, 'cli');
@@ -4148,7 +4148,7 @@ function connAddArea(b) {
   return box;
 }
 
-/** 接続先の一覧の面（灰色の面 1 枚: CLI のログイン → 登録したアカウント → 互換の接続先 →［＋ 接続先を追加］。ADR 0357） */
+/** 接続先の一覧の面（灰色の面 1 枚: CLI のログイン → 登録したアカウント → 互換の接続先 →［＋ 接続先を追加］。ADR 0359） */
 function connPanel(b, st, { accounts, endpoints }) {
   const p = el('div', 'mp-panel conn-panel');
   // 環境変数の API キーは、どの接続先を選んでもそちらが使われる（事故になるので、そのときだけ 1 行）
@@ -4349,7 +4349,7 @@ function renderAuth() {
     // 行は初回の案内・会話の中の一覧と同じ部品（web/agent-row.mjs）。ここだけが持つ操作（ログアウト・状態を確認・接続）は行の右の列へ足す
     const rowEl = agentRows.build(rowAgent(b), { near: plan.near });
     const actions = rowEl.querySelector(".ar2-a");
-    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Antigravity・Devin の頭の行は今のまま（ADR 0357）
+    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Antigravity・Devin の頭の行は今のまま（ADR 0359）
     const accounts = b.capabilities?.accounts && st.installed !== false;
     const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
     const conns = Boolean(accounts || endpoints);
@@ -4909,7 +4909,7 @@ function paintSettingsNotice() {
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) item("effort", next.effort || t("chat.next.useDefault"));
     if (next.mode !== undefined) item("mode", state.modes[next.mode]?.label ?? next.mode);
     if (next.cwd) item("cwd", worktreeNextText(next.cwd) ?? next.cwd);
-    // 接続先は 1 項目（互換ならその名前、公式ならアカウントの名前。'' は CLI のログイン。ADR 0357）
+    // 接続先は 1 項目（互換ならその名前、公式ならアカウントの名前。'' は CLI のログイン。ADR 0359）
     const connChanged = next.endpoint !== undefined && next.endpoint !== (s.compatEndpoint ?? "")
       || !nextEndpoint && next.account !== undefined && next.account !== (s.claudeAccount ?? "");
     if (connChanged) item("endpoint", nextEndpoint ? endpointLabel(nextEndpoint) : accountLabel(next.account ?? s.claudeAccount ?? "", next.backend));
@@ -5109,7 +5109,7 @@ function accountLabel(id, bid = null) {
   return lists.flat().find((a) => a.id === id)?.name ?? t("chat.endpoint.deleted");
 }
 /**
- * 接続先の警告（入力欄の上の一文）は 1 つ。互換の接続先を選んでいればその警告、公式なら選んだアカウントの警告（ADR 0357）
+ * 接続先の警告（入力欄の上の一文）は 1 つ。互換の接続先を選んでいればその警告、公式なら選んだアカウントの警告（ADR 0359）
  */
 const connWarnings = { account: "", endpoint: "" };
 let connWarning = "";
@@ -5384,7 +5384,7 @@ const controls = chatComposer.useControls({
     endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); warmEfforts({ endpoint: v, model: "" }); },
     // Claude のアカウント。'' は CLI のログイン
     account: (v) => { state.account = v; controls.paint(); chooseSettings({ account: v }); warmEfforts({ account: v }); },
-    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。1 回の予約で両方を書く。ADR 0357）
+    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。1 回の予約で両方を書く。ADR 0359）
     conn: ({ endpoint = "", account = "" }) => {
       const moved = endpoint !== (state.endpoint ?? "");
       state.endpoint = endpoint; state.account = account;
@@ -9850,7 +9850,7 @@ function useGitText(text) {
 
 let topbarVersion = 0;
 /**
- * 右クリックメニューの「接続先（次のターン）」（入力欄と同じ並び: CLI のログイン → アカウント → 互換。ADR 0357）。
+ * 右クリックメニューの「接続先（次のターン）」（入力欄と同じ並び: CLI のログイン → アカウント → 互換。ADR 0359）。
  * 選べる先が CLI のログインだけで、それを選んでいれば出さない
  */
 async function rowConnItems(s) {

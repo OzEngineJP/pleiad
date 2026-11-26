@@ -19,7 +19,7 @@
 //                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
-//   setAccount({ botId, account, endpoint? }, author): Promise<Bot> … bot の接続先（'' = CLI のログイン。ADR 0224・0357）。human-only の操作から。
+//   setAccount({ botId, account, endpoint? }, author): Promise<Bot> … bot の接続先（'' = CLI のログイン。ADR 0224・0359）。human-only の操作から。
 //                                                   account は登録の無い id・使えないアカウントを断る（host.accountList）。endpoint は互換の接続先の id（'' = 公式。
 //                                                   渡さなければ今のまま）で、そのエージェントに登録の無い id・接続先を選べない backend は断る（host.endpointHas）。
 //                                                   接続先が変わるとモデルとエフォートは既定（''）に戻す（公式のモデル名を互換の先へ送らない）。既存の会話も揃える。

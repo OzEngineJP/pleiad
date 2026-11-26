@@ -2,7 +2,7 @@
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
 //   - web/channels/bot-page.mjs: 作成下書きの account 選択で語彙引き直し、作成時は setAccount → update(model/effort)、接続先の登録が変わったら（connChanged）S.vocab 破棄。
-//     互換の接続先（ADR 0357）: 下書きで選ぶと作成の後に setAccount({endpoint})、語彙は接続先の段（account は渡さない）、見出しとチップに接続先の名前、消えた・使えない接続先は一文で知らせる
+//     互換の接続先（ADR 0359）: 下書きで選ぶと作成の後に setAccount({endpoint})、語彙は接続先の段（account は渡さない）、見出しとチップに接続先の名前、消えた・使えない接続先は一文で知らせる
 //     作成の後の段（アカウント・モデルの設定）で落ちたら、できた bot のページへ移して理由を出す（bot は消さない。最初の段で落ちたときは作る画面に留まる）
 //   - web/channels/thread-composer.mjs: host.vocab / host.efforts へ account を渡し、invalidateVocab() で取り直す
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
@@ -436,7 +436,7 @@ export default async function (t) {
       t.ok('bot-page: 作れたあとの段（アカウント・モデル）で落ちたら、できた bot の画面へ移して知らせる（消さない）。最初の段で落ちたときは作る画面に留まる', true);
     }
 
-    // ---- 3b. bot-page.mjs: 互換の接続先（ADR 0357）
+    // ---- 3b. bot-page.mjs: 互換の接続先（ADR 0359）
     {
       const mount = () => {
         const body = el('div'); body.id = 'channelsBody';
@@ -631,7 +631,7 @@ export default async function (t) {
         tc.destroy();
       }
 
-      // 互換の接続先で動く bot（ADR 0357）: アカウントを渡さず接続先で段を引く。チップは接続先のモデル名、面の接続先の行は読むだけ（変えるのは bot のページ）
+      // 互換の接続先で動く bot（ADR 0359）: アカウントを渡さず接続先で段を引く。チップは接続先のモデル名、面の接続先の行は読むだけ（変えるのは bot のページ）
       const vocabEp = [], effortsEp = [];
       const epConn = connChoicesFake();
       const epHost = { ...compHost,

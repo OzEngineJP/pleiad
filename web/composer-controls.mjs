@@ -530,7 +530,7 @@ function skeleton(n, text) {
 }
 
 /**
- * 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先。ADR 0357）。d.accounts（アカウント）と d.endpoint（互換）を 1 つに並べる。
+ * 接続先の一覧（CLI のログイン → 登録したアカウント → 互換の接続先。ADR 0359）。d.accounts（アカウント）と d.endpoint（互換）を 1 つに並べる。
  * アカウントの節が無い面では、接続先の「公式」の行を CLI のログインとして先頭に置く。key は account:<id> / endpoint:<id>
  */
 function connOptions(d) {
@@ -634,7 +634,7 @@ function topView(ctx) {
     if (dest.openBot) out.push(plist([linkRow({ key: "destination:openBot", ic: botMark(bot), text: t("composer.destination.openBot"), onClick: () => { hide(false); dest.openBot(bot.id); } })]));
     return out;
   }
-  // 接続先（CLI のログイン・アカウント・互換を 1 行。選べる先が CLI のログインだけなら出さない。ADR 0357）。
+  // 接続先（CLI のログイン・アカウント・互換を 1 行。選べる先が CLI のログインだけなら出さない。ADR 0359）。
   // 週の使用量の棒は公式の枠（CLI のログイン・アカウント）の行だけ。接続先の行が無ければエージェントの行に出す
   const ep = d.endpoint;
   const conn = connShown(d);
@@ -647,7 +647,7 @@ function topView(ctx) {
     const cur = connOptions(d).find((o) => o.key === sel);
     rows.push(navRow({ key: "nav:conn", ic: glyph(PLUG), label: t("composer.endpoint.title"), value: cur?.label ?? "", title: cur?.title,
       note: cur?.warn ? cur.note : null, two: Boolean(cur?.warn), warn: Boolean(cur?.warn),
-      // connLocked: bot の接続先は bot のページで変える（スレッドの入力欄は読むだけ。ADR 0357）
+      // connLocked: bot の接続先は bot のページで変える（スレッドの入力欄は読むだけ。ADR 0359）
       meta: cur?.kind === "account" ? weekMeta(cur.usage) : null, onClick: d.connLocked ? null : () => go("conn") }));
   }
   // モデル
@@ -729,7 +729,7 @@ function subView(ctx) {
       return wrap(t("composer.agent"), [plist(usable, t("composer.agent")), rest, links.length ? plist(links) : null]);
     }
     case "conn": {
-      // 接続先（CLI のログイン → アカウント → 互換を 1 つの一覧。棒は公式の枠の行だけ。既定の札は新しい会話の既定の 1 か所。ADR 0357）
+      // 接続先（CLI のログイン → アカウント → 互換を 1 つの一覧。棒は公式の枠の行だけ。既定の札は新しい会話の既定の 1 か所。ADR 0359）
       const opts = connOptions(d);
       if (!opts.length) return null;
       const ep = d.endpoint, sel = connSelected(d), title = t("composer.endpoint.title");

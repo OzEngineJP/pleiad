@@ -90,7 +90,7 @@ export default async function test(t) {
       ui.authEvent({ backend: 'codex', accountId: 'A', loginId: current.args.attempt, phase: 'url', url: 'https://auth.example.invalid/current' });
       assert.ok(currentPopup.location.href.endsWith('/current'));
       current.resolve({ label: 'new identity' }); await tick();
-      // 済んだ流れは「ログインしました」の一言だけ。ログインした名前（メール）はカードの状態の行に出る（ADR 0357）
+      // 済んだ流れは「ログインしました」の一言だけ。ログインした名前（メール）はカードの状態の行に出る（ADR 0359）
       assert.ok($('aaFlowBody').textContent.includes(tr('conn.loggedInNote')));
       check('cancel and same-ID retry serialize; old results and missing/wrong nonce events cannot repaint or close the new popup');
     }

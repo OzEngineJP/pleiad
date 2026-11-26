@@ -6,7 +6,7 @@
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
 //   接続先 … モデルの面の「接続先」の行（入力欄と同じ 1 つの一覧: CLI のログイン → 登録したアカウント → 互換の接続先。週の使用量は公式の枠の行だけ）。
-//     bots.setAccount（人だけ。ADR 0224・0357）。そのエージェントが接続先を選べ（capabilities.accounts・compatEndpoints。
+//     bots.setAccount（人だけ。ADR 0224・0359）。そのエージェントが接続先を選べ（capabilities.accounts・compatEndpoints。
 //     Claude はトークン・Codex などは資格情報。ADR 0222）、登録があるか bot が選んでいるときだけ出す。「既定」の札は新しい会話の既定の印なので出さない
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の Bypass・Codex の Bypass・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
@@ -320,7 +320,7 @@ export function createBotPage(host) {
   const backends = () => host.state?.backends ?? [];
   const backendLabel = (id) => backends().find((b) => b.id === id)?.label ?? id;
 
-  // ---------------------------------------------------------------- bot の接続先（ADR 0224・0357）
+  // ---------------------------------------------------------------- bot の接続先（ADR 0224・0359）
   // 入力欄・子の会話のモーダルと同じ部品（web/composer-controls.mjs の「接続先」の行と一覧）。候補はホストの 1 つの取得口（host.conn）から読む
   const caps = (backend) => backends().find((b) => b.id === backend)?.capabilities ?? {};
   /** 接続先を選べるエージェントか（アカウントを使える・互換の接続先を持てる） */

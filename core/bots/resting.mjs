@@ -12,7 +12,7 @@
 //   アカウントを選んだ bot（ADR 0224）は、枠がアカウントごとなので key に `:${account}` を足す（アカウントを替えれば休憩から出る）。
 //   足すのは、そのアカウントで動くバックエンド（takesAccount(backendId)。capabilities.accounts）の bot だけ（アカウントを持てない backend の
 //   bot に account があっても使われないので、同じ枠の bot と一緒に休む）
-//   互換の接続先を選んだ bot（ADR 0357）は、公式の枠ではなく接続先の枠なので、key に `@${endpoint}` を足す（アカウントは使わない）
+//   互換の接続先を選んだ bot（ADR 0359）は、公式の枠ではなく接続先の枠なので、key に `@${endpoint}` を足す（アカウントは使わない）
 
 export const restKey = (bot, takesAccount = () => true) =>
   `${bot?.backend ?? ''}:${bot?.model ?? ''}${bot?.endpoint ? `@${bot.endpoint}` : bot?.account && takesAccount(bot.backend ?? '') ? `:${bot.account}` : ''}`;

@@ -130,7 +130,7 @@ export function createWorkControls(h) {
     endpoint: (childId, v) => choose(childId, { endpoint: v }, { endpoint: v, model: '', effort: '' }),
     // アカウント。'' は CLI のログイン
     account: (childId, v) => choose(childId, { account: v }, { account: v }),
-    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。ADR 0357）
+    // 接続先の一覧で CLI のログイン・アカウントを選んだ（互換を選んでいれば公式に戻す。ADR 0359）
     conn: (childId, { endpoint = '', account = '' }) => {
       const moved = endpoint !== (selection(childId).endpoint ?? '');
       choose(childId, { endpoint, account }, moved ? { endpoint, account, model: '', effort: '' } : { endpoint, account });

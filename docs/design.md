@@ -121,7 +121,7 @@
 
 ## 互換の接続先（2026-09-23。2026-11-26 に画面はアカウントと 1 つの「接続先」へ統合）
 
-procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みの案（[ADR 0011](adr/0011-compat-endpoints.md)）。2026-11-26 に、画面の「ログイン」「アカウント」「接続先」を 1 つの概念「接続先」にまとめた（[ADR 0357](adr/0357-connections-unify.md)）: 入力欄のモデルの面は「接続先」の 1 行に、CLI のログイン → 登録したアカウント → 互換の接続先を並べ、登録は設定 › エージェント設定の各エージェントのカードの［接続先］の 1 つの面（Claude Code・Codex・OpenCode・Grok が同じ部品・同じ順）で行う。内部の名前（API・保存・設定のキー・MCP の引数 `account` / `endpoint`・`ply_usage` の `login`）と、会話が持つ 2 つの欄（アカウントと互換の接続先）は変えない。画面の規則は design-system.md「入力欄の設定」「Claude のアカウント」「互換の接続先の管理」「設定 › エージェント設定」。
+procway-code への対応をやめる代わりに、Claude Code と Codex それぞれで互換 URL の接続先を登録し、会話ごとに選べるようにした。UX は承認済みの案（[ADR 0011](adr/0011-compat-endpoints.md)）。2026-11-26 に、画面の「ログイン」「アカウント」「接続先」を 1 つの概念「接続先」にまとめた（[ADR 0359](adr/0359-connections-unify.md)）: 入力欄のモデルの面は「接続先」の 1 行に、CLI のログイン → 登録したアカウント → 互換の接続先を並べ、登録は設定 › エージェント設定の各エージェントのカードの［接続先］の 1 つの面（Claude Code・Codex・OpenCode・Grok が同じ部品・同じ順）で行う。内部の名前（API・保存・設定のキー・MCP の引数 `account` / `endpoint`・`ply_usage` の `login`）と、会話が持つ 2 つの欄（アカウントと互換の接続先）は変えない。画面の規則は design-system.md「入力欄の設定」「Claude のアカウント」「互換の接続先の管理」「設定 › エージェント設定」。
 
 **形式はエージェントで固定。** Claude Code は Anthropic Messages 互換（CLI が `{URL}/v1/messages` に送る。URL に `/v1` は付けない）、Codex は OpenAI Responses 互換（`{URL}/responses`。codex-cli 0.153 は `wire_api = "chat"` を起動時エラーにするので、Chat Completions だけの先は使えない）。プリセットは Claude: OpenRouter / Z.ai / Kimi / DeepSeek / LiteLLM / Ollama / カスタム、Codex: OpenRouter / Azure OpenAI / Ollama / LM Studio / vLLM / LiteLLM / カスタム（`web/compat-presets.mjs`。Responses に対応していない先は Codex 側に出さない）。
 

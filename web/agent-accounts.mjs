@@ -48,7 +48,7 @@ export function composerAccount({ backend, session = null, draft = null, prefs =
   return prefs.backends?.[backend]?.account ?? (kind === 'token' ? prefs.claudeAccount : null) ?? '';
 }
 
-// isDefault(backend, id) / makeDefault(backend, id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0357）。
+// isDefault(backend, id) / makeDefault(backend, id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0359）。
 // onAddEnd: 追加の欄を閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す）。見出し・説明・［＋ 追加］は持たない（接続先の一覧の面が持つ）
 export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, onChange = () => {}, isDefault = () => false, makeDefault = null, onAddEnd = () => {} }) {
   const accountCmd = (operation, args) => cmd('invoke', { op: `accounts.${operation}`, args });

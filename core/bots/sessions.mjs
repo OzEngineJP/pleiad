@@ -12,7 +12,7 @@
 //   Codex・OpenCode（accounts: 'agent'）の送った会話は、ネイティブの会話がアカウントごとなので、claudeAccount を直に替えず次のターンの予約
 //   （host.reserveAccount。入力欄でアカウントを替えたのと同じ）にする。スレッドごとの上書きは無い
 //
-// 互換の接続先: bot の `endpoint`（'' = 公式。ADR 0357）を会話の記録の compatEndpoint に写す（capabilities.compatEndpoints を持つ backend の会話だけ）。
+// 互換の接続先: bot の `endpoint`（'' = 公式。ADR 0359）を会話の記録の compatEndpoint に写す（capabilities.compatEndpoints を持つ backend の会話だけ）。
 //   ターンの始め（server の prepareTurn）が compatEndpoint を引くので、会話・ルーティン・学習・委譲の子（親の接続先を継ぐ）は同じ接続先で走る。
 //   選んでいる間はアカウントを使わない（接続先のキーで送る）ので、アカウントの写しは触らない。消した・確認に失敗した接続先でも写し、ターンの始めで止める
 //   （黙って公式で走らせない）。モデル・エフォートは接続先の語彙で決める（モデルは形だけ・段は接続先の行）

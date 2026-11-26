@@ -138,7 +138,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     if (!base) throw new Error(`pulse backend unavailable: ${backendId}`);
     const cwd = os.homedir();
     const own = backendId === bot.backend;
-    // 互換の接続先を選んだ bot は、心拍も同じ接続先で動く（ADR 0357。アカウントは使わない）。引けない（消した・確認に失敗した等）ときは投げて止める（公式へ落とさない）
+    // 互換の接続先を選んだ bot は、心拍も同じ接続先で動く（ADR 0359。アカウントは使わない）。引けない（消した・確認に失敗した等）ときは投げて止める（公式へ落とさない）
     const endpointId = own && base.capabilities?.compatEndpoints ? bot.endpoint ?? '' : '';
     const endpoint = endpointId && typeof host.endpointResolve === 'function' ? await host.endpointResolve(endpointId, backendId) : null;
     if (endpointId && !endpoint) throw new Error(`pulse endpoint unavailable: ${endpointId}`);

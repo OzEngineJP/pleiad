@@ -8,7 +8,7 @@
 //                        agent が人格を変える（bot 自身の人格を含む。外から来た文に押された bot が人格を書き換える足場になる）のは riskOf で guarded。
 //                        名前・アイコン・人の人格の変更・モデル・エフォート・狭める向きは write
 //   bots.setMode         human-only。承認モード（Antigravity の bot は yolo だけ）。AI には存在しないのと同じに見える
-//   bots.setAccount      human-only。bot の接続先（アカウント・互換の接続先。ADR 0224・0357）。bots.update では変えられない。AI には存在しないのと同じに見える
+//   bots.setAccount      human-only。bot の接続先（アカウント・互換の接続先。ADR 0224・0359）。bots.update では変えられない。AI には存在しないのと同じに見える
 //   bots.delete          guarded（消す操作）。bot の会話は残り（Chats の一覧に戻る）、DM のチャンネルは archive
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
@@ -171,7 +171,7 @@ export const botOps = [
     }),
   }),
 
-  // どの接続先（＝誰の使用枠・請求）で動くかも人だけが決める（ADR 0082 のアカウント・ADR 0224・0357）。account '' = CLI のログイン。endpoint は互換の接続先（'' = 公式）。
+  // どの接続先（＝誰の使用枠・請求）で動くかも人だけが決める（ADR 0082 のアカウント・ADR 0224・0359）。account '' = CLI のログイン。endpoint は互換の接続先（'' = 公式）。
   // bot のエージェントに登録の無い id・使えない（トークン・資格情報の無い）アカウント・登録の無い接続先は INVALID。アカウントを持てない backend の bot は '' だけ
   defineOp({
     id: 'bots.setAccount',

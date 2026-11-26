@@ -264,7 +264,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     vocab = (await host.vocab?.(backend, cwd, account).catch(() => null)) ?? { models: {}, modes: {} };
     paintSettings();
   };
-  // 互換の接続先で動く bot（bots.setAccount の endpoint。ADR 0357）は、アカウントを使わない（サーバーは接続先を先に見る）。
+  // 互換の接続先で動く bot（bots.setAccount の endpoint。ADR 0359）は、アカウントを使わない（サーバーは接続先を先に見る）。
   // 接続先の行は、その bot の接続先だけの読むだけの行（変えるのは bot のページ）。モデルはその接続先のもの
   const acctOf = (s) => (s.endpoint ? '' : s.account ?? '');
   const endpointOf = (s) => {

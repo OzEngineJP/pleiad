@@ -31,7 +31,7 @@ const sel = {
 const KINDS = { lg: 'usage-login' };
 const MAX_NAME = 60;
 
-// isDefault(id) / makeDefault(id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0357）。
+// isDefault(id) / makeDefault(id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0359）。
 // onAddEnd: 追加のカードを閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す）
 export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {}, isDefault = () => false, makeDefault = null, onAddEnd = () => {} }) {
   const panel = document.createElement('section');
@@ -150,7 +150,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {}, is
     return `<div class="mp-fold${(dr ? open : true) && removing !== id ? ' open' : ''}" data-k="fold:${esc(key)}"><div class="mp-fold-in"><div class="mp-card mp-acct cc${open ? ' is-open' : ''}${edit ? ' is-edit' : ''}${want ? ' has-fix' : ''}" data-account="${esc(id)}">${head}${body}${conf}</div></div></div>`;
   }
 
-  // 見出し・説明・［＋ 追加］は持たない（接続先の一覧の面が持つ。web/client.mjs の connPanel。ADR 0357）
+  // 見出し・説明・［＋ 追加］は持たない（接続先の一覧の面が持つ。web/client.mjs の connPanel。ADR 0359）
   function html() {
     return `<div class="mp-list">${entries().map(cardHtml).join('')}</div>`
       + `<p class="mp-state" data-k="state" role="status">${esc(message)}</p>`;

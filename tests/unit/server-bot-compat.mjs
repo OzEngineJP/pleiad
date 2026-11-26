@@ -1,4 +1,4 @@
-// bot の互換の接続先（ADR 0357）をサーバー越しに確かめる。codex の身代わり（tests/lib/fake-codex.mjs）と偽の互換 API（tests/lib/fake-compat-api.mjs）だけと話す。LLM は呼ばない。
+// bot の互換の接続先（ADR 0359）をサーバー越しに確かめる。codex の身代わり（tests/lib/fake-codex.mjs）と偽の互換 API（tests/lib/fake-compat-api.mjs）だけと話す。LLM は呼ばない。
 //   bots.setAccount { endpoint }（登録の無い id・選べない backend は断る・モデルと強さは接続先の既定へ戻る）→
 //   bot の会話（DM）・ルーティン（本番・試し）・その会話からの委譲が、公式ではなく接続先の URL・鍵・モデルで走る →
 //   接続先を消したら、どれも黙って公式へ戻さず止まる → 公式へ戻せば公式で走る → Pleiad を立て直しても bot の接続先が残る。

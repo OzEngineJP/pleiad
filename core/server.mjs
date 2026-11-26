@@ -4962,7 +4962,7 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
       // bot の会話のアカウントは bot の定義（bots.setAccount。ADR 0224）。スレッドで作業場所を変えても Chats の既定に替えない
       if (!manual.account && account === undefined && !current.bot) account = scoped?.account ?? await defaultAccount(bid);
-      // bot の会話の接続先も bot の定義（bots.setAccount。ADR 0357）。アカウントと同じく、作業場所を変えても既定に替えない
+      // bot の会話の接続先も bot の定義（bots.setAccount。ADR 0359）。アカウントと同じく、作業場所を変えても既定に替えない
       if (!manual.endpoint && endpoint === undefined && !current.bot) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
       pendingWorktree = Boolean(!manual.worktree && remembered?.worktree && !worktreeHost.worktrees.lookup(requestedCwd));
     }
@@ -5039,7 +5039,7 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
       if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
       if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
-      // 接続先（アカウントも）の既定は設定のカードの［既定にする］だけで決まる。入力欄で選んだ接続先は覚えない（ADR 0357）
+      // 接続先（アカウントも）の既定は設定のカードの［既定にする］だけで決まる。入力欄で選んだ接続先は覚えない（ADR 0359）
     }
     emitGlobal({ type: "nextSettings", sessionId, nextSettings: next, worktreePending: Boolean(current.unsent && pendingWorktree) });
     return next;
@@ -8979,7 +8979,7 @@ botHost = createBotHost({
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
   // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
   accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
-  // bot の互換の接続先（bots.setAccount。ADR 0357）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
+  // bot の互換の接続先（bots.setAccount。ADR 0359）: そのエージェントに登録のある接続先だけ選ばせる。心拍の内部呼出しは resolve（引けなければ投げる）
   endpointHas: (backendId, id) => compatEndpoints.has(id, backendId),
   endpointRow: (id) => endpointRow(id),
   endpointResolve: (id, backendId) => compatEndpoints.resolve(id, backendId),
@@ -11469,7 +11469,7 @@ wss.on("connection", (ws, req) => {
           return await viaOp('compatEndpoints.recheck');
         case 'compatEndpointDelete':
           return await viaOp('compatEndpoints.delete', () => compatEndpoints.list());
-        // 設定の接続先の［既定にする］（新しい会話の既定は 1 つ。ADR 0357）。互換の接続先は id。CLI のログイン・登録したアカウントは
+        // 設定の接続先の［既定にする］（新しい会話の既定は 1 つ。ADR 0359）。互換の接続先は id。CLI のログイン・登録したアカウントは
         // account（'' = CLI のログイン）を付け、既定の接続先を公式に戻してから既定のアカウントを書く（データの形は今のまま）
         case 'compatEndpointDefault': {
           const agentId = String(msg.args?.agent ?? '');

@@ -8,7 +8,7 @@ Pleiad は各エージェントの CLI とログイン（またはサブスク�
 
 認証は Claude Code のログインをそのまま使う。`ANTHROPIC_API_KEY` が設定されているとそちら（従量課金）が優先されるので、サブスクリプションで動かすなら未設定にしておく。
 
-Claude のサブスクリプションを複数使い分けるなら、設定の「エージェント設定」→ Claude Code の［接続先］の［＋ 接続先を追加］で公式のアカウントを足して［ログインする］と（アカウントごとの専用の設定フォルダを使う。[ADR 0353](adr/0353-claude-single-login-remove-setup-token.md)）、会話ごとに入力欄（モデルの隣）の「接続先」で選べる（画面の「接続先」は CLI のログイン・登録したアカウント・互換の接続先の 1 つの一覧。[ADR 0357](adr/0357-connections-unify.md)）。選ばない会話は CLI のログインで動く（［既定にする］で新しい会話の既定を変えられる）。モデルの一覧もアカウントごとに引くので、承認された組織のアカウントにだけ出るモデル（Claude Mythos など）は、そのアカウントを選んだときだけ並ぶ（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）。
+Claude のサブスクリプションを複数使い分けるなら、設定の「エージェント設定」→ Claude Code の［接続先］の［＋ 接続先を追加］で公式のアカウントを足して［ログインする］と（アカウントごとの専用の設定フォルダを使う。[ADR 0353](adr/0353-claude-single-login-remove-setup-token.md)）、会話ごとに入力欄（モデルの隣）の「接続先」で選べる（画面の「接続先」は CLI のログイン・登録したアカウント・互換の接続先の 1 つの一覧。[ADR 0359](adr/0359-connections-unify.md)）。選ばない会話は CLI のログインで動く（［既定にする］で新しい会話の既定を変えられる）。モデルの一覧もアカウントごとに引くので、承認された組織のアカウントにだけ出るモデル（Claude Mythos など）は、そのアカウントを選んだときだけ並ぶ（[ADR 0329](adr/0329-claude-per-account-model-catalog.md)）。
 トークンはブラウザーでログイン中の claude.ai のアカウントで発行されるので、発行前にそのアカウントへ切り替えておく（使用量の表示の認可と別のアカウントのトークンなら、一覧に警告が出る）。
 
 ログイン（OAuth）の期限が切れても `claude auth status` はログイン済みを返す。会話のターンが 401 で失敗すると、Pleiad はその失敗の行に「ログインの有効期限が切れています」と［ログインし直す］を出し、設定の Claude の行の下にも ⚠ の 1 行を出す（見分けは SDK の `authentication_failed`・`api_error_status: 401` と、例外の文面。覚えるのはサーバーのメモリだけ。[ADR 0212](adr/0212-claude-auth-expired.md)）。設定の行の名前の下に、Pleiad が使う `claude` の実行ファイルのパスを出す（Claude のデスクトップアプリに入っている別の Claude Code と取り違えないため。版はパスの説明に出す）。
@@ -131,7 +131,7 @@ Devin でも Pleiad のシェルツールと入力欄の `!` が使える。両�
 
 ## 互換の接続先
 
-Claude Code と Codex は、CLI のログイン・登録したアカウントのほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して、同じ「接続先」の一覧から会話ごとに選べる（[ADR 0357](adr/0357-connections-unify.md)）。詳しくは [`design.md`](design.md) の「互換の接続先」。
+Claude Code と Codex は、CLI のログイン・登録したアカウントのほかに互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）を登録して、同じ「接続先」の一覧から会話ごとに選べる（[ADR 0359](adr/0359-connections-unify.md)）。詳しくは [`design.md`](design.md) の「互換の接続先」。
 
 ## 使うときの注意
 

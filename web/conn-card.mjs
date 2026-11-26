@@ -2,7 +2,7 @@
 // 3 つの持ち主（web/client.mjs・web/agent-accounts.mjs・web/compat-endpoints.mjs）が同じ形で描く。
 // Claude のアカウント（web/claude-accounts.mjs）は文字列の HTML で同じ形（.mp-card.mp-acct.cc）を描く。
 // 形: 名前（· 新しい会話の既定）と状態の 1 行 | 操作の組。組が横に収まらなければ、組ごと状態の行の下へ回る（web/manage-panel.css の .cc）。
-// docs/design-system.md「接続先の一覧」（承認済み 2026-11-26）・ADR 0357。
+// docs/design-system.md「接続先の一覧」（承認済み 2026-11-26）・ADR 0359。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 

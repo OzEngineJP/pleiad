@@ -412,7 +412,7 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 #claudeAccountsPanel [data-slot]{display:flow-root;box-sizing:border-box;min-width:0;padding:4px;margin:-4px}
 #claudeAccountsPanel [data-slot][tabindex="-1"],.mp-body[tabindex="-1"]{outline:none}
 .mp-list{margin-top:10px}
-/* 接続先の一覧（ADR 0357）: エージェントのカード（白）の中の 1 枚の灰色の面に、CLI のログイン → アカウント → 互換の接続先の白いカードを並べる。
+/* 接続先の一覧（ADR 0359）: エージェントのカード（白）の中の 1 枚の灰色の面に、CLI のログイン → アカウント → 互換の接続先の白いカードを並べる。
    狭い幅では、エージェントのカードの余白へ 6px ずつ広げる */
 .conn-panel{padding:2px 14px 14px;background:var(--surface-1);border-radius:var(--r-l)}
 @media (max-width:700px){.conn-panel{margin-inline:-6px;padding:2px 6px 8px}}
