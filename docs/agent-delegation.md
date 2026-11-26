@@ -235,7 +235,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 収まるモードが無い、あるいは範囲を機械的に強制できないエンジンに「誰にも聞かない」を渡すことになる場合は、
 **委譲した瞬間に1回だけ親の会話で承認を求める**。承認カードには、どのバックエンドをどのモードで動かすことになるかを表示する。
 拒否すると委譲は失敗する。コマンドのたびに聞かれるのとは負担が違うので、1回に畳んでいる。
-Antigravity は、旧い口（stream-json）では対話承認を持たず常に全部自動（`yolo`）だったので、親が無制限でない限りこの確認が出た。2026-11 に ACP へ替えて `default`・`accept-edits`・`auto`・`plan` を持った（[ADR 0362](adr/0362-antigravity-on-acp.md)）ので、親の範囲に収まるモードがあればこの確認は出ない（範囲は宣言で、`enforced: false`）。新しい会話の既定は今も `yolo`。
+Antigravity は、旧い口（stream-json）では対話承認を持たず常に全部自動（`yolo`）だったので、親が無制限でない限りこの確認が出た。2026-11 に ACP へ替えて `default`・`accept-edits`・`auto`・`plan` を持った（[ADR 0363](adr/0363-antigravity-on-acp.md)）ので、親の範囲に収まるモードがあればこの確認は出ない（範囲は宣言で、`enforced: false`）。新しい会話の既定は今も `yolo`。
 Codex の親は `full` / `yolo` 以外では必ず確認する。Codex は MCP のツール呼び出しを自前の承認に通さず、これが無いと委譲が起きたことに気づけないため。
 
 親の自動許可・承認済み操作そのものは引き継がない。実行中の承認は子の会話で通常の Pleiad カードとして表示する。
@@ -410,7 +410,7 @@ Codex の履歴（`thread/read`）は、ツールの後に書いた本文を同�
 ### Antigravity の途中送信
 
 Antigravity は、旧い口（agy 1.4.4 の `--output-format stream-json`）では走っているターンへ入力を足せなかった。標準入力の 2 行目は今のターンが終わった後の別のターンになり、途中の割り込みの口も無かった（実測 2026-10-21）。
-2026-11 に ACP（`agy acp`）へ替えて、走っているターンへ `session/prompt` を重ねる途中送信を持った（`core/backends/acp-steer.mjs`。能力の印 `steer` を true にし、`control.steer`・`control.steerConfirms` を持たせる。[ADR 0362](adr/0362-antigravity-on-acp.md)）。
+2026-11 に ACP（`agy acp`）へ替えて、走っているターンへ `session/prompt` を重ねる途中送信を持った（`core/backends/acp-steer.mjs`。能力の印 `steer` を true にし、`control.steer`・`control.steerConfirms` を持たせる。[ADR 0363](adr/0363-antigravity-on-acp.md)）。
 受理は書き込みが断られなかったことで、「渡った」の合図は `session/prompt` の決着で出す。agy が重ねた入力を今のターンへ折り込むのか、待ち行列に積んで次のターンとして走らせるのかは、実物の agy ではまだ測っていない（身代わり `tests/lib/fake-agy.mjs` の ACP モードでは段取りを確かめた）。
 いまは途中送信できないエージェントは無い。圧縮のターン・人の送信待ちなど、途中で渡せないときの扱い（`queued` で次のターンへ）は、ほかのエージェントと同じ。
 

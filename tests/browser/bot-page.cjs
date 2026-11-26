@@ -3,7 +3,7 @@
 // （AGENT_HOST_BACKENDS=fake,codex,antigravity AGENT_HOST_CODEX_BIN="node tests/lib/fake-codex.mjs" AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs"）。
 // bot のページと作成・記憶の一覧（web/channels/bot-page.mjs・memory-list.mjs。ADR 0109・0110）:
 //   作成（名前が空なら作らない・承認モードも選べる）・設定の変更（名前・アイコン・人格・モデル・エフォート・承認モード・フォルダー・他の会話に送る）、
-//   Antigravity（承認モードは 5 つ。ADR 0362）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
+//   Antigravity（承認モードは 5 つ。ADR 0363）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。
 //   作ると、その bot の DM が開いて入力欄に焦点がある（ADR 0358）。DM の見出しの名前から bot のページへ行ける。
 //   畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて、右に今の値だけを出し、長い説明文と「今週」は無い。
@@ -209,7 +209,7 @@ async page => {
   await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');
   check(true, '別の経路で書いた記憶が一覧に現れる（memoryChanged）');
 
-  // ---- Antigravity: 承認モードは 5 つ（ACP。ADR 0362）。「1 つだけ」の 1 行は出ない。全部自動（yolo）ではフォルダーは「すべてのフォルダー」
+  // ---- Antigravity: 承認モードは 5 つ（ACP。ADR 0363）。「1 つだけ」の 1 行は出ない。全部自動（yolo）ではフォルダーは「すべてのフォルダー」
   await botPage('new');
   await page.locator('#botName').fill('Kit');
   await pickChip('#botModelChip', 'backend:antigravity');

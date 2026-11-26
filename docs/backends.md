@@ -38,7 +38,7 @@ Google のサブスクリプション枠（AI Pro / Ultra）を使える唯一�
 
 **ログインは端末で行う。** `agy` は認可コードを端末からしか読まないため、Pleiad からは回せない（公式も「Authenticate once with an interactive `agy` session first」としている）。「ログイン」を押すと端末で実行するコマンドが出るので、それを実行して Google にログインする。済むと Pleiad が気づいて表示が切り替わる。資格情報は OS の資格情報ストアに入るため、ログアウトも `agy` 側で行う。
 
-`agy` は ACP（`agy acp`。1.5.15 以上。[ADR 0362](adr/0362-antigravity-on-acp.md)）で動かす。ツールの確認は Pleiad の承認カードで答え、選べる承認モードは「都度確認」「編集は自動」「自動判断」「計画のみ」「全部自動」の 5 つ。新しい会話の既定は今までどおり「全部自動」（`--dangerously-skip-permissions` の起動の旗。全部自動とそれ以外の行き来だけは agy を起こし直す）。組織の管理者が確認を求める設定のときは、旗を付けても確認の要るツールが拒否されるので、その旨を会話に知らせる。本文とツールは逐次流れ、走っているターンへの途中送信も使える。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
+`agy` は ACP（`agy acp`。1.5.15 以上。[ADR 0363](adr/0363-antigravity-on-acp.md)）で動かす。ツールの確認は Pleiad の承認カードで答え、選べる承認モードは「都度確認」「編集は自動」「自動判断」「計画のみ」「全部自動」の 5 つ。新しい会話の既定は今までどおり「全部自動」（`--dangerously-skip-permissions` の起動の旗。全部自動とそれ以外の行き来だけは agy を起こし直す）。組織の管理者が確認を求める設定のときは、旗を付けても確認の要るツールが拒否されるので、その旨を会話に知らせる。本文とツールは逐次流れ、走っているターンへの途中送信も使える。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
 
 Antigravity 1.4.2 の複数アカウント切替は未対応。CLI とアプリが OS の認証を共有するため、Pleiad だけで認証を安全に分離できない。別のアカウントを同時に使う場合は、別の OS ユーザーや仮想マシンで環境を分ける（[認証の公式説明](https://www.antigravity.google/docs/install?tab=cli)、[ADR 0222](adr/0222-agent-accounts-and-provider-quota.md)）。
 

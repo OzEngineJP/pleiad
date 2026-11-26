@@ -9,7 +9,7 @@
 //    （impossible・todo にできない。対応を終えたバックエンドの RETIRED だけ許す。capabilityProblem が落とす）。
 //    impossible は cause（upstream / design / retired）を持つ。手段があるのに確かめていない・未実装のものは todo('#Issue') に書く。
 //    印を足すときは、ここに 1 行足し、全バックエンドに状態を書く（agent-marks.mjs）。
-//    印の説明は CAPABILITY_DOCS の 1 か所だけに書く（開発者向けの一覧の写しは持たない。ADR 0361）。
+//    印の説明は CAPABILITY_DOCS の 1 か所だけに書く（開発者向けの一覧の写しは持たない。ADR 0362）。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
 // 2. 性質（TRAITS）: 機能ではなく、そのエージェントの特徴。全エージェントにそろえる対象ではない。
 //    true / false だけで書き、covered・impossible・todo は持たない（「持っていない」は未対応ではなく、そのエージェントの性質）。
@@ -175,7 +175,7 @@ export const NO_TRAITS = Object.freeze(Object.fromEntries(TRAIT_KEYS.map((key) =
  * 印の説明（公開文書 site/docs が使う利用者向けの文。ja・en）。
  * label は短い名前、summary はできることの説明、unavailable はできないときの理由、values は値ごとの補足。
  * covered は Pleiad が補える印（CAPABILITIES の covered: true）だけが持つ、補い方の説明（持たないと backend-contract が落とす）。
- * 印の説明はここだけに書く（旧 tests/lib/backend-matrix.mjs の ABOUT はここへ寄せた。ADR 0361）。
+ * 印の説明はここだけに書く（旧 tests/lib/backend-matrix.mjs の ABOUT はここへ寄せた。ADR 0362）。
  */
 export const CAPABILITY_DOCS = {
   title: { label: { ja: 'タイトル', en: 'Title' }, summary: { ja: '会話に名前を付けて、一覧や見出しに表示します。', en: 'Name a conversation and show it in the list and header.' }, unavailable: { ja: 'このエージェントではタイトルを保存できません。', en: 'This agent cannot store conversation titles.' }, covered: { ja: 'Pleiad の控えに題名を保存します。', en: 'Pleiad stores the title on its side.' } }, // i18n-ignore: 公開文書（site/docs）の生成に使う利用者向けの文。アプリの辞書の外

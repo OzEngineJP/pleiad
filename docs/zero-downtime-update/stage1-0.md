@@ -1,6 +1,6 @@
 # 無停止の更新 段階 1 の 1-0（頭の確認）: 公式 Node・Job・内蔵ブラウザーの再接続・インストーラーの内訳・サーバーの子
 
-> **2026-11-26 追記（[ADR 0362](../adr/0362-antigravity-on-acp.md)）**: 表の agy の行（`antigravity-cli.mjs`・`antigravity-pids.mjs`）は旧い口のもの。今の agy は ACP（`agy acp`）で、保持役の子は `core/backends/acp-held.mjs`、起動時の孤児の掃除は廃止した。
+> **2026-11-26 追記（[ADR 0363](../adr/0363-antigravity-on-acp.md)）**: 表の agy の行（`antigravity-cli.mjs`・`antigravity-pids.mjs`）は旧い口のもの。今の agy は ACP（`agy acp`）で、保持役の子は `core/backends/acp-held.mjs`、起動時の孤児の掃除は廃止した。
 
 > ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
 

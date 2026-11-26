@@ -23,6 +23,8 @@ export const CLAUDE_ROLES = [
   { key: 'sonnet', label: t('compat.role.sonnet'), short: t('compat.role.sonnet') },
   { key: 'haiku', label: t('compat.role.haikuLabel'), short: t('compat.role.haiku') },
 ];
+/** エージェントごとの役割の一覧（Claude だけが複数持つ。画面は id を書かずにここから引く） */
+export const ROLES_BY_AGENT = { claude: CLAUDE_ROLES };
 export const ROLE_KEYS = { claude: CLAUDE_ROLES.map(r => r.key), codex: ['main'], grok: ['main'] };
 
 /** 認証の送り方。auto は確認のときに Bearer と x-api-key の両方で試して決める（Claude だけ） */

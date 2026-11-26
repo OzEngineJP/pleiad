@@ -1,9 +1,9 @@
 # 0281 Antigravity CLI の不足能力を実装・判定する
 
-- 状態: 承認（2026-10-27）。**口の部分は [0362](0362-antigravity-on-acp.md) が置換**（一部置換）
+- 状態: 承認（2026-10-27）。**口の部分は [0363](0363-antigravity-on-acp.md) が置換**（一部置換）
 - 関連: [0054](0054-shell-input.md)（入力欄の `!`）、[0273](0273-capability-states.md)（能力の印）、[0274](0274-capability-traits-and-public-marks.md)（能力と性質）、[0278](0278-capability-delivery-tests.md)（配達物の試験）、[#148](https://github.com/OzEngineJP/pleiad/issues/148)、[#151](https://github.com/OzEngineJP/pleiad/issues/151)
 
-> **2026-11-26 の追記（[0362](0362-antigravity-on-acp.md)）**: Antigravity の口が stream-json から ACP（`agy acp`）に替わった。
+> **2026-11-26 の追記（[0363](0363-antigravity-on-acp.md)）**: Antigravity の口が stream-json から ACP（`agy acp`）に替わった。
 > この ADR の決定のうち、**可視化の指示を各ターンの発言の前に付けること・入力欄の `!`（`shell: 'host'`）・`compatEndpoints`・`autoCompactWindow` の判定は有効**。
 > 置換されるのは口に依存した部分で、次のとおり読み替える。
 > - 「`stream-json` は子の `subagent_info`（`conversation_id`・`log_uri`）を出す」「`--print` / `--conversation` / `--model` を確認した」は、旧い口（1.4.7）の記述。今の口は ACP で、モデルは `session/set_config_option`、会話の再開は `session/resume`・`session/load`。

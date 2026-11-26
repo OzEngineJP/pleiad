@@ -1,6 +1,6 @@
 # 無停止の更新 段階 0 の実測: Codex と Antigravity（agy）の付け直し
 
-> **2026-11-26 追記（[ADR 0362](../adr/0362-antigravity-on-acp.md)）**: agy は ACP（`agy acp`）に替わり、`core/backends/antigravity-cli.mjs`・`antigravity-pids.mjs` は無くなった。`60-agy-basic.mjs`・`61-agy-swap.mjs` は ACP の呼び出しに直してある。この文書の agy の実測は旧い口（stream-json）のもの。
+> **2026-11-26 追記（[ADR 0363](../adr/0363-antigravity-on-acp.md)）**: agy は ACP（`agy acp`）に替わり、`core/backends/antigravity-cli.mjs`・`antigravity-pids.mjs` は無くなった。`60-agy-basic.mjs`・`61-agy-swap.mjs` は ACP の呼び出しに直してある。この文書の agy の実測は旧い口（stream-json）のもの。
 
 [issue #54](https://github.com/tekalu1/pleiad/issues/54) の段階 0 のうち、Codex（`codex app-server`）と Antigravity（`agy`）について、保持役が stdio を持ってサーバー（JSON-RPC の相手・stdin の書き手）が入れ替わる形で、走っているターンが続くかを動かして測った。
 
