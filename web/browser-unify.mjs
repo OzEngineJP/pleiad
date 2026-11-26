@@ -223,6 +223,8 @@ export function createBrowserUnify(deps = {}) {
   const rows = new Map(), holderStore = deps.holderStore ?? createTabHolderStore(); let active = null, enabled = false, pagePort = null, order = 0;
   const orders = new Map();
   const session = () => chrome()?.sessionId ?? state.current;
+  /** 欄が別の会話を映していれば、その会話に向けて開く（chrome-panel の open の target。閉じていれば開き、開いていれば映す会話だけ替える）。向いたら true */
+  const aim = sessionId => { if (sessionId && sessionId !== session()) chrome()?.open?.(null, { target:sessionId }); return sessionId === session(); };
   const pages = createPageTabs({ pageOpen:input => (deps.pageOpen ?? (args => cmd('pageOpen', args)))(input), origin:location.origin, changed:() => { if (enabled) paint(); },
     // 「触った」はページが送る活動だけでなく、映像側の持ち手も数える（Chrome の映像のタブを人が操作中なら、戻ったときの上書きも「触った」）
     touched:tab => holderOf(tab.sessionId, tab.chromeId ?? tab.targetId).holder === 'human',
@@ -881,23 +883,26 @@ export function createBrowserUnify(deps = {}) {
     /** 利用者のページタブを開く（ファイルのリンク・可視化） */
     async openTab(input) {
       const { sessionId, url, ...request } = input;
+      // 欄が映している会話と違う会話のタブ（チャンネルのスレッドの可視化は bot の会話に作る）は、欄をその会話に向けて開いてから選ぶ（openEntry と同じ）
+      const view = sessionId === session() ? {} : { target:sessionId };
       let tab;
       if (request.kind || request.path || request.vizHash) {
         tab = await pages.open({ sessionId, ...request, kind:request.kind === 'directory' ? 'dir' : request.kind ?? 'file' });
-        if (sessionId === session()) await pick(tab);
-      } else tab = await openInput(url, sessionId);
+        if (aim(sessionId)) await pick(tab);
+      } else { aim(sessionId); tab = await openInput(url, sessionId); }
       if (!tab) {
         const result = await cmd('chromeNavigate', { sessionId, action:'new', input:url });
         if (sessionId === session() && result?.targetId) await pick(tabs().find(item => item.targetId === result.targetId) ?? { targetId:result.targetId });
         tab = result;
       }
-      if (sessionId === session()) chrome()?.open?.(); return tab;
+      if (sessionId === session()) chrome()?.open?.(null, view); return tab;
     },
     display,
-    /** 開いているタブを選んで右の欄に映す */
+    /** 開いているタブを選んで右の欄に映す（別の会話のタブなら、欄をその会話に向けて開く） */
     async focusTab(tab, sessionId) {
-      if (sessionId !== session()) return;
-      await pick(tab); chrome()?.open?.();
+      const view = sessionId === session() ? {} : { target:sessionId };
+      if (!aim(sessionId)) return;
+      await pick(tab); chrome()?.open?.(null, view);
       // 会話のリンクで開いているファイルをもう一度開いたときも、アドレスバーと同じに読み直す（入力のあるタブだけ「更新を表示」。ADR 0320）
       if (tab?.local && tab.page && tab.page.kind !== 'viz') { pages.refresh(tab); refreshNewTabs(sessionId); }
     },

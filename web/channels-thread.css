@@ -34,10 +34,10 @@
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within){padding-bottom:6px}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) :is(.ch-row,.ch-hint){display:none}
 .deck:is([data-deck=split],[data-deck=solo],.moving) #chFeedComposer:not(:focus-within) .ch-input{max-height:calc(1.6em + 12px);overflow:hidden}
-/* 開いているスレッドの根の投稿（選択中）。背景と、左の細い棒（枠線ではなく面の棒。.file-preview-resize::before と同じ作り） */
-.ch-feed .post[data-open]{background:var(--surface-hover)}
-.ch-feed .post[data-open]::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:var(--r-pill);background:var(--fill-primary);color:var(--on-fill);pointer-events:none}
-.ch-feed .post[data-open] .thread-summary{background:var(--surface-sel);font-weight:600}
+/* 開いているスレッドの根の投稿（選択中）。面は選択の色（ポインターを載せた投稿の色と分ける。載せても変えない）、
+   返信の数の丸は紙の色に持ち上げる（載せた投稿のアバターの丸と同じ）。左の縦線は引かない */
+.ch-feed .post[data-open]{background:var(--surface-sel)}
+.ch-feed .post[data-open] .thread-summary{background:var(--surface-paper);font-weight:600}
 
 /* ---- スレッドの見出し（Chats の頭と同じ高さ・並び） */
 .th-top{display:flex;align-items:center;gap:4px;flex:none;min-height:48px;padding:10px 12px 4px 18px}
@@ -67,16 +67,24 @@
 /* 設定のチップのアイコン（Chats の入力欄と同じ線画） */
 .th-composer .crow > .chip > svg.i,.wk-composer .crow > .chip > svg.i{width:14px;height:14px;flex:none}
 /* 送信待ち・`!` の行（ADR 0157）。`!` の行は Chats の .m.cmd をそのまま入れ、上に「〜の作業場所で実行」 */
-.th-shells{max-width:820px}
 .th-shell-where{margin:8px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
 /* 分岐（ADR 0157 の 4.4）: 枝の頭の「分岐元」の一行。分けた投稿の直後の行は Chats の .branch-row */
 .th-branch-from{margin:6px 0 2px 46px;font-size:var(--fs-xs);color:var(--ink-weak)}
-.th-replies > .branch-row,.th-root > .branch-row{max-width:820px}
 /* 投稿の列の入れ物（会話の移動の部品が重なる。web/conversation-nav.css の .log-frame）。地図の筋の分だけ右を空ける */
 .th-frame > .th-log{height:100%;padding-right:34px}
 .th-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
 .th-log:focus-visible{outline:none}
-.th-root,.th-rdiv,.th-replies,.th-perms{max-width:820px}
+/* 列（Chats と同じ入れ物 .col-lane。style.css の「列」）: 投稿・返事・承認・`!` の行（.th-root・.th-rdiv・.th-replies・.th-perms・.th-shells）と入力欄を、
+   欄の真ん中の同じ列に置く。投稿はアバター（32px と間の 10px）と左右の余白（10px ずつ）の分だけ本文より広いので、列の幅は --col + 62px にして
+   本文の幅を Chats と同じにする。欄の左の余白（10px）は列の入れ物に移し、［広げる］が欄の左端から 4px まで届くようにする。
+   右は地図の筋（34px）とスクロールバー（10px。scrollbar-gutter で空けておく）の分だけずらして、欄の全幅の真ん中に置く。入力欄の箱は列の箱と同じ幅 */
+@media (min-width:701px){
+  .th-frame > .th-log{padding-left:0;scrollbar-gutter:stable}
+  .ch-thread .col-lane{--lane-w:calc(var(--col) + 62px);--lane-shift:22px;--lane-min-l:10px}
+  .th-composer{--cpad-l:max(18px,calc((100% - var(--col) - 62px) / 2));--cpad-r:max(18px,calc((100% - var(--col) - 62px) / 2))}
+}
+/* 広げた可視化は、投稿の中の提示の幅（100%・margin 0）を外して左右へ伸ばす（style.css の .visualize-widened と同じ値） */
+.post-presents .present-visualization.visualize-widened{width:auto;max-width:none;margin-left:var(--widen-l,-4px);margin-right:var(--widen-r,-4px)}
 .th-rdiv{display:flex;align-items:center;gap:8px;margin:2px 10px 0;font-size:var(--fs-xs);color:var(--ink-weak)}
 .th-rdiv:empty{display:none}
 .ch-thread .post-tool.reply{display:none}
