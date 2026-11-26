@@ -124,7 +124,9 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     plyContext: "conversation",
     alwaysAllow: true,      // session/request_permission の allow_always を使う
     login: true,
-    logout: impossible('1 つ目のログインは OS の資格情報ストアにあり、Pleiad の画面からは外さない（ACP の logout は使わず、端末の agy 側で外す）', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    // ACP の logout（initialize の agentCapabilities.auth.logout を返す版だけ。返さない版は auth.status が logout: false を返し、画面は［ログアウト］を出さない）。
+    // 1 つ目のログインはこの PC の Antigravity のアプリ・端末の agy と共用なので、画面は確かめてから外す（agents.mjs の logoutConfirm。ADR 0365）
+    logout: true,
     // ply_computer は束ねた 1 本の中継に載せて渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
     // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びなかった（stream-json で 1.2.14 の実測。ACP でも同じとみなして据え置く）ので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },

@@ -12,8 +12,8 @@
 // **組織の管理ポリシーは承認の省略（yolo）より強い。** 確認を求める設定のとき、確認の要るツールは拒否される。黙らせずに知らせる（adminNotice）。
 // **思考は流れない**（thought chunk は捨てる。thinking_tokens は usage_update の集計にだけ出る）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
-import { AgyAcp, MIN_ACP_VERSION, agyLaunchProfile, assertFileStorage, prepareAgyLogs, tooOldAcp, FILE_STORAGE_MARKER } from "./antigravity-acp.mjs";
-import { LOGIN_TIMEOUT_MS, accountHome, hasAgyToken, loginAgyAccount } from "./antigravity-accounts.mjs";
+import { AgyAcp, MIN_ACP_VERSION, agyLaunchProfile, agyLogoutOffer, assertFileStorage, offersLogout, prepareAgyLogs, tooOldAcp, FILE_STORAGE_MARKER } from "./antigravity-acp.mjs";
+import { DEFAULT_LOGIN_METHOD, LOGIN_TIMEOUT_MS, accountHome, authenticateInBrowser, hasAgyToken, loginAgyAccount } from "./antigravity-accounts.mjs";
 import { adoptHome, agyRestricted, antigravityAgentOwners, antigravitySkipsNativeInstructions, prepareAgent, sweep, sweepHeldHomes, systemPromptAppend } from "./antigravity-context.mjs";
 import { nativeInstructionEntries } from "../context-session.mjs";
 import * as transcript from "./antigravity-store.mjs";
@@ -31,7 +31,7 @@ import { commandLabel, pickCommandProcess, pickHeldAgy } from "./antigravity-bac
 import { killTree, listProcesses } from "../process-tree.mjs";
 import { t, agentT } from "../i18n.mjs";
 import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
-import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
+import { loginCancelledError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -361,12 +361,10 @@ function profileState(key = "default") {
     modelsFetchFailedAt: 0,
     /** 送信の関所（見通しの確認 → 取得）の進行中の 1 本。並ぶ呼び出しは同じ結果を受け取る */
     modelsGate: null,
-    /** ログインを 2 本同時に走らせないための印 */
+    /** 進行中のログイン（2 本同時に走らせない。{ cancelled, client }。authCancel が agy を止める） */
     pendingAuth: null,
     /** 最後に分かったログインの見通し（'unknown'|'in'|'out'。プロセス内だけ） */
     authGuess: "unknown",
-    /** 待っているログインの見張りをやめる口（authCancel） */
-    loginWatch: createLoginWatch("Antigravity"),
   });
   return profileStates.get(id);
 }
@@ -394,9 +392,6 @@ const modelsGateRetryMs = () => Number(process.env.AGENT_HOST_AGY_MODELS_GATE_RE
 /** 未認証の印（`agy models` の「Please sign in」と `--print` 系の authentication required） */
 const AUTH_REQUIRED = /sign in|authentication required/i;
 
-
-/** 待っている間に `agy models` を叩く間隔。 */
-const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_AGY_POLL_MS ?? 3_000);
 
 const cut = (s) => {
   const text = String(s ?? "");
@@ -1124,13 +1119,8 @@ export const backend = {
       else outcome = 'error';
       if (outcome === 'error' && AUTH_REQUIRED.test(String(error?.message ?? ''))) {
         catalog.authGuess = 'out';   // agy が自ら認証を求めた＝未ログインが確定
-        if (profile.guard) {
-          // 2 つ目以降のアカウントは端末のコマンドで入れない。「このアカウントのログインが要る」（画面のログインの導線）にまとめる
-          error = Object.assign(new Error(t('accounts.backend.notLoggedIn', { agent: 'Antigravity' })), { code: 'AGY_NOT_LOGGED_IN' });
-        } else {
-          const argv = cliCommand('antigravity');
-          emit({ type: 'auth', backend: 'antigravity', phase: 'url', url: argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ') : 'agy', message: t('antigravity.auth.notLoggedInTurn') });
-        }
+        // ログインは設定の［ログインする］（ブラウザー）から。1 つ目も端末のコマンドは案内しない（ADR 0365 の追記）
+        error = Object.assign(new Error(profile.guard ? t('accounts.backend.notLoggedIn', { agent: 'Antigravity' }) : t('antigravity.auth.notLoggedInTurn')), { code: 'AGY_NOT_LOGGED_IN' });
       }
       // 何も実行せずに thought signature で断られた: 発言を控えから外し、再開した会話はネイティブの会話を使えない印を付ける
       if (outcome === 'error' && error?.thoughtSignature && started.size === 0 && !sawText) {
@@ -1347,9 +1337,8 @@ export const backend = {
 
   // ---- 認証 ---------------------------------------------------------------
   //
-  // `agy` は login サブコマンドを持たない。**ヘッドレスで走らせたときに、未ログインなら
-  // stderr へ OAuth の URL を出し、stdin で認可コードを待つ**（実機で確認）。
-  // つまりログイン専用の口は要らず、ターンを 1 本起こせばその経路に乗る。
+  // `agy` は login サブコマンドを持たない。ログイン・ログアウトは `agy acp` の `authenticate`（ブラウザー）と `logout` で行う
+  // （1 つ目も 2 つ目以降も同じ口。1 つ目は OS の資格情報ストアに入る。ADR 0365 の追記）。
 
   // ---- 2 つ目以降のアカウント（ADR 0222。トークンをファイルに保存させて別の置き場に分ける。antigravity-accounts.mjs） -------------------
   //
@@ -1430,106 +1419,97 @@ export const backend = {
      */
     async status({ probe = false, account = null } = {}) {
       const catalog = profileState(profileFor(account).key);
+      // logout: agy がログアウトの口を返すか（分かっているときだけ載せる。false の版では画面が［ログアウト］を出さない。ADR 0365）
+      const offer = () => { const known = agyLogoutOffer(); return known === null ? {} : { logout: known }; };
       // probe=false（起動時・定期の受動確認）は `agy` を起こさない。最後に分かった見通しだけを返す
       if (!probe) {
-        if (catalog.authGuess === 'in') return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
-        if (catalog.authGuess === 'out') return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn") };
-        return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
+        if (catalog.authGuess === 'in') return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail"), ...offer() };
+        if (catalog.authGuess === 'out') return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn"), ...offer() };
+        return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed"), ...offer() };
       }
       const old = await tooOldAcp();
-      if (old) return { loggedIn: false, account: null, unconfirmed: true, detail: t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }) };
+      if (old) return { loggedIn: false, account: null, unconfirmed: true, logout: false, detail: t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }) };
       try {
         await fetchModels(catalog);
         catalog.authGuess = 'in';
-        return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail") };
+        // 明示の確認では口の有無も確かめる（initialize だけ。ログインの操作はしない）
+        await learnLogoutOffer();
+        return { loggedIn: true, account: t("antigravity.auth.account"), detail: t("antigravity.auth.detail"), ...offer() };
       } catch (err) {
         const message = String(err?.message ?? err);
         if (AUTH_REQUIRED.test(message)) {
           catalog.authGuess = 'out';
-          return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn") };
+          return { loggedIn: false, account: null, detail: t("antigravity.auth.notLoggedIn"), ...offer() };
         }
         // 落ちた理由が分からないときは「ログインしていない」と断定しない（見通しも変えない）。
         // 生の stderr（URL・パスを含みうる）は detail に出さず、確かめられなかった固定の文言だけ
-        return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed") };
+        return { loggedIn: false, account: null, unconfirmed: true, detail: t("antigravity.auth.unconfirmed"), ...offer() };
       }
     },
 
     /**
-     * ログイン。**Pleiad からは OAuth を回せない。** 端末でのサインインを案内し、終わるのを待つ。
+     * 1 つ目のアカウントのログイン。`agy acp` を**ファイル保存の env を付けずに**起こし、ACP の `authenticate`（oauth-personal）を送って、
+     * agy にブラウザーを開かせる（2 つ目以降と同じ口。antigravity-accounts.mjs の authenticateInBrowser）。トークンは今までどおり
+     * OS の資格情報ストアに入り、端末で `agy` と打ってログインしたのと同じ結果になる（ADR 0365 の追記）。
      *
-     * 実機（agy 1.2.4）で確かめたこと:
-     *   - ヘッドレスで未ログインだと stderr に認可 URL を出し、
-     *     「Or, paste the authorization code here and press Enter:」と促す
-     *   - **その入力は端末からしか読まない。** パイプした stdin に認可コードを書いても
-     *     完全に無視され、60 秒で `authentication failed or timed out` になる（実測）
-     * 公式も同じことを書いている:
-     *   > Headless mode uses your cached credentials. Authenticate once with an interactive
-     *   > `agy` session first.
-     *
-     * そこで Pleiad は**自分で回そうとしない**。端末で叩くコマンドを案内し、
-     * `agy models` が通るようになるまで見張る（利用者は「再確認」を押さなくてよい）。
+     * 試しの session/new は送らない（agy の会話を 1 つ作ってしまうのと、期限切れのときも入り直せるように）。
+     * ［やめる］（cancel）は agy を止め、CANCELLED で返る。agy が断ったときは理由を 1 行にして AGY_LOGIN_REFUSED で返る
      */
     async login({ emit, account = null } = {}) {
+      if (account) return backend.accountLogin({ emit, account });
       const catalog = profileState(profileFor(account).key);
       if (catalog.pendingAuth) throw new Error(t("antigravity.auth.loginRunning"));
-      catalog.pendingAuth = {};
-      const watch = catalog.loginWatch.begin();
+      const run = { cancelled: false, client: null };
+      catalog.pendingAuth = run;
+      const check = () => { if (run.cancelled) throw loginCancelledError("Antigravity"); };
       try {
-        if (await signedIn(catalog)) {
-          emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.alreadyLoggedIn") });
-          return;
-        }
-
-        const argv = cliCommand("antigravity");
-        // PATH に載っていないこともある（インストーラが PATH を書いても、
-        // 起動済みの端末や Pleiad には届かない）。そのまま貼れる形で出す
-        const command = argv ? argv.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ") : "agy";
-        emit?.({
-          type: "auth", phase: "url", url: command,
-          message: t("antigravity.auth.runCommand"),
-        });
-
-        const until = Date.now() + LOGIN_TIMEOUT_MS;
-        while (Date.now() < until) {
-          await watch.pause(LOGIN_POLL_MS);
-          const done = await signedIn(catalog);
-          watch.check();
-          if (done) {
-            emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.loggedIn") });
-            return;
-          }
-        }
-        const message = t("antigravity.auth.loginTimeout");
-        emit?.({ type: "auth", phase: "error", code: "TIMEOUT", message });
-        throw loginTimeoutError(message);
+        const old = await tooOldAcp();
+        if (old) throw new Error(t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }));
+        check();
+        run.client = new AgyAcp({ timeoutMs: START_TIMEOUT_MS, profile: profileFor(null) });
+        const init = await run.client.start().catch((error) => { check(); throw error; });
+        check();
+        const offered = Array.isArray(init?.authMethods) ? init.authMethods.map((m) => m?.id) : [];
+        if (offered.length && !offered.includes(DEFAULT_LOGIN_METHOD)) throw new Error(t('accounts.backend.loginFailed', { agent: 'Antigravity' }));
+        await authenticateInBrowser({ client: run.client, method: DEFAULT_LOGIN_METHOD, timeoutMs: LOGIN_TIMEOUT_MS, emit, check });
+        check();
+        catalog.authGuess = "in";
+        // 前のアカウントの一覧を引き直す（別の Google アカウントで入り直したかもしれない）
+        catalog.modelCacheAt = 0;
+        emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.loggedIn") });
       } finally {
-        catalog.pendingAuth = null;
-        watch.end();
+        if (catalog.pendingAuth === run) catalog.pendingAuth = null;
+        await run.client?.close().catch(() => {});
       }
     },
 
-    /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
+    /** 待っているログインをやめる（ブラウザーを待っている agy を止める）。login は CANCELLED で返る */
     async cancel({ account = null } = {}) {
-      return profileState(profileFor(account).key).loginWatch.cancel();
+      const run = profileState(profileFor(account).key).pendingAuth;
+      if (!run || run.cancelled) return { cancelled: false };
+      run.cancelled = true;
+      await run.client?.close().catch(() => {});
+      return { cancelled: true };
     },
 
     /**
-     * ログアウト。`agy` に口が無く、資格情報は OS の資格情報ストアにある。
-     * Pleiad からは消せないので、そのことを伝える。
+     * ログアウト。agy が initialize でログアウトの口（agentCapabilities.auth.logout）を返したときだけ、ACP の `logout` を送る。
+     * 1 つ目のアカウントは OS の資格情報ストアにあり、この PC の Antigravity のアプリと端末の agy もログアウトする（画面は確かめてから呼ぶ）。
+     * 失敗は、押したカードに出せる短い文で返す（生の wire の文は出さない）
      */
     async logout({ account = null } = {}) {
       const catalog = profileState(profileFor(account).key);
-      // ACP に logout があるときだけ agy に頼む（無ければ端末での操作を案内する）
+      const old = await tooOldAcp();
+      if (old) throw new Error(t('antigravity.errors.acpTooOld', { version: old, min: MIN_ACP_VERSION }));
       const client = new AgyAcp({ timeoutMs: START_TIMEOUT_MS, profile: profileFor(account) });
       try {
-        const init = await client.start();
-        if (init?.agentCapabilities?.auth?.logout) {
-          await client.call("logout", {});
-          catalog.authGuess = "out";
-          return;
-        }
-      } catch { /* 案内に落とす */ } finally { await client.close().catch(() => {}); }
-      throw new Error(t("antigravity.auth.logoutInAgy"));
+        let init;
+        try { init = await client.start(); } catch { throw new Error(t("antigravity.auth.logoutStartFailed")); }
+        if (!offersLogout(init)) throw new Error(t("antigravity.auth.logoutInAgy"));
+        try { await client.call("logout", {}); } catch { throw new Error(t("antigravity.auth.logoutRefused")); }
+        catalog.authGuess = "out";
+        catalog.modelCacheAt = 0;
+      } finally { await client.close().catch(() => {}); }
     },
   },
 };
@@ -1541,15 +1521,22 @@ const AGY_MODELS_TIMEOUT_MS = 30_000;
 /** 読む出力の上限（モデルの一覧は数 KB。OAuth の案内などで膨らませない） */
 const AGY_MODELS_MAX_CHARS = 128 * 1024;
 
-/** ログイン済みか。`agy models` が通れば通っている（資格情報は OS の資格情報ストアにあり読めない）。 */
-async function signedIn(catalog) {
-  try {
-    await fetchModels(catalog);
-    catalog.authGuess = 'in';
-    return true;
-  } catch {
-    return false;
-  }
+/** 口の有無の確かめが落ちた時刻（落ちたあと続けて agy を起こさない） */
+let logoutOfferFailedAt = 0;
+let logoutOfferProbe = null;
+/**
+ * agy がログアウトの口を返すかを、まだ分からないときだけ確かめる（明示の確認から。initialize だけで、ログインの操作も会話の作成もしない）。
+ * 並ぶ呼び出しは同じ 1 本を待ち、落ちたら 60 秒は試し直さない（分からないまま。画面は［ログアウト］を出したまま、押せば理由を出す）
+ */
+function learnLogoutOffer() {
+  if (agyLogoutOffer() !== null || Date.now() - logoutOfferFailedAt < 60_000) return Promise.resolve();
+  logoutOfferProbe ??= (async () => {
+    const client = new AgyAcp({ timeoutMs: 30_000, profile: profileFor(null) });
+    try { await client.start(); }
+    catch { logoutOfferFailedAt = Date.now(); }
+    finally { await client.close().catch(() => {}); logoutOfferProbe = null; }
+  })();
+  return logoutOfferProbe;
 }
 
 /**

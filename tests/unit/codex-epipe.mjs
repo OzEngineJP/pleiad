@@ -5,6 +5,7 @@
 //   A. 子が生きたまま stdin に 'error'（EPIPE）が来る（決まった順で、誤りの形・子を止めること・onDown を見る）
 //   B. 本物の競り合い: tests/lib/scripted-codex.mjs の test/exit で子を終わらせ、子が消えるまで親のイベントループを止めて待ってから書く
 //      （exit の知らせより先に書く）。Windows の名前付きパイプは小さな書き込みを黙って受けるので、パイプの容量を超える行を書く
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexRpc } from "../../core/backends/codex-rpc.mjs";
@@ -17,7 +18,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const SCRIPT = path.join(ROOT, "tests", "lib", "scripted-codex.mjs");
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const settle = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// Linux では、終わった子は親が wait するまで zombie として残り、kill(pid, 0) が通り続ける（親のイベントループを止めて待つここでは永久に）。zombie は終わったものとして数える
+const alive = (pid) => {
+  try { process.kill(pid, 0); } catch { return false; }
+  try { return !/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; }
+};
 const describe = (result) => String(result.error?.message ?? JSON.stringify(result.value));
 
 /** 子が終わるまで同期で待つ（イベントループを回さないので、親はまだ exit を受けない）。終わったら true */

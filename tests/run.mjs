@@ -929,6 +929,7 @@ const SUITES = [
   './unit/opencode-usage.mjs',
   './unit/server-agent-accounts.mjs',
   './unit/agent-accounts-ui.mjs',
+  './unit/conn-card-logout.mjs',
   // 設定 › Claude のアカウント（web/claude-accounts.mjs）: 送るコマンドの並び（origin/main と同じ）・流れを閉じない決まり・遅れて届く応答
   './unit/claude-accounts-ui.mjs',
   // コネクターで止まった発言の失敗の行（web/connectors-fail.mjs。ADR 0340 段 3）
@@ -938,6 +939,7 @@ const SUITES = [
   './unit/server-agent-account-restart.mjs',
   './unit/antigravity-accounts.mjs',
   './unit/antigravity-account-login.mjs',
+  './unit/antigravity-logout.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
   // 同じ設定の画面の差し替え（web/dom-patch.mjs）を本物の Chrome で（B1_BROWSER_TEST=1。tests/browser/dom-patch.mjs）
