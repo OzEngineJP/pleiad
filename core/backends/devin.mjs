@@ -210,6 +210,8 @@ export function createDevinBackend({ Acp = null, command = () => cliCommand('dev
     // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
     capabilities: CAPABILITY_STATES.devin,
     traits: AGENT_TRAITS.devin,
+    // 子は sessions.db の subagent_heads / message_nodes から読むので、委譲を呼ぶツール名は申告しない（契約: contract.mjs の checkBackendShape）
+    subagentToolsAbsent: 'sessions.db の subagent_heads から子を読むので、ツール名では見分けない', // i18n-ignore: 契約の申告の理由（開発者向け）
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd(), { refresh = false } = {}) {

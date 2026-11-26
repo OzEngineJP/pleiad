@@ -1,5 +1,5 @@
 // bot の人格とフォルダーを antigravity に渡す形（core/backends/antigravity.mjs の runTurn の botInstructions・botFolders）を、別プロセスで確かめる。
-// 身代わりの agy（tests/lib/fake-agy.mjs）は、エージェント定義の本文を返す台本（prompt = agent-body）と、起こされた引数の控えを持つ。
+// 身代わりの agy（tests/lib/fake-agy.mjs）は、システムプロンプトに足された本文を返す台本（prompt = system-prompt）と、起こされた引数の控えを持つ（ACP）。
 // バックエンドを読み込むだけで置き場の掃除が走るので、置き場を一時ディレクトリにしてから読み込む（tests/lib/agy-partial-worker.mjs と同じ）。
 // 判定は { label, pass, detail } の配列を JSON で stdout に出す（tests/unit/bot-instructions.mjs が t.ok にする）
 import fs from "node:fs/promises";
@@ -19,12 +19,12 @@ const { backend, botSessionKey } = await import("../../core/backends/antigravity
 
 const checks = [];
 const ok = (label, pass, detail = "") => checks.push({ label, pass: Boolean(pass), detail: String(detail) });
-const launches = async () => JSON.parse(await fs.readFile(argsFile, "utf8").catch(() => "[]")).filter((a) => a.includes("--print="));
+const launches = async () => JSON.parse(await fs.readFile(argsFile, "utf8").catch(() => "[]")).filter((a) => a[0] === "acp");
 
 const cwd = path.join(scratch, "work"), extra = path.join(scratch, "extra"), other = path.join(scratch, "other");
 for (const d of [cwd, extra, other]) await fs.mkdir(d, { recursive: true });
 
-async function turn({ sessionId = null, botInstructions = null, botFolders = null, prompt = "agent-body" }) {
+async function turn({ sessionId = null, botInstructions = null, botFolders = null, prompt = "system-prompt" }) {
   const events = [];
   let id = sessionId;
   await backend.runTurn({
@@ -36,11 +36,11 @@ async function turn({ sessionId = null, botInstructions = null, botFolders = nul
 }
 
 try {
-  // ---- 人格はエージェント定義の本文に入り、フォルダーは --add-dir に入る
+  // ---- 人格はシステムプロンプト（session/new の _meta の append）に入り、フォルダーは --add-dir に入る
   const first = await turn({ botInstructions: "BOT-PERSONA-ONE", botFolders: { additionalDirectories: [extra] } });
   const l1 = await launches();
   ok("人格の文がエージェントの本文（システムプロンプト）に入る", first.text.includes("BOT-PERSONA-ONE"), first.text.slice(0, 200));
-  ok("カスタムエージェントで起こす（--agent）", l1.length === 1 && l1[0].includes("--agent"), JSON.stringify(l1[0]));
+  ok("agy を ACP で 1 本起こす（Skills・MCP を止めない会話は --agent を付けず、本文は systemPrompt で渡す）", l1.length === 1 && l1[0][0] === "acp" && !l1[0].includes("--agent"), JSON.stringify(l1[0]));
   const dirs = (a) => a.flatMap((x, i) => (x === "--add-dir" ? [a[i + 1]] : []));
   ok("cwd と bot のフォルダーを --add-dir に渡す", dirs(l1[0]).includes(cwd) && dirs(l1[0]).includes(extra), JSON.stringify(dirs(l1[0])));
 
@@ -52,7 +52,7 @@ try {
   const changed = await turn({ sessionId: first.id, botInstructions: "BOT-PERSONA-TWO", botFolders: { additionalDirectories: [extra] } });
   ok("人格を直すと agy を起こし直す（人格のハッシュが判定に入る）", (await launches()).length === 2, String((await launches()).length));
   ok("起こし直した後は新しい人格だけが本文にある", changed.text.includes("BOT-PERSONA-TWO") && !changed.text.includes("BOT-PERSONA-ONE"), changed.text.slice(0, 200));
-  ok("起こし直しても同じ会話を続ける（--conversation）", (await launches())[1].includes("--conversation"));
+  ok("起こし直しても同じ会話を続ける", changed.id === first.id, `${changed.id} / ${first.id}`);
 
   // ---- フォルダーを変えても起こし直す
   await turn({ sessionId: first.id, botInstructions: "BOT-PERSONA-TWO", botFolders: { additionalDirectories: [extra, other] } });
@@ -62,7 +62,7 @@ try {
   // ---- bot でない会話は今までどおり（エージェント定義なし）
   const plain = await turn({});
   const l4 = await launches();
-  ok("bot でない会話は --agent を付けず、人格の印も無い", l4.length === 4 && !l4[3].includes("--agent") && botSessionKey(null, null) === null && !plain.text.includes("BOT-PERSONA"), JSON.stringify(l4[3]));
+  ok("bot でない会話は人格の文が本文に無く、人格の印も無い", l4.length === 4 && !l4[3].includes("--agent") && botSessionKey(null, null) === null && !plain.text.includes("BOT-PERSONA"), JSON.stringify(l4[3]));
   ok("人格の印は人格が同じなら同じ・違えば違う", botSessionKey("a", null) === botSessionKey("a", { additionalDirectories: [] })
     && botSessionKey("a", null) !== botSessionKey("b", null) && botSessionKey("a", { additionalDirectories: ["/x"] }) !== botSessionKey("a", null));
 

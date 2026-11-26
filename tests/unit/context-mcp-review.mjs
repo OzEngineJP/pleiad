@@ -6,7 +6,6 @@ import { nativeContextReport, resolveRuntime, unstoppedMcp } from '../../core/co
 import { buildMcpMatrix, canStopName, canStopNative, mcpLegacyInfo, nativeStopBlock } from '../../core/context-mcp-matrix.mjs';
 import { canLinkMcpOffHome, nativeMcpOffMode, setMcpOffLinker } from '../../core/backends/mcp-off-home.mjs';
 import { readClaudePlugins } from '../../core/context-claude-extras.mjs';
-import { CAPABILITY_STATES } from '../../core/backends/agent-marks.mjs';
 import { mirrorGlobalConfig, MANAGED_KEEP, MANAGED_IDLE_MS } from '../../core/backends/opencode-context.mjs';
 import { contextOps } from '../../core/ops/context.mjs';
 import { createContextBridge } from '../../core/context-bridge.mjs';
@@ -30,9 +29,6 @@ export default async function (t) {
 
     // --- A: 自分の MCP を止められないエージェントは、自分の側が勝つ
     // ADR 0336: Devin はユーザーの設定の定義だけ止められる（'user'）。Antigravity・Grok は止めない（Grok は写しの置き場で認証の更新が本物に届かない）
-    t.ok('止める手の印: Antigravity・Grok は無し、Devin はユーザーの設定だけ（user）、Claude・Codex・OpenCode は全部（true）',
-      ['antigravity', 'grok'].every(a => ![true, 'user'].includes(CAPABILITY_STATES[a]?.nativeMcpOff)) && CAPABILITY_STATES.devin?.nativeMcpOff === 'user'
-        && ['claude', 'codex', 'opencode'].every(a => CAPABILITY_STATES[a]?.nativeMcpOff === true));
     await write(path.join(home, '.gemini/config/mcp_config.json'), JSON.stringify({ mcpServers: { own: { command: 'own-cmd' }, reg: { command: 'ag-reg' } } }));
     const ag = await resolveRuntime(policy({ off: {}, spread: {} }), { home, plyServers: plyServers(['reg', 'extra']), agent: 'antigravity' });
     t.ok('Antigravity: 自分の設定の名前は渡さず、同じ名前の Pleiad の登録も渡さない（自分の側が勝つ）。Pleiad だけの登録は渡す', names(ag).join() === 'extra', names(ag));

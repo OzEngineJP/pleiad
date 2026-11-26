@@ -135,7 +135,7 @@ jobs:
           export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
           node -p "JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version })"
           node -e "require('node-pty')"
-          node tests/run.mjs --jobs 2 desktop-updates account usage claude-login mcp-secret-store delegation-routing opencode-adopt devin backend-contract backend-conformance backend-registry backend-test-env context-owner-capability
+          node tests/run.mjs --jobs 2 desktop-updates account usage claude-login mcp-secret-store delegation-routing opencode-adopt devin backend-contract backend-common backend-registry backend-test-env context-owner-capability
       - name: macOS credential storage smoke
         timeout-minutes: 5
         env:

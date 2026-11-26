@@ -3,10 +3,13 @@
 //   ［既定にする］で「· 新しい会話の既定」の印が 1 か所だけ移る。［＋ 接続先を追加］→ 種類（公式・互換のプリセット）→ 追加の欄。
 //   カードの描き直し（［状態を再確認］など。renderAuth）を挟んでも、管理の面（アカウント・接続先）が枠から消えない。
 //   「開く → 閉じる → ［状態を再確認］ → 開く」と「開いたまま［状態を再確認］」の後に、枠に面の中身があり、「null」が出ず、ページの例外が無い。
-//   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode のそれぞれで確かめる。
+//   開いたまま描き直しても、打ちかけのフォーム（追加の名前）とフォーカスが残る。Claude・Codex・OpenCode・Antigravity のそれぞれで確かめる。
 //   CLI のログインのカードの［ログアウト］は能力の印 logout で出し分ける: Claude・Codex・Grok は［ログアウト］、
 //   Pleiad から外せない OpenCode は［ログアウト］を出さず、端末のコマンド（opencode auth logout）と［コピー］を案内する。
-//   接続先を 1 つしか持たないエージェントの頭の行も同じ印で決める: 外せない Antigravity は［ログアウト］を出さず外し方の 1 行、外せる Devin は［ログアウト］のまま。
+//   Antigravity も［ログアウト］を出さない（外し方のコマンドは持たないので案内も出さない）。
+//   接続先の一覧を持たない Devin の頭の行も同じ印で決める: 外せる Devin は［ログアウト］［状態を確認］のまま。
+//   Antigravity だけ、追加の前に注意のモーダル（2 つ目の Google アカウント）が出る: やめる → 名前の欄は開かない、理解して追加する → 名前の欄。360px に収まる。
+//   SHOT_DIR を渡すと、そのモーダルの画面（ja・1280px と 360px）を PNG で保存する。
 // 実行: node tests/browser/agent-conn-panel.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる。CONN_PANEL_AGENTS=codex,opencode で確かめるカードを絞る）
 // 本物のサーバー（Claude・Codex・OpenCode・Grok・Antigravity・Devin の偽の CLI・一時のデータ置き場・別ポート）だけと話す。実データには触れない。
 import fs from 'node:fs';
@@ -17,7 +20,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
-const AGENTS = (process.env.CONN_PANEL_AGENTS || 'claude,codex,opencode').split(',');
+const AGENTS = (process.env.CONN_PANEL_AGENTS || 'claude,codex,opencode,antigravity').split(',');
 const results = [];
 const check = (ok, label, detail) => { if (!ok) throw new Error(`${label}${detail === undefined ? '' : ` ${JSON.stringify(detail)}`}`); results.push(label); };
 
@@ -45,7 +48,7 @@ const devinAuth = path.join(dataDir, 'devin-auth.txt');
 fs.writeFileSync(devinAuth, 'in');
 let server, browser;
 try {
-  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,grok,antigravity,devin', AGENT_HOST_LOCALE: 'ja',
+  server = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'claude,codex,opencode,antigravity,grok,devin', AGENT_HOST_LOCALE: 'ja',
     AGENT_HOST_AGY_BIN: fakeBin('fake-agy.mjs'),
     AGENT_HOST_DEVIN_BIN: fakeBin('fake-devin.mjs'), FAKE_DEVIN_AUTH_FILE: devinAuth, DEVIN_CONFIG_HOME: path.join(dataDir, 'devin-config'),
     AGENT_HOST_CLAUDE_BIN: fakeBin('fake-claude-cli.mjs'),
@@ -90,9 +93,16 @@ try {
     return { sec: s.dataset.sec, panel: Boolean(panel && !panel.hidden), text: slot.textContent.trim().slice(0, 80),
       visible: !s.closest('.agent-conn').hidden };
   }), card(id));
-  const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'] };
+  const expect = { claude: ['accounts', 'endpoints'], codex: ['accounts', 'endpoints'], opencode: ['accounts'], antigravity: ['accounts'] };
+  // 追加の前に注意のモーダルが出るエージェントは、［理解して追加する］まで進める（出ないものは何もしない）
+  const confirmNotice = async (page, id) => {
+    if (id !== 'antigravity') return;
+    await page.waitForSelector(`${card(id)} dialog.aa-notice[open], dialog.aa-notice[open]`, { timeout: 5000 });
+    await page.locator('dialog.aa-notice [data-act="notice-ok"]').click();
+    await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+  };
   // Pleiad から外せるか（能力の印 logout）。外せないエージェントは［ログアウト］を出さず、端末のコマンドを案内する
-  const canLogout = { claude: true, codex: true, opencode: false, grok: true, antigravity: false, devin: true };
+  const canLogout = { claude: true, codex: true, opencode: false, antigravity: false, grok: true, devin: true };
   // CLI のログインのカードの操作と、外し方の案内（.conn-guide: 文・コマンド・［コピー］）
   const cliCard = (page, id) => page.evaluate(sel => {
     const cc = document.querySelector(`${sel} [data-conn="cli"]`);
@@ -140,6 +150,7 @@ try {
         check(await page.evaluate(sel => document.activeElement === document.querySelector(`${sel} .conn-kinds .mp-preset`), card(id)), `${id}: 種類の最初の候補へフォーカスが行く`);
         await page.locator(`${card(id)} [data-kind="official"]`).click();
       }
+      await confirmNotice(page, id);
       check(await page.locator(`${card(id)} [data-add]`).count() === 0, `${id}: 追加の欄が開いている間は［＋ 接続先を追加］を出さない`);
       await page.locator(`${card(id)} ${form.name}`).fill('打ちかけ');
       await recheck(page, { keepFocus: true });
@@ -174,6 +185,9 @@ try {
         check(cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, `${id}: 外せるエージェントは［ログアウト］（案内は出さない）`, cli);
       } else {
         check(!cli.actions.includes('ログアウト') && cli.logoutButtons === 0, `${id}: 外せないエージェントは［ログアウト］を出さない（押しても失敗するだけ）`, cli);
+      }
+      if (id === 'antigravity') check(!cli.guide, `${id}: 外し方のコマンドを持たないので、案内も出さない`, cli);
+      if (id === 'opencode') {
         // コマンドはログインの案内と同じ書き方（見つけた CLI の場所 + auth logout。偽の CLI なのでその場所が入る）
         check(/(^|[\s"])auth logout$/.test(cli.guide?.code ?? '') && /fake-opencode\.mjs/.test(cli.guide.code) && cli.guide.text.startsWith('外すには、端末で') && cli.guide.copy.join() === 'コピー',
           `${id}: 代わりに、外し方（端末で … auth logout）と［コピー］を案内する`, cli);
@@ -186,6 +200,7 @@ try {
       } else {
         await page.locator(`${card(id)} [data-add]`).click();
         if (expect[id].includes('endpoints')) await page.locator(`${card(id)} [data-kind="official"]`).click();
+        await confirmNotice(page, id);
         await page.locator(`${card(id)} #aaName`).fill('仕事');
         await page.locator(`${card(id)} #aaName`).press('Enter');
         await page.waitForFunction(sel => [...document.querySelectorAll(`${sel} .conn-sec[data-sec="accounts"] .cc .mp-name strong`)].some(n => n.textContent.trim() === '仕事'), card(id), { timeout: 15000 });
@@ -226,6 +241,43 @@ try {
       check(await page.locator(`${card(id)} .agent-conn`).isVisible(), `${id}: Esc は 1 層だけ閉じ、設定の画面や接続先の一覧は閉じない`);
     }]);
   }
+  // Antigravity: 追加の前の注意のモーダル（文面・やめる・理解して追加する・360px）
+  if (AGENTS.includes('antigravity')) {
+    scenes.push(['antigravity: 追加の前の注意のモーダル', async page => {
+      const id = 'antigravity';
+      const shots = process.env.SHOT_DIR;
+      await toggle(page, id);
+      await page.locator(`${card(id)} [data-add]`).click();
+      await page.waitForSelector('dialog.aa-notice[open]', { timeout: 5000 });
+      const dlg = page.locator('dialog.aa-notice');
+      const text = await dlg.innerText();
+      check(text.includes('2 つ目の Google アカウントを追加します') && text.includes('サポート対象外とされています'), 'antigravity: 注意の題と本文（ja）', text);
+      check(await dlg.getByRole('button', { name: '理解して追加する' }).count() === 1 && await dlg.getByRole('button', { name: 'やめる' }).count() === 1, 'antigravity: ボタンは［理解して追加する］［やめる］');
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: 確認の前は名前の欄が開かない');
+      if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, 'antigravity-add-notice-ja-1280.png') }); }
+      await page.setViewportSize({ width: 360, height: 740 });
+      await page.waitForTimeout(300);
+      const box = await dlg.boundingBox();
+      check(box && box.x >= 0 && box.x + box.width <= 360 && box.y >= 0 && box.y + box.height <= 740, 'antigravity: 360px にモーダルが収まる', box);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= 360 && document.querySelector('dialog.aa-notice').scrollWidth <= document.querySelector('dialog.aa-notice').clientWidth), 'antigravity: 360px で横にあふれない');
+      if (shots) await page.screenshot({ path: path.join(shots, 'antigravity-add-notice-ja-360.png') });
+      await dlg.getByRole('button', { name: 'やめる' }).click();
+      await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: やめると名前の欄は開かない');
+      await page.waitForTimeout(400);
+      check(await page.evaluate(sel => document.activeElement === document.querySelector(sel), `${card(id)} [data-add]`), 'antigravity: やめると［＋ 接続先を追加］へフォーカスが戻る');
+      await page.locator(`${card(id)} [data-add]`).click();
+      await page.waitForSelector('dialog.aa-notice[open]', { timeout: 5000 });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('dialog.aa-notice', { state: 'detached', timeout: 5000 });
+      check(await page.locator(`${card(id)} #aaForm`).isHidden(), 'antigravity: Esc もやめると同じ');
+      await page.locator(`${card(id)} [data-add]`).click();
+      await confirmNotice(page, id);
+      check(await page.locator(`${card(id)} #aaForm`).isVisible(), 'antigravity: ［理解して追加する］で名前の欄が開く');
+      const form = await page.locator(`${card(id)} #aaForm`).boundingBox();
+      check(form && form.x >= 0 && form.x + form.width <= 360, 'antigravity: 360px で名前の欄も収まる', form);
+    }]);
+  }
   // Grok も CLI のログインのカードを持つ。ここは外せる側（Claude・Codex と同じく［ログアウト］。案内は出さない）の確認
   scenes.push(['grok: CLI のログインのカードは［ログアウト］（案内なし）', async page => {
     await toggle(page, 'grok');
@@ -233,34 +285,24 @@ try {
     const cli = await cliCard(page, 'grok');
     check(canLogout.grok && cli.actions.includes('ログアウト') && cli.logoutButtons === 1 && !cli.guide, 'grok: 外せるエージェントは［ログアウト］（案内は出さない）', cli);
   }]);
-  // 接続先を 1 つしか持たないエージェント（Antigravity・Devin）の頭の行。ログイン済みにしてから見る（受動の確認では未確認のことがあるので［状態を確認］を押す）
-  for (const id of ['antigravity', 'devin']) {
-    scenes.push([`${id}: 頭の行の［ログアウト］は能力の印 logout で出し分ける`, async page => {
-      const sel = card(id);
-      const ok = () => page.evaluate(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel);
-      for (let i = 0; i < 3 && !(await ok()); i++) {
-        await page.locator(`${sel} [data-act="check"]`).first().click().catch(() => {});
-        await page.waitForFunction(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel, { timeout: 15000 }).catch(() => {});
-      }
-      check(await ok(), `${id}: ログイン済みになる`);
-      const head = await page.evaluate(s => {
-        const c = document.querySelector(s);
-        const guide = c.querySelector(':scope > .agent-logout-guide');
-        return { acts: [...c.querySelectorAll('.ar2-a > button')].map(b => b.textContent.trim()), connect: c.querySelectorAll('.connect').length,
-          guide: guide ? { text: guide.textContent.trim(), buttons: guide.querySelectorAll('button').length, color: getComputedStyle(guide).color,
-            meta: c.querySelector(':scope > .agent-meta') ? Boolean(c.querySelector(':scope > .agent-meta').compareDocumentPosition(guide) & Node.DOCUMENT_POSITION_FOLLOWING) : null } : null };
-      }, sel);
-      check(head.connect === 0, `${id}: 接続先の一覧は持たない（頭の行のカード）`, head);
-      if (canLogout[id]) {
-        check(head.acts.join() === 'ログアウト,状態を確認' && !head.guide, `${id}: 外せるエージェントの頭の行は今までどおり［ログアウト］［状態を確認］（案内は出さない）`, head);
-      } else {
-        check(head.acts.join() === '状態を確認', `${id}: 外せないエージェントの頭の行は［ログアウト］を出さず［状態を確認］だけ`, head);
-        // agy には外すコマンドが無いので、コマンドと［コピー］ではなく説明の 1 行（CLI のパスの行の下）
-        check(head.guide && head.guide.text === '外すには、Antigravity の CLI 側でログアウトします（Pleiad からは外せません）' && head.guide.buttons === 0 && head.guide.meta !== false,
-          `${id}: 代わりに外し方の 1 行を、CLI のパスの下に出す`, head);
-      }
-    }]);
-  }
+  // 接続先の一覧を持たない Devin の頭の行。ログイン済みにしてから見る（受動の確認では未確認のことがあるので［状態を確認］を押す）
+  scenes.push(['devin: 頭の行は今までどおり［ログアウト］［状態を確認］', async page => {
+    const id = 'devin';
+    const sel = card(id);
+    const ok = () => page.evaluate(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel);
+    for (let i = 0; i < 3 && !(await ok()); i++) {
+      await page.locator(`${sel} [data-act="check"]`).first().click().catch(() => {});
+      await page.waitForFunction(s => document.querySelector(`${s} [data-row]`)?.dataset.sig?.startsWith('ok/'), sel, { timeout: 15000 }).catch(() => {});
+    }
+    check(await ok(), `${id}: ログイン済みになる`);
+    const head = await page.evaluate(s => {
+      const c = document.querySelector(s);
+      return { acts: [...c.querySelectorAll('.ar2-a > button')].map(b => b.textContent.trim()), connect: c.querySelectorAll('.connect').length,
+        guide: c.querySelectorAll('.conn-guide').length };
+    }, sel);
+    check(head.connect === 0, `${id}: 接続先の一覧は持たない（頭の行のカード）`, head);
+    check(canLogout[id] && head.acts.join() === 'ログアウト,状態を確認' && head.guide === 0, `${id}: 外せるエージェントの頭の行は今までどおり［ログアウト］［状態を確認］（案内は出さない）`, head);
+  }]);
   const failed = [];
   for (const [name, run] of scenes) {
     const { ctx, page, errors } = await session();

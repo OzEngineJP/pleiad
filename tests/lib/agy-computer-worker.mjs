@@ -60,8 +60,8 @@ try {
   const recorded = JSON.parse(await fs.readFile(agentFile, "utf8").catch(() => "null"));
   const servers = recorded?.front?.mcpServers ?? [];
   const computer = servers.find((s) => s.serverName === "ply_computer");
-  ok("computerRuntime があればカスタムエージェントを使う", recorded?.agent === "ply-context" && recorded?.found === true, JSON.stringify(recorded?.agent));
-  ok("agent.md の mcpServers に ply_computer の中継（--computer）を足す", computer && computer.args?.at(-1) === "--computer" && /agy-context-relay\.mjs$/.test(computer.args?.[0] ?? ""), JSON.stringify(servers));
+  ok("computerRuntime があれば中継を渡す（Skills・MCP を Pleiad が持たない会話は session/new の mcpServers。ACP）", Boolean(recorded) && servers.length > 0, JSON.stringify(recorded?.agent));
+  ok("渡す mcpServers に ply_computer の中継（--computer）を足す", computer && computer.args?.at(-1) === "--computer" && /agy-context-relay\.mjs$/.test(computer.args?.[0] ?? ""), JSON.stringify(servers));
   ok("ply_context が無いときは ply_computer だけ", servers.length === 1, JSON.stringify(servers.map((s) => s.serverName)));
   ok("接続先とトークンはファイルに書かず env で渡す", recorded?.computerUrl === computerRuntime.url && recorded?.computerAuthorization === computerRuntime.headers.Authorization
     && !JSON.stringify(recorded?.front ?? {}).includes(token) && !String(recorded?.body ?? "").includes(token), JSON.stringify({ url: recorded?.computerUrl }));

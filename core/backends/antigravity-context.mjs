@@ -92,6 +92,27 @@ export function antigravitySkipsNativeInstructions(contextRuntime) {
 }
 
 /**
+ * ACP の session/new に渡す mcpServers（束ねた中継 1 本。agy は先頭の 1 本しか起こさないので束ねる）。接続先とトークンは env の { name, value } の配列で渡す
+ * （ファイルには書かない）。何も足さないなら空
+ */
+export function relayMcpServers({ env = {}, contextEnabled = false, agentsEnabled = false, computerEnabled = false, browserEnabled = false, controlEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) } = {}) {
+  const kinds = [contextEnabled && 'context', agentsEnabled && 'agents', computerEnabled && 'computer', browserEnabled && 'browser', controlEnabled && 'control'].filter(Boolean);
+  if (!kinds.length) return [];
+  const pairs = Object.entries({ ...env, ...(electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }).map(([name, value]) => ({ name, value: String(value) }));
+  return [{ name: `ply_${kinds[0]}`, command: execPath, args: [RELAY, ...kinds.map(kind => `--${kind}`)], env: pairs }];
+}
+
+/** 制限した会話（ネイティブの Skills・MCP を止める）か。このときだけ agent 定義（--agent ply-context）を使う */
+export function agyRestricted(owners = {}) {
+  return owners.skill === 'ply' || owners.mcp === 'ply';
+}
+
+/** システムプロンプトに足す本文（agent.md の本文と同じ組み立て。ACP の _meta.antigravity.systemPrompt.append に渡す） */
+export function systemPromptAppend({ prompt, cwd, home, locale }) {
+  return [agentT(locale, 'antigravity.heading'), '', String(prompt ?? '').trim(), '', agentT(locale, 'antigravity.note', { home, cwd })].join('\n');
+}
+
+/**
  * agent.md の中身。frontmatter の値は JSON で書く（YAML としても読める）。
  * locale は会話の言語（説明・見出し・注意書きはエージェントが読むので、その言語で書く。agent 名前空間）
  * computerEnabled は ply_computer（`--computer`）を足すか（docs/computer-use.md「エージェントへの渡し方」）。
@@ -128,7 +149,7 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
  * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す。
  * computer は ply_computer の接続先（{ url, authorization }）。あれば 2 本目の中継を書き、env で渡す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null, agents = null, browser = null, control = null, held = false }) {
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, restricted = false, hooks = null, computer = null, agents = null, browser = null, control = null, held = false }) {
   // 保持役に載せる agy（無停止の更新 段階 3）の置き場は held-<乱数>。持ち主はサーバーの pid ではなく、走っている agy（サーバーが入れ替わっても残る）なので、
   // 持ち主の pid での掃除（sweep）の対象にしない。会話が終わる（cleanup）か、前のサーバーが残したものを sweepHeldHomes が消す
   const name = held ? `held-${crypto.randomBytes(6).toString('hex')}` : `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
@@ -136,7 +157,7 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
   if (held) ownHomes.add(name);
   await fs.promises.mkdir(path.join(home, '.agents'), { recursive: true, mode: 0o700 });
   // context: カスタムエージェント（agent.md）を書くか（Pleiad のコンテキストかブラウザーの指示・委譲の橋を渡すとき）。ply_context の中継は url があるときだけ
-  if (context) {
+  if (context && restricted) {
     const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
     await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url), agentsEnabled: Boolean(agents?.url), computerEnabled: Boolean(computer?.url), browserEnabled: Boolean(browser?.url), controlEnabled: Boolean(control?.url) }), { encoding: 'utf8', mode: 0o600 });
@@ -153,17 +174,22 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
     await fs.promises.writeFile(path.join(home, '.agents', 'hooks.json'), `${JSON.stringify(agyHooksFileAt(hooks.file, path.join(home, '.agents')), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     runs = path.join(dir, 'runs.jsonl');
   }
+  const env = {
+    ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}),
+    ...(agents?.url ? { PLY_AGENTS_URL: agents.url, PLY_AGENTS_AUTHORIZATION: agents.authorization } : {}),
+    ...(computer?.url ? { PLY_COMPUTER_URL: computer.url, PLY_COMPUTER_AUTHORIZATION: computer.authorization } : {}),
+    ...(browser?.url ? { PLY_BROWSER_URL: browser.url, PLY_BROWSER_AUTHORIZATION: browser.authorization } : {}),
+    // PLY_CONTROL_* は中継の接続先（MCP の URL）。PLEIAD_CONTROL_* は会話のシェルの pleiad CLI を同じ会話に束縛する接続情報（ADR 0083）
+    ...(control?.url ? { PLY_CONTROL_URL: control.url, PLY_CONTROL_AUTHORIZATION: control.authorization, ...control.env } : {}),
+    // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
+    ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}),
+  };
   return {
     home,
     runs,
-    // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
-    env: { ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}),
-      ...(agents?.url ? { PLY_AGENTS_URL: agents.url, PLY_AGENTS_AUTHORIZATION: agents.authorization } : {}),
-      ...(computer?.url ? { PLY_COMPUTER_URL: computer.url, PLY_COMPUTER_AUTHORIZATION: computer.authorization } : {}),
-      ...(browser?.url ? { PLY_BROWSER_URL: browser.url, PLY_BROWSER_AUTHORIZATION: browser.authorization } : {}),
-      // PLY_CONTROL_* は中継の接続先（MCP の URL）。PLEIAD_CONTROL_* は会話のシェルの pleiad CLI を同じ会話に束縛する接続情報（ADR 0083）
-      ...(control?.url ? { PLY_CONTROL_URL: control.url, PLY_CONTROL_AUTHORIZATION: control.authorization, ...control.env } : {}),
-      ...(locale ? { PLY_CONTEXT_LOCALE: locale } : {}) },
+    env,
+    // 制限しない会話は、中継を session/new の mcpServers に直に渡す（agent.md を経由しない）。制限した会話は agent.md が持つ
+    mcpServers: restricted || !context ? [] : relayMcpServers({ env, contextEnabled: Boolean(url), agentsEnabled: Boolean(agents?.url), computerEnabled: Boolean(computer?.url), browserEnabled: Boolean(browser?.url), controlEnabled: Boolean(control?.url) }),
     cleanup: () => { ownHomes.delete(name); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 }); },
   };
 }

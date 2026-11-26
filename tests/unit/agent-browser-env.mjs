@@ -4,7 +4,7 @@ import path from 'node:path';
 import { browserEnvironment, chromeRelayBrowser, browserInstruction, browserSocketDirectory } from '../../core/agent-browser.mjs';
 import { rpc as nativeRpc } from '../../core/backends/codex-rpc.mjs';
 import { backend as codex } from '../../core/backends/codex.mjs';
-import { AgySession } from '../../core/backends/antigravity-cli.mjs';
+import { AgyAcp } from '../../core/backends/antigravity-acp.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 
 export const name = 'agent-browser-env';
@@ -111,12 +111,12 @@ export default async function (t) {
 
     process.env.AGENT_HOST_AGY_BIN = `"${process.execPath}" "${fake}"`;
     const agyFile = path.join(scratch, 'agy.json');
-    const agy = new AgySession({ cwd: scratch, env: { ...env, FAKE_BROWSER_ENV_FILE: agyFile } });
-    agy.start();
+    const agy = new AgyAcp({ cwd: scratch, env: { ...env, FAKE_BROWSER_ENV_FILE: agyFile } });
+    agy.start().catch(() => {});
     for (let i = 0; i < 100; i++) { try { await readFile(agyFile); break; } catch { await new Promise(resolve => setTimeout(resolve, 10)); } }
     const agySeen = JSON.parse(await readFile(agyFile, 'utf8'));
     const agyProc = agy.proc;
-    agy.kill();
+    await agy.close();
     await new Promise(resolve => {
       if (!agyProc || agyProc.exitCode !== null || agyProc.signalCode !== null) resolve();
       else agyProc.once('close', resolve);

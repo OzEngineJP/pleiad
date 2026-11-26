@@ -30,6 +30,7 @@ const sel = {
 };
 const KINDS = { lg: 'usage-login' };
 const MAX_NAME = 60;
+const AGENT = 'claude';   // backend-allow: この面は Claude のアカウント専用。id の置き場はここ 1 つ（web/client.mjs は claudeAccounts.agent で引く）
 
 // isDefault(id) / makeDefault(id): 新しい会話の既定（設定のカードの［既定にする］1 つ。web/client.mjs が持つ。ADR 0359）。
 // onAddEnd: 追加のカードを閉じた（フォーカスを一覧の［＋ 接続先を追加］へ戻す）
@@ -414,7 +415,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {}, is
   // focus: そのアカウントのカードの［編集］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   let onOpen = () => {};
   async function open({ usageLogin, focus } = {}) {
-    openSettings(); panel.hidden = false; onOpen('claude');   // backend-allow: この面は Claude のアカウント専用
+    openSettings(); panel.hidden = false; onOpen(AGENT);
     message = t('accounts.loading'); draw();
     try {
       await load(true);
@@ -442,7 +443,9 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {}, is
     /** 面を閉じる（エージェントのカードの「接続」を畳むとき。［閉じる］と同じ） */
     close,
     /** 開いている面のエージェント（閉じていれば ''。設定のカードの aria-expanded と再描画で使う） */
-    get openAgent() { return panel.hidden ? '' : 'claude'; },   // backend-allow: この面は Claude のアカウント専用
+    get openAgent() { return panel.hidden ? '' : AGENT; },
+    /** この面のエージェントの id（Claude のアカウントの面は 1 つのエージェント専用） */
+    agent: AGENT,
     /** open() が呼ばれた（カードの「接続」の面を開く合図。web/client.mjs が受ける） */
     onOpen(fn) { onOpen = fn; },
     invalidate: () => { loaded = null; if (!panel.hidden) load(true).then(() => draw()).catch(() => {}); },

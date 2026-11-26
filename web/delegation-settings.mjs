@@ -25,7 +25,7 @@ import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delega
 import { effortSelect } from './effort-select.mjs';
 import { paintWhoChip, renderModel, panel } from './composer-controls.mjs';
 import { createReorder, moveItem } from './reorder.mjs';
-import { CLAUDE_ROLES, KIND, KIND_LABEL } from './compat-presets.mjs';
+import { ROLES_BY_AGENT, KIND, KIND_LABEL } from './compat-presets.mjs';
 
 const SERVICE = 'openrouter';
 /** 判定に使うキーの割り当て（API キーの uses の judge:routing） */
@@ -900,7 +900,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, modelsOf
       const where = e => `${KIND_LABEL[e.kind ?? KIND[e.agent ?? backend]] ?? ''} · ${String(e.baseUrl ?? '').replace(/^https?:\/\//, '')}`;
       const endpointView = epRows.length || endpoint ? {
         selected: endpoint ?? '', row: epRow, lost: null,
-        roleNames: backend === 'claude' ? CLAUDE_ROLES.map(r => [r.key, r.short]) : [],   // backend-allow: 役割（メイン・速い・賢い）は Claude の互換の接続先だけ
+        roleNames: (ROLES_BY_AGENT[backend] ?? []).map(r => [r.key, r.short]),
         options: [
           { value: '', label: accountText(backend, ''), usage: usage(backend, '', model) },
           // 使えない接続先の理由は、選べない行では選べない理由（blocked）として 1 回だけ出す。選んでいる行（1 段目の注記にも使う）だけ下の行に添える

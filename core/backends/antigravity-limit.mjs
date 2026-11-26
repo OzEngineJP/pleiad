@@ -1,6 +1,6 @@
 // Antigravity の使用量の上限のエラーを見分ける（ADR 0119）。agy は上限を普通の失敗（`result.status` が SUCCESS 以外・`result.error` に英語の文）で返す。
 // 例（2026-10-04 の実物）: "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h14m6s."
-// これを Claude・Codex と同じ turnResult の limited（解除の時刻つき）にそろえる（core/backends/antigravity.mjs の turnResultFor）。
+// これを Claude・Codex と同じ turnResult の limited（解除の時刻つき）にそろえる（core/backends/antigravity-acp.mjs の decorateError と antigravity.mjs のターンの終わり）。
 //
 //   antigravityLimit(text, now) → { resetsAt: number|null } | null   … 上限の文でなければ null。解除の時刻は「Resets in 4h14m6s」から（無ければ null）
 

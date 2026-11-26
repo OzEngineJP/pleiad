@@ -22,7 +22,7 @@ import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 
-/** 控えの置き場。**agy がらみの控えはすべてここに揃える**（pid の控えも: antigravity-pids.mjs）。 */
+/** 控えの置き場。**agy がらみの控えはすべてここに揃える**。 */
 export function dir() {
   const base = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
   return path.join(base, "antigravity");
@@ -39,7 +39,7 @@ async function read(conversationId) {
   try {
     const raw = JSON.parse(await fs.readFile(fileFor(conversationId), "utf8"));
     // 控えの形をしていないものは「控えが無い」と同じに扱う。
-    // 同じ置き場には pid の控え（antigravity-pids.mjs）も入るので、一覧が拾わないように
+    // 同じ置き場には、以前の版が置いた pid の控え（pids.json）が残っていることがあるので、一覧が拾わないように
     if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.messages)) return null;
     return {
       conversationId: raw.conversationId ?? conversationId,

@@ -209,7 +209,7 @@ export default async function (t) {
     t.ok('待ちの 1 回分（600 秒）は MCP の上限（660 秒）より短い', BROWSER_WAIT_SLICE_MS === 600_000 && COMPUTER_CALL_TIMEOUT_SEC === 660 && BROWSER_WAIT_SLICE_MS < COMPUTER_CALL_TIMEOUT_SEC * 1000);
     t.ok('Claude: ply_browser の MCP の timeout は 660 秒', /\[BROWSER_SERVER\]: \{[^}]*timeout: COMPUTER_CALL_TIMEOUT_SEC \* 1000/.test(claude));
     t.ok('Codex: ply_browser の tool_timeout_sec は 660 秒', /mcp_servers\.\$\{BROWSER_SERVER\}`\]: \{[^}]*tool_timeout_sec: COMPUTER_CALL_TIMEOUT_SEC/.test(codex));
-    // agy の印（agent-marks.mjs）と橋（computer-delivery.mjs）は、同じ値（computer-timing.mjs）を使う
-    t.ok('agy: 3 分で切られるので 150 秒ごとに分けて返す', /AGY_WAIT_SLICE_MS = 150[_]?000/.test(await src('computer-timing.mjs')) && /waitSliceMs: AGY_WAIT_SLICE_MS/.test(await src('agent-marks.mjs')));
+    // agy の印（agent-marks.mjs）と橋（computer-delivery.mjs）は、同じ値（computer-timing.mjs）を使う（印の中身は宣言そのものなので見ない）
+    t.ok('agy: 3 分で切られるので 150 秒ごとに分けて返す', /AGY_WAIT_SLICE_MS = 150[_]?000/.test(await src('computer-timing.mjs')));
   }
 }

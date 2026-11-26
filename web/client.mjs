@@ -4136,7 +4136,8 @@ function connAddArea(b) {
   const official = () => {
     connAddOpen = '';
     if (kind === 'token') claudeAccounts.add().then(() => renderAuth());
-    else if (kind === 'agent') { agentAccounts.add(); renderAuth(); }
+    // 記述に注意（accountAddNotice）があるエージェントは、モーダルで［理解して追加する］を押してから名前の欄が開く
+    else if (kind === 'agent') agentAccounts.add({ notice: b.accountAddNotice ?? null }).then(() => renderAuth());
   };
   const closeKinds = () => { connAddOpen = ''; renderAuth(); $("authSec").querySelector(`[data-agent="${b.id}"] [data-add]`)?.focus(); };
   if (connAddOpen !== b.id) {
@@ -4378,7 +4379,7 @@ function renderAuth() {
     // 行は初回の案内・会話の中の一覧と同じ部品（web/agent-row.mjs）。ここだけが持つ操作（ログアウト・状態を確認・接続）は行の右の列へ足す
     const rowEl = agentRows.build(rowAgent(b), { near: plan.near });
     const actions = rowEl.querySelector(".ar2-a");
-    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Antigravity・Devin の頭の行は今のまま（ADR 0359）
+    // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Devin の頭の行は今のまま（ADR 0359。Antigravity は 2 つ目以降のアカウントを持つので Claude・Codex と同じ）
     const accounts = b.capabilities?.accounts && st.installed !== false;
     const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
     const conns = Boolean(accounts || endpoints);
@@ -5046,8 +5047,8 @@ function cwdOptions() {
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   onChange: () => { vocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); delegationSettings.event({ change: 'accounts' }); connAsked.clear(); renderAuth(); },
-  isDefault: (id) => connIsDefault('claude', 'account', id),   // backend-allow: Claude のアカウントの面は Claude のカード専用
-  makeDefault: (id) => setConnDefault('claude', { account: id }),   // backend-allow: 同上
+  isDefault: (id) => connIsDefault(claudeAccounts.agent, 'account', id),
+  makeDefault: (id) => setConnDefault(claudeAccounts.agent, { account: id }),
   onAddEnd: () => connAddEnd() });
 // Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
 const agentAccounts = setupAgentAccounts({ cmd, labelOf,
@@ -5190,7 +5191,7 @@ const compatEndpoints = setupCompatEndpoints({ cmd,
   onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); renderAuth(); },
   onAddEnd: () => connAddEnd() });
 // 管理の面が開きたいとき、面をそのエージェントのカードの「接続先」の一覧の中へ移す
-claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', claudeAccounts.panel));   // backend-allow: Claude のアカウントの面は Claude のカード専用
+claudeAccounts.onOpen(() => mountPanel(claudeAccounts.agent, 'accounts', claudeAccounts.panel));
 agentAccounts.onOpen(id => mountPanel(id, 'accounts', agentAccounts.panel));
 compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', compatEndpoints.panel); });
 function endpointLabel(id) {

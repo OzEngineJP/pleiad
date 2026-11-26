@@ -680,7 +680,7 @@
       "enableNote": "Works in Claude, Codex and Antigravity conversations. While an agent is operating, it uses your mouse and keyboard. Press Esc to stop it.",
       "allowAll": "Allow all apps",
       "allowAllNote": "Lets agents operate any app without asking. The apps under “Apps agents can’t operate” (terminals, password managers, security software, agents themselves, and so on) stay off limits even when this is on.",
-      "antigravity": "Antigravity doesn’t ask for approval. It only runs without confirmation, so any app except those agents can’t operate is operated without asking.",
+      "antigravity": "In Antigravity conversations with the “Fully automatic” approval mode, apps are operated without asking, except those that can’t be operated. In other modes, it asks for approval like the other agents.",
       "allowedTitle": "Always-allowed apps",
       "allowedAll": "All allowed",
       "empty": "None yet",
@@ -857,6 +857,13 @@
     }
   },
   "agentAccounts": {
+    "addNotice": {
+      "antigravity": {
+        "title": "Add a second Google account",
+        "body": "This is for keeping accounts with different purposes apart, such as work and personal. Google's FAQ says that rotating accounts automatically to get around usage limits is not supported on individual plans.",
+        "ok": "I understand, add it"
+      }
+    },
     "close": "Close",
     "cancel": "Cancel",
     "deleteFailed": "Could not delete: {{error}}",

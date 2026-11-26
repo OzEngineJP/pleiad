@@ -1,5 +1,5 @@
 // antigravity の控えをターンの途中から書くこと（core/backends/antigravity.mjs の runTurn）を、別プロセスで確かめる。
-// バックエンドを読み込むだけで置き場（AGENT_HOST_DATA）の孤児の掃除が走るので、置き場を一時ディレクトリにしてから読み込む。
+// バックエンドは置き場（AGENT_HOST_DATA）に控えを書くので、置き場を一時ディレクトリにしてから読み込む。
 // 判定は { label, pass, detail } の配列を JSON で stdout に出す（tests/unit/antigravity-partial-transcript.mjs が t.ok にする）
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -24,14 +24,6 @@ const pids = async () => JSON.parse(await fs.readFile(process.env.FAKE_AGY_PID_F
 const gone = async (pid) => {
   for (let i = 0; i < 100; i++) {
     try { process.kill(pid, 0); } catch { return true; }
-    await sleep(20);
-  }
-  return false;
-};
-const released = async (pid) => {
-  for (let i = 0; i < 100; i++) {
-    const live = JSON.parse(await fs.readFile(path.join(scratch, "antigravity", "pids.json"), "utf8").catch(() => "[]"));
-    if (!live.some((entry) => entry.pid === pid)) return true;
     await sleep(20);
   }
   return false;
@@ -97,8 +89,8 @@ try {
   ok("失敗したターンもツールと本文が残り、前のターンも残る",
     afterFail?.messages?.length === 4 && reply(afterFail)?.toolCalls?.[0]?.result?.text === "partial-out" && afterFail.messages[1].text === "途中まで",
     JSON.stringify(afterFail?.messages?.map((m) => [m.role, m.text, m.toolCalls?.length ?? 0]) ?? null));
-  ok("途中失敗の生 status と経路を控える", afterFail?.turnResults?.at(-1)?.source === "result"
-    && afterFail.turnResults.at(-1).status === "ERROR", JSON.stringify(afterFail?.turnResults?.at(-1) ?? null));
+  ok("途中失敗の経路と失敗理由を控える（ACP は依頼の失敗として届く）", afterFail?.turnResults?.at(-1)?.source === "exception"
+    && afterFail.turnResults.at(-1).outcome === "error" && Boolean(afterFail.turnResults.at(-1).error), JSON.stringify(afterFail?.turnResults?.at(-1) ?? null));
 
   // ---- 3. 成功するターン。途中と同じ uuid の発言が、完了の時刻と最終の本文に差し替わる（二重にならない）
   const sentBefore = Date.now();
@@ -122,10 +114,7 @@ try {
   // ---- 4. SUCCESS の result を返してからプロセスが終了しても、完了済みのターンは成功のまま
   const completed = await turn({ prompt: "result-then-exit", sessionId: sid }).done;
   const completedPid = (await pids()).at(-1);
-  const exitedAfterResult = await gone(completedPid);
-  // pid の控えが外れた時点で onExit の判定も済んでいる。
-  const exitHandled = await released(completedPid);
-  ok("SUCCESS の後に agy が終了する台本が動く", exitedAfterResult && exitHandled, String(completedPid));
+  ok("SUCCESS の後に agy が終了する台本が動く", await gone(completedPid), String(completedPid));
   ok("完了後の終了で成功ターンを失敗に変えない",
     !completed.error && completed.events.filter((e) => e.type === "turnResult").map((e) => e.outcome).join() === "ok",
     JSON.stringify({ error: completed.error?.message, results: completed.events.filter((e) => e.type === "turnResult") }));
@@ -142,8 +131,8 @@ try {
   ok("途中で落ちたターンもツールと本文が残る",
     afterExit?.messages?.length === 12 && afterExit.messages[10].text === "partial-exit" && reply(afterExit)?.toolCalls?.length === 1,
     JSON.stringify(afterExit?.messages?.map((m) => [m.role, m.text]) ?? null));
-  ok("完了前の異常終了は result と区別して控える", afterExit?.turnResults?.at(-1)?.source === "exit"
-    && afterExit.turnResults.at(-1).outcome === "error", JSON.stringify(afterExit?.turnResults?.at(-1) ?? null));
+  ok("完了前の異常終了は失敗として控える（ACP の子の終了は依頼の失敗になる）", afterExit?.turnResults?.at(-1)?.source === "exception"
+    && afterExit.turnResults.at(-1).outcome === "error" && /exited/.test(afterExit.turnResults.at(-1).error ?? ""), JSON.stringify(afterExit?.turnResults?.at(-1) ?? null));
 
   // ---- 6. 控えの無い会話を再開した（別の起動で forget した・控えが無い）。途中・失敗の書き込みで作らない
   const ghost = "ghost-conversation";

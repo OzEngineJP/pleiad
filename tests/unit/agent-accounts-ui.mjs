@@ -286,6 +286,66 @@ export default async function test(t) {
       assert.equal(opened, 1); assert.equal(signedIn, 0);
       check('account auth-expired action opens account settings without pretending to start a login or resend');
     }
+    {
+      // 追加の前の注意のモーダル（エージェントの記述の accountAddNotice）。鍵が無いエージェントは今までどおり名前の欄が先に開く
+      const notice = 'agentAccounts.addNotice.antigravity';
+      const dialogOf = ui => ui.panel.children.find(n => n.tagName === 'DIALOG');
+      const press = (dialog, act) => dialog.querySelectorAll('button').find(b => b.dataset.act === act).onclick();
+      const ui = fresh(); await ui.open('codex');
+      const plain = ui.add(); assert.equal($('aaForm').hidden, false, 'no notice: the name form opens at once'); assert.equal(dialogOf(ui), undefined); await plain;
+      $('aaForm').hidden = true;
+
+      let adding = ui.add({ notice }); await tick();
+      let dialog = dialogOf(ui);
+      assert.ok(dialog, 'the notice modal is shown');
+      assert.equal($('aaForm').hidden, true, 'the name form waits for the confirmation');
+      assert.ok(dialog.textContent.includes(tr(`${notice}.title`)) && dialog.textContent.includes(tr(`${notice}.body`)));
+      assert.deepEqual(dialog.querySelectorAll('button').map(b => b.textContent), [tr('agentAccounts.cancel'), tr(`${notice}.ok`)]);
+      press(dialog, 'notice-cancel');
+      assert.equal(await adding, false); assert.equal(dialogOf(ui), undefined, 'cancel removes the modal');
+      assert.equal($('aaForm').hidden, true, 'cancel never opens the name form');
+      assert.equal(calls.filter(c => c.verb === 'create').length, 0);
+
+      adding = ui.add({ notice }); await tick(); dialog = dialogOf(ui);
+      dialog.dispatchEvent({ type: 'cancel' });
+      assert.equal(await adding, false); assert.equal($('aaForm').hidden, true, 'Esc is the same as cancel');
+
+      adding = ui.add({ notice }); await tick();
+      press(dialogOf(ui), 'notice-ok');
+      assert.equal(await adding, true); assert.equal(dialogOf(ui), undefined);
+      assert.equal($('aaForm').hidden, false, 'confirming opens the name form');
+      check('the add notice modal shows before the name form, cancel/Esc stop there, confirm opens the form; no notice key keeps the old flow');
+    }
+    {
+      // メッセージだけの段（URL もコマンドも無い auth イベント）。どのエージェントにも効く
+      const ui = fresh(); await ui.open('codex'); await login('A');
+      const current = requests('login')[0];
+      ui.authEvent({ backend: 'codex', accountId: 'A', loginId: current.args.attempt, phase: 'url', message: 'Sign in to Google in your browser' });
+      const text = $('aaFlowBody').textContent;
+      assert.ok(text.includes('Sign in to Google in your browser'), text);
+      assert.ok(!$('aaFlowBody').querySelectorAll('code').length, 'no empty command line');
+      assert.ok(!$('aaFlowBody').querySelectorAll('a').length, 'no link without a URL');
+      assert.ok($('aaFlowBody').querySelectorAll('button').some(b => b.textContent === tr('agentAccounts.cancel')), 'the cancel button stays');
+      ui.authEvent({ backend: 'codex', accountId: 'A', loginId: current.args.attempt, phase: 'url', url: 'https://accounts.example.invalid/x', message: 'Sign in' });
+      assert.ok($('aaFlowBody').querySelectorAll('a').length === 1, 'a later https URL upgrades the step to a link');
+      current.resolve({ label: 'A' }); await tick();
+      check('a message-only login step shows the message and cancel (no link, no empty command), and a later URL still becomes a link');
+    }
+    {
+      // 3 つの止め方（server.json の文面）が ja・en の両方にあり、ログインが要るときは［ログインする］の道が出る
+      for (const lang of ['ja', 'en']) {
+        const dict = JSON.parse(await readFile(new URL(`../../web/locales/${lang}/server.json`, import.meta.url), 'utf8'));
+        const a = dict.antigravity.accounts;
+        assert.ok(a.fileStorageUnsupported && a.appDataUnreachable && a.loginTokenMissing, `${lang}: Antigravity account stop messages`);
+        assert.ok(/\{\{agent\}\}/.test(dict.accounts.backend.notLoggedIn), `${lang}: notLoggedIn names the agent`);
+      }
+      const ui = fresh(); rows.set('antigravity', [{ ...account('G') }, { ...account('H'), hasCredential: true }]);
+      await ui.open('antigravity');
+      const labels = id => $('aaList').children.find(n => n.querySelector('strong')?.textContent === id).querySelectorAll('button').map(b => b.textContent);
+      assert.ok(labels('G').includes(tr('conn.login')), 'a logged-out Antigravity account offers the login button');
+      assert.ok(!labels('H').includes(tr('conn.login')), 'a logged-in one does not');
+      check('Antigravity stop messages exist in ja/en and a logged-out account keeps the same login button as the other agents');
+    }
   } finally {
     await i18n.setLanguage(originalLanguage);
     if (globals.document === undefined) delete globalThis.document; else globalThis.document = globals.document;

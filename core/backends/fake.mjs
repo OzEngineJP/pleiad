@@ -5,7 +5,7 @@
 // ことで SDK を避けていたので、server.mjs のロジックは e2e（本物の LLM）でしか触れなかった。
 //
 // セッションはプロセス内のメモリだけに持つ。サーバを落とせば消えるが、
-// テストは1プロセスの寿命の中で完結するので足りる。
+// テストは1プロセスの寿命の中で完結するので足りる（起こし直しの後の続きを試すときだけ AGENT_HOST_FAKE_STATE_DIR で控える。ファイル末尾）。
 //
 // 台本は prompt の先頭で選ぶ:
 //   "echo:<文字>"  … text.delta を数回 -> turnResult
@@ -469,12 +469,12 @@ export const backend = {
     // 同じ会話での巻き戻し（core/conversations.mjs の rewind）。FAKE_REWIND で形を切り替える:
     //   resumeAt（既定）… Claude と同じ。次のターンが drops の手前で切る / reject … 次のターンが拒否する（ホスト管理へ落とす経路） /
     //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
-    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている', 'design') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     subagents: true,
     // FAKE_LIVE=off でターンの途中切り替えの口が無いエージェントにする（Codex・OpenCode と同じ形）
-    get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    get liveEffort() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveEffort() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている', 'design') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,
     plyAgents: true,
     plyInstructions: true,
@@ -483,7 +483,7 @@ export const backend = {
     logout: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
     // アカウント（Claude の台帳を共有する形）。試験が FAKE_ACCOUNTS=off で「アカウントを持てないエージェント」にする
-    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている', 'design') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
     plyShell: true,
@@ -491,16 +491,16 @@ export const backend = {
     nativeMcpOff: true,
     approvals: 'interactive',
     mcpApproval: 'agent',
-    compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない', 'design'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,
     // 内部呼出し（Issue #180。host.internalCall）。FAKE_INTERNAL=off で「分離して呼べないエージェント」にする
-    get internalCall() { return process.env.FAKE_INTERNAL === 'off' ? impossible('試験用に内部呼出しを止めている') : 'ephemeral'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get internalCall() { return process.env.FAKE_INTERNAL === 'off' ? impossible('試験用に内部呼出しを止めている', 'design') : 'ephemeral'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     plyContext: 'turn',
     steer: true,
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
-      if (process.env.FAKE_COMPUTER_USE === 'off') return impossible('試験用にコンピューターの操作を無効にしている'); // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+      if (process.env.FAKE_COMPUTER_USE === 'off') return impossible('試験用にコンピューターの操作を無効にしている', 'design'); // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
       return { images: process.env.FAKE_COMPUTER_IMAGES === 'path' ? 'path' : 'inline', waitSliceMs: Number(process.env.FAKE_COMPUTER_SLICE_MS) > 0 ? Number(process.env.FAKE_COMPUTER_SLICE_MS) : null };
     },
     // runArgs の配達物は台本で全部確かめられるよう、全部受け取ることにする
@@ -1280,6 +1280,24 @@ export const backend = {
     },
   },
 };
+
+// AGENT_HOST_FAKE_STATE_DIR=<ディレクトリ>: 会話を <dir>/sessions.json に控え、サーバーを起こし直した後も履歴と続きが出る
+// （実機の codex・opencode などと同じ。全エージェント共通の「再起動の後の続き」の試験用: tests/lib/backend-common.mjs の checkResume）。指定が無ければメモリだけ
+const STATE_FILE = process.env.AGENT_HOST_FAKE_STATE_DIR ? path.join(process.env.AGENT_HOST_FAKE_STATE_DIR, "sessions.json") : null;
+if (STATE_FILE) {
+  try { for (const saved of JSON.parse(fs.readFileSync(STATE_FILE, "utf8"))) sessions.set(saved.sessionId, saved); } catch { /* 初回は控えが無い */ }
+  const save = () => {
+    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify([...sessions.values()]));
+  };
+  for (const method of ["runTurn", "setTitle", "setTag", "fork", "rewind", "deleteSession"]) {
+    const original = backend[method];
+    if (typeof original !== "function") continue;
+    backend[method] = async function (...args) {
+      try { return await original.apply(this, args); } finally { save(); }
+    };
+  }
+}
 
 /** テストから状態を消したいとき用。サーバ側からは使わない。 */
 export function reset() {

@@ -26,7 +26,7 @@
 6. **保存済みの古い名前**（利用者の決定。Pleiad で Devin を使うのは利用者 1 人という前提）:
    - 委譲の設定（`prefs.json` の `delegationRouting.tiers` の候補と、その `efforts`）にある Devin の候補は、この版の最初の起動で 1 回だけ全部消す。古いカタログの名前か ACP の名前かは見分けず、置き換えない。
    - 1 回きりはデータの形の版（`DATA_SCHEMA` は 4 のまま）ではなく、`prefs.json` の印（`migrations` に `devin-acp-candidates`）で決める（`core/prefs-migrations.mjs` の `removeDevinCandidatesOnce`。設定を受け取って移行した設定を返すだけの純粋な関数で、自分では書かない。起動の中で store が `prefs.json` を読む前に、`core/store.mjs` の `migratePrefs` に渡して呼ぶ）。印が無いときだけ消して印を立て、`setPref` と同じ書き込みの口（一時ファイルから rename）で済ませる。新しい書き込みの口は足さない（`tests/data-writes-allowlist.mjs` は変えない）。移す前の写し（`backup-prefs-<日時>/`）は残さない: 消すのは委譲の候補だけで、利用者が選び直せば戻るため。消した数は起動のログに 1 行（`data.devinCandidatesRemoved`）残す。画面の通知は出さない。
-   - Devin を名指しして外す 1 行（`isDevin`）は、能力の印・エージェントの記述からは引かず、`backend-allow` の印を付けた（`tests/lint-backends.mjs`。保存済みの Devin の候補だけを外す 1 回きりの処理で、別のエージェントへ広げないため）。
+   - Devin を名指しして外す 1 行（`isDevin`）は、能力の印・エージェントの記述からは引かず、`backend-allow` の印を付けた（`tests/lint-agents.mjs`。保存済みの Devin の候補だけを外す 1 回きりの処理で、別のエージェントへ広げないため）。
    - 2 回目以降の起動は印があるので何もせず、利用者が選び直した Devin の候補は残る。前の版は `prefs.json` の知らないキーも書き戻すので、版を戻して上げ直しても印が残り、何もしない。
    - 読めない（壊れている）・書けないときは起動を止めない。`prefs.json` には触れず（書けなければメモリも戻す）、ログに 1 行（`data.devinCandidatesFailed`）残し、印が立たないので次の起動でやり直す。`prefs.json` が無い置き場は、印だけの `prefs.json` を作る（後で選んだ Devin の候補を次の起動で外さないため）。
    - 会話のモデル・既定のモデルなど、ほかに残る古い名前は置き換えない。§5 のとおり「使えないモデル」として止め、人に選び直してもらう（新しい画面の部品は足さない）。

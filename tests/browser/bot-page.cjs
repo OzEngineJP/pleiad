@@ -3,7 +3,7 @@
 // （AGENT_HOST_BACKENDS=fake,codex,antigravity AGENT_HOST_CODEX_BIN="node tests/lib/fake-codex.mjs" AGENT_HOST_AGY_BIN="node tests/lib/fake-agy.mjs"）。
 // bot のページと作成・記憶の一覧（web/channels/bot-page.mjs・memory-list.mjs。ADR 0109・0110）:
 //   作る 3 段（名前 → 色 → 人格。名前が空なら次へ進めない。ADR 0362）・設定の変更（名前・色・人格・モデル・エフォート・承認モード・フォルダー・他の会話に送る）、
-//   Antigravity（承認モードは全部自動だけ）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
+//   Antigravity（承認モードは 5 つ。ADR 0365）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。
 //   作ると、その bot の DM が開いて入力欄に焦点がある（ADR 0358）。DM の見出しの名前から bot のページへ行ける。
 //   畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて、右に今の値だけを出し、長い説明文と「今週」は無い。
@@ -219,19 +219,21 @@ async page => {
   await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');
   check(true, '別の経路で書いた記憶が一覧に現れる（memoryChanged）');
 
-  // ---- Antigravity: 承認モードは全部自動だけ。事実を 1 行。フォルダーは「すべてのフォルダー」
+  // ---- Antigravity: 承認モードは 5 つ（ACP。ADR 0365）。「1 つだけ」の 1 行は出ない。全部自動（yolo）ではフォルダーは「すべてのフォルダー」
   await makeBot('Kit');
   await botPage((await botOf('Kit')).id);
   await pickChip('#botModelChip', 'backend:antigravity');
-  await page.waitForFunction(() => document.querySelector('#botModeChip').dataset.value === 'yolo');
-  check(await page.locator('#botView .bp-fact').isVisible() && (await page.locator('#botView .bp-fact').innerText()).includes('全部自動'), 'Antigravity は承認モードが全部自動だけ、と 1 行添える');
+  await page.waitForFunction(() => document.querySelector('#botModelChip').dataset.backend === 'antigravity');
+  check(!(await page.locator('#botView .bp-fact').isVisible()), 'Antigravity は承認モードを複数選べるので、「だけ」の 1 行は出ない');
   await page.locator('#botModeChip').click();
-  check(await page.locator('#botModePop [role=option]').count() === 1, '承認モードの面に選べるのは全部自動の 1 つ');
+  check(await page.locator('#botModePop [role=option]').count() === 5, '承認モードの面に選べるのは 5 つ（都度確認・編集は自動・自動判断・計画のみ・全部自動）');
   await page.keyboard.press('Escape');
   const kit = await waitBot('Kit', b => b.backend === 'antigravity', 'bot のエージェントを Antigravity に替えられる');
   await botPage(kit.id);
-  check(kit.mode === 'yolo', 'Antigravity の bot の承認モードは yolo');
-  check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Antigravity の bot は「すべてのフォルダー」で非活性');
+  check(kit.mode === 'default', 'Antigravity の bot の承認モードは、作業場所に限るモードが無いので語彙の先頭の default（都度確認）');
+  await pickChip('#botModeChip', 'mode:yolo');
+  await waitBot('Kit', b => b.mode === 'yolo', 'Antigravity の全部自動（yolo）にする');
+  check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Antigravity の全部自動は「すべてのフォルダー」で非活性');
   await shot('06-antigravity');
 
   // ---- Codex: 全部自動 (full) は書き込みを作業場所に限るので、フォルダーは活性のまま。Bypass は非活性

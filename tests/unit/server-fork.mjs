@@ -1,3 +1,6 @@
+// 発言単位の分岐・永続化・失敗の共通契約。身代わりの Codex（tests/lib/fake-codex.mjs）を通して、server の共通の処理
+// （分岐の境界・実行中の親・保存の失敗・再起動後の系譜）を確かめる。エージェントごとの 1 ターン・中断・失敗・再開の共通の流れは
+// tests/unit/backend-common.mjs が見るので、ここでは分岐に関わるものだけを見る。
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

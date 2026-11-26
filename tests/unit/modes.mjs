@@ -19,7 +19,7 @@ const TABLE = [
   ['codex',  'full',    'claude',      'auto',      false],   // never は claude に無いので judge まで
   ['claude', 'auto',    'codex',       'auto',      false],
   ['claude', 'default', 'codex',       'ask',       false],
-  ['codex',  'ask',     'antigravity', 'yolo',      true],    // yolo しか無く、上限を超える
+  ['codex',  'ask',     'antigravity', 'plan',      false],   // agy も ACP の承認モードを持つので、親の強さに収まり、聞かない
   ['codex',  'yolo',    'antigravity', 'yolo',      false],   // 親が無制限なら超えない
   ['claude', 'default', 'claude',      'default',   false],
 ];
@@ -48,8 +48,8 @@ export default async function (t) {
   t.ok('引数が欠けても落ちない', resolveDelegatedMode({}).mode === null);
 
   // 隠れた会話（心拍・夜の整理）のモード: readonly 以下でいちばん狭いもの。Claude は読むだけのモードを持たないので plan（none）
-  t.ok('隠れた会話のモード: Claude は plan（none）・Codex は readonly・Antigravity は無し（全部自動だけ）',
-    narrowestMode(claude.modes()) === 'plan' && narrowestMode(codex.modes()) === 'readonly' && narrowestMode(antigravity.modes()) === null,
+  t.ok('隠れた会話のモード: Claude は plan（none）・Codex は readonly・Antigravity は plan',
+    narrowestMode(claude.modes()) === 'plan' && narrowestMode(codex.modes()) === 'readonly' && narrowestMode(antigravity.modes()) === 'plan',
     JSON.stringify([narrowestMode(claude.modes()), narrowestMode(codex.modes()), narrowestMode(antigravity.modes())]));
   t.ok('隠れた会話のモード: none と readonly があれば none、同じ範囲なら自律の弱いほう。モードが無くても落ちない',
     narrowestMode({ r: { scope: 'readonly', autonomy: 'judge' }, n: { scope: 'none', autonomy: 'judge' } }) === 'n'

@@ -24,7 +24,6 @@ import { t as T } from '../../core/i18n.mjs';
 export const name = 'hooks-agents';
 export const title = 'Hook × エージェント: 行 ID・移行の式・旧の保存と同じ動き・一覧と実行時の一致・二重に動かさない・鍵の理由・操作の承認';
 
-// backend-allow: エージェントごとの元の集合と止め方を、試験の入力として並べる
 const AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
 const [CLAUDE, CODEX, AGY, OPENCODE, DEVIN, GROK] = AGENTS;
 

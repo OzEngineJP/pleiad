@@ -49,13 +49,9 @@ export default async function (t) {
     t.ok('既定のレジストリは試験用以外を記述順に含む（CLI を起動せず読める）', defaults.map((b) => b.id).join() === DEFAULT_AGENT_IDS.join(), defaults.map((b) => b.id).join());
     for (const b of defaults) {
       const a = agentPresentation(b.id);
-      t.ok(`${b.id}: 画面の記述はエージェントの記述から来る`, b.shortLabel === a.shortLabel && JSON.stringify(b.brand) === JSON.stringify(a.brand) && b.idleCompaction === a.idleCompaction && b.contextAt === a.contextAt);
+      t.ok(`${b.id}: 画面の記述はエージェントの記述から来る`, b.shortLabel === a.shortLabel && JSON.stringify(b.brand) === JSON.stringify(a.brand) && b.idleCompaction === a.idleCompaction && b.contextAt === a.contextAt && b.accountAddNotice === a.accountAddNotice);
     }
-    // サブエージェントを呼ぶツール名の申告（画面の委譲カード・過去の一覧が見る）。申告の無いエージェントは空
-    const DECLARED = { claude: ['Task', 'Agent'], codex: ['subAgentActivity', 'collabAgentToolCall'], opencode: ['task', 'subagent'] };
-    for (const b of defaults) {
-      t.ok(`${b.id}: 申告したサブエージェントのツール名を渡す（無ければ空）`, JSON.stringify(b.subagentTools) === JSON.stringify(DECLARED[b.id] ?? []), JSON.stringify(b.subagentTools));
-    }
+    t.ok('2 つ目以降の注意の鍵は Antigravity だけが持つ（画面は id を直書きしない）', defaults.filter((b) => b.accountAddNotice).map((b) => b.id).join() === 'antigravity', defaults.map((b) => `${b.id}:${b.accountAddNotice}`).join());
     const reverse = [...Object.keys(AGENTS)].reverse();
     const selected = await readRegistry(['unknown-contract-backend', ...reverse, 'unknown-contract-backend']);
     t.ok('指定順の全エージェントを含み、未知の id は除く', selected.map((b) => b.id).join() === reverse.join(), selected.map((b) => b.id).join());
