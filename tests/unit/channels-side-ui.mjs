@@ -36,17 +36,17 @@ export default function (t) {
   t.ok('使用量の上限で休んでいれば休憩中。作業中・あなた待ちが先、解除の時刻を過ぎたら待機（ADR 0119）', botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 1000 }) === 'resting'
     && botState({ ...owl, restingUntil: 2000 }, { sessions, runningIds: new Set(['s1']), now: 1000 }) === 'working' && botState({ ...lynx, restingUntil: 2000 }, { sessions, now: 3000 }) === 'idle');
 
-  // ---- タブの点（見ていない側にだけ）
+  // ---- タブの点（05-2: 作業中 ◌ は出さない。05-3: あなた待ちの点は見ている側でも片付くまで残す）
   const dots = (o) => tabDots({ channels: [], botStates: [], chats: {}, ...o });
   t.ok('Chats を見ていて bot があなた待ち → Channels に mark', dots({ tab: 'chats', botStates: ['idle', 'waiting'] }).channels === 'mark');
-  t.ok('あなた宛ての投稿も mark。作業中の bot は working、未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
-    && dots({ tab: 'chats', botStates: ['working'] }).channels === 'working' && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
+  t.ok('あなた宛ての投稿も mark。作業中の bot や未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
+    && dots({ tab: 'chats', botStates: ['working'] }).channels === null && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
   t.ok('アーカイブしたチャンネルの未読は数えない', dots({ tab: 'chats', channels: [{ unread: 3, mentions: 1, archivedAt: 1 }] }).channels === null);
-  t.ok('見ている側には点を付けない', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === null
+  t.ok('見ている側でもあなた待ちが残っている間は mark を残す', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === 'mark'
     && dots({ tab: 'channels', chats: { waiting: true } }).chats === 'mark');
-  t.ok('チャット側: あなた待ちが先、作業中なら working、無ければ null', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
-    && dots({ tab: 'channels', chats: { running: true } }).chats === 'working' && dots({ tab: 'channels', chats: { unread: true } }).chats === null
-    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === null);
+  t.ok('チャット側: あなた待ちなら mark、作業中や未読だけでは null（見ている側でも残す）', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
+    && dots({ tab: 'channels', chats: { running: true } }).chats === null && dots({ tab: 'channels', chats: { unread: true } }).chats === null
+    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === 'mark');
 
   // ---- 検索の行
   const rows = channelNameRows(channels, parseTerms('check'));
@@ -84,11 +84,12 @@ export default function (t) {
   t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く（スレッドの行は状態を持つので落とせる）', /if \(!interactive \|\| \(s\.bot && !s\.thread\)\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
   t.ok('検索: チャンネルの当たりを混ぜ、出どころを添える', /connectChannels\(link\)/.test(side) && /channelsLink\.matchNames/.test(side) && /"row-src"/.test(side));
 
-  // ---- 脇の切り替え（節 05: 板 1 枚・アイコン・まばたき/弾む・reducedMotion・◆/◌ の読み上げ）
+  // ---- 脇の切り替え（節 05・11: 板 1 枚・アイコン・まばたき/弾む・reducedMotion・あなた待ちの点・新しいチャット）
   const html = read('web/index.html');
-  t.ok('index.html の #sideFace に板 1 枚とチャット/bot のアイコンがある',
+  t.ok('index.html の切り替え行に板 1 枚・アイコン・#newSession がある',
     /id="sideFace"[^>]*data-on="chats"/.test(html) && html.includes('class="side-face-plate"')
-    && /id="faceChats"[\s\S]*?side-face-chat/.test(html) && /id="faceChannels"[\s\S]*?side-face-bot/.test(html));
+    && /id="faceChats"[\s\S]*?side-face-chat/.test(html) && /id="faceChannels"[\s\S]*?side-face-bot/.test(html)
+    && /side-face-row[\s\S]*id="newSession"/.test(html));
   const prevDoc = globalThis.document, prevLoc = globalThis.location, prevStorage = globalThis.localStorage;
   try {
     installDomStub();
@@ -100,16 +101,18 @@ export default function (t) {
     document.querySelector = () => null;
     const faceGroup = mk('div', 'sideFace', 'side-face');
     const faceChats = mk('button', 'faceChats'); faceChats.dataset.face = 'chats';
+    const chatWrap = mk('span', 'faceChatsWrap', 'side-face-ico-wrap');
     const chatIco = mk('svg', '', 'side-face-ico side-face-chat');
-    const faceChatsMark = mk('span', 'faceChatsMark', 'face-mark');
-    faceChats.append(chatIco, faceChatsMark);
+    chatWrap.append(chatIco);
+    faceChats.append(chatWrap);
     const faceChannels = mk('button', 'faceChannels'); faceChannels.dataset.face = 'channels';
+    const botWrap = mk('span', 'faceChannelsWrap', 'side-face-ico-wrap');
     const botIco = mk('svg', '', 'side-face-ico side-face-bot');
-    const faceChannelsMark = mk('span', 'faceChannelsMark', 'face-mark');
-    faceChannels.append(botIco, faceChannelsMark);
+    botWrap.append(botIco);
+    faceChannels.append(botWrap);
     faceGroup.append(faceChats, faceChannels);
     faceGroup.querySelectorAll = (sel) => (sel === '[data-face]' ? [faceChats, faceChannels] : N.prototype.querySelectorAll.call(faceGroup, sel));
-    const byId = new Map([['sideFace', faceGroup], ['faceChatsMark', faceChatsMark], ['faceChannelsMark', faceChannelsMark]]);
+    const byId = new Map([['sideFace', faceGroup], ['faceChatsWrap', chatWrap], ['faceChannelsWrap', botWrap]]);
     document.getElementById = (id) => byId.get(id) ?? null;
 
     setReducedMotion(false);
@@ -133,16 +136,19 @@ export default function (t) {
       faceGroup.dataset.on === 'channels' && !botIco.classList.contains('play') && !chatIco.classList.contains('play'));
 
     tabs.setDot('chats', 'mark');
-    t.ok('見ていない側の ◆ は見た目と位置を残し、ボタンに読み上げ名と title を付ける',
-      faceChatsMark.textContent === '◆' && !faceChatsMark.hidden && faceChatsMark.getAttribute('aria-hidden') === 'true'
-      && faceChats.getAttribute('aria-label')?.includes('チャット') && faceChats.attrs.title?.length > 0);
+    t.ok('あなた待ちはアイコン右上の点（has-wait）と読み上げ名・title を付ける',
+      chatWrap.classList.contains('has-wait')
+      && faceChats.getAttribute('aria-label') === 'チャット · あなたを待っている会話があります' && faceChats.attrs.title?.length > 0);
+    tabs.set('chats');
+    t.ok('今いる側へ切り替えても、あなた待ちが残っている間は点が消えない',
+      chatWrap.classList.contains('has-wait') && faceChats.getAttribute('aria-label') === 'チャット · あなたを待っている会話があります');
     tabs.setDot('chats', 'working');
-    t.ok('見ていない側の ◌ も残し、作業中の読み上げ名と title を付ける',
-      faceChatsMark.textContent === '◌' && faceChatsMark.classList.contains('working')
-      && faceChats.getAttribute('aria-label')?.includes('作業中'));
-    tabs.setDot('chats', null);
-    t.ok('印が消えたら aria-label と title も外す',
-      faceChatsMark.hidden && !faceChats.hasAttribute('aria-label') && !faceChats.hasAttribute('title'));
+    t.ok('作業中（working）は点を出さず、ラベルも外す',
+      !chatWrap.classList.contains('has-wait') && !faceChats.hasAttribute('aria-label') && !faceChats.hasAttribute('title'));
+    tabs.setDot('channels', 'mark');
+    tabs.setDot('channels', null);
+    t.ok('印が消えたら点と aria-label と title を外す',
+      !botWrap.classList.contains('has-wait') && !faceChannels.hasAttribute('aria-label') && !faceChannels.hasAttribute('title'));
   } finally {
     setReducedMotion(null);
     globalThis.document = prevDoc;
