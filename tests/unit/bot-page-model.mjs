@@ -1,6 +1,6 @@
 // bot のページの決まりごと（web/channels/bot-model.mjs。DOM に触れない）: どのモードでフォルダーを限れないか（計画 §7.2-2）・
 // 承認モードの選び直し・使用量の字・記憶の出どころの行き先・フォルダーの足し引き。
-import { foldersUnlimited, validMode, onlyMode, modeAfterBackend, sourceView, shortDate, shortTime, learnStatusView, newDraft, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
+import { foldersUnlimited, validMode, onlyMode, sourceView, shortDate, shortTime, learnStatusView, newDraft, nextColor, toggleAccess, addFolder, removeFolder } from '../../web/channels/bot-model.mjs';
 
 export const name = 'bot-page-model';
 export const title = 'bot のページ: 全部自動でフォルダーを限れないのは範囲 full だけ・承認モードの選び直し・使用量・出どころの行き先';
@@ -20,7 +20,6 @@ export default async function (t) {
 
   t.ok('語彙にある承認モードはそのまま', validMode(CODEX, 'full') === 'full');
   t.ok('語彙に無ければ default、無ければ先頭', validMode(CLAUDE, 'ask') === 'default' && validMode(CODEX, 'default') === 'ask' && validMode({}, 'x') === '');
-  t.ok('バックエンドを替えても、同じ id があれば承認モードを保つ', modeAfterBackend(CODEX, 'ask') === 'ask' && modeAfterBackend(AGY, 'default') === 'yolo');
   t.ok('選べるモードが 1 つのバックエンドだけ onlyMode が返す（Antigravity）', onlyMode(AGY) === 'yolo' && onlyMode(CLAUDE) === null && onlyMode({}) === null);
 
   const now = new Date(2026, 9, 3, 12).getTime();
@@ -55,8 +54,12 @@ export default async function (t) {
   t.ok('出どころ（消えた会話）: 開けない（行き先なし）', gone.target === null && gone.where.name === '');
   t.ok('出どころ（無い）: none', sourceView(undefined).kind === 'none');
 
-  const d = newDraft('claude', CLAUDE);
-  t.ok('作る画面の下書き: 既定のアイコンと承認モード', d.isNew && d.icon === '' && d.mode === 'default' && d.backend === 'claude' && d.name === '');
+  const d = newDraft([]);
+  t.ok('作る 3 段の下書き: 名前の段から、最初の bot は青', d.step === 1 && d.name === '' && d.persona === '' && d.color === 1);
+  const made = [{ id: 'b1', createdAt: 1, color: 1 }, { id: 'b2', createdAt: 2, color: 2 }];
+  t.ok('次の色: 作った順に回す（青 → 橙 → 緑）', nextColor(made) === 3 && newDraft(made).color === 3);
+  t.ok('次の色: まだ使っていない色を先に選ぶ', nextColor([{ id: 'b1', createdAt: 1, color: 3 }, { id: 'b2', createdAt: 2, color: 2 }]) === 4 && nextColor([{ id: 'b1', createdAt: 1, color: 4 }, { id: 'b2', createdAt: 2, color: 3 }]) === 5);
+  t.ok('次の色: 標準の bot（plain）は数えない', nextColor([{ id: 'p', createdAt: 1, color: 5, plain: true }]) === 1);
 
   const f = [{ path: 'D:/dev/a', access: 'rw' }, { path: 'D:/dev/b', access: 'ro' }];
   t.ok('フォルダー: 読み書き/読み取りを切り替える', JSON.stringify(toggleAccess(f, 'D:/dev/a').map((x) => x.access)) === '["ro","ro"]' && toggleAccess(f, 'D:/dev/b')[1].access === 'rw');

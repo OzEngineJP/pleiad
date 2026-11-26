@@ -52,19 +52,18 @@ try {
   }
   browser = await chromium.launch({ executablePath });
 
-  async function openHomeThread(context, url) {
-    await context.addInitScript(() => {
-      localStorage.setItem('agent-host-side-tab', 'channels');
-      localStorage.setItem('agent-host-view', JSON.stringify({ channelId: 'home' }));
-    });
+  async function openChat(context, url) {
+    await context.addInitScript((id) => {
+      localStorage.setItem('agent-host-side-tab', 'chats');
+      localStorage.setItem('agent-host-view', JSON.stringify({ channelId: 'home', sessionId: id }));
+    }, sessionId);
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     await page.goto(url);
-    await page.locator('#channelsView .thread-summary').click();
     return page;
   }
 
-  const desktop = await openHomeThread(await browser.newContext({ viewport: { width: 1280, height: 900 } }),
+  const desktop = await openChat(await browser.newContext({ viewport: { width: 1280, height: 900 } }),
     `http://127.0.0.1:${host.port}/?token=${host.token}`);
   await desktop.locator('#todoEntry').click();
   await desktop.locator('.todo-pop .td-item:not(.td-meas)').getByText(task, { exact: true }).waitFor();
@@ -92,7 +91,7 @@ try {
       } else downstream.send(raw);
     });
   });
-  const mobile = await openHomeThread(mobileContext, proxy.url);
+  const mobile = await openChat(mobileContext, proxy.url);
   await mobile.locator('#sessionMore').click();
   await mobile.getByRole('menuitem', { name: /ToDo/ }).click();
   const panel = mobile.locator('.todo-pop');

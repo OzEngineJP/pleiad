@@ -61,15 +61,14 @@ try {
   }
   async function openPanel(width, theme) {
     const context = await browser.newContext({ viewport: { width, height: width === 360 ? 800 : 900 }, reducedMotion: 'reduce' });
-    await context.addInitScript(theme => {
-      localStorage.setItem('agent-host-side-tab', 'channels');
-      localStorage.setItem('agent-host-view', JSON.stringify({ channelId: 'home' }));
+    await context.addInitScript(([theme, id]) => {
+      localStorage.setItem('agent-host-side-tab', 'chats');
+      localStorage.setItem('agent-host-view', JSON.stringify({ channelId: 'home', sessionId: id }));
       localStorage.setItem('agent-host-theme', theme);
-    }, theme);
+    }, [theme, sessionId]);
     const page = await context.newPage();
     page.setDefaultTimeout(6_000);
     await page.goto(`http://127.0.0.1:${host.port}/?token=${host.token}`);
-    await page.locator('#channelsView .thread-summary').click();
     await showPanel(page, width);
     return page;
   }
@@ -112,7 +111,6 @@ try {
   await mode(desktop, 'list');
   assert.equal(await widthOf(desktop), defaultWidth + 16);
   await desktop.reload();
-  await desktop.locator('#channelsView .thread-summary').click();
   await showPanel(desktop, 1280);
   await mode(desktop, 'list');
   assert.equal(await widthOf(desktop), defaultWidth + 16);

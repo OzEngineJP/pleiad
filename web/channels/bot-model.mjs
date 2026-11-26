@@ -18,11 +18,6 @@ export function onlyMode(modes) {
   return ids.length === 1 ? ids[0] : null;
 }
 
-/** バックエンドを替えたときの新しい承認モード。同じ id があれば保ち、無ければ語彙の既定（bots.update の backend の動きに合わせる） */
-export function modeAfterBackend(modes, current) {
-  return validMode(modes, current);
-}
-
 /** 「M/D」。今日は null を返す（呼び出し側が「今日」と書く） */
 export function shortDate(at, now = Date.now()) {
   const d = new Date(at);
@@ -78,9 +73,26 @@ export function sourceView(src, { channels = new Map(), bots = new Map(), sessio
   return { kind: 'message', where: { type: 'chat', name: s?.title ?? '' }, date, target: s ? { sessionId: src.sessionId } : null };
 }
 
-/** 作る画面の下書きの初期値。backend は呼び出し側が決める（利用できる最初のもの） */
-export function newDraft(backend, modes) {
-  return { name: '', icon: '', persona: '', backend, model: '', effort: '', mode: validMode(modes, 'default'), isNew: true };
+const COLOR_COUNT = 8;   // web/channels/bot-icon.mjs の BOT_COLOR_COUNT と同じ
+const colorOf = (bot) => (Number.isInteger(bot?.color) && bot.color >= 1 && bot.color <= COLOR_COUNT ? bot.color : null);
+
+/** 次に作る bot の色（1〜8）。最後に作った bot の次の色から、まだ誰も使っていない色を選ぶ（core/bots/service.mjs の nextColor と同じ） */
+export function nextColor(bots) {
+  const rows = [...(bots ?? [])].filter((b) => !b.plain).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || String(a.id).localeCompare(String(b.id)));
+  if (!rows.length) return 1;
+  const last = colorOf(rows.at(-1)) ?? ((rows.length - 1) % COLOR_COUNT) + 1;
+  const first = (last % COLOR_COUNT) + 1;
+  const used = new Set(rows.map(colorOf).filter(Boolean));
+  for (let step = 0; step < COLOR_COUNT; step++) {
+    const color = ((first - 1 + step) % COLOR_COUNT) + 1;
+    if (!used.has(color)) return color;
+  }
+  return first;
+}
+
+/** 作る 3 段（名前 → 色 → 人格）の下書きの初期値。エージェント・モデル・承認モードは既定のまま作る（ADR 0362） */
+export function newDraft(bots) {
+  return { step: 1, name: '', color: nextColor(bots), persona: '' };
 }
 
 /** フォルダー 1 行の読み書きを切り替えた新しい配列（bots.update の folders は置き換え） */

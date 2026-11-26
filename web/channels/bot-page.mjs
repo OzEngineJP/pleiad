@@ -1,8 +1,9 @@
 // bot のページと作成（W4。ADR 0109・docs/channels.md「bot のページ」・承認済みのモック 05）。
-// #channelsBody の中に section#botView.bot-page を作る。見せるのは show({ kind: 'bot', id }) のとき（id が 'new' なら作る画面）。
+// #channelsBody の中に section#botView.bot-page を作る。見せるのは show({ kind: 'bot', id }) のとき。
+// id が 'new' なら作る 3 段（名前 → 色 → 人格。エージェント・モデル・承認モードは既定。作ったら DM を開く。ADR 0362）。
 //
 // 設定は Chats の入力欄と同じ程度に簡単にする:
-//   名前・アイコン（絵文字ピッカー）・人格（自由文）… 離れたときに bots.update
+//   名前・色（顔を押すと 8 色の面）・人格（自由文）… 離れたときに bots.update。前の版の絵文字・画像は保存に残すが読まない（ADR 0362）
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
 //   接続先 … モデルの面の「接続先」の行（入力欄と同じ 1 つの一覧: CLI のログイン → 登録したアカウント → 互換の接続先。週の使用量は公式の枠の行だけ）。
@@ -18,15 +19,13 @@ import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
-import { openEmojiPicker, closeEmojiPicker } from '../emoji-picker.mjs';
 import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel, effortStops, connShown } from '../composer-controls.mjs';
 import { endpointChipLabel } from '../composer-labels.mjs';
 import { compatModelLabel } from '../compat-models.mjs';
 import { weekUsage } from '../header-usage.mjs';
 import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
-import { botIcon } from './bot-icon.mjs';
-import { sendAttachment } from '../attach-upload.mjs';
+import { botIcon, BOT_COLOR_COUNT } from './bot-icon.mjs';
 import { createBrainPanel } from './brain-panel.mjs';
 import { foldRow } from './fold-row.mjs';
 import * as M from './bot-model.mjs';
@@ -51,19 +50,26 @@ function glyph(paths, cls = 'i') {
 const caret = () => { const g = glyph(CARET); g.classList.add('caret'); return g; };
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
 const show = (node, on) => { node.hidden = !on; };
-async function resizeIcon(file) {
-  const bitmap = await createImageBitmap(file);
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas is unavailable');
-    const side = Math.min(bitmap.width, bitmap.height);
-    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
-    const blob = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error('WebP encoding failed')), 'image/webp', 0.8));
-    if (blob.type !== 'image/webp') throw new Error('WebP encoding failed');
-    return new File([blob], 'bot-icon.webp', { type: 'image/webp' });
-  } finally { bitmap.close(); }
+// 8 色の名前（作る順: 青 → 橙 → 緑 → 桃 → 紫 → 黄 → 青緑 → 赤。ADR 0362）
+// i18n-dynamic: channels:bot.color.
+const COLOR_NAMES = ['blue', 'orange', 'green', 'pink', 'purple', 'yellow', 'teal', 'red'].map((k) => `channels:bot.color.${k}`);
+/** 8 色の見本（作る 3 段の 2 段目と、bot のページの顔の面で同じもの）。押した色を onPick に渡す */
+function swatches(current, onPick) {
+  const box = el('div', 'bp-swatches');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', t('channels:bot.color.title'));
+  for (let c = 1; c <= BOT_COLOR_COUNT; c++) {
+    const b = el('button', 'bp-swatch');
+    b.type = 'button';
+    b.dataset.color = String(c);
+    b.title = t(COLOR_NAMES[c - 1]);
+    b.setAttribute('aria-label', b.title);
+    b.setAttribute('aria-pressed', String(c === current));
+    b.append(botIcon({ color: c }, 'bp-swatch-face', 32));
+    b.onclick = () => onPick(c);
+    box.append(b);
+  }
+  return box;
 }
 
 export function createBotPage(host) {
@@ -73,7 +79,7 @@ export function createBotPage(host) {
   const S = {
     id: null,             // 見せている bot の id。'new' = 作る画面
     bot: null,            // bots.get の行（Bot + state）
-    draft: null,          // 作る画面の下書き（M.newDraft）
+    draft: null,          // 作る 3 段の下書き（M.newDraft）。{ step, name, color, persona }
     v: null,              // 今の backend の語彙 { modes, models, efforts }
     vocab: new Map(),     // backend → { modes, models, efforts: Map<model, efforts> }
     bots: new Map(),      // id → Bot（記憶の出どころの字に使う）
@@ -90,7 +96,7 @@ export function createBotPage(host) {
   // 流れの部品が show/hide で見出しを替える順（流れ → 自分）の後に付け外しする。頭は流れの有無で置き場所が動くので、その都度引く
   const topEl = () => document.getElementById('channelsPageTitle')?.closest('.top') ?? null;
   const navigate = (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail }));
-  const vm = () => S.draft ?? S.bot;
+  const vm = () => S.bot;
   const unlimited = () => M.foldersUnlimited(S.v?.modes?.[vm()?.mode]);
 
   // ---------------------------------------------------------------- DOM
@@ -102,31 +108,17 @@ export function createBotPage(host) {
   av.type = 'button';
   av.setAttribute('aria-label', t('channels:bot.iconLabel'));
   av.title = t('channels:bot.iconLabel');
-  av.setAttribute('aria-haspopup', 'dialog');
   const avatar = el('span', 'bp-av-icon');
   const badge = el('span', 'bp-av-edit');
   badge.setAttribute('aria-hidden', 'true');
   badge.append(glyph(PENCIL));
   av.append(avatar, badge);
-  const imageInput = el('input');
-  imageInput.type = 'file'; imageInput.accept = '.png,.jpg,.jpeg,.webp'; imageInput.hidden = true;
-  const iconDialog = el('dialog', 'bp-icon-dialog');
-  iconDialog.setAttribute('aria-label', t('channels:bot.iconLabel'));
-  const iconClose = el('button', 'btn btn-icon');
-  iconClose.type = 'button';
-  iconClose.setAttribute('aria-label', t('channels:bot.iconClose'));
-  iconClose.append(glyph(CLOSE));
-  const iconTitle = el('div', 'bp-icon-head');
-  iconTitle.append(el('strong', null, t('channels:bot.iconTitle')), iconClose);
-  const unset = el('button', 'bp-icon-choice', t('channels:bot.iconUnset'));
-  const emojiPick = el('button', 'bp-icon-choice', t('channels:bot.emojiPick'));
-  const imagePick = el('button', 'bp-icon-choice');
-  imagePick.type = 'button';
-  const imageRemove = el('button', 'bp-icon-choice', t('channels:bot.imageRemove'));
-  unset.type = emojiPick.type = imageRemove.type = 'button';
-  const imageHelp = el('p', 'bp-icon-help', t('channels:bot.imageHelp'));
-  iconDialog.append(iconTitle, unset, emojiPick, imagePick, imageRemove, imageHelp);
-  root.append(iconDialog);
+  // 顔を押すと 8 色の面（題「アイコン」。選ぶとすぐ bots.update の color）
+  const colorPop = el('div', 'pop cpop bp-color-pop');
+  colorPop.id = 'botColorPop';
+  colorPop.setAttribute('role', 'dialog');
+  colorPop.setAttribute('aria-label', t('channels:bot.iconTitle'));
+  colorPop.hidden = true;
   const nameIn = el('input', 'bp-name');
   nameIn.id = 'botName';
   nameIn.type = 'text';
@@ -143,12 +135,23 @@ export function createBotPage(host) {
   moreBtn.setAttribute('aria-haspopup', 'menu');
   dmBtn.type = 'button';
   dmBtn.append(glyph(REPLY), t('channels:bot.openDm'));
-  const createBtn = el('button', 'btn btn-primary bp-create', t('channels:bot.createButton'));
-  createBtn.type = 'button';
   const idBox = el('div', 'bp-id');
   idBox.append(nameIn, sub);
   const head = el('div', 'bp-head');
-  head.append(av, imageInput, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn, createBtn);
+  head.append(av, idBox, el('span', 'bp-spacer'), dmBtn, moreBtn);
+
+  // 作る 3 段（名前 → 色 → 人格）。右の面の中ほどに置く。段は点で示す（ADR 0362）
+  const obFace = el('div', 'bp-ob-face');
+  const obDots = el('div', 'bp-ob-dots');
+  obDots.setAttribute('aria-hidden', 'true');
+  obDots.append(el('i'), el('i'), el('i'));
+  const obStep = el('div', 'bp-ob-step');
+  const obErr = el('p', 'bp-err');
+  obErr.setAttribute('role', 'alert');
+  obErr.hidden = true;
+  const ob = el('div', 'bp-ob');
+  ob.hidden = true;
+  ob.append(obFace, el('h3', 'bp-ob-t', t('channels:side.newBot')), obDots, obStep, obErr);
 
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
@@ -265,7 +268,7 @@ export function createBotPage(host) {
   right.append(foldBlk, memBlk);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
-  root.append(head, err, connWarn, notice, grid, modelPop, modePop, addPop);
+  root.append(head, ob, err, connWarn, notice, grid, modelPop, modePop, addPop, colorPop);
   body.append(root);
 
   // ---------------------------------------------------------------- 浮く面（入力欄と同じ。チップは画面の途中にあるので、広い方（なるべく下）に置き直す）
@@ -291,7 +294,10 @@ export function createBotPage(host) {
     render: () => { askQuota(); askConn(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
-  const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); if (iconDialog.open) iconDialog.close(); };
+  const colorPanel = place(panel(av, colorPop, { width: 212, initialFocus: '[aria-pressed="true"]', render: () => {
+    colorPop.replaceChildren(el('h4', 'bp-color-t', t('channels:bot.iconTitle')), swatches(S.bot?.color, (c) => { colorPanel.hide(); if (c !== S.bot?.color) update({ color: c }); }));
+  } }));
+  const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); colorPanel.hide(false); };
 
   // ---------------------------------------------------------------- 語彙（バックエンドごとの承認モード・モデル・エフォート）
   /** bot が走る作業場所（最初のフォルダー。core/bots/sessions.mjs の pickCwd）。モデルの一覧・段はその場所のプロジェクト設定で変わる */
@@ -505,7 +511,7 @@ export function createBotPage(host) {
 
   function paintFolders() {
     const cur = vm();
-    if (!cur || S.draft) return;
+    if (!cur) return;
     const lim = unlimited();
     const rows = (cur.folders ?? []).map((f) => folderRow(f, lim));
     folderBox.classList.toggle('all', lim);
@@ -527,7 +533,7 @@ export function createBotPage(host) {
 
   function paintSend() {
     const cur = vm();
-    if (!cur || S.draft) return;
+    if (!cur) return;
     sw.setAttribute('aria-checked', String(cur.sendToOthers !== false));
     foldSend.setValue(cur.sendToOthers !== false ? t('channels:bot.fold.on') : t('channels:bot.fold.off'));
     const pulse = cur.pulse;
@@ -573,24 +579,18 @@ export function createBotPage(host) {
     const creating = Boolean(S.draft);
     root.classList.toggle('is-new', creating);
     root.classList.toggle('is-gone', S.gone);
-    show(dmBtn, !creating);
-    show(moreBtn, !creating && !S.bot?.plain);
-    show(createBtn, creating);
-    show(folderTitle, !creating);
-    show(folderBox, !creating);
-    show(addBtn, !creating);
-    show(foldBlk, !creating);
-    show(memBlk, !creating);
+    show(ob, creating);
     show(notice, S.gone);
-    show(grid, !S.gone);
-    show(head, !S.gone);
+    show(grid, !S.gone && !creating);
+    show(head, !S.gone && !creating);
+    show(moreBtn, !S.bot?.plain);
+    if (creating) { memory.setBot(null); brain.setBot(null); paintOb(); return; }
     const cur = vm();
     if (cur && document.activeElement !== persona) persona.value = cur.persona ?? '';
     growPersona();
     paintRun();
-    if (!creating && S.bot) memory.setBot(S.bot);
-    else memory.setBot(null);
-    brain.setBot(!creating && S.bot ? S.bot : null);
+    memory.setBot(S.bot ?? null);
+    brain.setBot(S.bot ?? null);
   }
 
   const growPersona = () => {
@@ -618,7 +618,7 @@ export function createBotPage(host) {
   }
 
   async function update(patch) {
-    if (S.draft) { await draftUpdate(patch); return; }
+    if (S.draft) return;
     const botId = S.id;
     setError('');
     await queue(async () => {
@@ -632,7 +632,7 @@ export function createBotPage(host) {
   }
 
   async function setMode(mode) {
-    if (S.draft) { S.draft.mode = mode; paintChips(); return; }
+    if (S.draft) return;
     const botId = S.id;
     setError('');
     await queue(async () => {
@@ -647,14 +647,10 @@ export function createBotPage(host) {
 
   /**
    * bot の接続先を変える（人だけ。bots.setAccount）。互換の接続先を選ぶ（endpoint）か、CLI のログイン（account ''）・アカウント（endpoint '' で公式へ戻す）。
-   * 接続先を変えるとモデル・エフォートは既定へ戻る（サーバーと同じ。互換のモデルは公式では通らない）。作る画面では下書きに持ち、作った後に付ける
+   * 接続先を変えるとモデル・エフォートは既定へ戻る（サーバーと同じ。互換のモデルは公式では通らない）。作る 3 段には接続先の欄が無い（作った後に bot のページで選ぶ。ADR 0362）
    */
   async function setConn({ endpoint = '', account = '' }) {
-    if (S.draft) {
-      const moved = endpoint !== (S.draft.endpoint ?? '');
-      Object.assign(S.draft, { endpoint, account }, moved ? { model: '', effort: '' } : {});
-      paintRun(); loadVocab(); return;
-    }
+    if (S.draft) return;
     const botId = S.id;
     setError('');
     await queue(async () => {
@@ -667,67 +663,96 @@ export function createBotPage(host) {
     });
   }
 
-  /** 作る画面の下書きを変える（保存はしない）。エージェントを替えたら、モデル・エフォート・接続先は既定へ（アカウント・接続先の id はエージェントごと）、承認モードは同じ id があれば保つ */
-  async function draftUpdate(patch) {
-    const d = S.draft;
-    Object.assign(d, patch);
-    if ('backend' in patch) {
-      d.model = ''; d.effort = ''; d.account = ''; d.endpoint = '';
-      const v = await vocabOf(d.backend, '', botCwd(d), d.account ?? '', d.endpoint ?? '');
-      if (S.draft !== d) return;
-      d.mode = M.modeAfterBackend(v.modes, d.mode);
-      S.v = v;
-    } else if ('model' in patch) {
-      d.effort = '';
-      const v = await vocabOf(d.backend, d.model, botCwd(d), d.account ?? '', d.endpoint ?? '');
-      if (S.draft !== d) return;
-      S.v = v;
-    } else if ('effort' in patch) {
-      /* そのまま */
-    }
-    paintRun();
-  }
-
-  let imageBusy = false;
+  // ---------------------------------------------------------------- 作る 3 段（名前 → 色 → 人格。ADR 0362）
   let createBusy = false;
-  const paintBusy = () => { av.disabled = imageBusy || createBusy; createBtn.disabled = imageBusy || createBusy; };
-
-  async function create() {
-    if (imageBusy || createBusy) return;
+  const obButton = (label, primary, onClick) => {
+    const b = el('button', primary ? 'btn btn-primary' : 'btn', label);
+    b.type = 'button';
+    b.onclick = onClick;
+    return b;
+  };
+  /** 段を描き直す。段が変わったら（focus = true）その段の入力へカーソルを置く */
+  function paintOb(focus = false) {
     const d = S.draft;
     if (!d) return;
-    const name = nameIn.value.trim();
-    d.name = name;
-    d.persona = persona.value;
-    if (!name) { setError(t('channels:bot.nameRequired')); nameIn.focus(); return; }
-    setError('');
+    obFace.replaceChildren(botIcon(d, 'bp-ob-av', 32));
+    obDots.querySelectorAll('i').forEach((dot, i) => dot.classList.toggle('on', i === d.step - 1));
+    const actions = el('div', 'bp-ob-actions');
+    let first = null;
+    if (d.step === 1) {
+      const input = el('input', 'bp-ob-in');
+      input.id = 'botObName';
+      input.type = 'text';
+      input.maxLength = 64;
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.placeholder = t('channels:bot.namePlaceholder');
+      input.value = d.name;
+      const next = obButton(t('channels:bot.onboard.next'), true, () => go(2));
+      next.disabled = !d.name.trim();
+      input.addEventListener('input', () => { d.name = input.value; next.disabled = !d.name.trim(); });
+      input.addEventListener('keydown', (e) => {
+        if (isComposingKey(e) || e.key !== 'Enter') return;
+        e.preventDefault();
+        if (d.name.trim()) go(2);
+      });
+      const label = el('label', 'bp-ob-l', t('channels:bot.nameLabel'));
+      label.htmlFor = input.id;
+      actions.append(next);
+      obStep.replaceChildren(label, input, actions);
+      first = input;
+    } else if (d.step === 2) {
+      const pick = swatches(d.color, (c) => { d.color = c; paintOb(); obStep.querySelector(`[data-color="${c}"]`)?.focus(); });
+      actions.append(obButton(t('channels:bot.onboard.back'), false, () => go(1)), obButton(t('channels:bot.onboard.next'), true, () => go(3)));
+      obStep.replaceChildren(el('span', 'bp-ob-l', t('channels:bot.color.title')), pick, actions);
+      first = pick.querySelector('[aria-pressed="true"]');
+    } else {
+      const area = el('textarea', 'bp-ob-in bp-ob-persona');
+      area.id = 'botObPersona';
+      area.rows = 4;
+      area.maxLength = 6000;
+      area.spellcheck = false;
+      area.placeholder = t('channels:bot.persona.placeholder');
+      area.value = d.persona;
+      area.addEventListener('input', () => { d.persona = area.value; });
+      const label = el('label', 'bp-ob-l', t('channels:bot.persona.label'));
+      label.htmlFor = area.id;
+      const make = obButton(t('channels:bot.createButton'), true, create);
+      make.classList.add('bp-create');
+      make.disabled = createBusy;
+      actions.append(obButton(t('channels:bot.onboard.back'), false, () => go(2)), make);
+      obStep.replaceChildren(label, area, actions);
+      first = area;
+    }
+    if (focus) first?.focus();
+  }
+  function go(step) {
+    if (!S.draft || createBusy) return;
+    S.draft.step = step;
+    obErr.hidden = true;
+    paintOb(true);
+  }
+
+  async function create() {
+    const d = S.draft;
+    if (!d || createBusy) return;
+    const name = d.name.trim();
+    if (!name) { go(1); return; }
+    obErr.hidden = true;
     createBusy = true;
-    paintBusy();
-    // bots.create が返した bot（続く段の返りで置き替える）。作れたあとの段で落ちても bot はもうある（同じ名前では作り直せない）ので、
-    // この画面に「作れませんでした」と留めず、できた bot の画面へ移して、効かなかった設定をそこで選び直してもらう。自動では消さない
-    let bot = null;
+    paintOb();
     try {
-      // 接続先（アカウント・互換）は作った後に付ける（モデル・エフォートは接続先ごとに通るものが違うので、その後に付ける）
-      const withConn = Boolean((d.account || d.endpoint) && takesConn(d.backend));
-      const deferModel = withConn && Boolean(d.model || d.effort);
-      const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(deferModel ? {} : { ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) }) };
-      bot = await host.invoke('bots.create', args);
-      if (d.mode && d.mode !== bot.mode) bot = await host.invoke('bots.setMode', { botId: bot.id, mode: d.mode });
-      if (withConn) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account ?? '', ...(d.endpoint ? { endpoint: d.endpoint } : {}) });
-      if (deferModel) bot = await host.invoke('bots.update', { botId: bot.id, ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) });
+      // エージェント・モデル・承認モードは既定（エージェントは今の入力欄のもの。後から bot のページで変える）
+      const backend = backends().find((b) => b.id === host.state?.backendId)?.id ?? backends()[0]?.id;
+      const bot = await host.invoke('bots.create', { name, color: d.color, ...(backend ? { backend } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}) });
       S.bots.set(bot.id, bot);
       // 作った後は話しかける場面（DM）を開く。入力欄へのカーソルは DM の流れが開くときに置く（feed.mjs の show）。DM がまだ無ければ bot のページ
       navigate(bot.dmChannelId ? { kind: 'channel', id: bot.dmChannelId } : { kind: 'bot', id: bot.id });
     } catch (e) {
-      if (!bot) setError(t('channels:bot.createFailed', { error: message(e) }));
-      else {
-        S.bots.set(bot.id, bot);
-        navigate({ kind: 'bot', id: bot.id });   // 開き直し（open）が表示中のエラーを消すので、移した後に出す
-        setError(t('channels:bot.createPartial', { error: message(e) }));
-      }
+      if (S.draft === d) { obErr.textContent = t('channels:bot.createFailed', { error: message(e) }); obErr.hidden = false; }
     } finally {
       createBusy = false;
-      paintBusy();
+      if (S.draft === d) paintOb();
     }
   }
 
@@ -807,56 +832,10 @@ export function createBotPage(host) {
   function paintAvatar() {
     avatar.replaceChildren(botIcon(vm(), 'bp-av-face'));
   }
-  const restoreAvatarFocus = () => { if (!root.hidden) av.focus({ preventScroll: true }); };
-  iconDialog.addEventListener('close', restoreAvatarFocus);
-  iconClose.onclick = () => iconDialog.close();
-  iconDialog.addEventListener('click', (e) => { if (e.target === iconDialog) { const r = iconDialog.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) iconDialog.close(); } });
-  unset.onclick = () => { iconDialog.close(); update({ icon: '', iconImage: null }); };
-  imageRemove.onclick = () => { iconDialog.close(); update({ iconImage: null }); };
-  emojiPick.onclick = (e) => {
-    e.stopPropagation();
-    iconDialog.close();
-    openEmojiPicker({ anchor: av, current: vm()?.icon, title: t('channels:bot.emojiPick'),
-      onPick: (emoji) => update({ icon: emoji, iconImage: null }), onClose: restoreAvatarFocus });
-  };
-  av.addEventListener('click', (e) => {
-    e.stopPropagation();   // 脇の document の click が、開いたばかりのピッカーを閉じないように（web/side.mjs の closePops）
-    imagePick.textContent = vm()?.iconImage ? t('channels:bot.imageChange') : t('channels:bot.imagePick');
-    imageRemove.hidden = !vm()?.iconImage;
-    unset.setAttribute('aria-pressed', String(!vm()?.icon && !vm()?.iconImage));
-    iconDialog.showModal();
-    unset.focus();
-  });
-  imagePick.addEventListener('click', () => { iconDialog.close(); imageInput.click(); });
-  imageInput.addEventListener('change', async () => {
-    const file = imageInput.files?.[0];
-    imageInput.value = '';
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { setError(t('channels:bot.imageTooLarge')); return; }
-    if (!/\.(png|jpe?g|webp)$/i.test(file.name)) { setError(t('channels:bot.imageType')); return; }
-    const target = vm();
-    const targetId = S.id;
-    const stillHere = () => S.id === targetId && (!target?.isNew || S.draft === target);
-    if (imageBusy || createBusy) return;
-    imageBusy = true;
-    paintBusy();
-    try {
-      let iconFile;
-      try { iconFile = await resizeIcon(file); }
-      catch { if (stillHere()) setError(t('channels:bot.imageReadFailed')); return; }
-      if (iconFile.size > 1024 * 1024) { setError(t('channels:bot.imageOutputTooLarge')); return; }
-      const upload = await sendAttachment({ cmd: host.cmd, file: iconFile, sessionId: 'bot-icon-upload' });
-      if (upload?.path && stillHere()) await update({ iconImage: upload.path });
-    } catch (e) { if (stillHere()) setError(t('channels:bot.saveFailed', { error: message(e) })); }
-    finally { imageBusy = false; paintBusy(); if (stillHere()) restoreAvatarFocus(); }
-  });
-
-  nameIn.addEventListener('input', () => { if (S.draft) { S.draft.name = nameIn.value; paintAvatar(); } });
 
   const commitName = async () => {
     const cur = vm();
     const name = nameIn.value.trim();
-    if (S.draft) { S.draft.name = name; paintAvatar(); return; }
     if (!cur || name === cur.name) { nameIn.value = cur?.name ?? ''; return; }
     if (!name) { nameIn.value = cur.name; return; }
     await update({ name });
@@ -865,13 +844,12 @@ export function createBotPage(host) {
   nameIn.addEventListener('blur', commitName);
   nameIn.addEventListener('keydown', (e) => {
     if (isComposingKey(e)) return;
-    if (e.key === 'Enter') { e.preventDefault(); if (S.draft) create(); else nameIn.blur(); }
+    if (e.key === 'Enter') { e.preventDefault(); nameIn.blur(); }
     if (e.key === 'Escape') { e.preventDefault(); nameIn.value = vm()?.name ?? ''; nameIn.blur(); }
   });
   persona.addEventListener('input', growPersona);
   persona.addEventListener('blur', () => {
     const cur = vm();
-    if (S.draft) { S.draft.persona = persona.value; return; }
     if (cur && persona.value !== (cur.persona ?? '')) update({ persona: persona.value });
   });
   sw.addEventListener('click', () => {
@@ -885,7 +863,6 @@ export function createBotPage(host) {
     const r = moreBtn.getBoundingClientRect();
     host.showMenu?.(r.left, r.bottom, [{ label: t('channels:botDelete.menu'), danger: true, onClick: () => host.deleteBot(S.bot, moreBtn) }], S.bot?.name);
   });
-  createBtn.addEventListener('click', create);
 
   // ---------------------------------------------------------------- 読み込み
   async function loadChannels() {
@@ -912,16 +889,15 @@ export function createBotPage(host) {
     S.seq += 1;
     setError('');
     if (id === 'new') {
+      // 色は作った順に回すので、先に今の bot を読む（core の bots.create の nextColor と同じ選び方）
       S.bot = null;
-      const first = backends().find((b) => b.id === host.state?.backendId)?.id ?? backends()[0]?.id ?? '';
-      const v = await vocabOf(first);
-      if (S.id !== 'new') return;
-      S.draft = M.newDraft(first, v.modes);
-      S.v = v;
-      nameIn.value = '';
-      persona.value = '';
+      S.draft = M.newDraft([...S.bots.values()]);
       paintAll();
-      nameIn.focus();
+      paintOb(true);
+      await loadBots();
+      if (S.id !== 'new' || !S.draft || S.draft.step !== 1 || S.draft.name) return;
+      S.draft.color = M.nextColor([...S.bots.values()]);
+      paintOb(true);
       return;
     }
     S.draft = null;

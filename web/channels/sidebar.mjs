@@ -1,15 +1,13 @@
-// 脇の Channels 側（docs/channels.md「画面」・docs/design-system.md「脇」、ADR 0107・0288）。脇の 3 か所を描く:
-//   Bots の帯（#botStrip。検索の下）… 名前付きのアイコンを横に並べる（作業中は回る弧、あなた待ちは ◆）。押すと DM、右クリックで bot のページ。
-//                                       入りきらない分は「+N」のメニュー、入りきれば最後に ＋（bot を作る画面、W4）
+// 脇の bot の面（docs/channels.md「画面」・docs/design-system.md「脇」、ADR 0107・0288・0362）。脇の 2 か所を描き、Bots の行に要るものを渡す:
+//   Bots（bot の面の木。行は web/side.mjs の botSection）… 状態（作業中・あなた待ち）・右クリックのメニュー・選ばれた行を setDirectory で渡す
 //   ルーティン（木の一番上の畳める見出し）… 次に動く時刻の近い順に全部を 1 行ずつ（件数では絞らない。ADR 0260）。一時停止中は薄く、直近の失敗は「✕ 失敗」。
 //                                       畳んだ間は見出しに走っている弧と「✕N」。押すと編集のシート（routine-sheet.mjs）、＋で新規
-//   チャンネル（一時チャットの下の見出し）… ＋でその場に名前の欄を出して作る（channels.create）。チャンネルの行は web/side.mjs の木が描く
+//   チャンネル（Bots の下の見出し）… ＋でその場に名前の欄を出して作る（channels.create）。チャンネルの行は web/side.mjs の木が描く
 // 木の節（ルーティン・チャンネル）は #channelsSide に置いておき、絞り込んでいないとき web/side.mjs の channelExtras が #groups へ入れる。
 // 検索は Chats と同じ欄（#q）で両方を横断する（side.connectChannels。結果の行に「Chats」「#チャンネル」）。
 // 読むのは channels.list・bots.list・channels.search・routines.list（routine-store.mjs）、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged・routinesChanged。
 // 開く入口は document の channels:show（{ kind: 'channel', id, threadId? } / { kind: 'bot', id }。web/channels/index.mjs）。
 import { el, svgEl } from '../dom.mjs';
-import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
@@ -23,8 +21,6 @@ const ICONS = {
   plus: 'M12 5v14M5 12h14',
 };
 const RELOAD_WAIT_MS = 150;     // 出来事が続けて来たら 1 回にまとめて読み直す（作業中の投稿は 1 秒に 1 回届く）
-const BOT_W = 50;               // 帯の 1 つ分の幅（.bt の 48px と間の 2px。web/channels-side.css）
-const STRIP_PAD = 20;           // 帯の左右の余白の和
 const ROUTINES_OPEN_KEY = 'agent-host-side-routines-open';   // ルーティンの見出しを開いているか（'1'。既定は畳む）
 
 const icon = (d) => {
@@ -59,7 +55,6 @@ export function createSidebar(host, getTabs) {
   };
   try { S.routinesOpen = localStorage.getItem(ROUTINES_OPEN_KEY) === '1'; } catch { /* 覚えていなければ畳む */ }
   const secs = Object.fromEntries(['channels', 'routines'].map((k) => [k, panel.querySelector(`.cs-sec[data-sec="${k}"]`)]));
-  const strip = document.getElementById('botStrip');
 
   const navigate = (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail }));
   const newRoutine = () => openRoutine(S.view?.kind === 'channel' ? { channelId: S.view.id } : {});
@@ -162,8 +157,8 @@ export function createSidebar(host, getTabs) {
         S.channels = c?.channels ?? [];
         S.bots = (b?.bots ?? []).map((x) => shownBot(x, t));
         S.loaded = true;
-        side?.setDirectory?.({ channels: S.channels, bots: S.bots });
         paint();
+        if (wantDefault && getTabs?.()?.tab === 'channels' && !S.view) openDefault();
       } catch {
         // まだつながっていない・切れている。次の出来事（つながると一覧の出来事が届く）で読み直す
         S.stale = true;
@@ -177,7 +172,6 @@ export function createSidebar(host, getTabs) {
 
   // ---------------------------------------------------------------- 描画
   const live = () => ({ sessions: host.state?.sessions ?? [], runningIds: host.state?.runningIds ?? new Set(), waitingIds: host.state?.waitingIds ?? new Set() });
-  const isSel = (kind, id) => { const s = selectedRow(S.view, S.bots); return s?.kind === kind && s.id === id; };
 
   function paint() {
     paintCreate();
@@ -186,105 +180,10 @@ export function createSidebar(host, getTabs) {
     paintDots();
   }
 
-  // ---- Bots の帯
-  // 組み込みの bot（bot なし）は出さない（スレッドの宛先の面でだけ選ぶ）。描き直しは中身が変わったときだけ（押している最中・Tab で指している最中に崩さない）
-  let stripSig = '';
-  let stripAt = 0;            // 帯の中で Tab が止まる位置
-  function paintBots(force = false) {
-    if (!strip) return;
-    const now = live();
-    const bots = S.bots.filter((b) => !b.plain).map((b) => ({ b, state: botState(b, now) }));
-    const cap = strip.clientWidth ? Math.max(2, Math.floor((strip.clientWidth - STRIP_PAD + 2) / BOT_W)) : 5;
-    const over = bots.length + 1 > cap;
-    const shown = over ? bots.slice(0, cap - 1) : bots;
-    const hidden = over ? bots.slice(cap - 1) : [];
-    const sig = JSON.stringify([cap, S.loaded, document.documentElement.lang, selectedRow(S.view, S.bots),
-      bots.map(({ b, state }) => [b.id, b.name, b.icon, b.iconImage, b.dmChannelId, state])]);
-    if (!force && sig === stripSig) return;
-    stripSig = sig;
-    const hadFocus = strip.contains(document.activeElement);
-    const nodes = shown.map(({ b, state }) => {
-      // i18n-dynamic: channels:side.botState.
-      const said = t(`channels:side.botState.${state}`);
-      const node = el('button', 'bt');
-      node.type = 'button';
-      node.dataset.id = b.id;
-      node.setAttribute('aria-label', `${b.name}, ${said}`);
-      node.title = state === 'idle' ? b.name : `${b.name} · ${said}`;
-      if (isSel('bot', b.id)) { node.classList.add('sel'); node.setAttribute('aria-current', 'page'); }
-      const av = botIcon(b, 'av');
-      av.setAttribute('aria-hidden', 'true');
-      if (state === 'working') { const m = runMark(); m.classList.add('ring'); m.setAttribute('aria-hidden', 'true'); av.append(m); }
-      else if (state === 'waiting') { const w = el('span', 'bw', '◆'); w.setAttribute('aria-hidden', 'true'); av.append(w); }
-      const nm = el('span', 'nm', b.name);
-      nm.setAttribute('aria-hidden', 'true');
-      node.append(av, nm);
-      // 押すと DM（bot と 1 対 1 のチャンネル）。bot のページは右クリック・DM の見出しから
-      node.addEventListener('click', () => navigate(b.dmChannelId ? { kind: 'channel', id: b.dmChannelId } : { kind: 'bot', id: b.id }));
-      node.addEventListener('contextmenu', (e) => { e.preventDefault(); botMenu(b, e.clientX, e.clientY, node); });
-      node.botMenu = (x, y) => botMenu(b, x, y, node);
-      return node;
-    });
-    if (over) {
-      const more = el('button', 'bt more');
-      more.type = 'button';
-      more.setAttribute('aria-haspopup', 'menu');
-      more.setAttribute('aria-label', t('channels:side.moreBots', { count: bots.length }));
-      more.title = t('channels:side.moreBots', { count: bots.length });
-      const av = el('span', 'av', `+${hidden.length}`);
-      av.setAttribute('aria-hidden', 'true');
-      // 隠れた bot の中に待っている・走っているものがあれば、「+N」にも同じ印
-      if (hidden.some((x) => x.state === 'waiting')) { const w = el('span', 'bw', '◆'); w.setAttribute('aria-hidden', 'true'); av.append(w); }
-      else if (hidden.some((x) => x.state === 'working')) { const m = runMark(); m.classList.add('ring'); m.setAttribute('aria-hidden', 'true'); av.append(m); }
-      more.append(av, el('span', 'nm', ''));
-      more.addEventListener('click', () => { const r = more.getBoundingClientRect(); allBotsMenu(bots, r.left, r.bottom + 4); });
-      nodes.push(more);
-    } else if (S.loaded) {
-      const add = el('button', 'bt add');
-      add.type = 'button';
-      add.setAttribute('aria-label', t('channels:side.newBot'));
-      add.title = t('channels:side.newBot');
-      const av = el('span', 'av');
-      av.setAttribute('aria-hidden', 'true');
-      av.append(icon(ICONS.plus));
-      add.append(av);
-      add.addEventListener('click', () => navigate({ kind: 'bot', id: 'new' }));
-      nodes.push(add);
-    }
-    strip.replaceChildren(...nodes);
-    strip.classList.toggle('is-empty', S.loaded && !bots.length);
-    if (S.loaded && !bots.length) strip.prepend(el('span', 'bt-empty', t('channels:side.botsEmpty')));
-    stripAt = Math.min(stripAt, Math.max(0, nodes.length - 1));
-    nodes.forEach((n, i) => { n.tabIndex = i === stripAt ? 0 : -1; });
-    if (hadFocus) nodes[stripAt]?.focus({ preventScroll: true });
-  }
-  if (strip) {
-    // ← → Home End で帯の中を移る（Tab は帯に 1 回だけ止まる）。Shift+F10・メニューキーで bot のメニュー
-    strip.addEventListener('keydown', (e) => {
-      const items = [...strip.querySelectorAll('.bt')];
-      const i = items.indexOf(document.activeElement);
-      if (i < 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
-        if (!items[i].botMenu) return;
-        e.preventDefault();
-        const r = items[i].getBoundingClientRect();
-        items[i].botMenu(r.left + 16, r.bottom);
-        return;
-      }
-      const to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : null;
-      if (to == null) return;
-      e.preventDefault();
-      stripAt = (to + items.length) % items.length;
-      items.forEach((n, j) => { n.tabIndex = j === stripAt ? 0 : -1; });
-      items[stripAt].focus();
-    });
-    strip.addEventListener('focusin', (e) => {
-      const items = [...strip.querySelectorAll('.bt')];
-      const i = items.indexOf(e.target);
-      if (i >= 0) { stripAt = i; items.forEach((n, j) => { n.tabIndex = j === i ? 0 : -1; }); }
-    });
-    // 脇の幅が変わったら、入る数を数え直す
-    if (typeof ResizeObserver === 'function') new ResizeObserver(() => paintBots()).observe(strip);
+  // ---- Bots（bot の面の木の行は web/side.mjs の botSection が描く。ここは状態・メニュー・選ばれた行を渡す。ADR 0362）
+  // 組み込みの bot（bot なし）は出さない
+  function paintBots() {
+    side?.setDirectory?.({ channels: S.channels, bots: S.bots, stateOf: (b) => botState(b, live()), botMenu, selected: selectedRow(S.view, S.bots) });
   }
 
   function botMenu(b, x, y, opener) {
@@ -293,20 +192,6 @@ export function createSidebar(host, getTabs) {
       { label: t('channels:side.openBot'), onClick: () => navigate({ kind: 'bot', id: b.id }) },
       ...(!b.plain ? [{ sep: true }, { label: t('channels:botDelete.menu'), danger: true, onClick: () => host.deleteBot(b, opener) }] : []),
     ], b.name);
-  }
-
-  // 「+N」: すべての bot（状態つき）と「bot を作る」
-  function allBotsMenu(bots, x, y) {
-    const items = bots.map(({ b, state }) => {
-      const av = botIcon(b, 'av bt-menu-av');
-      av.setAttribute('aria-hidden', 'true');
-      // i18n-dynamic: channels:side.botState.
-      const said = t(`channels:side.botState.${state}`);
-      return { icon: av, label: b.name, hint: state === 'idle' ? '' : said,
-        onClick: () => navigate(b.dmChannelId ? { kind: 'channel', id: b.dmChannelId } : { kind: 'bot', id: b.id }) };
-    });
-    host.showMenu?.(x, y, [...items, { sep: true }, { label: t('channels:side.newBot'), onClick: () => navigate({ kind: 'bot', id: 'new' }) }],
-      t('channels:side.sections.bots'));
   }
 
   // ---- ルーティン
@@ -479,10 +364,19 @@ export function createSidebar(host, getTabs) {
     open: (row) => navigate(showDetail(row)),
   });
   // Chats の一覧が描き直されたら（走る・待つ・既読が動いた）、bot の状態とタブの点を合わせる
-  side?.onRender?.(() => { if (S.stale && !loading) load(); else { paintBots(); paintDots(); } });
+  side?.onRender?.(() => { if (S.stale && !loading) load(); else paintDots(); });
 
   // タブは setupChannels が部品を並べた直後に作る。それを待ってから描く
-  queueMicrotask(() => { paint(); load(); });
+  queueMicrotask(() => { side?.setFace?.(getTabs?.()?.tab ?? 'chats'); paint(); load(); });
+
+  // bot の面で、まだ何も開いていない: 最初の bot の DM、bot が 0 なら初めての bot の段（ADR 0362）
+  let wantDefault = false;
+  function openDefault() {
+    if (!S.loaded) { wantDefault = true; return; }
+    wantDefault = false;
+    const first = S.bots.find((b) => !b.plain);
+    navigate(!first ? { kind: 'bot', id: 'new' } : first.dmChannelId ? { kind: 'channel', id: first.dmChannelId } : { kind: 'bot', id: first.id });
+  }
 
   const RELOAD_ON = new Set(['channelsChanged', 'channelPost', 'channelRead', 'channelThread', 'botsChanged']);
   return {
@@ -492,7 +386,9 @@ export function createSidebar(host, getTabs) {
     },
     show(view) { S.view = view ?? null; paint(); },
     hide() { S.view = null; paint(); },
-    sideTabChanged() { paintDots(); if (S.stale) load(); },
+    sideTabChanged(tab) { side?.setFace?.(tab); paintDots(); if (S.stale) load(); },
+    /** bot の面へ切り替えたが、その面で開いたものが無い（web/channels/index.mjs） */
+    openDefault,
     /** ルーティンの見出しを開く（閉じたレールの時計から。中身は次の描き直しで出る） */
     openRoutines() { setRoutinesOpen(true); },
   };

@@ -25,15 +25,15 @@ export function botState(bot, { sessions = [], runningIds = new Set(), waitingId
 }
 
 /**
- * タブの札の点。見ていない側にだけ付ける。あなたを待っているもの（承認待ちの bot・あなた宛ての投稿）があれば 'mark'、
- * 未読だけなら 'unread'、どちらも無ければ null
- * @param {{ tab: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, unread: boolean } }} o
+ * 脇の面の切り替え（チャット / bot）の印。見ていない面にだけ付ける（ADR 0362）。あなたを待っているもの（承認待ちの bot・あなた宛ての投稿）が
+ * あれば 'mark'（◆）、作業中のものがあれば 'working'（弧）、どちらも無ければ null。未読だけでは付けない
+ * @param {{ tab: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, running: boolean } }} o
  */
 export function tabDots({ tab, channels = [], botStates = [], chats = {} }) {
   const live = channels.filter((c) => !c.archivedAt);
   const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark'
-    : live.some((c) => (c.unread ?? 0) > 0) ? 'unread' : null;
-  const chatsDot = chats.waiting ? 'mark' : chats.unread ? 'unread' : null;
+    : botStates.includes('working') ? 'working' : null;
+  const chatsDot = chats.waiting ? 'mark' : chats.running ? 'working' : null;
   return { chats: tab === 'chats' ? null : chatsDot, channels: tab === 'channels' ? null : channelsDot };
 }
 

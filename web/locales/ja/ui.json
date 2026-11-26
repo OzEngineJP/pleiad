@@ -3216,16 +3216,10 @@
   },
   "composer": {
     "destination": {
-      "title": "Bot",
       "sentAria": "モデル: {{backend}} · {{model}}{{effort}}",
       "botAria": "Bot とモデル: {{name}}（{{backend}} · {{model}}{{effort}}）",
       "plainAria": "Bot とモデル: なし · {{backend}} · {{model}}{{effort}}",
-      "optionAria": "{{name}}（{{backend}}{{state}}）",
-      "botRuns": "{{name}} の既定で動きます: {{setup}}。送った後、スレッドの中で変えられます。",
-      "openBot": "bot のページで既定を変える",
-      "locked": "{{name}} の既定で動きます（送った後、スレッドの中で変えられます）",
-      "changedAria": "このスレッドだけ変更あり",
-      "resetBot": "bot の既定に戻す"
+      "changedAria": "このスレッドだけ変更あり"
     },
     "cwd": {
       "placeholder": "作業ディレクトリのパス",
@@ -3702,7 +3696,7 @@
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}",
+      "chat": "チャット › {{title}}",
       "remote": "設定 › リモート",
       "plus": "設定 › Pleiad Plus"
     },

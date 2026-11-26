@@ -174,7 +174,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
   let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), answerWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [] };
   // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
-  let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
+  let directory = { channels: new Map(), bots: new Map(), stateOf: () => 'idle', botMenu: null };   // id → Channel / Bot。bot の今の状態とメニュー
+  let face = 'chats';                           // 脇の面（'chats' = チャット、'channels' = bot。web/channels/side-tabs.mjs）
   let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
   const rendered = new Set();                   // 描き直しの知らせ（Channels 側のタブの点）
   let renderedRows = new Map();
@@ -441,17 +442,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   // ---- 置き場所の木 ---------------------------------------------------
-  // 畳めるルーティン（channelExtras）→ 一時チャット（会話のスレッド）→「チャンネル ＋」（channelExtras）→ チャンネルごとに開閉できる見出しとスレッド（全部）。
-  // Bots は木の外の帯（#botStrip）。ADR 0288
+  // チャットの面: 会話（状態ごと）だけ。bot の面: 畳めるルーティン（channelExtras）→「Bots ＋」→ bot の行（下に DM のスレッド）
+  // →「チャンネル ＋」（channelExtras）→ チャンネルごとに開閉できる見出しとスレッド（全部）。ADR 0362
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
   // 質問への回答だけを待っている会話は「回答待ち」（Issue #231。通知の一覧の「あなた待ち」の質問と同じ見分け）
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : last.answerWaitIds.has(id) ? t("sidebar.waitingAnswer") : t("sidebar.waiting");
 
   /** チャンネルのスレッドの 1 行: 印（弧・◆・青い丸）・題・時刻 */
-  function oneRow(s, level) {
+  function oneRow(s, level, { noBot = false } = {}) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, noBot, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -479,7 +480,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
     r.append(glyph, title, when);
-    if (s.thread && s.bot?.botId) {
+    if (s.thread && s.bot?.botId && !noBot) {
       const av = botIcon(directory.bots.get(s.bot.botId), 'av xs');
       av.setAttribute("aria-hidden", "true");
       r.insertBefore(av, when);
@@ -556,22 +557,117 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return sec;
   }
 
+  /** bot の面の「Bots ＋」の見出し（「チャンネル ＋」と同じ形。＋ と見出しは初めての bot の段へ）。bot が 0 なら下に「bot はまだありません」 */
+  function botsHead(count) {
+    const sec = keyed(el("section", "grp botsec-top"), "bots-head", true);
+    sec.setAttribute("role", "none");
+    const head = el("div", "cs-label");
+    const make = () => document.dispatchEvent(new CustomEvent("channels:show", { detail: { kind: "bot", id: "new" } }));
+    treeItem(head, "c:new-bot", 1, { open: make });
+    head.setAttribute("aria-label", `${t("channels:side.sections.bots")}, ${t("channels:side.newBot")}`);
+    head.onclick = make;
+    const add = el("button", "btn btn-icon cs-add");
+    add.type = "button";
+    add.tabIndex = -1;
+    add.title = t("channels:side.newBot");
+    add.setAttribute("aria-label", t("channels:side.newBot"));
+    add.append(icon(PLUS));
+    add.onclick = (e) => { e.stopPropagation(); make(); };
+    head.append(el("span", "cs-label-t", t("channels:side.sections.bots")), add);
+    sec.append(head);
+    if (!count) sec.append(el("div", "empty", t("channels:side.botsEmpty")));
+    return sec;
+  }
+
+  /** bot の 1 行（20px の顔・名前・状態）と、下に畳む DM のスレッド。押すと DM、右クリックで bot のメニュー */
+  function botSection(b, rows) {
+    const key = `bot:${b.id}`;
+    const sec = keyed(el("section", "grp chsec botsec"), `chsec:${key}`, true);
+    sec.setAttribute("role", "none");
+    const isCollapsed = chCollapsed.has(key) || !rows.length;
+    if (isCollapsed) sec.classList.add("collapsed");
+    if (!rows.length) sec.classList.add("no-threads");
+    const setOpen = (open) => { if (open) chCollapsed.delete(key); else chCollapsed.add(key); save(); render(); };
+    const go = () => document.dispatchEvent(new CustomEvent("channels:show", { detail: b.dmChannelId ? { kind: "channel", id: b.dmChannelId } : { kind: "bot", id: b.id } }));
+    const head = el("div", "grp-head chsec-head botsec-head");
+    const sel = face === "channels" && directory.selected?.kind === "bot" && directory.selected.id === b.id;
+    if (sel) { head.classList.add("sel"); head.setAttribute("aria-current", "page"); }
+    treeItem(head, `b:${b.id}`, 1, { expanded: rows.length ? !isCollapsed : null, open: go, expand: rows.length ? setOpen : undefined,
+      menu: directory.botMenu && ((x, y) => directory.botMenu(b, x, y, head)) });
+    const chev = el("button", "chsec-chev");
+    chev.type = "button";
+    chev.tabIndex = -1;
+    chev.setAttribute("aria-hidden", "true");
+    chev.append(chevron());
+    chev.onclick = (e) => { e.stopPropagation(); setOpen(isCollapsed); };
+    const av = botIcon(b, "bot-face-av bot-row-icon");
+    av.setAttribute("aria-hidden", "true");
+    const label = el("span", "grp-name chsec-name", b.name);
+    head.append(chev, av, label);
+    const state = directory.stateOf(b);
+    // 状態の印（あなた待ち ◆ → 作業中の弧）。畳んだ間は DM のスレッドの印もここに寄せる
+    const waiting = state === "waiting" || (isCollapsed && rows.some((s) => last.waitingIds.has(s.id)));
+    const working = state === "working" || (isCollapsed && rows.some((s) => last.runningIds.has(s.id)));
+    // i18n-dynamic: channels:side.botState.
+    if (waiting) head.append(approvalMark(1));
+    else if (working) head.append(runMark(t("channels:side.botState.working")));
+    else if (state === "resting") head.append(el("span", "row-when", t("channels:side.botState.resting")));
+    else if (isCollapsed && rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
+    head.setAttribute("aria-label", spoken([label, ...[...head.children].filter((c) => c.tagName !== "BUTTON" && c !== label && c !== av)]));
+    head.onclick = go;
+    head.oncontextmenu = (e) => { if (!directory.botMenu) return; e.preventDefault(); directory.botMenu(b, e.clientX, e.clientY, head); };
+    sec.append(head);
+    const rowsEl = keyed(el("div", "rows"), `chrows:${key}`, true);
+    rowsEl.setAttribute("role", "group");
+    for (const s of rows) rowsEl.append(oneRow(s, 2, { noBot: true }));
+    sec.append(rowsEl);
+    return sec;
+  }
+
+  // 脇の 2 面（ADR 0362）: チャットの面は会話だけ（bot は出さない）。bot の面はルーティン → Bots（bot ごとに DM と、前の一時チャットで
+  // 話しかけたスレッドを下に畳む）→ チャンネル。bot の分からない一時チャットのスレッドだけは、行き場が無いのでチャットの面に残す
+  const newest = (a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0);
+  /** 一時チャットの行の持ち主の bot（DM のスレッド・前の一時チャットで話しかけたスレッド）。分からなければ null */
+  function homeOwners() {
+    const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
+    const bots = [...directory.bots.values()].filter((b) => !b.plain);
+    const known = new Set(bots.map((b) => b.id));
+    const ownerOf = (s) => {
+      if (!s.thread) return null;
+      const dm = bots.find((b) => b.dmChannelId && b.dmChannelId === s.thread.channelId);
+      if (dm) return dm.id;
+      return homeIds.has(s.thread.channelId) && known.has(s.bot?.botId) ? s.bot.botId : null;
+    };
+    return { homeIds, bots, ownerOf };
+  }
+
   /**
-   * 一時チャットの行（状態の見出しを作る行）。会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを
-   * 新しい順。作成中の新しい会話は先頭。match は表示の絞り込み（状態の候補 statusChoices は絞り込まずに同じ行を見る）
+   * チャットの面の行（状態の見出しを作る行）。会話のスレッド（bot の会話・委譲の子は除く）と、bot の分からない一時チャットのスレッドを新しい順。
+   * 作成中の新しい会話は先頭。match は表示の絞り込み（状態の候補 statusChoices は絞り込まずに同じ行を見る）
    */
   function homeRowsOf(match = () => true) {
-    const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
+    const { homeIds, ownerOf } = homeOwners();
     return [...(last.pendingNew ? [last.pendingNew] : []),
-      ...[...last.sessions.filter((s) => !s.bot && match(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && match(s))]
-        .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
+      ...[...last.sessions.filter((s) => !s.bot && match(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && !ownerOf(s) && match(s))].sort(newest)];
   }
 
   function buildPlaces(wanted) {
+    const { bots, ownerOf } = homeOwners();
+    if (face !== "channels") {
+      const homeRows = homeRowsOf(matchesFilter);
+      wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows,
+        onAdd: newChat, addLabel: t("channels:side.newChat") }));
+      return;
+    }
     if (!filtering()) putExtra(wanted, "routines");
-    const homeRows = homeRowsOf(matchesFilter);
-    wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
-      onAdd: newChat, addLabel: t("channels:side.newChat") }));
+    const kids = new Map(bots.map((b) => [b.id, []]));
+    for (const s of last.threads) { const id = ownerOf(s); if (id && matchesFilter(s)) kids.get(id).push(s); }
+    wanted.append(botsHead(bots.length));
+    for (const b of bots) {
+      const rows = kids.get(b.id).sort(newest);
+      if (filtering() && !rows.length) continue;
+      wanted.append(botSection(b, rows));
+    }
     if (!filtering()) putExtra(wanted, "channels");
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
       .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
@@ -1702,15 +1798,26 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     onRender(fn) { rendered.add(fn); return () => rendered.delete(fn); },
     /** Chats の側に、あなたを待っている会話・未読の会話があるか（脇のタブの点。web/channels/sidebar.mjs） */
     attention() {
-      return { waiting: last.sessions.some((s) => last.waitingIds.has(s.id)), unread: last.unreadIds.size > 0 };
+      // bot の会話（DM・ルーティンの待ち）は bot の面の印（web/channels/sidebar.mjs の botState）が受け持つ
+      const mine = last.sessions.filter((s) => !s.bot);
+      return { waiting: mine.some((s) => last.waitingIds.has(s.id)), running: mine.some((s) => last.runningIds.has(s.id)), unread: mine.some((s) => last.unreadIds.has(s.id)) };
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
-    setDirectory({ channels = [], bots = [] } = {}) {
+    setDirectory({ channels = [], bots = [], stateOf = directory.stateOf, botMenu = directory.botMenu, selected = directory.selected } = {}) {
       // 一時チャット（home: true）の保存の名前は home。脇・行の出どころでは画面の名前で書く
-      directory = { channels: new Map(channels.map((c) => [c.id, c.home ? { ...c, name: t("channels:side.home") } : c])), bots: new Map(bots.map((b) => [b.id, b])) };
+      directory = { channels: new Map(channels.map((c) => [c.id, c.home ? { ...c, name: t("channels:side.home") } : c])), bots: new Map(bots.map((b) => [b.id, b])),
+        stateOf, botMenu, selected: selected ?? null };
       if (remote) remote.sig = null;   // 検索中ならチャンネルの当たりも取り直す
       render();
     },
+    /** 脇の面（'chats' = チャット、'channels' = bot。web/channels/side-tabs.mjs が切り替えのたびに渡す） */
+    setFace(next) {
+      if (next === face) return;
+      face = next;
+      renderedRows.clear();
+      render();
+    },
+    get face() { return face; },
     /**
      * 検索をチャンネルへ広げる口（web/channels/sidebar.mjs）:
      *   matchNames(terms) → 行（名前の一致。手元で即座に）、searchPosts(q) → Promise<行>（channels.search）、open(行)、
