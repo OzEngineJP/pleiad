@@ -175,7 +175,7 @@
       "commandCopied": "Copied",
       "loginFailed": "Couldn’t sign in: {{error}}",
       "loginTimedOut": "Timed out (10 minutes).",
-      "logoutFailed": "Couldn't sign out of {{agent}}: {{error}}",
+      "logoutFailed": "Couldn't sign out of {{agent}}. {{error}}",
       "loginUrl": "Sign in to {{agent}}: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "Signed in",

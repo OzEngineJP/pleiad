@@ -136,4 +136,5 @@ agy は 1.5.0 で `agy acp`（Agent Client Protocol。JSON-RPC 2.0 を stdio で
 
 - **ログアウト**: `initialize` の `agentCapabilities.auth.logout` が返るときだけ、1 つ目（CLI のログイン）のカードに［ログアウト］を出す（`agyLogoutOffer()`）。押すと ACP の `logout` を送る。1 つ目のログインは OS の資格情報にあり、この PC の Antigravity のアプリ・端末の `agy` と共用なので、押す前にカードの中で確かめる（エージェントの記述の印 `logoutConfirm`。Antigravity だけ）。2 つ目以降のアカウントは［削除］のまま。失敗は押したカードの中に出す（全エージェント共通）。能力の印 `logout` は Antigravity も `true`。
 - **ログインし直し**: 端末の案内（`agy` と［コピー］）と `agy models` の見張りをやめ、ACP の `authenticate`（`oauth-personal`）をブラウザーで行う。ファイル保存の env は付けず、端末で `agy` を打つのと同じく OS の資格情報へ保存する。ログインの段は 2 つ目以降と同じ「メッセージだけ」の表示と取消。断られたら `AGY_LOGIN_REFUSED` の理由を 1 行で出す。
+- **実測**: agy 1.5.17 に、ログインしていない使い捨てのフォルダー（ファイル保存の env 付き）で ACP の `logout`（引数 `{}`）を送ると `ok {}` が返った。`initialize` の `agentCapabilities.auth` は `{"logout":{}}`。OS の資格情報は変わらなかった。
 - **試験**: 実機の agy ではログアウト・ログインを流さない（利用者のアプリが外れる）。身代わり（`tests/lib/fake-agy.mjs`。`FAKE_AGY_NO_LOGOUT`・`FAKE_AGY_LOGOUT_FAIL`・`FAKE_AGY_LOGOUT_FAIL_FILE`）で確かめた。

@@ -175,7 +175,7 @@
       "commandCopied": "コピーしました",
       "loginFailed": "ログインできませんでした: {{error}}",
       "loginTimedOut": "時間切れになりました（10 分）。",
-      "logoutFailed": "{{agent}} のログアウトに失敗: {{error}}",
+      "logoutFailed": "{{agent}} からログアウトできませんでした。{{error}}",
       "loginUrl": "{{agent}} のログイン: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "ログインした",

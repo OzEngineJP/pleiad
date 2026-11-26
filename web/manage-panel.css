@@ -450,6 +450,9 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mp-acct .mp-head>.mp-card-actions{flex:none;flex-wrap:wrap;max-width:calc(100% + 12px);margin-left:auto;margin-right:-12px;transition:opacity var(--dur) var(--ease-out),visibility 0s}
 .mp-acct .mp-cred>.mp-fold:has(.mp-card-actions>.btn:last-child:not(.btn-primary):not(.btn-quiet)){margin-right:-12px}
 .mp-acct .mp-head>.mp-card-actions.away{opacity:0;visibility:hidden;transition:opacity var(--dur) var(--ease-out),visibility 0s var(--dur)}
+/* 確かめの間は見えない操作の組が、折り返した行の高さ（狭い幅で 70px ほど）を残さないよう流れから外す */
+.mp-acct .mp-head{position:relative}
+.mp-acct:is(.has-fix,.cc) .mp-head>.mp-card-actions.away{position:absolute;right:0;top:0}
 @media (max-width:520px){.mp-acct .mp-head>.mp-card-actions .btn{padding-inline:8px}}
 .mp-name{display:grid;align-items:center;min-height:var(--hit);min-width:0}
 .mp-name>*{grid-area:1/1;min-width:0}

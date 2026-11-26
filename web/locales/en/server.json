@@ -568,7 +568,7 @@
       "loginFailed": "Could not complete sign-in. Try again.",
       "loggedIn": "Signed in",
       "waitLogin": "Wait for sign-in to finish.",
-      "logoutFailed": "Could not sign out."
+      "logoutFailed": "The sign-out didn't finish. Please try again."
     },
     "login": {
       "pasteCode": "Paste the code shown in your browser.",
@@ -897,7 +897,7 @@
       "loginTimeout": "Sign-in in the browser did not finish. Please try again.",
       "logoutInAgy": "This version of agy can't sign out from Pleiad (run agy update to update it).",
       "logoutStartFailed": "Couldn't start Antigravity",
-      "logoutRefused": "agy didn't accept the sign-out"
+      "logoutRefused": "agy didn't accept it. Please try again."
     },
     "models": {
       "levels": "Effort: {{levels}}",

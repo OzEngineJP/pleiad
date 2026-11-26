@@ -361,13 +361,23 @@ try {
       await page.waitForSelector(`${cli} .mp-confirm`, { state: 'detached', timeout: 5000 });
       check(fs.existsSync(agyAuth) && (await cliState()).acts.includes('ログアウト'), `${id}: ［やめる］では外さない`);
 
+      // ---- 2 つ目以降の［削除］の確かめ: 見えない操作の組が、折り返した高さの空白を残さない（状態の行と確かめの間は 24px 以内）
+      const acct = `${card(id)} .conn-sec[data-sec="accounts"] .cc`;
+      await page.locator(`${acct} button`, { hasText: '削除' }).first().click();
+      await page.waitForSelector(`${acct} .mp-confirm`, { timeout: 5000 });
+      const gap = await page.evaluate(sel => { const c = document.querySelector(sel); return Math.round(c.querySelector('.mp-confirm').getBoundingClientRect().top - c.querySelector('.mp-ln').getBoundingClientRect().bottom); }, acct);
+      check(gap >= 0 && gap <= 24, `${id}: ［削除］の確かめの上に空白が出ない（${gap}px）`, gap);
+      await shoot('s03');
+      await page.locator(`${acct} .mp-confirm [data-confirm="no"]`).click();
+      await page.waitForSelector(`${acct} .mp-confirm`, { state: 'detached', timeout: 5000 });
+
       // ---- 失敗: 押したカードの中に赤の一文（#setupError には出さない）
       fs.writeFileSync(agyLogoutFail, 'keyring unavailable');
       await page.locator(`${cli} [data-act="logout"]`).click();
       await page.locator(`${cli} .mp-confirm [data-confirm="yes"]`).click();
       await page.waitForSelector(`${cli} [role="alert"]`, { timeout: 15000 });
       st = await cliState();
-      check(st.alert === 'Antigravity のログアウトに失敗: agy がログアウトを受け付けませんでした', `${id}: 失敗は押したカードの中に出る（wire の生の文は出さない）`, st.alert);
+      check(st.alert === 'Antigravity からログアウトできませんでした。agy が受け付けませんでした。もう一度お試しください', `${id}: 失敗は押したカードの中に出る（wire の生の文は出さない）`, st.alert);
       check(!(await setupError()), `${id}: 失敗を設定の上の欄（#setupError）には出さない`, await setupError());
       check(fs.existsSync(agyAuth) && st.acts.includes('ログアウト'), `${id}: 失敗したらログイン済みのまま`, st);
       check(await on(`${cli} [data-act="logout"]`), `${id}: 失敗したら［ログアウト］へ焦点が戻る`);

@@ -565,7 +565,7 @@
       "loginFailed": "ログインを完了できませんでした。もう一度お試しください",
       "loggedIn": "ログインしました",
       "waitLogin": "ログインの完了を待ってください",
-      "logoutFailed": "ログアウトできませんでした"
+      "logoutFailed": "ログアウトの処理が終わりませんでした。もう一度お試しください"
     },
     "login": {
       "pasteCode": "ブラウザーに表示されたコードを貼り付けてください",
@@ -894,7 +894,7 @@
       "loginTimeout": "ブラウザーでのログインが終わらなかった（もう一度お試しください）",
       "logoutInAgy": "この版の agy は Pleiad からのログアウトに対応していません（agy update で更新してください）",
       "logoutStartFailed": "Antigravity を起動できません",
-      "logoutRefused": "agy がログアウトを受け付けませんでした"
+      "logoutRefused": "agy が受け付けませんでした。もう一度お試しください"
     },
     "models": {
       "levels": "段: {{levels}}",
