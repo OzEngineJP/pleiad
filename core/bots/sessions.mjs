@@ -25,10 +25,10 @@
 //   書き込みの範囲を限れないモード（modes() の scope が full。Claude の Bypass・Codex の Bypass・Antigravity の yolo）では、
 //   フォルダーの選択は無効で「すべてのフォルダー」（all: true。ADR 0109・計画 §7.2-2）。Codex の full は sandbox で書き込みを
 //   作業場所に限るので scope が workspace のまま、選択は有効
-import path from 'node:path';
 import os from 'node:os';
 import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
+import { workPlace } from '../../web/work-place.mjs';
 import { folderKey } from './store.mjs';
 import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
@@ -80,19 +80,12 @@ export function folderPlan(bot, modeEntry, cwd = null) {
   };
 }
 
-/** 作業場所を決める: チャンネルの cwd が bot のフォルダーの中ならそれ（すべてのモードでは bot のフォルダーに限らない）、無ければ先頭のフォルダー、それも無ければホーム */
+/**
+ * 作業場所を決める: チャンネルの cwd が bot のフォルダーの中ならそれ（すべてのモードでは bot のフォルダーに限らない）、無ければ先頭のフォルダー、それも無ければホーム。
+ * 判定は web/work-place.mjs の workPlace 1 つ（チャンネルの設定の「各 bot の動く場所」・スレッドの返信先の推定も同じものを使う）
+ */
 export function pickCwd(bot, channel, modeEntry) {
-  const folders = bot?.folders ?? [];
-  const wanted = channel?.cwd ? String(channel.cwd) : null;
-  if (wanted) {
-    if (unrestrictedMode(modeEntry) || !folders.length) return wanted;
-    const inside = folders.some((f) => {
-      const rel = path.relative(folderKey(f.path), folderKey(wanted));
-      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    });
-    if (inside) return wanted;
-  }
-  return folders[0]?.path ?? os.homedir();
+  return workPlace({ folders: bot?.folders, channelCwd: channel?.cwd, unrestricted: unrestrictedMode(modeEntry), home: os.homedir() }).cwd;
 }
 
 /** 新しい bot の既定のモード: 作業場所に書けて毎回聞くもの（Claude の default・Codex の ask）。無ければ先頭（Antigravity は yolo だけ） */

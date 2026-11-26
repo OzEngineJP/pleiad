@@ -55,6 +55,11 @@ export default async function(t) {
       return text.includes('- manual:') && text.includes('- second:');
     }));
     t.ok('URL・パスをスキルの明示指定と誤認しない', ['https://manual', 'C:/manual', './manual', '/manual/file', 'a/manual'].every(prompt => !contextTools(runtime, prompt).prompt.includes('- manual:')));
+    // チャンネルの投稿は <pleiad-channel …>本文</pleiad-channel> の包みで渡る（core/channels/types.mjs）。先頭の /名前 は包みの `>` の直後に来る
+    const wrapped = (text, extra = '') => `<pleiad-channel channel="#dev" channel-id="c_1" thread="p_1" post="p_1" from="あなた"${extra} at="2026-10-03T10:41">${text}</pleiad-channel>`;
+    t.ok('チャンネル投稿の包みの直後（先頭）の /名前 で手動専用スキルを公開', [wrapped('/manual 使って'), wrapped('/manual'), wrapped('/manual', ' reply="true"'), `<pleiad-channel-thread channel="#dev">\n${wrapped('/manual 今から')}\n</pleiad-channel-thread>`].every(prompt => contextTools(runtime, prompt).prompt.includes('- manual:')));
+    t.ok('包みの中でも URL・パスはスキルの明示指定と誤認しない', ['https://manual', 'C:/manual', './manual', '/manual/file', 'a/manual'].every(text => !contextTools(runtime, wrapped(text)).prompt.includes('- manual:')));
+    t.ok('包みの属性の中の /名前 は明示指定としない', !contextTools(runtime, wrapped('こんにちは', ' note="/manual"')).prompt.includes('- manual:'));
     t.ok('子階層の指示を範囲付きで必要時に読み込む',(await helpers.call('instructions_for_path',{id:path.join(cwd,'sub')})).content[0].text.includes('SCOPED_SENTINEL'));
     await rejects('範囲外の指示を要求できない',()=>helpers.call('instructions_for_path',{id:tmp}));
     const ctx={owners:policy.owners,prompt:'MANAGED_PROMPT',url:'http://localhost/context',headers:{Authorization:'test'}};
