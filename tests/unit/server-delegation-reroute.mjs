@@ -14,6 +14,13 @@ export const title = '委譲の再振り分け: 上限なら同じ子で継続�
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const sh = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true }).trim();
 const slash = p => String(p ?? '').replaceAll('\\', '/');
+// Windows では裏の git（状態の読み取り）が .git を一瞬掴み、名前の付け替えが EPERM / EBUSY になる。少し待って付け替え直す
+const renameRetry = async (from, to) => {
+  for (let i = 0; ; i++) {
+    try { return await fs.rename(from, to); }
+    catch (e) { if (i >= 50 || !['EPERM', 'EBUSY', 'EACCES'].includes(e?.code)) throw e; await sleep(100); }
+  }
+};
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-reroute-'));
@@ -174,14 +181,55 @@ export default async function (t) {
       JSON.stringify({ status: isoFailRow?.status, worktree: isoFailRow?.worktree, cwd: isoFailRow?.cwd, workspace: isoFailRow?.workspace, wt2Exists, firstCwd: firstChild?.cwd }));
 
     // ---- 片付いた作業場所を作り直せないときは、元の場所で走らせず失敗で返す
-    await fs.rename(path.join(repo, '.git'), path.join(repo, 'git-disabled'));
+    await renameRetry(path.join(repo, '.git'), path.join(repo, 'git-disabled'));
     const renewSend = await call(isoParent, 'ply_task_send', { taskId: iso.data.taskId, message: 'echo:should-not-run' });
     t.ok('（準備）片付け済みの子へ追加の指示を積める', !renewSend.isError, renewSend.text.slice(0, 300));
     const renewRow = await settle(iso.data.taskId);
     t.ok('作業場所を作り直せない追加の指示は失敗になり、子の返事は走らない',
       renewRow?.status === 'failed' && /worktree.*作り直せなかった/.test(renewRow.error ?? '') && !String(renewRow.result ?? '').includes('should-not-run'),
       JSON.stringify({ status: renewRow?.status, error: renewRow?.error, result: renewRow?.result }));
-    await fs.rename(path.join(repo, 'git-disabled'), path.join(repo, '.git'));
+
+    // ---- 片付いた子へ人が直接送ったとき（外から起きたターン。ADR 0355）も、作り直せなければ元の場所で走らせない。
+    // 発言は送信待ちに「送れなかった」で残り、作り直せなかった理由と次にすることが出る。タスクの行は起こす前のまま
+    const isoChild = iso.data.sessionId;
+    // 上の失敗の知らせが依頼元へ届くのを待ってから比べる（届く途中だと通知の状態が並行して動く）
+    await noticeOf(isoParent, iso.data.taskId);
+    const humanRowBefore = await rowOf(iso.data.taskId);
+    const humanFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: isoChild, messageId: 'renew-human-0001', prompt: 'echo:human-after-fix' });
+    let humanItem;
+    for (let i = 0; i < 400 && !['failed', 'sent', 'unknown'].includes(humanItem?.status); i++) {
+      humanItem = (await c.cmd('listMessages', { sessionId: isoChild })).find(m => m.id === 'renew-human-0001');
+      await sleep(50);
+    }
+    for (let i = 0; i < 100 && (await c.cmd('running')).turns.some(x => x.sessionId === isoChild); i++) await sleep(50);
+    const humanEvents = c.since(humanFrom).filter(e => e.sessionId === isoChild);
+    const humanReplied = (await c.cmd('loadSession', { sessionId: isoChild })).messages.some(m => m.role === 'assistant' && String(m.text ?? '').includes('human-after-fix'));
+    const humanRowAfter = await rowOf(iso.data.taskId);
+    t.ok('作業場所を作り直せないとき、人の発言のターンは元の場所で走らない',
+      !humanReplied && !humanEvents.some(e => ['text.delta', 'turnEnd'].includes(e.type)),
+      JSON.stringify({ humanReplied, events: humanEvents.map(e => e.type).slice(0, 20), childCwd: (await sessionMeta(isoChild))?.cwd }));
+    t.ok('発言は送信待ちに「送れなかった」で残り、作り直せなかった理由（git でない）と次にすることが出る',
+      humanItem?.status === 'failed' && humanItem.args?.prompt === 'echo:human-after-fix'
+      && /作り直せなかった/.test(humanItem.error ?? '') && /git のリポジトリではない/.test(humanItem.error ?? '') && /再送/.test(humanItem.error ?? ''),
+      JSON.stringify(humanItem));
+    t.ok('始まらなかったので、タスクの行（状態・通知・出来事）は起こす前のまま',
+      humanRowAfter?.status === humanRowBefore?.status && humanRowAfter?.notification === humanRowBefore?.notification
+      && (humanRowAfter?.events ?? []).length === (humanRowBefore?.events ?? []).length && humanRowAfter?.worktree?.id === humanRowBefore?.worktree?.id,
+      JSON.stringify({ before: { s: humanRowBefore?.status, n: humanRowBefore?.notification, e: humanRowBefore?.events?.length }, after: { s: humanRowAfter?.status, n: humanRowAfter?.notification, e: humanRowAfter?.events?.length } }));
+    await renameRetry(path.join(repo, 'git-disabled'), path.join(repo, '.git'));
+
+    // ---- 直してから［再送する］と、今までどおり作業場所を作り直してから走り、タスクが動いて終わる
+    const retryFrom = c.mark();
+    await c.cmd('messageAction', { sessionId: isoChild, messageId: 'renew-human-0001', action: 'retry' });
+    let retried;
+    for (let i = 0; i < 1200 && !(retried?.status === 'completed' && String(retried.result ?? '').includes('human-after-fix')); i++) { retried = await rowOf(iso.data.taskId); await sleep(50); }
+    const retriedCwd = c.since(retryFrom).find(e => e.type === 'cwd' && e.sessionId === isoChild && e.reasonKey === 'worktreeSplit')?.cwd ?? null;
+    const retriedItem = (await c.cmd('listMessages', { sessionId: isoChild })).find(m => m.id === 'renew-human-0001');
+    t.ok('作り直せるようになって再送すると、新しい worktree を作ってから走り、タスクが完了する',
+      retried?.status === 'completed' && Boolean(retriedCwd) && slash(retriedCwd) !== slash(repo) && slash(retriedCwd) !== slash(wt0.path)
+      && retried.worktree?.id && retried.worktree.id !== wt0.id && slash(retried.cwd) === slash(retriedCwd) && (!retriedItem || retriedItem.status === 'sent'),
+      JSON.stringify({ status: retried?.status, cwd: retried?.cwd, worktree: retried?.worktree, retriedCwd, item: retriedItem?.status }));
 
     // ---- 返事を書いてから失敗した子は任せ直さない（痕跡があるので、同じ仕事を 2 箇所で走らせない）
     await setTiers(['antigravity:gemini-3.8-pro-high', 'fake:fast']);

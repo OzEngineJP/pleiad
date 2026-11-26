@@ -1403,7 +1403,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           const ac = new AbortController(); live.set(id, ac);
           let invoked = false, settle;
           const outcome = new Promise((resolve, reject) => { settle = { resolve, reject }; });
-          const wake = { kind, started: false, before: null };
+          const wake = { kind, started: false, before: null, refused: null };
+          // ターンを始める前に断る（片付いた作業場所を作り直せなかった。ADR 0360 §3）。断ったら素のままでも走らせず、送信待ちへ理由付きの失敗で返す
+          wake.refuse = message => { wake.refused = String(message ?? ''); };
           wake.turn = async hooks => {
             invoked = true;
             try { const o = await turn({ ...hooks, began: async () => {
@@ -1432,8 +1434,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           spawn(run(r, ac, null, undefined, wake).catch(e => { live.delete(id); report({ event: 'unexpected', operation: 'run', taskId: id, code: e?.code ?? null }); })
             .finally(() => {
               release();
-              // 回がターンを始めずに終わった（子の会話が消えていた・取り消された）: 人の送信は止めず、タスクと結ばずに流す
-              if (!invoked) Promise.resolve().then(() => turn(null)).then(settle.resolve, settle.reject);
+              // 回がターンを始めずに終わった（子の会話が消えていた・取り消された）: 人の送信は止めず、タスクと結ばずに流す。
+              // 作業場所を作り直せずに断った（refused）ときは流さない（元の場所で走らせない）。発言は送信待ちに失敗として残る
+              if (!invoked && wake.refused) settle.reject(Object.assign(new Error(wake.refused), { code: 'WORKTREE_RENEW_FAILED' }));
+              else if (!invoked) Promise.resolve().then(() => turn(null)).then(settle.resolve, settle.reject);
             }));
           return await outcome;
         }
