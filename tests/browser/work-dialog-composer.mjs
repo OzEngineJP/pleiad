@@ -248,9 +248,9 @@ try {
   assert.ok(ime.focus, 'focus kept during a composition');
   console.log(`PASS: composing text is untouched while the child streams (re-reads during composition: ${imeReads})`);
 
-  // ---- 5b. アカウントの節: メインと同じ面に出て、選ぶと子の予約に流れる ----
+  // ---- 5b. 接続先の節（CLI のログイン・アカウント）: メインと同じ面に出て、選ぶと子の予約に流れる ----
   clickOn('#wkModelChip', 'model chip (accounts)');
-  clickOn('#workDialog [data-key="nav:account"]', 'account section');
+  clickOn('#workDialog [data-key="nav:conn"]', 'connection section');
   await wait(() => evaluate(() => !!document.querySelector('#workDialog [data-key^="account:"]')), 'account rows in the child model pop');
   const accountRows = evaluate(() => [...document.querySelectorAll('#workDialog [data-key^="account:"]')].map(n => ({ key: n.dataset.key, on: n.getAttribute('aria-selected') === 'true' || n.getAttribute('aria-checked') === 'true' || n.classList.contains('on') })));
   console.log('account rows', JSON.stringify(accountRows));

@@ -72,10 +72,10 @@ try {
   await note.waitFor({ state: 'hidden' });
   await type('');
 
-  await choose('account', 'account:' + privateId);
+  await choose('conn', 'account:' + privateId);
   await waitResume(false);
   await note.waitFor({ state: 'hidden' });
-  await choose('account', 'account:');
+  await choose('conn', 'account:');
   await waitResume(false);
 
   // The fake provider advertises host compaction. Antigravity manages its own.
@@ -165,11 +165,11 @@ try {
   assert.equal((await client.runTurn({ sessionId: compatId, prompt: 'hit usage limit' })).outcome, 'limited');
   await page.locator('#groups .row[data-session="' + compatId + '"]').evaluate(row => row.click());
   await waitResume(false);
-  await choose('endpoint', 'endpoint:');
+  await choose('conn', 'account:');
   await waitResume(false);
-  await choose('endpoint', 'endpoint:' + endpoint);
+  await choose('conn', 'endpoint:' + endpoint);
   await waitResume(false);
-  await choose('endpoint', 'endpoint:');
+  await choose('conn', 'account:');
   await waitResume(false);
   await type('continue on official');
   assert.equal(await note.evaluate(node => node.getBoundingClientRect().height), 0);

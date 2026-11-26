@@ -138,6 +138,8 @@ export default async function (t) {
     t.ok('sendToOthers: false は保たれる', normalizeBot({ id: 'b', name: 'n', sendToOthers: false }).sendToOthers === false);
     t.ok('bot のアカウント（ADR 0224）: 無い・文字列でない古い行は \'\'（ログイン中）、id は保たれる',
       n.account === '' && normalizeBot({ id: 'b', name: 'n', account: 7 }).account === '' && normalizeBot({ id: 'b', name: 'n', account: 'acc-oz' }).account === 'acc-oz');
+    t.ok('bot の互換の接続先（ADR 0359）: 無い・文字列でない古い行は \'\'（公式）、id は保たれる（bots.json の版は上げない）',
+      n.endpoint === '' && normalizeBot({ id: 'b', name: 'n', endpoint: 7 }).endpoint === '' && normalizeBot({ id: 'b', name: 'n', endpoint: 'ep-1' }).endpoint === 'ep-1');
     const folders = normalizeFolders(['/a', '/a/', { path: '/b', access: 'ro' }, { path: '' }, { path: '/c', access: 'zzz' }, 5]);
     t.ok('フォルダー: 重複（末尾の区切り）は先を残し、access は rw か ro（既定 rw）', folders.map((f) => `${f.path}:${f.access}`).join() === '/a:rw,/b:ro,/c:rw', folders.map((f) => f.path).join());
     t.ok('フォルダーは 20 まで', normalizeFolders(Array.from({ length: 30 }, (_, i) => `/f${i}`)).length === 20);

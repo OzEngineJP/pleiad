@@ -11,6 +11,7 @@ import { buildComposer, composerEls, createComposer } from '../composer/composer
 import { renderOutbox } from '../outbox.mjs';
 import { chipCaret, chipGlyph, defaultModeOf, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
 import { weekUsage } from '../header-usage.mjs';
+import { compatModelLabel } from '../compat-models.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
@@ -266,6 +267,21 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     vocab = (await host.vocab?.(backend, cwd, account).catch(() => null)) ?? { models: {}, modes: {} };
     paintSettings();
   };
+  // 互換の接続先で動く bot（bots.setAccount の endpoint。ADR 0359）は、アカウントを使わない（サーバーは接続先を先に見る）。
+  // 接続先の行は、その bot の接続先だけの読むだけの行（変えるのは bot のページ）。モデルはその接続先のもの
+  const acctOf = (s) => (s.endpoint ? '' : s.account ?? '');
+  const endpointOf = (s) => {
+    if (!s.endpoint) return null;
+    const view = host.conn?.endpointView(s.backend, s.endpoint) ?? null;
+    return view ? { ...view, options: view.options.filter((o) => o.value === s.endpoint).map((o) => ({ ...o, isDefault: false })), manage: null } : null;
+  };
+  /** 接続先の一覧を、backend ごとに 1 度だけ読む（読み終えたら描き直す。invalidateVocab で忘れる）。消えた接続先でも繰り返さない */
+  const connAsked = new Set();
+  const askConn = (s) => {
+    if (!s.endpoint || !host.conn || connAsked.has(s.backend)) return;
+    connAsked.add(s.backend);
+    Promise.resolve(host.conn.load(s.backend)).catch(() => {}).finally(() => paintSettings());
+  };
   const leaf = (path) => String(path ?? '').split(/[\\/]/).filter(Boolean).at(-1) ?? '';
   const chipKind = (chip) => (chip === chips.cwd ? 'cwd' : chip === chips.model ? 'model' : 'mode');
   const chipBody = (chip, text, changed) => {
@@ -283,15 +299,18 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       fitThreadRow();
       return;
     }
-    loadVocab(s.backend, s.values?.cwd ?? '', s.account ?? '');
+    loadVocab(s.backend, s.values?.cwd ?? '', acctOf(s));
+    askConn(s);
     const v = s.values, d = s.defaults;
-    // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す
-    const modelLabel = (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
+    // 既定に従うモデルは、Chats のチップと同じく実際に当たるモデルの名前で出す。互換の接続先はその接続先の表示名
+    const row = endpointOf(s)?.row ?? null;
+    const modelLabel = row ? compatModelLabel(v.model || row.roles?.main || '').text
+      : (vocab.models?.[v.model] ? resolvedModel(vocab.models, v.model).label : '') || v.model || t('chat.model.default');
     const changed = { model: (v.model ?? '') !== (d.model ?? '') || (v.effort ?? '') !== (d.effort ?? ''), mode: (v.mode ?? '') !== (d.mode ?? '') };
     chipBody(chips.cwd, leaf(v.cwd) || '~', false);
     chips.cwd.title = v.cwd ?? '';
     paintWhoChip(destChip, { bot: bot.plain ? null : bot, backend: s.backend, backendLabel: backendLabel?.(s.backend) ?? s.backend,
-      model: modelLabel, effort: v.effort || resolvedModel(vocab.models, v.model).entry?.defaultEffort || '', changed: changed.model });
+      model: modelLabel, effort: v.effort || (row ? '' : resolvedModel(vocab.models, v.model).entry?.defaultEffort) || '', changed: changed.model });
     // 承認モードを決めていない（bot なしで会話を作る前）は、エージェントの既定の承認モード
     const modeLabel = vocab.modes?.[v.mode || defaultModeOf(vocab.modes)]?.label ?? v.mode ?? '';
     chipBody(chips.mode, modeLabel, changed.mode);
@@ -345,6 +364,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       agentView: (id) => host.agentView?.(id) ?? null,
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
       effortDisabled: Object.keys(threadEfforts).length <= 1,
+      ...(s.endpoint && endpointOf(s) ? { endpoint: endpointOf(s), connLocked: true } : {}),
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
         backendLabel: (id) => backendLabel?.(id) ?? id,
         // エージェントの一覧の下の「使用量」（使用量の画面を開く）
@@ -364,10 +384,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   function loadPanelData(opening = false) {
     const s = destNow().bot && settings(destNow().bot.id);
     if (!s) return;
-    const key = JSON.stringify([s.backend, s.account ?? '', s.values.model ?? '', s.values.cwd ?? '']);
+    const key = JSON.stringify([s.backend, s.endpoint ?? '', acctOf(s), s.values.model ?? '', s.values.cwd ?? '']);
     if (key !== effortKey) {
       effortKey = key; threadEfforts = {};
-      const request = host.efforts?.({ backend: s.backend, ...(s.account ? { account: s.account } : {}), model: s.values.model ?? '', cwd: s.values.cwd || undefined });
+      const request = host.efforts?.({ backend: s.backend, ...(s.endpoint ? { endpoint: s.endpoint } : s.account ? { account: s.account } : {}), model: s.values.model ?? '', cwd: s.values.cwd || undefined });
       request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; repaintPanel(); } }).catch(() => {});
     }
     if (opening) quotaAsked.clear();
@@ -379,7 +399,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const bot = destNow().bot;
     const s = bot && settings(bot.id);
     if (!s) return;
-    await loadVocab(s.backend, s.values?.cwd ?? '', s.account ?? '');
+    await loadVocab(s.backend, s.values?.cwd ?? '', acctOf(s));
     const items = Object.entries(vocab.modes ?? {}).map(([id, m]) => ({
       label: m.label ?? id, hint: id === s.defaults.mode ? t('channels:thread.settings.botDefault', { name: bot.name }) : (m.note ?? ''), checked: id === s.values.mode,
       onClick: () => apply({ mode: id }),
@@ -549,7 +569,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       els.abort.disabled = disabled;
       c.fit();
     },
-    invalidateVocab() { vocabFor = null; effortKey = ''; paintDest(); },
+    invalidateVocab() { vocabFor = null; effortKey = ''; connAsked.clear(); paintDest(); },
     /** 予定が動いた */
     paintSchedules,
     /** 送信待ちの投稿の下の［編集］［取り消す］ */

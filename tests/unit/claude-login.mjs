@@ -88,7 +88,7 @@ export default async function (t) {
     { id: 'a1', name: '仕事用', configDir: '/u/a1', usageLogin: true },
     { id: 'a2', name: '個人用', configDir: '/u/a2', usageLogin: false },
     { id: 'a3', name: '壊れた', configDir: '/u/broken', usageLogin: true }] });
-  t.ok('アカウントごとに見出しを付けて並べる', many.accounts.map(a => a.label).join() === 'ログイン中のアカウント,仕事用,個人用,壊れた');
+  t.ok('アカウントごとに見出しを付けて並べる', many.accounts.map(a => a.label).join() === 'CLI のログイン,仕事用,個人用,壊れた');
   t.ok('認可済みのアカウントはその設定フォルダで読む（トークンは使わない）', reads.some(r => r.configDir === '/u/a1') && reads.every(r => r.token === null) && many.accounts[1].plan === 'max');
   t.ok('未認可のアカウントは読みに行かず、認可を促す', !reads.some(r => r.configDir === '/u/a2') && many.accounts[2].needsUsageLogin === true
     && many.accounts[2].message === NEEDS_USAGE_LOGIN && many.accounts[2].accountId === 'a2');

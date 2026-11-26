@@ -255,7 +255,6 @@ export const ALLOWED = [
   { file: 'core/hooks-agents.mjs', expect: 'nativeHooks', reason: '旧「Pleiad がそろえる」から移すとき、作業場所の Hooks の行で止める相手（作業場所の定義を自分で持つエージェント = HOOK_AGENTS。ADR 0338）' },
   { file: 'web/hooks-card.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントの欄（HOOK_AGENTS）' },
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
-  { file: 'web/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの画面の対象' },
   { file: 'web/compat-presets.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの preset の対象' },
   { file: 'web/api-keys-settings.mjs', expect: 'compatEndpoints', reason: 'API キーの設定カードでエージェント名を出す対象（互換エンドポイントの利用者）' },
   // 固定の組（記述から引けないもの。引けるなら expect にする）

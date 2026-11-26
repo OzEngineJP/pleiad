@@ -54,8 +54,10 @@
 | モデル | model |
 | エフォート（考える量） | effort |
 | 既定 / 既定に従う / 既定に戻す | Default / Use default / Reset to default |
-| 接続先 / 互換の接続先 / 公式 | endpoint / compatible endpoint / Official |
-| 接続先を管理… | Manage endpoints… |
+| 接続先（CLI のログイン・登録したアカウント・互換の接続先の総称。画面の 1 つの概念。2026-11-26 に「ログイン」「アカウント」と 1 つへ統一） | connection |
+| 互換の接続先（URL とキーで足す接続先。この語を使うのは互換だけを指す文のとき） / 公式 | compatible endpoint / Official |
+| CLI のログイン（そのエージェントの CLI がログインしている接続先。どのエージェントも同じ名前） | CLI login |
+| 接続先を管理… / ＋ 接続先を追加 / 接続先の種類 | Manage connections… / + Add connection / Connection type |
 | 使用量 | usage |
 | プラグイン（指示・Skills・MCP の入口） | Plugins |
 | コンテキスト（会話の LLM 窓の占有） | Context |
@@ -79,7 +81,7 @@
 | 元に戻す | Undo |
 | 閉じる / 戻る / キャンセル | Close / Back / Cancel |
 | 保存 / 削除 / 追加 | Save / Delete / Add |
-| アカウント / ログイン / ログアウト | account / Sign in / Sign out |
+| アカウント（接続先の 1 つ。登録した公式のサブスクの口） / ログイン / ログアウト（ボタンは［ログインする］［ログインし直す］［ログアウト］） | account / Sign in / Sign out |
 | ログインを待っている / やめる（待っているログイン。設定のカード・初回の案内・会話の失敗の行で同じ語。「キャンセル」と書かない） | Waiting for sign-in / Cancel |
 | ログインの画面を開く / リンクをコピー / コピー（待っている間の入口。コマンドはコピー） | Open the sign-in page / Copy link / Copy |
 | 時間切れになりました（10 分）。 / ログインできませんでした: 理由（カードの中の一文） | Timed out (10 minutes). / Couldn’t sign in: reason |
@@ -97,8 +99,8 @@
 | ファイルプレビュー | file preview |
 | たった今 | just now |
 | 会話用のトークン | conversation token |
-| claude.ai のログイン / claude.ai にログイン（し直す） | claude.ai login / Log in to claude.ai (again) |
-| ログイン中のアカウント | Signed-in account |
+| claude.ai のログイン（2026-11-26 から画面では「ログイン」。ボタンは［ログインする］［ログインし直す］） | Sign-in (the claude.ai login) / Sign in / Sign in again |
+| CLI のログイン（2026-11-26 までの「ログイン中のアカウント」。画面では使わない） | CLI login |
 | ネイティブ（指示・MCP） | native |
 | 伏せ字 | [redacted] |
 | トークンを貼り付ける | Paste token |

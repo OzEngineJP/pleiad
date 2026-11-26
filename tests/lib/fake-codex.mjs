@@ -650,6 +650,8 @@ function applyProvider(t, params) {
   t.developerInstructions = params?.developerInstructions ?? null;
   // ply_computer の MCP と、同梱の computer use を切る上書き（ADR 0074）も同じ
   t.computer = params?.config?.["mcp_servers.ply_computer"] ?? null;
+  // ply_agents（委譲）の MCP。"agents:<JSON>" のターンが呼ぶ
+  t.agents = params?.config?.["mcp_servers.ply_agents"] ?? null;
   t.bundledComputerUse = Object.fromEntries(Object.entries(params?.config ?? {}).filter(([k]) => /computer[-_]use/.test(k)));
 }
 
@@ -657,16 +659,16 @@ function applyProvider(t, params) {
  * ply_computer のツールを呼ぶターン（"computer:<JSON>"。{ name, arguments } か、その配列）。
  * thread/start の config の mcp_servers.ply_computer（url・http_headers）へ tools/call を送り、本物と同じ mcpToolCall のアイテムで返す
  */
-async function runComputerTurn(t, turnId, text) {
+async function runComputerTurn(t, turnId, text, { prefix = "computer:", server = "ply_computer", target = t.computer } = {}) {
   notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
   const items = [];
-  for (const [i, call] of [].concat(JSON.parse(text.slice("computer:".length))).entries()) {
-    const item = { id: `mcp_${turnId}_${i}`, type: "mcpToolCall", server: "ply_computer", tool: call.name, arguments: call.arguments ?? {}, status: "inProgress", result: null, error: null };
+  for (const [i, call] of [].concat(JSON.parse(text.slice(prefix.length))).entries()) {
+    const item = { id: `mcp_${turnId}_${i}`, type: "mcpToolCall", server, tool: call.name, arguments: call.arguments ?? {}, status: "inProgress", result: null, error: null };
     notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item });
     let done;
-    if (!t.computer?.url) done = { ...item, status: "failed", error: { message: "ply_computer is not configured" } };
+    if (!target?.url) done = { ...item, status: "failed", error: { message: `${server} is not configured` } };
     else {
-      const response = await fetch(t.computer.url, { method: "POST", headers: { ...(t.computer.http_headers ?? {}), "content-type": "application/json" },
+      const response = await fetch(target.url, { method: "POST", headers: { ...(target.http_headers ?? {}), "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: i + 1, method: "tools/call", params: { name: call.name, arguments: call.arguments ?? {} } }) });
       const body = await response.json().catch(() => null);
       done = body?.result ? { ...item, status: "completed", result: body.result } : { ...item, status: "failed", error: { message: `HTTP ${response.status}` } };
@@ -674,7 +676,7 @@ async function runComputerTurn(t, turnId, text) {
     items.push(done);
     notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: done });
   }
-  const reply = `computer:${items.length}`;
+  const reply = `${prefix}${items.length}`;
   notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: `it_c_${turnId}`, delta: reply });
   const message = { id: `it_c_${turnId}`, type: "agentMessage", text: reply };
   notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: message });
@@ -770,6 +772,7 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
+      const bareText = text.replace(/^<pleiad-turn-context>[\s\S]*?<\/pleiad-turn-context>/, "");
       // folded: `!` のターンが閉じる前に来た。本物はこの発言を `!` のターンに入れ、返答しないまま閉じる（codex-cli 0.156.1）
       record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null,
         computer: t.computer ? { ...t.computer, http_headers: Object.keys(t.computer.http_headers ?? {}) } : null, bundledComputerUse: t.bundledComputerUse ?? {}, ...(t.shellTurn ? { folded: true } : {}) });
@@ -794,6 +797,8 @@ async function handle(method, params) {
         : text.startsWith("bgterm") ? runBgTermTurn(t, turnId, text)
         : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
         : text.startsWith("computer:") ? runComputerTurn(t, turnId, text)
+        // bot の会話は先頭に <pleiad-turn-context> が付くので、それを除いた本文で見る
+        : bareText.startsWith("agents:") ? runComputerTurn(t, turnId, bareText, { prefix: "agents:", server: "ply_agents", target: t.agents })
         : /images:\d+/.test(text) ? runImagesTurn(t, turnId, text)
         : runTurn(t, turnId, text);
       script.catch((err) => notify("error", {

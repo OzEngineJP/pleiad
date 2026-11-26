@@ -48,7 +48,7 @@ export default async function (t) {
     t.ok('同じ名前の追加は bad-name で止める', (await codeOf(() => accounts.add({ id: newAccountId(), name: '仕事用' }))) === 'bad-name' && (await accounts.list()).accounts.length === 2);
     t.ok('同じ id の追加は止める', Boolean(await codeOf(() => accounts.add({ id: work, name: '別名' }))));
     const msg = async fn => { try { await fn(); } catch (e) { return e.message; } return null; };
-    t.ok('ほかのアカウントと同じ名前への変更は止める', (await msg(() => accounts.rename({ id: home, name: '仕事用' }))) === '同じ名前のアカウントがあります'
+    t.ok('ほかのアカウントと同じ名前への変更は止める', (await msg(() => accounts.rename({ id: home, name: '仕事用' }))) === '同じ名前の接続先があります'
       && (await accounts.get(home)).name === '個人用');
     t.ok('自分の名前のままの保存と、大文字小文字だけ違う名前は通す', (await msg(() => accounts.rename({ id: work, name: '仕事用' }))) === null
       && (await msg(() => accounts.rename({ id: home, name: 'Work' }))) === null && (await msg(() => accounts.assertNameFree('work'))) === null);
@@ -61,7 +61,7 @@ export default async function (t) {
     t.ok('すでに同名が 2 つあるデータも一覧で読める', (await accounts.list()).accounts.filter(x => x.name === 'Work').length === 2);
     t.ok('既存の同名は、名前を変えない保存ができる', (await msg(() => accounts.rename({ id: work, name: 'Work' }))) === null);
     t.ok('既存の同名は、片方の名前を変えれば解消する', (await msg(() => accounts.rename({ id: work, name: '仕事用' }))) === null
-      && (await msg(() => accounts.rename({ id: work, name: 'Work' }))) === '同じ名前のアカウントがあります');
+      && (await msg(() => accounts.rename({ id: work, name: 'Work' }))) === '同じ名前の接続先があります');
 
     // ---- 載せる前のアカウントの片付け（ログインの取り消し・失敗）
     const pending = newAccountId();

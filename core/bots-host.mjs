@@ -7,6 +7,8 @@
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
 //     accountList(backendId)（そのエージェントに登録したアカウント [{ id, name, ready }]。bots.setAccount の検査が使う。ADR 0224）、
+//     endpointHas(backendId, id)（そのエージェントに登録した互換の接続先か。bots.setAccount の検査）・endpointRow(id)（一覧の行。キー無し。段の確かめ）・
+//     endpointResolve(id, backendId)（キー付きで引く。引けなければ投げる。心拍の内部呼出しが使う）（ADR 0359）、
 //     reserveAccount(sessionId, account)（送った会話のアカウントを次のターンの予約にする。Codex・OpenCode の bot の会話を揃えるのに使う）、
 //     deleteHidden(sessionId)（隠れた会話をネイティブの会話ごと消す。消せなければ false。心拍・夜の整理の片付けが使う。ADR 0127）
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
