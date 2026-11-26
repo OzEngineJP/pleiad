@@ -28,6 +28,12 @@
 //       … 約束（kind = promise）は人以外は書けない（write・直した結果が約束になる edit は MEMORY_REJECTED: promiseTodo / promiseLoop。ctx.hasTodos が真なら ToDo へ、
 //         偽なら気がかりへ置くよう返す。段だけ archive へ寄せる直しは通す）。段の無い既存の約束は、最初の読み込みでコードが保存だけ（archive）にする
 //         （archiveLegacyPromises。AI なし・updatedAt 据え置き・記録に migration を残す・段を外しても再度は行わない）
+//   place({ id, tier?, workspace?, reason?, migration?, expect?, by? }): Promise<{ placed, entry?, reason? }>
+//       … コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。core/memory/learn.mjs の sortStart・sortUndo）。null・省略で外す。
+//         本文・出どころ・強さ・updatedAt には触れず、by は既定でシステム。expect（今の { tier?, workspace? }）を渡すと、今もそのままのときだけ直す（人が後から直した記憶を上書きしない）。
+//         返りの reason は notFound / changed / same。migration・reason は変更記録に残る
+//   archiveLegacyPromises(): Promise<string[]>・placements(migration): Promise<{ id, from, to }[]>
+//       … 前者は上の約束の移行を今すぐもう一度行う（何度でも同じ。一度きりの振り分けの最初に呼ぶ）。後者は一括移行が変えた段・作業場所の前後（取り消しの材料）
 //   rev(): number                                                 … log.jsonl の最後の rev
 //   turnContext({ bot, session, sessionId?, incomingText, cwd?, now?, locale? }):
 //       Promise<{ notes: string[], memRev: number, delivered: string[], snapshotDue: boolean, omitted?: { untiered, always, workspace } }>
@@ -84,7 +90,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
    * updatedAt は進めず、変更記録に「システムが段を付けた（migration）」と前後を残す。段を外せば元に戻り、外した後の起動でもやり直さない（記録にある id は飛ばす）。
    * ToDo・気がかりへは写さない。返りは変えた層
    */
-  async function archiveLegacyPromises() {
+  async function archiveLegacy() {
     const done = store.migrated(PROMISE_ARCHIVE_MIGRATION);
     const layers = new Set();
     for (const entry of store.entries()) {
@@ -98,7 +104,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   async function catchUp() {
     if (!started) {
       await store.init();
-      const moved = await archiveLegacyPromises();   // 失敗したら started にしない（次の呼び出しでやり直す）
+      const moved = await archiveLegacy();   // 失敗したら started にしない（次の呼び出しでやり直す）
       started = true;
       for (const layer of moved) announce(layer);
     }
@@ -300,6 +306,42 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return done.entry;
     },
 
+    /**
+     * コードが段・作業場所だけを付け替える（一度きりの振り分けとその取り消し。本文・出どころ・強さには触れず、updatedAt も進めない）。
+     * tier・workspace は null か省略で外す。expect（{ tier?, workspace? }）を渡すと、今がその段・作業場所のままのときだけ直す
+     * （振り分けの途中・後に人が直した記憶を上書きしないため）。by は既定でシステム。migration・reason は変更記録に残る。
+     * 返りは { placed: true, entry } か { placed: false, reason: 'notFound' | 'changed' | 'same' }
+     */
+    async place({ id, tier, workspace, reason, migration, expect, by = { kind: 'system' } } = {}) {
+      await catchUp();
+      const old = store.get(id);
+      if (!old) return { placed: false, reason: 'notFound' };
+      if (expect && ((old.tier ?? null) !== (expect.tier ?? null) || (old.workspace ?? null) !== (expect.workspace ?? null))) return { placed: false, reason: 'changed' };
+      if (tier != null && !isTier(tier)) throw rejected('tier');
+      const place = workspace == null ? null : placeOf(workspace);
+      if (tier === 'workspace' && !place) throw rejected('workspaceUnknown');
+      if ((old.tier ?? null) === (tier ?? null) && (old.workspace ?? null) === place) return { placed: false, reason: 'same' };
+      const note = reason ? [...oneLine(reason)].slice(0, 80).join('') : undefined;
+      const done = await store.edit({ id, tier: tier ?? null, workspace: place, by, reason: note, ...(migration ? { migration } : {}) });
+      if (!done) return { placed: false, reason: 'notFound' };
+      announce(done.entry.layer);
+      return { placed: true, entry: done.entry };
+    },
+
+    /** 一括移行 migration（place の migration）が段・作業場所を変えた記憶ごとの最初の前と最後の後。[{ id, from, to }]（from・to は { tier?, workspace? }）。取り消しの材料 */
+    async placements(migration) {
+      await catchUp();
+      return [...store.migrations(migration)].map(([id, { from, to }]) => ({ id, from, to }));
+    },
+
+    /** 段の無い既存の約束を保存だけにする移行（冒頭の archiveLegacy）。起動の最初の読み込みで済んでいるが、一度きりの振り分けの最初にもう一度呼ぶ（何度呼んでも同じ）。変えた層の配列 */
+    async archiveLegacyPromises() {
+      await catchUp();
+      const moved = await archiveLegacy();
+      for (const layer of moved) announce(layer);
+      return moved;
+    },
+
     async forget({ id } = {}, author, ctx = {}) {
       await catchUp();
       const done = await store.forget({ id, by: author, via: ctx.sessionId });
@@ -373,8 +415,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     if (['rev', 'stop', 'now', 'emit'].includes(name) || typeof operation !== 'function') continue;
     service[name] = (...args) => {
       const execute = async () => {
-        if (['write', 'edit', 'forget', 'unforget'].includes(name)) await catchUp();
-        const layer = name === 'write' ? args[0]?.layer : ['edit', 'forget', 'unforget'].includes(name)
+        if (['write', 'edit', 'forget', 'unforget', 'place'].includes(name)) await catchUp();
+        const layer = name === 'write' ? args[0]?.layer : ['edit', 'forget', 'unforget', 'place'].includes(name)
           ? (store.get(args[0]?.id) ?? store.forgottenEntry(args[0]?.id))?.layer : null;
         return layer ? withLayer(layer, () => operation(...args)) : operation(...args);
       };

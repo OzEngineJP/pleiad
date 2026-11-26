@@ -265,7 +265,10 @@ export default async function (t) {
     brain: { list: () => [{ seq: 1, botId: 'b_1', at: 1, kind: 'think', text: '考える', ...secret }], loops: () => [{ id: 'l1', status: 'open', text: 'やりかけ', updatedAt: 1, ...secret }], count: () => 1 },   // 頭の中（ADR 0126）
     wakes: { list: () => [{ id: 'w1', botId: 'b_1', status: 'pending', at: 1, note: 'あとで確かめる', channelId: 'c_1', threadId: null, createdAt: 1, ...secret }], now: () => 1 },   // 予約（ADR 0140）
     pulse: { status: async () => ({ on: false, paused: false, running: false, nextAt: null, lastBeatAt: null, drives: null, home: null, ...secret }) },
-    memoryLearner: { status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }) },   // S3
+    memoryLearner: {   // S3
+      status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }),
+      sortStatus: async () => ({ status: 'done', running: false, stopping: false, untiered: 1, processed: 2, left: 0, failures: 0, changed: 0, unknown: 1, tiers: { always: 1, workspace: 0, archive: 1 }, startedAt: 1, updatedAt: 2, undone: null, ...secret }),   // 段 2 単位 4（振り分けの様子。数だけ）
+    },
     routines: {     // R1（P2）
       list: async () => [{ id: 'r_000000000aaaaaa', name: '朝のまとめ', botId: 'b_1', channelId: 'c_000000000aaaaaa', prompt: 'まとめて', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false },
         mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt: 2, ...secret }],

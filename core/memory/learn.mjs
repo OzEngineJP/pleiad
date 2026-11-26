@@ -10,6 +10,13 @@
 //
 // runNow({ scope? }) … scope は { sessionIds?, channelIds? }。渡すとその会話・チャンネルだけを読む（スレッドが静かになった後の整理のため。
 //   予定の分の実行には数えず、lastRunAt を進めない）。省くと全部（予定の分の実行）。
+//
+// 一度きりの振り分け（ADR 0359 段階 2 の単位 4。部品は core/memory/sort.mjs）: 人が設定 › 記憶の［振り分けを始める］（memory.sortStart）を押したときだけ走る。
+//   自動整理が OFF でも始められ、アプリの起動・夜の整理からは始まらない。夜の整理の停止（halted）・失敗の数とは別に数える。
+//   最初に既存の約束を保存だけにする移行（memory.archiveLegacyPromises。何度でも同じ）を行い、段の無い記憶を 50 件・約 8000 トークンずつ内部呼出し（kind = sort）へ渡す。
+//   1 束ごとに memory.place で段（と作業場所）だけを付け、memory_state の 'memory.sort'/'run' の 1 行へ数だけを残す。本文は書き換えず、形の合わない答えの記憶は段なしのまま。
+//   止める（sortStop）は今の束の AI の返りを書いてから止まる。止まった・失敗・再起動の後は、同じ走りの続きを人が始める。取り消し（sortUndo）は、その走りが付けた段・作業場所だけを、
+//   今もそのままのものに限って戻す（人が後から直した記憶には触れない）。どちらも変更記録に migration（sort:<走りの id> / sort-undo:<走りの id>）と理由が残る。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -20,8 +27,10 @@ import { nextFireAt } from '../routines/schedule.mjs';
 import { narrowestMode } from '../modes.mjs';
 import { prepareMessages } from '../history.mjs';
 import { agentT } from '../i18n.mjs';
+import { canonicalWorkspace } from '../git-root.mjs';
 import { MemoryError } from './guard.mjs';
 import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
+import { SORT_BATCH_ITEMS, sortItemOf, sortBatchOf, sortPrompt, parseSortAnswer, workspaceOfSources, decideTier } from './sort.mjs';
 
 export const LEARNER_ID = 'b_learner';
 export const DEFAULT_LEARN_AT = '02:00';
@@ -115,7 +124,7 @@ function parseAnswer(raw) {
 }
 
 export function createMemoryLearner({ dataDir, channels, bots, memory, host, clock, readPrefs = () => host.store.getPrefs(),
-  listSessions = null, readMessages = null, ask = null, now = () => clock.now() } = {}) {
+  listSessions = null, readMessages = null, ask = null, now = () => clock.now(), cwdOf = null, workspaceOf = canonicalWorkspace } = {}) {
   let state = emptyState();
   let timer = null;
   let closed = true;
@@ -589,8 +598,147 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
     return runNow();
   }
 
+  // ── 一度きりの振り分け（冒頭の説明）。状態は memory_state の 'memory.sort'/'run' の 1 行（数だけ。記憶の本文は持たない） ──
+  const SORT_KIND = 'memory.sort';
+  const SORT_ID = 'run';
+  /** 連続して失敗した束がこの数に届いたら、走りを failed で止める（毎回同じ理由で落ちる backend を呼び続けない） */
+  const SORT_FAILED_STREAK = 3;
+  const emptyTiers = () => ({ always: 0, workspace: 0, archive: 0 });
+  let sortRecord;           // undefined = まだ読んでいない・null = 一度も走っていない
+  let sortRunning = null;
+  let sortStopping = false;
+
+  const sortRead = () => { if (sortRecord === undefined) sortRecord = open().get(SORT_KIND, SORT_ID) ?? null; return sortRecord; };
+  const sortSave = (record) => { open().save([[SORT_KIND, SORT_ID, record]]); sortRecord = record; return record; };
+  const newSortRecord = () => ({ runId: crypto.randomUUID().slice(0, 8), status: 'running', startedAt: now(), updatedAt: now(),
+    processed: 0, left: 0, failures: 0, changed: 0, unknown: 0, tiers: emptyTiers(), undone: null });
+  const sortOrder = (a, b) => (a.at ?? 0) - (b.at ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+  /** 1 束の問い合わせ。形の壊れた返りは 1 回だけ取り直す。ほかの失敗・中止はそのまま投げる */
+  async function askSort(batch, prefs) {
+    const prompt = sortPrompt(batch);
+    for (let attempt = 0; ; attempt++) {
+      if (sortStopping) throw stopped();
+      const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, async () => !sortStopping, 'sort');
+      try { return parseSortAnswer(typeof response === 'string' ? response : response.text, batch); }
+      catch (e) { if (attempt >= 1 || !/^sort returned /.test(e.message)) throw e; }
+    }
+  }
+
+  async function sortLoop(runId) {
+    const migration = `sort:${runId}`;
+    let record = sortRead();
+    const persist = (patch = {}) => sortSave(record = { ...record, ...patch, updatedAt: now() });
+    const attempted = new Set();      // この回で問い合わせた id（答えが無かった・失敗した記憶を、同じ回で何度も送らない）
+    const cwdPlaces = new Map();      // cwd → 正規の作業場所（git を何度も呼ばない）
+    const cwdOfSession = cwdOf ?? (async (id) => (await host.store.get(id))?.cwd ?? null);
+    const placeOfCwd = async (cwd) => {
+      if (!cwdPlaces.has(cwd)) cwdPlaces.set(cwd, await Promise.resolve(workspaceOf(cwd)).catch(() => null));
+      return cwdPlaces.get(cwd);
+    };
+    const workspaceFor = async (entry) => entry.workspace || workspaceOfSources(entry.sources, { cwdOf: cwdOfSession, workspaceOf: placeOfCwd });
+    let streak = 0;
+    try {
+      await memory.archiveLegacyPromises();   // 約束は AI へ渡さず、先にコードで保存だけにする（何度行っても同じ）
+      for (;;) {
+        if (sortStopping) return persist({ status: 'stopped' });
+        const chunk = (await memory.list()).filter((e) => !e.tier && !attempted.has(e.id)).sort(sortOrder).slice(0, SORT_BATCH_ITEMS);
+        if (!chunk.length) return persist({ status: 'done' });
+        const places = new Map();
+        for (const entry of chunk) places.set(entry.id, await workspaceFor(entry));
+        const batch = sortBatchOf(chunk.map((entry) => sortItemOf(entry, places.get(entry.id))));
+        const entries = new Map(chunk.map((entry) => [entry.id, entry]));
+        for (const item of batch) attempted.add(item.id);
+        let answers;
+        try { answers = await askSort(batch, await readPrefs()); }
+        catch (e) {
+          if (e?.stopped) return persist({ status: 'stopped' });
+          log('sort batch failed:', String(e?.message ?? e).slice(0, ERROR_MAX));
+          streak++;
+          persist({ failures: record.failures + 1, ...(streak >= SORT_FAILED_STREAK ? { status: 'failed' } : {}) });
+          if (streak >= SORT_FAILED_STREAK) return record;
+          continue;
+        }
+        streak = 0;
+        const tiers = { ...record.tiers };
+        let left = answers.left.length, changed = 0, unknown = 0;
+        for (const item of batch) {
+          const answer = answers.answers.get(item.id);
+          if (!answer) continue;
+          const entry = entries.get(item.id);
+          const decided = decideTier(answer, places.get(item.id));
+          try {
+            const done = await memory.place({ id: item.id, tier: decided.tier, workspace: decided.tier === 'workspace' ? decided.workspace : (entry.workspace ?? null),
+              reason: decided.reason, migration, expect: { tier: null, workspace: entry.workspace ?? null } });
+            if (done.placed) { tiers[decided.tier]++; if (decided.reason === 'workspace unknown') unknown++; }
+            else if (done.reason === 'changed') changed++;
+            else left++;
+          } catch (e) {
+            if (!(e instanceof MemoryError)) throw e;
+            log('sort rejected:', e.code ?? e.message);
+            left++;
+          }
+        }
+        persist({ processed: record.processed + batch.length, left: record.left + left, changed: record.changed + changed, unknown: record.unknown + unknown, tiers });
+      }
+    } catch (e) {
+      log('sort failed:', String(e?.message ?? e).slice(0, ERROR_MAX));
+      return persist({ status: 'failed', failures: (record?.failures ?? 0) + 1 });
+    }
+  }
+
+  /** 始める・続ける。すぐ戻り、走りは裏で続く（様子は sortStatus）。走っている間は何もしない。
+   *  止まった・失敗した・再起動で途切れた・終わった走りは、同じ走り（runId）の続きとして残りの段なしを振り分ける。取り消した後は新しい走り */
+  async function sortStart() {
+    if (sortRunning) return { skipped: 'running' };
+    const last = sortRead();
+    const record = !last || last.status === 'undone' ? newSortRecord() : { ...last, status: 'running', updatedAt: now() };
+    sortSave(record);
+    sortStopping = false;
+    sortRunning = sortLoop(record.runId).catch((e) => log('sort failed:', e.message)).finally(() => { sortRunning = null; sortStopping = false; });
+    return { started: true };
+  }
+
+  /** 止める。今の束の AI の返りを書いてから止まる（次の束へは進まない）。走っていなければ何もしない */
+  async function sortStop() {
+    if (!sortRunning) return { skipped: 'idle' };
+    sortStopping = true;
+    return { stopping: true };
+  }
+
+  /** 取り消す: この走りが付けた段・作業場所を、今もそのままのものだけ前の状態へ戻す。走っている間は何もしない */
+  async function sortUndo() {
+    if (sortRunning) return { skipped: 'running' };
+    const last = sortRead();
+    if (!last || last.status === 'undone') return { skipped: 'none' };
+    let restored = 0, kept = 0;
+    for (const { id, from, to } of await memory.placements(`sort:${last.runId}`)) {
+      const done = await memory.place({ id, tier: from.tier ?? null, workspace: from.workspace ?? null, reason: 'undo', migration: `sort-undo:${last.runId}`, expect: to });
+      if (done.placed) restored++; else kept++;
+    }
+    sortSave({ ...last, status: 'undone', updatedAt: now(), tiers: emptyTiers(), undone: { restored, kept } });
+    return { restored, kept };
+  }
+
+  /** 様子。数・内訳・失敗の数だけ（記憶の本文は出さない） */
+  async function sortStatus() {
+    const record = sortRead();
+    const untiered = (await memory.list()).filter((e) => !e.tier).length;
+    const status = sortRunning ? 'running' : !record ? 'none' : record.status === 'running' ? 'stopped' : record.status;   // 走っていない 'running' は再起動で途切れた印
+    return {
+      status, running: Boolean(sortRunning), stopping: Boolean(sortRunning) && sortStopping, untiered,
+      processed: record?.processed ?? 0, left: record?.left ?? 0, failures: record?.failures ?? 0, changed: record?.changed ?? 0, unknown: record?.unknown ?? 0,
+      tiers: { ...emptyTiers(), ...(record?.tiers ?? {}) },
+      startedAt: record?.startedAt ?? null, updatedAt: record?.updatedAt ?? null,
+      undone: record?.undone ?? null,
+    };
+  }
+
   return {
     state: () => structuredClone(state), runNow, runIfDue, learnNow, summarizeEpisode, status,
+    sortStart, sortStop, sortUndo, sortStatus,
+    /** 走っている振り分けが終わるまで待つ（テスト・後片付け用。走っていなければすぐ戻る） */
+    sortIdle: async () => { await sortRunning; },
     /** 自動再試行を止めた状態か（memory.learnStatus・エピソードの enabled が見る） */
     isHalted: () => Boolean(state.status.halted),
     async start() {
@@ -599,8 +747,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, host, clo
       runIfDue().catch((e) => log('startup run failed:', e.message));
       await arm();
     },
-    stop() { closed = true; if (timer) clock.clearTimer(timer); timer = null; },
+    stop() { closed = true; sortStopping = true; if (timer) clock.clearTimer(timer); timer = null; },
     /** stop に加えて、DB の接続を離す（データ置き場を消す前。テストの後片付け用） */
-    close() { this.stop(); handle?.release(); handle = null; table = null; },
+    close() { this.stop(); handle?.release(); handle = null; table = null; sortRecord = undefined; },
   };
 }

@@ -3501,6 +3501,71 @@
       "input": "730dd7ff714a"
     },
     {
+      "id": "memory.sortStart",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "memory",
+            "sort-status"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortStop",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "memory.sortUndo",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "memory.unforget",
       "risk": "write",
       "riskOf": false,
@@ -7026,6 +7091,11 @@
       "positional": [
         "query"
       ]
+    },
+    {
+      "id": "memory.sortStatus",
+      "path": "memory sort-status",
+      "positional": []
     },
     {
       "id": "memory.unforget",

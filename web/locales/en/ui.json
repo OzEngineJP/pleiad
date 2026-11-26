@@ -116,6 +116,38 @@
         "skippedRunning": "Already organizing",
         "failed": "Couldn't complete the action",
         "saveFailed": "Couldn't save"
+      },
+      "sort": {
+        "title": "Memory sorting",
+        "note": "Asks the AI once to sort memories that have no tier into Always, Workspace or Archive. It only runs when you press Start, even if automatic organization is off. Memory text is never rewritten, and you can undo it afterwards",
+        "status": {
+          "none": "Not sorted yet",
+          "running": "Sorting",
+          "stopping": "Stopping",
+          "stopped": "Stopped",
+          "done": "Sorted",
+          "failed": "Stopped after failures",
+          "undone": "Undone"
+        },
+        "sub": {
+          "untiered": "{{n}} without a tier",
+          "processed": "{{n}} processed",
+          "tiers": "Always {{always}} · Workspace {{workspace}} · Archive {{archive}}",
+          "unknown": "{{n}} archived because the workspace was unknown",
+          "left": "{{n}} left without a tier",
+          "changed": "{{n}} skipped because you changed them first",
+          "failures": "{{n}} failures",
+          "undone": "{{restored}} restored · {{kept}} kept because you changed them"
+        },
+        "act": {
+          "start": "Start sorting",
+          "resume": "Continue",
+          "redo": "Run again",
+          "stop": "Stop",
+          "undo": "Undo",
+          "skippedRunning": "Already sorting",
+          "failed": "Couldn't complete the action"
+        }
       }
     },
     "agents": {

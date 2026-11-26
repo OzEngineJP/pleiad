@@ -18,6 +18,8 @@
 //   via は書いた会話の sessionId（その会話の末尾の差分には同じ記憶を重ねて出さないため）。
 //   edit で段・作業場所が変わったときは place: { from, to }（それぞれ { tier?, workspace? }）も残す。コードの一括移行（既存の約束を保存だけにするなど）は
 //   migration: '<名前>' を付け、by は { kind: 'system' }。段を外せば元に戻り、同じ名前の移行は同じ id にやり直さない（migrated(name)）。
+//   一度きりの振り分け（core/memory/sort.mjs）も同じ印（migration: 'sort:<走りの id>'）と、短い理由 reason を付ける。取り消しは 'sort-undo:<走りの id>'。
+//   migrations(name) は、その移行が変えた段・作業場所の前後（from・to）を id ごとに返す。
 // 変更はすべて 1 本のキューで直列にする（rev を欠番なく進めるため）。md を先に書き、log を後に足す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -352,7 +354,7 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
 
     /** 本文・理由・出どころ・種類・重み・状態・段・作業場所を直す。種類・重み・状態・段・作業場所は null で外す（undefined は触らない）。
      *  段・作業場所だけの直し（振り分け）は updatedAt を進めない（記憶の強さ・並び・「直した」の表示を、振り分けで動かさないため）。無い id は null */
-    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration }) => serial(async () => {
+    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration, reason }) => serial(async () => {
       await ensureReady(); await syncNow();
       for (const [layer, list] of cache) {
         const i = list.findIndex((e) => e.id === id);
@@ -383,7 +385,7 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         const from = placeOf(old), to = placeOf(entry);
         const placed = JSON.stringify(from) !== JSON.stringify(to);
         const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}),
-          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}) });
+          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}), ...(reason ? { reason } : {}) });
         return { entry: publicEntry(entry), rev: rec.rev };
       }
       return null;
@@ -391,6 +393,17 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
 
     /** コードの一括移行 name（edit の migration）を、すでに行った記憶の id。人が段を外しても、次の起動で同じ移行をやり直さないために使う */
     migrated: (name) => new Set(records.filter((r) => r.op === 'edit' && r.migration === name).map((r) => r.id)),
+
+    /** 一括移行 name が段・作業場所を変えた記憶ごとの、最初の前（from）と最後の後（to）。振り分けを取り消すとき、今も to のままのものだけ戻すために使う */
+    migrations: (name) => {
+      const out = new Map();
+      for (const r of records) {
+        if (r.op !== 'edit' || r.migration !== name || !r.place) continue;
+        const prev = out.get(r.id);
+        out.set(r.id, { from: prev?.from ?? r.place.from, to: r.place.to });
+      }
+      return out;
+    },
 
     /** 忘れる（墓石を残す）。無い id は null */
     forget: ({ id, by, via }) => serial(async () => {

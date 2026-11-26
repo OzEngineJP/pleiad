@@ -53,6 +53,16 @@ const learnStatusOut = z.object({
   halted: z.object({ message: z.string(), at: z.number() }).nullable(),
 });
 
+// 一度きりの振り分けの様子（数・内訳・失敗の数だけ。記憶の本文は返さない）
+const sortStatusOut = z.object({
+  status: z.enum(['none', 'running', 'stopped', 'done', 'failed', 'undone']),
+  running: z.boolean(), stopping: z.boolean(), untiered: z.number().int(),
+  processed: z.number().int(), left: z.number().int(), failures: z.number().int(), changed: z.number().int(), unknown: z.number().int(),
+  tiers: z.object({ always: z.number().int(), workspace: z.number().int(), archive: z.number().int() }),
+  startedAt: z.number().nullable(), updatedAt: z.number().nullable(),
+  undone: z.object({ restored: z.number().int(), kept: z.number().int() }).nullable(),
+});
+
 // 会話の始まりに入りきらない記憶の件数（段ごと。設定 › 記憶が出す）
 const coreFitOut = z.object({
   layer: z.string(), workspace: z.string().nullable(),
@@ -273,6 +283,52 @@ export const memoryOps = [
     output: z.object({ read: z.number().optional(), changed: z.number().optional(), deferred: z.number().optional(), more: z.boolean().optional(), skipped: z.string().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'learn-now'] } },
     handler: async (ctx) => ctx.memoryLearner.learnNow(),
+  }),
+
+  // 一度きりの振り分け（ADR 0359 段階 2 の単位 4）。段の無い記憶を AI に「いつも / この作業場所で / 保存だけ」へ振り分けてもらう。
+  // 始める・止める・取り消すは画面だけに出す（設定 › 記憶 › 振り分け。surfaces が ui だけなので AI・CLI からは見つからない。自動では始まらない）。
+  // human-only は ADR 0094 の 5 つだけなので使わず、たくさんの記憶を書き換える開始と取り消しは guarded、止めるは write にする。様子は AI・CLI も読める。自動整理が OFF でも始められる
+  defineOp({
+    id: 'memory.sortStatus',
+    summary: 'agent:ops.memory.sortStatus.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: sortStatusOut,
+    surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'sort-status'] } },
+    handler: async (ctx) => ctx.memoryLearner.sortStatus(),
+  }),
+
+  defineOp({
+    id: 'memory.sortStart',
+    summary: 'agent:ops.memory.sortStart.summary',
+    risk: 'guarded',
+    input: z.object({}),
+    output: z.object({ started: z.boolean().optional(), skipped: z.string().optional() }),
+    confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortStart.confirm'), before: null, loosens: false }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortStart(),
+  }),
+
+  defineOp({
+    id: 'memory.sortStop',
+    summary: 'agent:ops.memory.sortStop.summary',
+    risk: 'write',
+    riskReason: 'Stops a running one-time sort after the batch in flight is saved. It only stops work that a person started and changes no memory itself; it is on the settings screen only (not on MCP or the CLI)',
+    input: z.object({}),
+    output: z.object({ stopping: z.boolean().optional(), skipped: z.string().optional() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortStop(),
+  }),
+
+  defineOp({
+    id: 'memory.sortUndo',
+    summary: 'agent:ops.memory.sortUndo.summary',
+    risk: 'guarded',
+    input: z.object({}),
+    output: z.object({ restored: z.number().int().optional(), kept: z.number().int().optional(), skipped: z.string().optional() }),
+    confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortUndo.confirm'), before: null, loosens: false }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.sortUndo(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る
