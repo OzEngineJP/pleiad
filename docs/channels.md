@@ -291,7 +291,8 @@ Chats が `tool.result.images` に描く生成画像は、bot のターンでは
   - **止める**: 入力欄の送信の横の ■（`#thAbort`。Chats と同じ部品・同じ形。`createThreadComposer` の `setStop`）。bot が作業中（承認待ちを含む）の間だけ出し、押すと `channels.stopThread`。入力欄の上の帯（作業中の文・呼び合いの回数・トークン・コンテキストの量）は無い。
   - **承認**: そのスレッドの会話の `permission` を `host.permissionCard(ev, perms)`（質問は同じ口で質問のカード）でスレッドの中（`.th-perms`）に出す。どちらで押しても `resolvePermission`。別の画面で答えたものは `running` の後に外す。
   - **既読**: スレッドを見て末尾にいる間は、最後の返信まで `channels.markRead` を進める（流れの既読は流れの投稿だけを見るため）。
-  - DOM: `#chDeck`・`#chThread`・`.th-top`（`.th-crumb`・`.th-chan`・`.th-title`・`.th-todo`・`.th-toc`・`.th-browser`・`.th-more`（700px 以下だけ）・`.th-close`・`#chThreadOpenSidebar`）・`.th-log`・`.th-rdiv`・`.th-tools`・`ul.ck`・`.post-presents`・`.th-perms`・`#chThreadComposer`。流れ側で開いているスレッドの根の投稿は `data-open`。
+  - DOM: `#chDeck`・`#chThread`・`.th-top`（`.th-crumb`・`.th-chan`・`.th-title`・`.th-todo`・`.th-toc`・`.th-browser`・`.th-more`（700px 以下だけ）・`.th-close`・`#chThreadOpenSidebar`）・`.th-log`・`.th-rdiv`・`.th-tools`・`ul.ck`・`.post-presents`・`.th-perms`・`#chThreadComposer`。流れ側で開いているスレッドの根の投稿は `data-open`（面は `--surface-sel`、返信の数の丸は紙の色。左の縦線は引かない。2026-11-26）。
+  - **列**: 根・区切り・返信・承認の段（と作業中の殻）は Chats と同じ列の入れ物 `.col-lane`（[design-system](design-system.md) の「列の入れ物」）。幅は `--col` + 62px で、投稿の本文が Chats の本文と同じ幅になり、入力欄の箱も同じ幅に揃う。可視化の「広げる」もこの入れ物を基準に、欄の端から 4px 手前まで広がる。
   - `host` に足した口（`web/client.mjs` の `setupChannels` の引数）: `browser`（会話のブラウザーの部品。使えない画面では null）、`todo(o)`（スレッド・DM の ToDo。`createSessionTodo` に頭・入口・開く面の置き場を渡して作る）、`background.open(scope, key)`（ToDo の項目から、その作業の子の会話を開く）。`permissionCard` は質問のカードも出す。
 - Chats の一覧は bot の会話を出さない（あなた待ちの間だけ。`client.mjs` の `renderSessions`）。右パネルの作業場所の基準は `contextForPanel`。
 

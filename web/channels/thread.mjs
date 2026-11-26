@@ -71,10 +71,11 @@ export function createThread(host) {
   log.tabIndex = 0;
   const older = el('div', 'ch-older', t('channels:feed.older'));
   older.hidden = true;
-  const rootSlot = el('div', 'th-root');
-  const rdiv = el('div', 'th-rdiv');
-  const replies = el('div', 'th-replies');
-  const perms = el('div', 'th-perms bg-thread');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
+  // 投稿の列は Chats と同じ列の入れ物（.col-lane。style.css の「列」）で真ん中に置く（可視化の［広げる］の基準もこの箱）
+  const rootSlot = el('div', 'th-root col-lane');
+  const rdiv = el('div', 'th-rdiv col-lane');
+  const replies = el('div', 'th-replies col-lane');
+  const perms = el('div', 'th-perms bg-thread col-lane');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
   log.append(older, rootSlot, rdiv, replies, perms);
   // 会話の移動（最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
   const frame = el('div', 'log-frame th-frame');
@@ -815,7 +816,7 @@ export function createThread(host) {
   const refreshPendingSoon = () => { clearTimeout(pendingTimer); pendingTimer = setTimeout(refreshPending, 250); };
 
   // ---------------------------------------------------------------- `!` の行（宛先の bot の会話のシェル。Chats と同じ行の部品）
-  const shells = el('div', 'th-shells');
+  const shells = el('div', 'th-shells col-lane');
   perms.after(shells);   // 投稿の列の末尾の目印（会話の移動の部品）より前に置く
   function onShellStart(ev) {
     if (!Object.values(S.thread?.sessions ?? {}).includes(ev.sessionId) || !host.shellRow) return;

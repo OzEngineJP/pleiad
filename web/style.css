@@ -714,12 +714,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .thread{position:relative;max-width:860px;min-width:0}
 /* 列（ADR 0252）: 履歴と入力欄は同じ 760px の列（--col）に入れ、本文の領域（#log の左右の余白 8px と 22px + スクロールバー 10px の内側）の
    中央に置く。溝（時間の線）は本文の領域の左端に固定する。列が溝にかかる幅では、列を溝の右へ寄せる（左端は溝の右）。
-   中央に寄せる余白は発言の中身（.mw-body）の左右の padding。padding の内側までは .mw-body の overflow で切られないので、
-   可視化を「広げる」（.present-visualization.wide）は溝の右から本文の領域の右端まで使える。入力欄（#composer）の左右の余白は同じ式 */
+   中央に寄せる余白は列の入れ物の左右の padding。padding の内側までは .mw-body の overflow で切られないので、
+   可視化を「広げる」は溝の右から本文の領域の右端まで使える。入力欄（#composer）の左右の余白は同じ式。
+   列の入れ物は Chats の発言の中身（#thread .mw-body）と、チャンネルのスレッドの投稿の列（.col-lane。web/channels-thread.css）で共通:
+   幅 --lane-w（既定 --col）の列を、入れ物の箱の真ん中から --lane-shift だけ右へずらして置き、左右の余白は --lane-min-l / --lane-min-r より小さくしない。
+   ［広げる］を出す条件と測る基準もこの箱（web/visualize-widen.mjs の LANE。セレクターを変えるときは両方）。
+   .mw-body に印を付けないのは、同じ部品（wrap）の行がモーダルの子の筋・スレッドの承認のカードにも入り、そこは列に寄せないため */
 :root{--col:760px}
 #thread{max-width:none}
-#thread .mw-body{padding-left:max(0px,calc((100% - var(--col) + 32px - 8px - var(--gut,72px)) / 2));
-  padding-right:max(0px,calc((100% - var(--col) + 8px + var(--gut,72px) - 32px) / 2))}
+:is(.col-lane,#thread .mw-body){padding-left:max(var(--lane-min-l,0px),calc((100% - var(--lane-w,var(--col))) / 2 + var(--lane-shift,0px)));
+  padding-right:max(var(--lane-min-r,0px),calc((100% - var(--lane-w,var(--col))) / 2 - var(--lane-shift,0px)))}
+/* Chats: 列を #log の全幅（溝・左右の余白 8px と 22px + スクロールバー 10px を含む）の真ん中に置く */
+#thread .mw-body{--lane-shift:calc((32px - 8px - var(--gut,72px)) / 2)}
 @media (min-width:701px){
   #composer{--cpad-l:max(calc(8px + var(--gut,72px)),calc((100% - var(--col)) / 2));--cpad-r:max(32px,calc((100% - var(--col)) / 2))}
 }
@@ -1187,13 +1193,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .visualize-seamless:is(:hover,:focus-within,.point) .present-tools,.visualize-seamless .present-tools:is(:hover,:focus-within){opacity:1;pointer-events:auto}
 .visualize-seamless .present-tools .h-icon:hover{background:var(--surface-1);color:var(--ink)}
 .visualize-seamless .visualize-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-/* 広げる（web/visualize-widen.mjs、ADR 0252）。左右の margin は .mw-body の padding の箱の 4px 内側までを JS が測る。
+/* 広げる（web/visualize-widen.mjs、ADR 0252）。左右の margin は列の入れ物（上の「列」）の padding の箱の 4px 内側までを JS が測る。
    動きを減らす設定では --dur-slow が 0ms になり、すぐ切り替わる */
 .present-visualization.visualize-widen-able{transition:box-shadow var(--dur-fast) var(--ease-out),margin var(--dur-slow) var(--ease-organic)}
 .present-visualization.visualize-widened{margin-left:var(--widen-l,-4px);margin-right:var(--widen-r,-4px)}
-/* 出すのは会話の列（#thread の .mw-body）の中だけ。幅 700px 以下は列の左右に余りが無いので出さない */
+/* 出すのは列の入れ物（Chats の #thread .mw-body・チャンネルのスレッドの .col-lane）の中だけ。幅 700px 以下は列の左右に余りが無いので出さない */
 .present-tools .visualize-widen{display:none}
-@media (min-width:701px){#thread .mw-body .present-tools .visualize-widen{display:inline-flex}}
+@media (min-width:701px){:is(.col-lane,#thread .mw-body) .present-tools .visualize-widen{display:inline-flex}}
 @media (hover:none){
   .present-visualization.visualize-seamless:is(:hover,:focus-within){box-shadow:none}
   .visualize-seamless .present-tools{position:static;margin:2px 4px 0;padding:0;background:transparent;box-shadow:none;opacity:1;pointer-events:auto}
