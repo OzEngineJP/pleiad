@@ -304,11 +304,21 @@
       "pref": "Preference",
       "note": "Note"
     },
+    "tier": {
+      "none": "Unsorted",
+      "always": "Always",
+      "workspace": "In this workspace",
+      "archive": "Stored only"
+    },
+    "tierLabel": "Given when",
+    "workspaceLabel": "Workspace",
+    "workspacePlaceholder": "Slash-separated place (e.g. D:/dev/app)",
     "learn": {
       "label": "Nightly organizing",
       "running": "organizing now",
       "ran": "learned {{n}} at {{when}}",
       "ranNone": "ran at {{when}} (nothing new)",
+      "retiered": "changed the tier of {{n}}",
       "never": "has not run yet",
       "more": "the rest is left for the next run",
       "deferred": "{{n}} busy conversations left for the next run",

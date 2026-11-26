@@ -5,8 +5,9 @@
 //
 // createMemoryIndex({ file, loadSqlite, log }) → {
 //   sync(entries, hash)                          … 正本の写しを渡す。hash が前と違えば索引を作り直す（sqlite を使うときだけ重い）
-//   search({ query, layers?, limit })            … 語を AND で（3 文字未満の語は LIKE）。MemoryEntry[]（順位順）
-//   related({ text, layers?, exclude?, limit })  … 文章に関係する記憶（ターンの末尾用）。{ entry, score }[]
+//   search({ query, layers?, limit, accept? })            … 語を AND で（3 文字未満の語は LIKE）。MemoryEntry[]（順位順）
+//   related({ text, layers?, exclude?, limit, accept? })  … 文章に関係する記憶（ターンの末尾用）。{ entry, score }[]
+//     accept(entry) … 呼び出し側の絞り込み（保存だけ・ほかの作業場所の記憶を外す）。順位づけと件数の上限の前に外すので、外した分で件数が減らない
 //   mode(): 'sqlite' | 'scan' | 'unknown'        … 今どちらの道か（テスト・診断用）
 //   close() }
 import fs from 'node:fs/promises';
@@ -164,7 +165,11 @@ export function createMemoryIndex({ file, loadSqlite = defaultLoadSqlite, log = 
   }
 
   const inLayers = (layers) => (layers?.length ? entries.filter((e) => layers.includes(e.layer)) : entries);
-  const pick = (ids, layers) => (ids ? inLayers(layers).filter((e) => ids.has(e.id)) : inLayers(layers));
+  // accept は呼び出し側の絞り込み（段・作業場所で外す。何も渡さなければ全部）。順位づけの前に外す
+  const pick = (ids, layers, accept) => {
+    const list = ids ? inLayers(layers).filter((e) => ids.has(e.id)) : inLayers(layers);
+    return typeof accept === 'function' ? list.filter(accept) : list;
+  };
 
   return {
     mode: () => state,
@@ -178,23 +183,23 @@ export function createMemoryIndex({ file, loadSqlite = defaultLoadSqlite, log = 
       if (stored !== hash || stale) { stale = false; await rebuild(hash); }
     },
 
-    async search({ query, layers, limit = 5 } = {}) {
+    async search({ query, layers, limit = 5, accept } = {}) {
       const terms = queryTerms(query);
       if (!terms.length) return [];
       await ensureOpen();
       const long = terms.filter((t) => [...t].length >= TRIGRAM);
       const short = terms.filter((t) => [...t].length < TRIGRAM);
       const ids = candidateIds({ match: long.length ? long.map(ftsPhrase).join(' AND ') : null, likes: short, layers });
-      return rankSearch(pick(ids, layers), terms).slice(0, limit).map((r) => r.entry);
+      return rankSearch(pick(ids, layers, accept), terms).slice(0, limit).map((r) => r.entry);
     },
 
-    async related({ text, layers, exclude = [], limit = 5 } = {}) {
+    async related({ text, layers, exclude = [], limit = 5, accept } = {}) {
       const terms = relatedTerms(text);
       if (!terms.size) return [];
       await ensureOpen();
       const skip = new Set(exclude);
       const ids = candidateIds({ match: [...terms.keys()].map(ftsPhrase).join(' OR '), likes: [], layers });
-      return rankRelated(pick(ids, layers).filter((e) => !skip.has(e.id)), terms).slice(0, limit);
+      return rankRelated(pick(ids, layers, accept).filter((e) => !skip.has(e.id)), terms).slice(0, limit);
     },
 
     get: (id) => byId.get(id) ?? null,

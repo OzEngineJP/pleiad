@@ -8,13 +8,18 @@
 //
 //   - 本文 <!-- {"id":"m_…","at":…,"up":…,"by":{…},"why":"…","src":[{…}],"k":"promise","w":3,"st":"open"} -->
 //   1 行 1 件。本文は人が読めて直せる。メタは行末の HTML コメントの JSON（読めない・無い行は「出どころ不明」の人の記憶として読む）。
-//   k（種類）・w（重み 1〜3）・st（状態）は任意（ADR 0118。無い行は strength.mjs の既定）。知らないキーは捨てずに、書き直しでもそのまま残す
+//   k（種類）・w（重み 1〜3）・st（状態）は任意（ADR 0118。無い行は strength.mjs の既定）。tier（段 always/workspace/archive）・ws（作業場所。
+//   スラッシュ形・末尾なし・500 字まで）も任意で、無い行は未振り分け（公開の欄は tier / workspace）。知らないキーは捨てずに、書き直しでもそのまま残す
 //   （新しい版が足した欄を古い版が読んで書き直しても消さないため。版の印 v1 は変えない）。
 //   人が markdown を直接直したら、次に読むとき（sync）に差分を人の変更として log.jsonl に記録する。
 //
 // log.jsonl の 1 行: { rev, at, op: 'add'|'edit'|'forget'|'unforget', layer, id, text, fp, by, via?, entry? }
 //   forget は entry（消した記憶の全体）と fp（墓石。正規化した本文の sha256 の先頭 16 字）を残す。unforget は forget の entry から戻し、墓石を外す。
 //   via は書いた会話の sessionId（その会話の末尾の差分には同じ記憶を重ねて出さないため）。
+//   edit で段・作業場所が変わったときは place: { from, to }（それぞれ { tier?, workspace? }）も残す。コードの一括移行（既存の約束を保存だけにするなど）は
+//   migration: '<名前>' を付け、by は { kind: 'system' }。段を外せば元に戻り、同じ名前の移行は同じ id にやり直さない（migrated(name)）。
+//   一度きりの振り分け（core/memory/sort.mjs）も同じ印（migration: 'sort:<走りの id>'）と、短い理由 reason を付ける。取り消しは 'sort-undo:<走りの id>'。
+//   migrations(name) は、その移行が変えた段・作業場所の前後（from・to）を id ごとに返す。
 // 変更はすべて 1 本のキューで直列にする（rev を欠番なく進めるため）。md を先に書き、log を後に足す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -27,6 +32,14 @@ import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 
 export const MEMORY_TEXT_MAX = 300;
 export const USER_LAYER = 'user';
+
+/** 段（ADR 0110 の段 2）。always = いつも渡す・workspace = その作業場所の会話にだけ渡す・archive = 保存だけ。段なし = 未振り分け（従来どおり） */
+export const MEMORY_TIERS = ['always', 'workspace', 'archive'];
+export const isTier = (tier) => MEMORY_TIERS.includes(tier);
+export const WORKSPACE_MAX = 500;
+/** 作業場所の形か（スラッシュ形・末尾なし・500 字まで）。canonical は core/git-root.mjs の canonicalWorkspace が作る */
+export const isWorkspace = (value) => typeof value === 'string' && value.length >= 1 && value.length <= WORKSPACE_MAX
+  && !value.includes('\\') && !value.includes('\0') && !/[\r\n]/.test(value) && (value.length === 1 || !value.endsWith('/') || /^[A-Za-z]:\/$/.test(value));
 
 /** 層の id か（'user' か bot の id）。ファイル名になるので、それ以外は通さない */
 export const isLayer = (layer) => layer === USER_LAYER || isId(layer, 'bot');
@@ -44,13 +57,15 @@ const HEADER = (layer) => `<!-- pleiad-memory v1 layer=${layer} -->`;
 const metaJson = (value) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
 
 /** メタの JSON のうち、この版が読むキー。ほかは extraMeta に入れて、書き直しで戻す */
-const META_KEYS = new Set(['id', 'at', 'up', 'by', 'ob', 'why', 'src', 'k', 'w', 'st']);
+const META_KEYS = new Set(['id', 'at', 'up', 'by', 'ob', 'why', 'src', 'k', 'w', 'st', 'tier', 'ws']);
 
-/** 種類・重み・状態（どれも任意）。正しくない値は無いものとして読む */
+/** 種類・重み・状態・段・作業場所（どれも任意）。正しくない値は無いものとして読む */
 const tagsOf = (value) => ({
   ...(isMemoryKind(value?.kind) ? { kind: value.kind } : {}),
   ...(isWeight(value?.weight) ? { weight: value.weight } : {}),
   ...(isMemoryStatus(value?.status) ? { status: value.status } : {}),
+  ...(isTier(value?.tier) ? { tier: value.tier } : {}),
+  ...(isWorkspace(value?.workspace) ? { workspace: value.workspace } : {}),
 });
 
 /** 本文だけから決める id（メタの無い手書きの行用。同じ本文は同じ id なので、読むたびに変わらない） */
@@ -82,7 +97,7 @@ export function parseLayer(markdown, layer) {
       updatedAt: Number.isFinite(meta?.up) ? meta.up : Number.isFinite(meta?.at) ? meta.at : 0,
       by: isAuthor(meta?.by) ? meta.by : { kind: 'human' },
       ...(isAuthor(meta?.ob) ? { origBy: meta.ob } : {}),
-      ...tagsOf({ kind: meta?.k, weight: meta?.w, status: meta?.st }),
+      ...tagsOf({ kind: meta?.k, weight: meta?.w, status: meta?.st, tier: meta?.tier, workspace: meta?.ws }),
       ...(Object.keys(extra).length ? { extraMeta: extra } : {}),
       hadMeta: Boolean(meta),
     });
@@ -96,9 +111,13 @@ export function renderLayer(layer, entries, title) {
     ...(e.extraMeta ?? {}),
     id: e.id, at: e.at, up: e.updatedAt, by: e.by, ...(e.origBy ? { ob: e.origBy } : {}), ...(e.why ? { why: e.why } : {}), src: e.sources ?? [],
     ...(e.kind ? { k: e.kind } : {}), ...(e.weight ? { w: e.weight } : {}), ...(e.status ? { st: e.status } : {}),
+    ...(e.tier ? { tier: e.tier } : {}), ...(e.workspace ? { ws: e.workspace } : {}),
   })} -->`);
   return `${HEADER(layer)}\n# ${title}\n\n${lines.join('\n')}${lines.length ? '\n' : ''}`;
 }
+
+/** 段と作業場所だけの形（記録の place の前後） */
+const placeOf = (entry) => ({ ...(entry.tier ? { tier: entry.tier } : {}), ...(entry.workspace ? { workspace: entry.workspace } : {}) });
 
 /** 外へ出す形（hadMeta・extraMeta を落とす） */
 const publicEntry = (entry) => { const { hadMeta: _hadMeta, extraMeta: _extraMeta, ...rest } = entry; return rest; };
@@ -317,24 +336,25 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     /** 忘れた直後で、戻せる記憶（最後の操作が forget）の写し。無ければ null */
     forgottenEntry: (id) => { const gone = forgotten.get(id); return gone?.entry && !known.has(id) ? publicEntry(gone.entry) : null; },
     /** 索引の鮮度の印（全層の entries の内容から） */
-    hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt])]))).digest('hex'),
+    hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt, e.tier ?? '', e.workspace ?? ''])]))).digest('hex'),
 
     /** 追加。by は発言者、via は書いた会話。entry は id・at 以外が入った形 */
-    add: ({ layer, text, why, sources = [], by, via, unique = false, kind, weight, status }) => serial(async () => {
+    add: ({ layer, text, why, sources = [], by, via, unique = false, kind, weight, status, tier, workspace }) => serial(async () => {
       await ensureReady(); await syncNow();
       // 同じ文を同時に 2 回書いても、直列化の中で見れば後の 1 つは弾ける（呼び出し側の事前の検査は直列化の外）
       if (unique && (cache.get(layer) ?? []).some((e) => fingerprintOf(e.text) === fingerprintOf(text))) return { duplicate: true };
       const at = now();
       const entry = { id: newId('memory', at), layer, text: oneLine(text), ...(why ? { why } : {}), sources, at, updatedAt: at, by,
-        ...tagsOf({ kind, weight, status }), hadMeta: true };
+        ...tagsOf({ kind, weight, status, tier, workspace }), hadMeta: true };
       cache.set(layer, [...(cache.get(layer) ?? []), entry]);
       await writeLayer(layer);
       const rec = await appendLog({ op: 'add', layer, id: entry.id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(via ? { via } : {}) });
       return { entry: publicEntry(entry), rev: rec.rev };
     }),
 
-    /** 本文・理由・出どころ・種類・重み・状態を直す。種類・重み・状態は null で外す（undefined は触らない）。無い id は null */
-    edit: ({ id, text, why, sources, by, via, kind, weight, status }) => serial(async () => {
+    /** 本文・理由・出どころ・種類・重み・状態・段・作業場所を直す。種類・重み・状態・段・作業場所は null で外す（undefined は触らない）。
+     *  段・作業場所だけの直し（振り分け）は updatedAt を進めない（記憶の強さ・並び・「直した」の表示を、振り分けで動かさないため）。無い id は null */
+    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration, reason }) => serial(async () => {
       await ensureReady(); await syncNow();
       for (const [layer, list] of cache) {
         const i = list.findIndex((e) => e.id === id);
@@ -343,14 +363,15 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         // by は今の本文を書いた者なので、本文が変わるときだけ替える（理由・種類・重みだけの直しや同じ本文の直しで、
         // AI が人の行を自分の行にしてしまわないため。そうすると次から承認なしで本文を書き換えられる）。直した者は log.jsonl の by に残る
         const textChanged = text !== undefined && oneLine(text) !== old.text;
+        const placementOnly = [text, why, sources, kind, weight, status].every((v) => v === undefined) && (tier !== undefined || workspace !== undefined);
         const entry = {
           ...old,
           ...(text !== undefined ? { text: oneLine(text) } : {}),
           ...(why !== undefined ? (why ? { why } : { why: undefined }) : {}),
           sources: sources ? [...old.sources, ...sources] : old.sources,
-          updatedAt: now(), by: textChanged ? by : old.by,
+          updatedAt: placementOnly ? old.updatedAt : now(), by: textChanged ? by : old.by,
         };
-        for (const [key, value] of [['kind', kind], ['weight', weight], ['status', status]]) {
+        for (const [key, value] of [['kind', kind], ['weight', weight], ['status', status], ['tier', tier], ['workspace', workspace]]) {
           if (value === null) delete entry[key];
           else if (value !== undefined) Object.assign(entry, tagsOf({ [key]: value }));
         }
@@ -360,11 +381,38 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         const next = [...list]; next[i] = entry;
         cache.set(layer, next);
         await writeLayer(layer);
-        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}) });
+        // 段・作業場所が変わったときは前後を記録に残す（戻すとき・後から見るとき用）。migration はコードの一括移行の名前（同じ名前では 1 つの id に 1 度だけ行う）
+        const from = placeOf(old), to = placeOf(entry);
+        const placed = JSON.stringify(from) !== JSON.stringify(to);
+        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}),
+          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}), ...(reason ? { reason } : {}) });
         return { entry: publicEntry(entry), rev: rec.rev };
       }
       return null;
     }),
+
+    /** コードの一括移行 name（edit の migration）を、すでに行った記憶の id。人が段を外しても、次の起動で同じ移行をやり直さないために使う */
+    migrated: (name) => new Set(records.filter((r) => r.op === 'edit' && r.migration === name).map((r) => r.id)),
+
+    /** 一括移行 name が段・作業場所を変えた記憶ごとの、最初の前（from）と最後の後（to）。振り分けを取り消すとき、今も to のままのものだけ戻すために使う */
+    migrations: (name) => {
+      const out = new Map();
+      for (const r of records) {
+        if (r.op !== 'edit' || r.migration !== name || !r.place) continue;
+        const prev = out.get(r.id);
+        out.set(r.id, { from: prev?.from ?? r.place.from, to: r.place.to });
+      }
+      return out;
+    },
+
+    /** 記憶 id の段・作業場所を最後に変えた記録の by（無ければ null）。夜の整理が、人が選んだ段を付け直さないために使う */
+    lastPlacedBy: (id) => {
+      for (let i = records.length - 1; i >= 0; i--) {
+        const r = records[i];
+        if (r.id === id && r.op === 'edit' && r.place) return r.by ?? null;
+      }
+      return null;
+    },
 
     /** 忘れる（墓石を残す）。無い id は null */
     forget: ({ id, by, via }) => serial(async () => {

@@ -986,7 +986,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 組み込みの bot（bot なし）は記憶もスレッドの申し送りも持たない（ADR 0157）
     if (!bot.plain) {
       try {
-        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', locale: turn.agentLocale });
+        // 作業場所は会話の cwd（このターンの cwd。無ければ保存済みの会話の cwd）。無い会話は「この作業場所で」の記憶を受けない
+        let cwd = turn.info?.cwd ?? null;
+        if (!cwd) { try { cwd = (await host.store.get(sessionId))?.cwd ?? null; } catch { /* 読めなければ作業場所なし */ } }
+        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', cwd, locale: turn.agentLocale });
         rec.tail = tail;
         notes = tail.notes ?? [];
       } catch (e) { log('could not build the turn tail:', errText(e)); }

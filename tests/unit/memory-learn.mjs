@@ -113,6 +113,29 @@ try {
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
+  // ADR 0363: 夜の整理は約束（kind=promise）の候補を黙って捨てる。保存だけ（archive）の記憶は材料（Existing memories）に入れない
+  await memory.write({ layer: 'user', text: '保存だけに置いた古い記憶 ZZARCHIVEDZZ', tier: 'archive' }, { kind: 'human' }, {});
+  await channels.post({ channelId: channel.id, text: '見積もりは来週の月曜までに出します。見出しに飾りは付けないでほしい。' }, { kind: 'human' });
+  const prompts = [];
+  host.internalCall = async ({ kind, prompt }) => {
+    prompts.push(prompt);
+    const statements = JSON.parse(prompt.split('\n').find((part) => part.startsWith('Human statements: '))?.slice('Human statements: '.length) ?? '[]');
+    const index = statements.at(-1)?.index ?? 0;
+    return { text: JSON.stringify({ memories: [
+      { action: 'add', layer: 'user', kind: 'promise', text: '見積もりを来週の月曜までに出す約束です', sourceIndexes: [index] },
+      { action: 'add', layer: 'user', kind: 'pref', text: '見出しに飾りは付けない（好み）', sourceIndexes: [index] },
+    ] }), usage: null, callId: `call-promise-${prompts.length}` };
+  };
+  const beforePromise = (await memory.list({ layer: 'user' })).length;
+  const promised = await learner.runNow();
+  const afterPromise = await memory.list({ layer: 'user' });
+  assert.equal(prompts.length, 1, '人の新しい発言があれば夜の整理が 1 回走る');
+  assert.ok(!prompts[0].includes('ZZARCHIVEDZZ'), '保存だけ（archive）の記憶は夜の整理の材料に入れない');
+  assert.ok(!afterPromise.some((e) => e.kind === 'promise'), '約束の候補は記憶に書かない');
+  assert.equal(promised.changed, 1, '約束を除いた候補だけ書く');
+  assert.equal(afterPromise.length, beforePromise + 1);
+  assert.ok(afterPromise.some((e) => e.text.includes('見出しに飾りは付けない')), '約束でない候補は書く');
+  assert.ok(prompts[0].includes('Never use kind promise'), '夜の整理の指示に約束を使わないと書く');
   // 内部呼出しの上限時間切れは「止めた（OFF）」ではなく失敗。理由付きの停止（halted）へ回す（Issue #180）
   await runFake(chat, '覚えて: 時間切れの確認用に新しい文があります。');
   side.set(chat, { ...side.get(chat), lastModified: Date.now() + 5000 });

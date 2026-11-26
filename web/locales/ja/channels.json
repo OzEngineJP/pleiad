@@ -301,11 +301,21 @@
       "pref": "好み",
       "note": "メモ"
     },
+    "tier": {
+      "none": "未振り分け",
+      "always": "いつも",
+      "workspace": "この作業場所で",
+      "archive": "保存だけ"
+    },
+    "tierLabel": "渡す範囲",
+    "workspaceLabel": "作業場所",
+    "workspacePlaceholder": "/ 区切りの場所（例: D:/dev/app）",
     "learn": {
       "label": "夜の整理",
       "running": "整理しています",
       "ran": "{{when}} に {{n}} 件覚えた",
       "ranNone": "{{when}} に整理した（新しく覚えたものなし）",
+      "retiered": "段を変えた {{n}} 件",
       "never": "まだ一度も走っていない",
       "more": "残りの発言は次の回に",
       "deferred": "作業中だった会話 {{n}} 件は次の回に",
