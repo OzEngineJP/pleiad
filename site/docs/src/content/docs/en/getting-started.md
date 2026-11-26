@@ -20,20 +20,21 @@ Pleiad is a host for AI agents. Each agent you use needs its own CLI installed a
 
 1. Install the agent's CLI (each agent's guide explains how — the "Install" button under Settings › "Agents" opens it too).
 2. In Pleiad, open Settings › "Agents" and press "Recheck status" so Pleiad finds the installed CLI. While you wait after pressing "Install", Pleiad notices the install by itself and the row switches without a press.
-3. Press "Sign in" on the agent's row.
+3. Open "Connections" on the agent's row and press "Sign in" on the "CLI login" card.
 4. When the row shows "Signed in", the agent is ready to use.
 
 How sign-in proceeds differs per agent:
 
 | Agent | How you sign in | Signing out |
 | --- | --- | --- |
-| Claude | Open the sign-in page in a browser and authorize with your Anthropic account | "Sign out" in Pleiad |
-| Codex | Open the sign-in page in a browser and authorize with your ChatGPT account | "Sign out" in Pleiad |
+| Claude | Open the sign-in page in a browser and authorize with your Anthropic account | "Sign out" on the "CLI login" card |
+| Codex | Open the sign-in page in a browser and authorize with your ChatGPT account | "Sign out" on the "CLI login" card |
 | Antigravity | Run the shown command (`agy`) in a terminal and sign in with Google | Done on the `agy` side (credentials live in the OS credential store) |
 | OpenCode | Run `opencode auth login` in a terminal and pick a provider | Run `opencode auth logout` in a terminal |
 | Devin | Run `devin auth login` in a terminal and authorize in a browser | "Sign out" in Pleiad |
-| Grok | Run `grok login` in a terminal (`grok login --device-auth` when there is no browser) | "Sign out" in Pleiad |
+| Grok | Run `grok login` in a terminal (`grok login --device-auth` when there is no browser) | "Sign out" on the "CLI login" card |
 
+- For Claude, Codex, OpenCode and Grok, "Connections" lists the CLI login, any accounts you added and compatible endpoints in one list. Add one with "+ Add connection" and pick the one new chats use with "Make default". Antigravity and Devin keep "Sign in" / "Sign out" on the row.
 - Sign-in waits for about 10 minutes. Press "Cancel" to stop waiting.
 - Claude needs the Claude Agent SDK as well as the CLI. Press "Download" on the Claude row — you don't have to wait for the CLI install or sign-in to finish. If the download fails, press "Try again" on the row.
 - OpenCode's free models work without signing in; sign in when you want to connect other providers.
