@@ -1012,6 +1012,13 @@ export default async function (t) {
         await tick();
         const restNotes = w.posts.filter((p) => String(p.text).includes('届けていません'));
         t.ok('上限: 休憩中の @ には、その場所（スレッド）へ 1 回だけ Pleiad のお知らせを出す', restNotes.length === 1 && restNotes[0].threadId === 'p_other' && w.started.length === before, JSON.stringify(restNotes));
+        owl.routing = { levels: [{ id: 'level_1' }], tiers: { level_1: ['fake:', 'fake:other'] } };
+        let routed = false;
+        w.d.bots.routeSession = async () => { routed = true; return null; };
+        await w.d.onPosted({ ...other, id: 'p_other3', threadId: 'p_other', text: '@Owl 予備候補を確認' }, w.channel);
+        t.ok('上限: 休憩中でも予備候補を確認し、候補が尽きていれば同じ場所に知らせを重ねない',
+          routed && w.posts.filter((p) => String(p.text).includes('届けていません')).length === 1);
+        delete owl.routing;
         await w.d.turnExtras(w.turn);
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '復帰しました。' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });

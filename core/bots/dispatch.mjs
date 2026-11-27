@@ -765,10 +765,11 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const bot = await getBot(botId);
     if (!bot) return null;
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
-    if (heard ? resting.until(bot) : await restingWake(bot, channel, threadId)) return null;
+    const hasAlternatives = botCandidates(botRoutingSettings(bot)).length > 1;
+    if (!hasAlternatives && (heard ? resting.until(bot) : await restingWake(bot, channel, threadId))) return null;
     const sessionId = await sessionFor({ bot, channel, threadId, post });
     if (!sessionId) {
-      if (!heard) await limitReached({ botId, channelId: channel.id, threadId });
+      if (!heard && !await restingWake(bot, channel, threadId)) await limitReached({ botId, channelId: channel.id, threadId });
       return null;
     }
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）

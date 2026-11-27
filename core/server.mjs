@@ -2111,7 +2111,8 @@ async function routeBotSession(bot, meta, { limited = false, channel, cwd, sessi
   const usage = routingUsage.snapshot();
   const base = settings.levels[0].id;
   const original = parse(pinned);
-  const checked = original && original.model == null && meta?.model
+  const checked = original && original.model == null && meta?.backend === original.backend && meta.model
+    && (meta.claudeAccount ?? '') === (original.account ?? '') && (meta.compatEndpoint ?? '') === (original.endpoint ?? '')
     ? candidateId(original.backend, meta.model, original.account, original.endpoint) : pinned;
   const blocked = (b, m, a) => botSlotBlocked(b, m, a ?? limitAccount(b, ''));
   const state = checkCandidate(checked, { usage, settings, now: Date.now(), blocked, endpoints: endpointStates, limitsOnly: true });
