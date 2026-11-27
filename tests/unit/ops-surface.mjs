@@ -285,6 +285,14 @@ export default async function (t) {
   };
   // 人の画面には返すが agent には伏せるもの（引数の秘密・承認の URL・ペアリングの番号・URL のクエリ）は tests/unit/ops-mcp-hooks.mjs
   // 必須の引数がある read 操作に渡す引数（設定は全部の key）
+  deps.workspace = {
+    prepare: async () => ({ ticket: MARKER }),
+    execute: async (op, input) => ({
+      search: { pages: [], more: false },
+      readPage: { pageId: input.pageId, title: 'Page', version: '1:0', markdown: '', blocks: [] },
+      queryDatabase: { properties: [], rows: [], nextOffset: null },
+    })[op],
+  };
   const samples = {
     'browser.chromeWindows': [{ sessionId: 's1' }], 'browser.listDownloads': [{ sessionId: 's1' }],
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
@@ -307,6 +315,9 @@ export default async function (t) {
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],
     'routines.get': [{ routineId: 'r_000000000aaaaaa' }],
     'plus.syncInboxItem': [{ id: '0123456789abcdef0123456789abcdef' }],
+    'workspace.search': [{ sessionId: 's1' }],
+    'workspace.readPage': [{ sessionId: 's1', pageId: '840733ab-841c-4d44-b3be-404ce7d01f11' }],
+    'workspace.queryDatabase': [{ sessionId: 's1', databaseId: '840733ab-841c-4d44-b3be-404ce7d01f11' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

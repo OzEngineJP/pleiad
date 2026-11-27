@@ -27,6 +27,7 @@
     "remotePairingApprove": "human-only",
     "remotePairingDeny": "human-only",
     "remoteDevices": "human-only",
+    "remotePcWorkspaces": "human-only",
     "remoteRevoke": "human-only",
     "remoteRevokedHide": "human-only",
     "remotePlusRequestsResume": "human-only",

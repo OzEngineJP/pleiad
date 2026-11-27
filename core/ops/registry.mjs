@@ -201,7 +201,12 @@ async function approval(ctx, op, args, failure, run) {
   };
   const reason = typeof args?.reason === 'string' ? args.reason : null;
   const ask = async (attempt, requestId) => {
-    const change = await describe();
+    let change;
+    try { change = await describe(); }
+    catch (err) {
+      if (err instanceof OpError) return { ok: false, code: err.code, error: err.message, decision: 'ask' };
+      throw err;
+    }
     const receipt = receiptOf(op.id, args, change.before);
     let id = requestId;
     const proceed = async () => {

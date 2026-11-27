@@ -131,6 +131,7 @@ import { opencodeRelay, OPENCODE_RELAY_PATH } from './opencode-relay.mjs';
 import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { createPlusConfig } from './plus/config.mjs';
+import { createWorkspaceOperations } from './plus/workspace.mjs';
 import { createPlusSession } from './plus/session.mjs';
 import { createIdTokenVerifier } from './plus/verify.mjs';
 import { createTicketIssuer, createTicketVerifier } from './plus/tickets.mjs';
@@ -5731,6 +5732,14 @@ async function markReads(reads) {
 }
 
 // 会話の操作（sessions.new・abort・compact など。core/ops/conversations.mjs）の本体。画面の WS コマンドの中身を移したもの
+const workspaceOperations = createWorkspaceOperations({
+  session: plusSession,
+  async workspaceOf(id) {
+    if (!await resolveBackendForSession(id)) return null;
+    return await conversationWorkspaceId(id) ?? 'personal';
+  },
+});
+
 const opsConversations = {
   create: (args) => createSession(args),
   deleteUnsent: (sessionId) => deleteUnsentSessionOf({ sessionId }),
@@ -7465,6 +7474,7 @@ function opsDeps(lng = currentLocale()) {
       },
       providerUsage: (id, { force } = {}) => providerUsageOf({ backend: id }, { force }) },
     conversations: opsConversations,
+    workspace: workspaceOperations,
     agents: opsAgents,
     accounts: {
       ...accountManager,

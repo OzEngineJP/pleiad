@@ -844,6 +844,14 @@
         "waitFlag": "待ちで通った経路や状態を示す真偽値。"
       }
     },
+    "workspace": {
+      "fields": {"sessionId":"会話の ID。エージェントは現在の会話を使います。","query":"タイトルに含まれる文字。","limit":"返す件数の上限。","pageId":"workspace.search が返すページの ID。","databaseId":"workspace.search が返すデータベースの ID。","baseVersion":"workspace.readPage が返した版。","blockId":"workspace.readPage が返したブロックの ID。文章を置き換えるときに必須。段落の追加では省きます。","change":"段落の追加または文章の置き換えと、変更後の文字列。","requestId":"呼び出し側で生成した UUID。同じ変更の再試行に限って再利用できます。","viewId":"保存済みビューの ID。省略できます。","filters":"すべての条件を満たす行を返します。項目の ID と型は workspace.queryDatabase で確認できます。","sorts":"優先順に並べた整列条件。","offset":"前回の検索が返した開始位置。","title":"タスクのタイトル。","values":"項目 ID と値の組。workspace.queryDatabase が示す型を使います。"},
+      "search": { "summary": "この会話のワークスペースでタイトルからページを探します。" },
+      "readPage": { "summary": "ページを Markdown、ブロック ID、基準の版とともに読みます。" },
+      "writePage": { "summary": "基準の版と要求 ID を指定し、段落の追加やブロックの文章の置き換えを行います。" },
+      "queryDatabase": { "summary": "型付きの条件と並び順を指定して、ワークスペースのデータベースを読みます。" },
+      "createTask": { "summary": "テンプレートと要求 ID を使って、データベースにタスクを1件作ります。" }
+    },
     "sessions": {
       "scheduleSend": { "summary": "会話に送信予定を置く。時刻が来たら、ふつうの送信と同じ送信待ちへ入る。人が決める操作なので承認が要る。", "sessionId": "送る会話の ID。", "prompt": "送る本文。", "at": "送る時刻（Unix ミリ秒、または ISO 8601 の日時）。", "messageId": "送信の ID（英数字とハイフンで 8〜80 文字）。省略すると新しく決める。", "attachments": "添付（パス・名前・MIME）。", "cwd": "作業ディレクトリ。", "mode": "承認モード。", "confirm": "会話 {{session}} に {{at}} の送信予定を置く: {{prompt}}" },
       "sendScheduledNow": { "summary": "送信予定を、時刻を待たずに今すぐ送信待ちへ入れる。", "id": "予定の ID。", "confirm": "送信予定 {{id}} を今すぐ送る" },
