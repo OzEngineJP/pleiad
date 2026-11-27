@@ -92,6 +92,7 @@
     "setting:agentSitePermissions": "reference/settings",
     "setting:backend": "reference/settings",
     "setting:childThreadRenderer": "reference/settings",
+    "setting:botEnabled": "memory",
     "setting:chromeAutoAllow": "reference/settings",
     "setting:chromeNewProfile": "reference/settings",
     "setting:chromeProfileNotes": "reference/settings",

@@ -33,7 +33,7 @@ export default async function (t) {
   const runtimeRoot = path.join(temp, 'runtime');
   const clockFile = path.join(temp, 'clock');
   const inboxFile = path.join(dataDir, 'channels', 'inbox.json');
-  const time = Math.floor(Date.now() / MIN) * MIN;
+  const time = Math.ceil(Date.now() / MIN) * MIN;
   const setClock = value => fs.writeFile(clockFile, String(value));
   const inbox = async () => JSON.parse(await fs.readFile(inboxFile, 'utf8')).items;
   const env = {

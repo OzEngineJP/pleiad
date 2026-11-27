@@ -42,6 +42,7 @@ export function createBotEnablement({ read, existing, locale, changed, now = Dat
   return {
     load, enabled, allowed, requireEnabled, error,
     since: () => current?.since ?? 0,
+    workSince: () => current?.workSince ?? 0,
     generation: () => generation,
     backgroundSignal: () => background.signal,
     finishing: (sessionId) => Boolean(sessionId && [...running].some(entry => entry.sessionId === sessionId && entry.manual)),
@@ -59,7 +60,10 @@ export function createBotEnablement({ read, existing, locale, changed, now = Dat
         const previous = await load();
         closing = !value;
         try {
-          const saved = { enabled: value, since: value === previous.enabled ? previous.since : now() };
+          // Timers use the scheduler clock. Persisted turns and outgoing messages use wall time.
+          const saved = value === previous.enabled
+            ? { ...previous, enabled: value }
+            : { enabled: value, since: now(), workSince: Date.now() };
           await save(saved);
           if (value !== previous.enabled) {
             generation++;

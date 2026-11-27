@@ -11148,7 +11148,7 @@ async function discardQueuedBotMessage(sessionId, { at }, knownBot = false) {
   if (!knownBot && !await botSession(sessionId)) return false;
   const gate = botHost.enablement;
   await gate.load();
-  return !gate.enabled() || (typeof at === 'number' ? at : Date.parse(at)) < gate.since();
+  return !gate.enabled() || (typeof at === 'number' ? at : Date.parse(at)) < gate.workSince();
 }
 
 function recordSendPhase(command, sessionId, start, outcome) {
@@ -11290,7 +11290,7 @@ async function holdBotSchedule(row) {
   const gate = botHost?.enablement;
   if (!gate) return false;
   await gate.load();
-  return !gate.enabled() || row.at < gate.since();
+  return !gate.enabled() || row.at < gate.workSince();
 }
 const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
   ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
