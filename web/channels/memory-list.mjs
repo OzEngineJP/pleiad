@@ -5,10 +5,11 @@ import { sourceView } from './bot-model.mjs';
 import { botIcon } from './bot-icon.mjs';
 // i18n-dynamic: channels:memory.tier.
 // i18n-dynamic: channels:memory.folder.
-const FOLDERS = ['open', 'decision', 'pref', 'share', 'note', 'done', 'stop'];
+const FOLDERS = ['open', 'decision', 'pref', 'share', 'note', 'done', 'expired', 'stop'];
 const PAGE_SIZE = 4;
 const folderOf = (entry) => {
   if (entry.kind === 'stop' || entry.status === 'dropped') return 'stop';
+  if (entry.status === 'expired') return 'expired';
   if (entry.status === 'done') return 'done';
   if (entry.status === 'open') return 'open';
   return FOLDERS.includes(entry.kind) ? entry.kind : 'note';

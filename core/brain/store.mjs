@@ -79,7 +79,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
     /**
      * 気がかりの足す・直す・手放す。add の id が既にあれば直す。外部由来の印は引き継ぐ。
      */
-    applyLoops(botId, ops, { taint = null, sources = [], sessionId = null, author, workNotesVersion = WORK_NOTES_VERSION } = {}) {
+    applyLoops(botId, ops, { taint = null, sources = [], sessionId = null, author, runId, workNotesVersion = WORK_NOTES_VERSION } = {}) {
       open();
       const t = followUps;
       const applied = [];
@@ -104,7 +104,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
           if (!target || (target.status !== 'open' && op.op !== 'add')
             || (op.expect && (target.updatedAt !== op.expect.updatedAt || target.text !== op.expect.text))) { rejected++; continue; }
           if (op.op === 'resolve' || op.op === 'drop') {
-            t.putLoop(botId, target.id, op.op === 'resolve' ? 'resolved' : 'dropped', at, target);
+            t.putLoop(botId, target.id, op.op === 'resolve' ? 'resolved' : 'dropped', at, target, runId);
             applied.push({ op: op.op, id: target.id, text: target.text });
           } else {   // update（と、開いている id への add）
             const next = { ...target, text: text ?? target.text, ...(op.wakeOn !== undefined ? { wakeOn: op.wakeOn } : {}), ...(op.due !== undefined ? { due: op.due } : {}),
@@ -117,6 +117,19 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
       });
       if (applied.length) changed(botId, true);
       return { applied, rejected };
+    },
+
+    expireConcerns(runId) {
+      open();
+      const bots = followUps.expire(runId);
+      for (const botId of bots) changed(botId, true);
+    },
+    runChanges(runId) { open(); return followUps.changes(runId); },
+    undoRunChange(runId, id, rev) {
+      open();
+      const botId = followUps.undo(runId, id, rev);
+      if (botId) changed(botId, true);
+      return Boolean(botId);
     },
 
     state(botId) {

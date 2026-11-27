@@ -9,7 +9,8 @@
 //       … 安いモデルへ聞く束（英語の指示 + JSON だけを返させる）。作業記憶 3〜4k トークンに収める
 //   findLeaks(rows, text, min) → rows   … 思考の流れの行のうち、text（投稿）に min 字以上そのまま写っているもの。朝の突き合わせ
 import { createHash } from 'node:crypto';
-$1import { estimateTokens } from '../../web/token-estimate.mjs';
+import { agentT } from '../i18n.mjs';
+import { estimateTokens } from '../../web/token-estimate.mjs';
 
 /** 呼ばれたターンの末尾に入れる思考の流れのトークンの目安（設計 §4.3: 末尾 ≈1.2k トークン） */
 export const TAIL_TOKENS = 1200;
@@ -85,11 +86,11 @@ export function streamLines(stream, { locale, now, maxTokens = TAIL_TOKENS }) {
 }
 
 export function todoContext({ items, previous = {}, wrap = text => text }) {
-  const active = items.filter(item => item.status !== 'done' || previous[item.id]);
+  const active = items.filter(item => item.followUp?.status !== 'expired' && (item.status !== 'done' || previous[item.id]));
   const versions = Object.fromEntries(active.map(item => [item.id, previous[item.id]]).filter(([, version]) => version));
   const lines = [];
   for (const item of active) {
-    const version = createHash('sha256').update(JSON.stringify($1)).digest('base64url');
+    const version = createHash('sha256').update(JSON.stringify([item.updatedAt, item.status, item.waiting, item.humanWaiting, item.text, item.followUp])).digest('base64url');
     if (version === versions[item.id]) continue;
     const state = item.status === 'done' ? 'done' : item.humanWaiting ? 'waiting for human' : item.status;
     const label = `- (${item.id}) [${state}]`;

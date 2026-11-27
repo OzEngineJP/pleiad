@@ -108,7 +108,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const tier = entry.kind === 'promise' ? 'archive' : important ? entry.tier : 'standard';
       if (tier === entry.tier) continue;
       const migration = entry.kind === 'promise' ? PROMISE_ARCHIVE_MIGRATION : 'memory-importance';
-      if (await store.edit({ id: entry.id, tier, by: { kind: 'system' }, migration, reason: tier === 'archive' ? 'legacyPromise' : 'unconfirmedImportance' })) layers.add(entry.layer);
+      if (await store.edit({ id: entry.id, tier, by: { kind: 'system' }, migration, runId: 'memory-migration-v1', reason: tier === 'archive' ? 'legacyPromise' : 'unconfirmedImportance' })) layers.add(entry.layer);
     }
     return [...layers];
   }
@@ -167,7 +167,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     const effective = tier ?? (given ? 'workspace' : old.tier);   // workspace だけ渡したら、write と同じく workspace の段にする
     const out = {};
     if (effective != null && effective !== old.tier) out.tier = effective;
-    if (workspace === null && effective !== 'workspace') { if (old.workspace) out.workspace = null; }
+    if ((workspace === null || tier === 'always') && effective !== 'workspace') { if (old.workspace) out.workspace = null; }
     else if (given && effective === 'workspace' && given !== old.workspace) out.workspace = given;
     if (effective === 'workspace' && !(out.workspace ?? old.workspace)) {
       const place = await hereOf(ctx);
@@ -273,7 +273,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const tags = { kind, weight: capWeight(weight, { human, kind, humanQuotes: proven.humanQuotes }), status, ...placement };
-      const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, ...tags });
+      const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, runId: ctx.runId, reason: note, ...tags });
       if (added.duplicate) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const { entry } = added;
       bump(budget);
@@ -290,7 +290,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const resultKind = kind === undefined ? old.kind : kind;
       const onlyArchiving = tier === 'archive' && [text, why, sources, kind, weight, status, workspace].every((v) => v === undefined);
       if (!human && resultKind === 'promise' && !onlyArchiving) throw promiseRefusal();
-      const placement = await editedPlacement({ tier, workspace }, old, ctx);
+      const protectedPlacement = !human && (store.lastPlacedBy(id) ?? old.by)?.kind === 'human';
+      const placement = protectedPlacement ? {} : await editedPlacement({ tier, workspace }, old, ctx);
       const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;
       const budget = changing ? ensureBudget(old.layer, author, ctx) : null;
@@ -308,7 +309,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       const others = [clean, note, kind, cappedWeight, status].some((v) => v !== undefined) || proven.sources.length > 0;
       if (placing && !others && !Object.keys(placement).length) return old;
       const done = await store.edit({ id, text: clean, why: note, sources: proven.sources.length ? proven.sources : undefined, by: author, via: ctx.sessionId,
-        kind, weight: cappedWeight, status, ...placement });
+        kind, weight: cappedWeight, status, runId: ctx.runId, reason: note, ...placement });
       if (!done) throw notFound(id);
       bump(budget);
       announce(done.entry.layer);
@@ -322,18 +323,18 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
      * unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人（画面の選び直し）の記憶には触れない（夜の整理が人の選んだ段を戻さないため）。
      * 返りは { placed: true, entry } か { placed: false, reason: 'notFound' | 'changed' | 'human' | 'same' }
      */
-    async place({ id, tier, workspace, reason, migration, expect, by = { kind: 'system' }, unlessHumanPlaced = false } = {}) {
+    async place({ id, tier, workspace, reason, migration, runId, expect, by = { kind: 'system' }, unlessHumanPlaced = false } = {}) {
       await catchUp();
       const old = store.get(id);
       if (!old) return { placed: false, reason: 'notFound' };
       if (expect && ((old.tier ?? null) !== (expect.tier ?? null) || (old.workspace ?? null) !== (expect.workspace ?? null))) return { placed: false, reason: 'changed' };
-      if (unlessHumanPlaced && store.lastPlacedBy(id)?.kind === 'human') return { placed: false, reason: 'human' };
+      if (unlessHumanPlaced && (store.lastPlacedBy(id) ?? old.by)?.kind === 'human') return { placed: false, reason: 'human' };
       if (tier != null && !isTier(tier)) throw rejected('tier');
       const place = workspace == null ? null : placeOf(workspace);
       if (tier === 'workspace' && !place) throw rejected('workspaceUnknown');
       if ((old.tier ?? null) === (tier ?? null) && (old.workspace ?? null) === place) return { placed: false, reason: 'same' };
       const note = reason ? [...oneLine(reason)].slice(0, 80).join('') : undefined;
-      const done = await store.edit({ id, tier: tier ?? null, workspace: place, by, reason: note, ...(migration ? { migration } : {}) });
+      const done = await store.edit({ id, tier: tier ?? null, workspace: place, by, reason: note, runId, ...(migration ? { migration } : {}) });
       if (!done) return { placed: false, reason: 'notFound' };
       announce(done.entry.layer);
       return { placed: true, entry: done.entry };
@@ -375,6 +376,20 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return done.entry;
     },
 
+    async runChanges(runId) {
+      await catchUp();
+      return store.runChanges(runId);
+    },
+    async undoRunChange(runId, id, rev) {
+      await catchUp();
+      const layer = store.get(id)?.layer;
+      if (!layer) return false;
+      return withLayer(layer, async () => {
+        const restored = await store.undoRunChange(runId, id, rev);
+        if (restored) announce(layer);
+        return restored;
+      });
+    },
     rev: () => store.rev(),
 
     async turnContext({ bot, session = {}, sessionId = null, channelId = null, cwd = null, now: at = now(), locale } = {}) {

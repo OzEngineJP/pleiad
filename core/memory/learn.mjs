@@ -364,14 +364,14 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
   }
 
   // mayWrite: 各書き込みの直前に確かめる（OFF→ON が短時間にあっても、OFF 前の世代の AI 結果を書かない）
-  async function writeCandidates(candidates, items, response, existing, onlyBot = null, mayWrite = async () => true) {
+  async function writeCandidates(candidates, items, response, existing, onlyBot = null, mayWrite = async () => true, runId) {
     const author = { kind: 'bot', botId: LEARNER_ID };
     const sessions = {
       read: async (id) => messagesOf(knownRows.get(id) ?? { id, backend: (await host.store.get(id)).backend }),
       get: async (id) => ({ row: knownRows.get(id) ?? await host.store.get(id) }),
     };
     const ctx = { sessions, botOfSession: async (id) => (await host.store.get(id)).bot ?? null,
-      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}`, userWriteLimit: CANDIDATES_PER_CALL };
+      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}`, userWriteLimit: CANDIDATES_PER_CALL, runId };
     let changed = 0;
     for (const candidate of candidates.slice(0, CANDIDATES_PER_CALL)) {
       if (!candidate || !['add', 'edit', 'replace'].includes(candidate.action)) continue;
@@ -420,7 +420,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
    * 1 回の実行（budget.left。束をまたいで共有）で付け直せるのは NIGHTLY_TIER_CHANGES 件まで。人が書いた記憶・人が選んだ段・約束は付け直さない
    * （decideNightlyTier・memory.place の unlessHumanPlaced）。変更記録に migration（nightly:<日付>）と理由が残るので、記録から前後を辿って戻せる
    */
-  async function applyTierChanges(raw, sent, budget, mayWrite, resolver) {
+  async function applyTierChanges(raw, sent, budget, mayWrite, resolver, runId) {
     const by = { kind: 'bot', botId: LEARNER_ID };
     let retiered = 0;
     for (const change of parseTierChanges(raw, sent.map((e) => e.id))) {
@@ -431,7 +431,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
       if (decided.skip) continue;
       if (!(await mayWrite())) break;
       try {
-        const done = await memory.place({ id: entry.id, tier: decided.tier, workspace: decided.workspace, reason: decided.reason, migration: nightlyMigration(now()), by,
+        const done = await memory.place({ id: entry.id, tier: decided.tier, workspace: decided.workspace, reason: decided.reason, migration: nightlyMigration(now()), runId, by,
           unlessHumanPlaced: true, expect: { tier: entry.tier ?? null, workspace: entry.workspace ?? null } });
         if (done.placed) { retiered++; budget.left--; }
       } catch (e) {
@@ -448,7 +448,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
    * 返りの memories は新しい記憶・書き換え（従来どおり）、tiers は渡した記憶の段の付け直し。同じ文・忘れた記憶かどうかは全件を見る memory.write が調べる。
    * 返りは { changed（書いた記憶の数）, retiered（段を付け直した数） }
    */
-  async function process(items, prefs, mayWrite, tierBudget = { left: NIGHTLY_TIER_CHANGES }) {
+  async function process(items, prefs, mayWrite, tierBudget = { left: NIGHTLY_TIER_CHANGES }, runId) {
     const resolver = placeResolver();
     const workspaces = [];
     for (const id of new Set(items.map((item) => item.sessionId).filter(Boolean))) {
@@ -476,7 +476,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
     if (!(await mayWrite())) return { changed: 0, retiered: 0 };   // memory.list の await 中に OFF/停止/世代替わりがあり得るので、ask の直前に確かめ直す
     const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, mayWrite);
     const answer = parseAnswer(typeof response === 'string' ? response : response.text);
-    let changed = await writeCandidates(answer.memories, items, response, picked.entries, null, mayWrite);
+    let changed = await writeCandidates(answer.memories, items, response, picked.entries, null, mayWrite, runId);
     for (const change of (Array.isArray(answer.concerns) ? answer.concerns : []).slice(0, concerns.length)) {
       if (!['resolved', 'dropped'].includes(change?.status) || !Array.isArray(change.sourceIndexes)) continue;
       const loop = concerns.find((l) => l.id === change.id && l.botId === change.botId);
@@ -489,9 +489,9 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
       })) continue;
       if (!(await mayWrite())) break;
       const op = change.status === 'resolved' ? 'resolve' : 'drop';
-      changed += brain.applyLoops(loop.botId, [{ op, id: loop.id, expect: loop }]).applied.length;
+      changed += brain.applyLoops(loop.botId, [{ op, id: loop.id, expect: loop }], { runId }).applied.length;
     }
-    const retiered = tierBudget.left > 0 && picked.entries.length ? await applyTierChanges(answer.tiers, picked.entries, tierBudget, mayWrite, resolver) : 0;
+    const retiered = tierBudget.left > 0 && picked.entries.length ? await applyTierChanges(answer.tiers, picked.entries, tierBudget, mayWrite, resolver, runId) : 0;
     return { changed, retiered };
   }
 
@@ -577,6 +577,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
       if (state.status.halted) return { skipped: 'halted' };   // scoped・エピソードの自動経路もここを通るので、停止ラッチはここでも止める（解除は learnNow・再有効化だけ）
       // 予定の回の lastRunAt は始めた時刻（走っている間に更新された会話・後へ回した会話を、次の回で読み落とさない）
       const startedAt = now();
+      const runId = crypto.randomUUID();
+      open().save([['memory.organize', 'lastRun', { runId, at: startedAt }]]);
       let read = 0, changed = 0, retiered = 0, sorted = 0, calls = 0, more = false, stopped = false;
       const deferred = new Set();
       const tierBudget = { left: NIGHTLY_TIER_CHANGES };   // 段の付け直しは 1 回の実行（束をまたいで）20 件まで
@@ -587,7 +589,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
           // OFF にされた直後（または OFF→ON で世代が替わった後）の AI 呼び出し・記憶の書き込みへは進まない
           if (batch.items.length) {
             if (!(await mayWrite(gen))) { stopped = true; break; }
-            const done = await process(batch.items, prefs, () => mayWrite(gen), tierBudget);
+            const done = await process(batch.items, prefs, () => mayWrite(gen), tierBudget, runId);
             changed += done.changed;
             retiered += done.retiered;
             // 処理の途中で別経路が停止を記録していれば、続きの束・書き込みへは進まない（印も残す）
@@ -608,7 +610,10 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
         }
       }
       // 最後に、渡す場面の振り分け（会話ごとの scoped の回は除く）。失敗は sortNight が握るので、夜の整理の失敗・停止にはならない
-      if (!scope && !stopped && !state.status.halted) sorted = await sortNight(gen, prefs);
+      if (!scope && !stopped && await mayWrite(gen)) {
+        brain?.expireConcerns(runId);
+        sorted = await sortNight(gen, prefs, runId);
+      }
       const result = { at: now(), read, changed, retiered, sorted, deferred: deferred.size, ...(more ? { more: true } : {}), ...(stopped ? { stopped: state.status.halted ? 'halted' : 'off' } : {}), ...(scope ? { scoped: true } : {}) };
       if (!scope) state.lastRunAt = startedAt;
       // halted はラッチ（明示解除まで戻さない）。実行中にエピソード側が記録した停止・失敗（一時エラーの回数・retryAt）を、この成功で消さない
@@ -677,6 +682,24 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
   }
 
   /** 画面・AI へ見せる今の様子（memory.learnStatus） */
+  async function lastChanges() {
+    const run = open().get('memory.organize', 'lastRun');
+    const migrationId = 'memory-migration-v1';
+    const migration = await memory.runChanges(migrationId);
+    const current = run ? [...await memory.runChanges(run.runId), ...(brain?.runChanges(run.runId) ?? [])] : [];
+    return [
+      ...current.map(change => ({ ...change, runId: run.runId })),
+      ...migration.map(change => ({ ...change, runId: migrationId })),
+    ];
+  }
+
+  async function undoChange({ runId, id, rev, type }) {
+    if (running) return { skipped: 'running' };
+    if (runId !== 'memory-migration-v1' && runId !== open().get('memory.organize', 'lastRun')?.runId) return { skipped: 'none' };
+    const done = type === 'followUp' ? brain?.undoRunChange(runId, id, rev) : await memory.undoRunChange(runId, id, rev);
+    return done ? { restored: 1 } : { skipped: 'changed' };
+  }
+
   async function status() {
     const prefs = await readPrefs();
     const enabled = autoLearnAllowed(prefs);
@@ -747,7 +770,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
    * 夜の整理の最後の振り分け。1 回に SORT_NIGHT_BATCHES 束まで。OFF・世代替わり・停止で次の束へ進まない。失敗してもここで握り、夜の整理の失敗にしない。
    * 返りは決めた数（placed）。走らなかったときは 0
    */
-  async function sortNight(gen, prefs) {
+  async function sortNight(gen, prefs, runId) {
     if (sortRunning) return 0;
     const last = sortRead();
     // 取り消した後は、スイッチを入れ直す（世代が替わる）まで決め直さない
@@ -799,7 +822,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
           const decided = decideTier(answer, places.get(item.id));
           try {
             const done = await memory.place({ id: item.id, tier: decided.tier, workspace: decided.tier === 'workspace' ? decided.workspace : (entry.workspace ?? null),
-              reason: decided.reason, migration, expect: { tier: null, workspace: entry.workspace ?? null } });
+              reason: decided.reason, migration, runId, unlessHumanPlaced: true, expect: { tier: null, workspace: entry.workspace ?? null } });
             if (done.placed) { tiers[decided.tier]++; placed++; if (decided.reason === 'workspace unknown') unknown++; }
             else if (done.reason === 'changed') changed++;
             else left++;
@@ -851,7 +874,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
 
   return {
     state: () => structuredClone(state), runNow, runIfDue, learnNow, summarizeEpisode, status,
-    sortUndo, sortStatus,
+    sortUndo, sortStatus, lastChanges, undoChange,
     /** 自動再試行を止めた状態か（memory.learnStatus・エピソードの enabled が見る） */
     isHalted: () => Boolean(state.status.halted),
     async start() {

@@ -13,7 +13,7 @@ export function followUpTable(db, now) {
   const read = (type, botId) => todos.followUps(type, botId).map(item => {
     const { type: _type, id, status, ...data } = item.external.followUp;
     const active = type === 'concern' ? 'open' : 'pending';
-    return { item, value: { ...data, id, todoId: item.id, status: item.status === 'done' ? (status === active ? (type === 'concern' ? 'resolved' : 'cancelled') : status) : active,
+    return { item, value: { ...data, id, todoId: item.id, status: status === 'expired' ? status : item.status === 'done' ? (status === active ? (type === 'concern' ? 'resolved' : 'cancelled') : status) : active,
       [type === 'concern' ? 'text' : 'note']: item.text, createdAt: item.createdAt, updatedAt: item.updatedAt } };
   });
   const put = (type, value, updatedAt, existing) => {
@@ -23,14 +23,14 @@ export function followUpTable(db, now) {
     const order = existing?.order ?? (todos.list(scope.kind, scope.id).at(-1)?.order ?? 0) + 1;
     todos.replace(scope.kind, scope.id, [{
       ...existing, id, order, text: text ?? note ?? '', createdAt, updatedAt,
-      status: ['open', 'pending'].includes(value.status) ? existing?.status === 'doing' ? 'doing' : 'todo' : 'done',
+      status: ['open', 'pending', 'expired'].includes(value.status) ? existing?.status === 'doing' ? 'doing' : 'todo' : 'done',
       external: { ...existing?.external, followUp: { type, ...data } },
       by: existing?.by ?? value.author ?? { kind: 'agent', botId: value.botId },
       updatedBy: { kind: 'agent', botId: value.botId },
     }]);
   };
-  if (!states.get('todo.followUpMigration', 'v1')) transaction(db, () => {
-    if (states.get('todo.followUpMigration', 'v1')) return;
+  if (states.get('todo.followUpMigration', 'v1') == null) transaction(db, () => {
+    if (states.get('todo.followUpMigration', 'v1') != null) return;
     for (const loop of brainTable(db).legacyLoops()) put('concern', loop, loop.updatedAt);
     for (const wake of wakeTable(db).legacyWakes()) put('wake', wake, wake.updatedAt ?? wake.closedAt ?? wake.firedAt ?? wake.createdAt ?? wake.at);
     states.save([['todo.followUpMigration', 'v1', now()]]);
@@ -43,11 +43,57 @@ export function followUpTable(db, now) {
     for (const { item } of rows) todos.replace(item.scope.kind, item.scope.id, [], [item.id]);
     return rows.length;
   });
+  const changeKind = runId => `memory.follow-up:${runId}`;
+  const applyChange = (runId, type, row, value, reason) => transaction(db, () => {
+    put(type, value, now(), row.item);
+    const after = find(type, value.botId, value.id).item;
+    const previous = states.get(changeKind(runId), row.item.id);
+    states.save([[changeKind(runId), row.item.id, { type, before: previous?.before ?? row.item, after, reason,
+      scopeRev: todos.rev(after.scope.kind, after.scope.id) }]]);
+  });
+  const undoable = change => {
+    const item = find(change.type, change.after.external.followUp.botId, change.after.external.followUp.id)?.item;
+    return Boolean(!change.undone && item && JSON.stringify(item) === JSON.stringify(change.after));
+  };
   return {
+    expire(runId) {
+      const day = 86_400_000;
+      const at = now();
+      const changed = new Set();
+      for (const row of read('concern', null)) {
+        const { item, value } = row;
+        const due = (value.due ?? value.createdAt) + (value.due != null ? 7 : 14) * day;
+        if (value.status !== 'open' || item.by?.kind === 'human' || item.external?.humanWaiting || due > at) continue;
+        applyChange(runId, 'concern', row, { ...value, status: 'expired' }, value.due != null ? 'deadlineElapsed' : 'trackingElapsed');
+        changed.add(value.botId);
+      }
+      return [...changed];
+    },
+    changes(runId) {
+      return Object.values(states.ofKind(changeKind(runId))).map(change => ({
+        id: change.after.id, layer: change.after.external.followUp.botId, rev: change.scopeRev,
+        before: { text: change.before.text, status: change.before.external.followUp.status },
+        after: { text: change.after.text, status: change.after.external.followUp.status },
+        reason: change.reason, canUndo: undoable(change), type: 'followUp',
+      }));
+    },
+    undo(runId, id, rev) {
+      return transaction(db, () => {
+        const change = states.get(changeKind(runId), id);
+        if (!change || change.scopeRev !== rev || !undoable(change)) return null;
+        const { before } = change;
+        todos.replace(before.scope.kind, before.scope.id, [{ ...before, updatedAt: now(), updatedBy: { kind: 'human' } }]);
+        states.save([[changeKind(runId), id, { ...change, undone: true }]]);
+        return before.external.followUp.botId;
+      });
+    },
     loops: (botId, status) => list('concern', botId, status).sort((a, b) => a.updatedAt - b.updatedAt),
     loop: (botId, id) => find('concern', botId, id)?.value ?? null,
-    putLoop(botId, id, status, updatedAt, data) {
-      put('concern', { ...data, botId, id, status }, updatedAt, find('concern', botId, id)?.item);
+    putLoop(botId, id, status, updatedAt, data, runId) {
+      const row = find('concern', botId, id);
+      const value = { ...data, botId, id, status };
+      if (runId && row) applyChange(runId, 'concern', row, value, status === 'resolved' ? 'resolvedByPerson' : 'cancelledByPerson');
+      else put('concern', value, updatedAt, row?.item);
     },
     clearLoops: botId => remove('concern', botId),
     get: id => find('wake', null, id)?.value ?? null,

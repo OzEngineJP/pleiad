@@ -17,6 +17,11 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
   const deps = [...$('memoryPanel').querySelectorAll('.learn-dep')];   // 毎晩の整理が OFF の間は薄くして押せなくする行（時刻）
   const statusBox = $('memoryLearnStatus');
   const actionsBox = $('memoryLearnActions');
+  const changesPanel = $('memoryLastChanges');
+  const changesList = $('memoryChangeList');
+  let changesLimit = 20;
+  let changesRead = 0;
+  changesPanel.ontoggle = () => { if (changesPanel.open) void refreshChanges(); };
   const saved = $('memoryLearnSaved');
   const botsBox = $('memoryBots');
   const botsList = $('memoryBotsList');
@@ -151,12 +156,64 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
     paintEnablement();
   }
 
+  // i18n-dynamic: settings.memory.changes.reason.
+  // i18n-dynamic: settings.memory.changes.status.
+  // i18n-dynamic: channels:memory.tier.
+  function changeText(entry) {
+    if (!entry) return t('settings.memory.changes.absent');
+    const state = entry.tier ? t(`channels:memory.tier.${entry.tier}`)
+      : entry.status ? t(`settings.memory.changes.status.${entry.status}`) : '';
+    return [entry.text, state, entry.workspace, entry.why].filter(Boolean).join(' · ');
+  }
+
+  async function refreshChanges(feedback = '') {
+    const read = ++changesRead;
+    try {
+      const all = await invoke('memory.lastChanges', {});
+      if (read !== changesRead) return;
+      const rows = all.slice(0, changesLimit).map(change => {
+        const row = el('details', 'mem-status');
+        const before = el('p', null, t('settings.memory.changes.before', { text: changeText(change.before) }));
+        const after = el('p', null, t('settings.memory.changes.after', { text: changeText(change.after) }));
+        const knownReason = ['legacyPromise', 'unconfirmedImportance', 'organizer', 'deadlineElapsed', 'trackingElapsed', 'resolvedByPerson', 'cancelledByPerson'].includes(change.reason);
+        const reason = el('p', null, t('settings.memory.changes.reasonLabel', {
+          text: knownReason ? t(`settings.memory.changes.reason.${change.reason}`) : change.reason,
+        }));
+        const undo = el('button', 'btn', t('settings.memory.changes.undo'));
+        undo.type = 'button';
+        undo.disabled = !change.canUndo || Boolean(status?.running);
+        undo.onclick = async () => {
+          undo.disabled = true;
+          const { id, rev, runId, type } = change;
+          try {
+            const result = await invoke('memory.sortUndo', { change: { id, rev, runId, type } });
+            await refreshChanges(t(result?.restored ? 'settings.memory.changes.restored' : 'settings.memory.changes.unavailable'));
+          } catch {
+            await refreshChanges(t('settings.memory.changes.unavailable'));
+          }
+        };
+        row.append(el('summary', null, change.after?.text ?? change.before?.text), before, after, reason, undo);
+        return row;
+      });
+      const more = el('button', 'btn', t('settings.memory.changes.more'));
+      more.type = 'button';
+      more.onclick = () => { changesLimit += 20; void refreshChanges(); };
+      changesList.replaceChildren(...(feedback ? [el('p', null, feedback)] : []),
+        ...(rows.length ? rows : [el('p', null, t('settings.memory.changes.empty'))]),
+        ...(all.length > rows.length ? [more] : []));
+    } catch {
+      if (read === changesRead) changesList.textContent = t('settings.memory.changes.unavailable');
+    }
+  }
+
   async function refreshState() {
     const mine = ++seq;
     const current = await invoke('memory.learnStatus', {}).catch(() => null);
     if (mine !== seq) return;
+    const finished = status?.running && !current?.running;
     status = current;
     paintStatus(!current);
+    if (finished && changesPanel.open) void refreshChanges();
   }
 
   async function refresh() {

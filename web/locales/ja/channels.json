@@ -279,7 +279,8 @@
     "count": "{{n}} 件",
     "more": "さらに表示（残り {{n}} 件）",
     "stopTracking": "この件を追うのをやめる",
-    "folder": {"open": "やりかけ", "decision": "決めたこと", "pref": "好み", "share": "分担", "note": "メモ", "done": "完了", "stop": "やめたこと"},
+    "folder": {
+      "expired": "期限を過ぎた気がかり","open": "やりかけ", "decision": "決めたこと", "pref": "好み", "share": "分担", "note": "メモ", "done": "完了", "stop": "やめたこと"},
     "tier": {
       "none": "渡す場面は未定",
       "standard": "その他",

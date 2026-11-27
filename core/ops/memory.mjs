@@ -31,7 +31,7 @@ const sourceInput = z.object({
 const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
-  kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum([...MEMORY_STATUSES, 'expired']).optional(),
   tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
   concern: z.object({ id: z.string(), wakeOn: z.unknown(), due: z.number().nullable() }).optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
@@ -153,8 +153,8 @@ export const memoryOps = [
       if (who.author?.kind !== 'human') return entries;
       const concerns = name === USER_LAYER ? [] : (ctx.brain?.loops(name, null) ?? []).map((loop) => ({
         id: 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
-        at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: { kind: 'bot', botId: name },
-        status: ({ open: 'open', resolved: 'done', dropped: 'dropped' })[loop.status],
+        at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: loop.author ?? { kind: 'bot', botId: name },
+        status: ({ open: 'open', resolved: 'done', dropped: 'dropped', expired: 'expired' })[loop.status],
         concern: { id: loop.id, wakeOn: loop.wakeOn ?? null, due: loop.due ?? null },
       }));
       const titles = new Map();
@@ -317,6 +317,16 @@ export const memoryOps = [
     handler: async (ctx) => ctx.memoryLearner.status(),
   }),
 
+  defineOp({
+    id: 'memory.lastChanges',
+    summary: 'agent:ops.memory.learnStatus.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.array(z.unknown()),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.lastChanges(),
+  }),
+
   // 「今すぐ整理」/「もう一度」。停止（halted）を明示操作で解除してから 1 回走る。毎晩の整理が OFF のままでは動かない（skipped: 'off'）
   defineOp({
     id: 'memory.learnNow',
@@ -346,11 +356,13 @@ export const memoryOps = [
     id: 'memory.sortUndo',
     summary: 'agent:ops.memory.sortUndo.summary',
     risk: 'guarded',
-    input: z.object({}),
+    input: z.object({
+      change: z.object({ runId: z.string().max(80), id: z.string().max(80), rev: z.number().int(), type: z.enum(['followUp']).optional() }).optional(),
+    }),
     output: z.object({ restored: z.number().int().optional(), kept: z.number().int().optional(), skipped: z.string().optional() }),
     confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortUndo.confirm'), before: null, loosens: false }),
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: async (ctx) => ctx.memoryLearner.sortUndo(),
+    handler: async (ctx, { change }) => change ? ctx.memoryLearner.undoChange(change) : ctx.memoryLearner.sortUndo(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る

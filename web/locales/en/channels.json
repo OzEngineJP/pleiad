@@ -283,7 +283,8 @@
     "count": "{{n}}",
     "more": "Show more ({{n}} remaining)",
     "stopTracking": "Stop tracking this item",
-    "folder": {"open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
+    "folder": {
+      "expired": "Expired concerns","open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
     "tier": {
       "none": "Not decided yet",
       "standard": "Other",
