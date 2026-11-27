@@ -64,9 +64,9 @@ async page => {
   check((await sent('channels.create')).some(m => m.args.args?.name === name), 'Enter で channels.create に名前を渡す');
   check(await page.locator('#groups .cs-new').count() === 0, '作ると欄は閉じる');
   await page.waitForFunction(n => document.querySelector('.channels-view .top h2')?.textContent.includes(n), name);
-  check(true, '作ったチャンネルが木に出て、その流れが開く');
-  check(await heading.evaluate(n => n.closest('.chsec').classList.contains('no-threads')) && await heading.evaluate(n => getComputedStyle(n.closest('.grp-head').querySelector('.chsec-chev')).visibility) === 'hidden',
-    'スレッドの無いチャンネルは畳む印を出さない');
+  check(await heading.locator('xpath=..').locator('.chsec-chev').count() === 1
+    && await heading.locator('xpath=../..').locator('.channel-archive-head').count() === 1,
+    '空のチャンネルにも開閉とアーカイブがある');
   await shot('02-created');
 
   // ---- 同じ名前: 理由が欄の下に出て、打った字は残る。Esc で閉じて ＋ へ戻る

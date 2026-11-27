@@ -177,6 +177,21 @@ export const channelOps = [
     handler: (ctx, args) => run(ctx, () => ctx.channels.threadIndex(args)),
   }),
   defineOp({
+    id: 'channels.organizeThreads', summary: D('organizeThreads', 'summary'), risk: 'write',
+    riskReason: 'Changes the grouping and order of threads in the sidebar.',
+    input: z.object({
+      channelId: postId('organizeThreads', 'channelId'),
+      action: z.enum(['createFolder', 'renameFolder', 'moveFolder', 'moveThread', 'restoreThread']).describe(D('organizeThreads', 'action')),
+      folderId: z.string().max(100).optional().describe(D('organizeThreads', 'folderId')),
+      name: z.string().trim().min(1).max(120).optional().describe(D('organizeThreads', 'name')),
+      threadId: postId('organizeThreads', 'threadId').optional(),
+      beforeId: z.string().max(100).optional().describe(D('organizeThreads', 'beforeId')),
+    }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, args) => run(ctx, () => ctx.channels.organizeThreads(args, () => ctx.app.runningWork())),
+  }),
+  defineOp({
     id: 'channels.setThreadStatus', summary: D('setThreadStatus', 'summary'), risk: 'write',
     riskReason: 'Sets or clears the status label of a thread (the same status groups as conversations). It only changes how the sidebar groups the thread; no post or bot is touched. A human can do the same, so an agent is treated the same (ADR 0082)',
     input: z.object({

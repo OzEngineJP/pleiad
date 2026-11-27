@@ -5,6 +5,18 @@
 // 終わりの合図が無い裏のシェル・端末は、数えると印が消えなくなるので数えない。
 import { t } from './i18n.mjs';
 
+export function threadActivity(thread, { runningIds, waitingIds, bgWaiting }) {
+  const ids = [...new Set(Object.values(thread.sessions ?? {}).filter(Boolean))];
+  const live = Object.values(thread.live ?? {});
+  const behind = ids.reduce((count, id) => count + (bgWaiting.get(id) ?? 0), 0);
+  return {
+    running: ids.some(id => runningIds.has(id) && !bgWaiting.has(id))
+      || (!behind && (thread.state === 'working' || live.includes('working'))),
+    waiting: ids.some(id => waitingIds.has(id)) || thread.state === 'waiting' || live.includes('waiting'),
+    behind,
+  };
+}
+
 const waited = (x) => x.waitable === true || (x.kind !== 'shell' && x.kind !== 'terminal');
 
 export function behindOfTasks(tasks, { waiting = false } = {}) {

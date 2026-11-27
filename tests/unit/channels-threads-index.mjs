@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ChannelError, createChannelService, THREADS_PER_CHANNEL } from '../../core/channels/service.mjs';
 import { applyThreadPatch, emptyThread, threadTitle } from '../../core/channels/threads.mjs';
+import { ARCHIVE_FOLDER, ROOT_FOLDER, threadGroups } from '../../web/channels/thread-folders.mjs';
 
 export const name = 'channels-threads-index';
 export const title = 'スレッドの索引: チャンネルごとの最近のスレッド・件数・未読・状態・スレッドの既読';
@@ -74,6 +75,53 @@ export default async function (t) {
     t.ok('スレッドを読むと、その行の未読が消える（チャンネルの既読も同じ値へ進む）', before.unread === true && after.threads.find((x) => x.threadId === roots[0]).unread === false);
     const later = await post(a, '新しい返信', roots[1], BOT);
     t.ok('読んだ後の返信は未読', Boolean(later) && (await service.threadIndex({ channelId: a, all: true })).threads.find((x) => x.threadId === roots[1]).unread === true);
+
+    const organize = (action, args = {}, work) => service.organizeThreads({ channelId: a, action, ...args }, work);
+    const ordered = async (channel) => {
+      const { threads } = await service.threadIndex({ channelId: a, all: true });
+      return new Map([...threadGroups(channel.threadFolders, threads)].map(([id, members]) => [id, members.map(row => row.threadId)]));
+    };
+    t.ok('フォルダー情報のないチャンネルでは全件が直下に出る', (await ordered({})).get(ROOT_FOLDER).length === 7);
+    const created = await organize('createFolder', { name: 'First' });
+    const first = created.threadFolders.folders[0].id;
+    const second = (await organize('createFolder', { name: 'Second' })).threadFolders.folders[1].id;
+    await organize('renameFolder', { folderId: first, name: 'Renamed' });
+    const reordered = await organize('moveFolder', { folderId: second, beforeId: first });
+    t.ok('フォルダーの作成・改名・並べ替え', reordered.threadFolders.folders.map(folder => folder.name).join() === 'Second,Renamed');
+    await organize('moveThread', { threadId: roots[6], folderId: first });
+    const inserted = await organize('moveThread', { threadId: roots[3], folderId: first, beforeId: roots[6] });
+    t.ok('直下からフォルダーへ移して間に挿入', (await ordered(inserted)).get(first).join() === [roots[3], roots[6]].join());
+
+    await service.threads.update(a, roots[6], { sessions: { b_owl: 's_active' } });
+    const archive = work => organize('moveThread', { threadId: roots[6], folderId: ARCHIVE_FOLDER }, async () => work);
+    t.ok('応答中・あなた待ち・子が作業中はアーカイブへ移せない',
+      await codeOf(() => archive({ turns: [{ sessionId: 's_active' }] })) === 'INVALID'
+      && await codeOf(() => archive({ permissions: [{ sessionId: 's_active' }] })) === 'INVALID'
+      && await codeOf(() => archive({ background: [{ sessionId: 's_active', tasks: [{ type: 'subagent' }] }] })) === 'INVALID');
+
+    const archived = await organize('moveThread', { threadId: roots[6], folderId: ARCHIVE_FOLDER });
+    const reader = createChannelService({ dir: path.join(tmp, 'channels') });
+    try {
+      await reader.start();
+      const saved = (await reader.list()).find(channel => channel.id === a);
+      const index = await reader.threadIndex({ channelId: a, all: true });
+      t.ok('保存を読み直してもアーカイブ・並び・既存の状態が残る',
+        (await ordered(saved)).get(ARCHIVE_FOLDER).join() === roots[6]
+        && index.threads.find(row => row.threadId === roots[6]).status === 'あとで'
+        && saved.threadFolders.folders[0].id === second
+        && archived.threadFolders.restore[roots[6]].folderId === first);
+      t.ok('アーカイブしたスレッドを検索と直接読み取りで開ける',
+        (await reader.search({ channelId: a, query: '仕事 6' })).hits.some(hit => hit.threadId === roots[6] || hit.postId === roots[6])
+        && Boolean(await reader.read({ channelId: a, threadId: roots[6] })));
+    } finally {
+      await reader.close();
+    }
+    const restored = await organize('restoreThread', { threadId: roots[6] });
+    t.ok('アーカイブから元の位置へ戻せる', (await ordered(restored)).get(first).join() === [roots[3], roots[6]].join());
+    await organize('moveThread', { threadId: roots[6], folderId: second });
+    const atRoot = await organize('moveThread', { threadId: roots[6], folderId: ROOT_FOLDER, beforeId: roots[2] });
+    t.ok('別のフォルダーを経由して直下に移せる', (await ordered(atRoot)).get(ROOT_FOLDER).includes(roots[6])
+      && !(await ordered(atRoot)).get(second).length);
   } finally {
     await service.close().catch(() => {});
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
