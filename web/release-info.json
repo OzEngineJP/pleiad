@@ -1,6 +1,25 @@
 {
-  "version": "0.44.2-beta.3",
+  "version": "0.44.2-beta.4",
   "releases": [
+    {
+      "version": "0.44.2-beta.4",
+      "date": "2026-11-27",
+      "title": "Antigravity で Gemini 4 Hydrogen を選ぶと失敗するのを直しました",
+      "sections": [
+        {
+          "title": "Antigravity",
+          "items": [
+            "Gemini 4 Hydrogen（Low・Medium・High・XHigh）を選ぶと「agy が選んだモデル・段を受け付けませんでした。」で失敗していたのを直しました。"
+          ]
+        },
+        {
+          "title": "チャンネルとスレッド",
+          "items": [
+            "bot が返事を始める前に失敗したときも、スレッドに「失敗」と理由を出し、会話の履歴にも残すようにしました。ルーティン（定時・webhook）で起こしたときも同じです。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.44.2-beta.3",
       "date": "2026-11-27",
