@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -6,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { dataDir, get, setSessionData } from '../store.mjs';
 import { t } from '../i18n.mjs';
+import { spawnCli } from '../cli-installation.mjs';
 import { editableField, hostTools, interactionQuestions } from './pleiad-agent-tools.mjs';
 import { managedBackendIds } from './host-policy.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
@@ -242,8 +242,8 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
     await mkdir(homeDir, { recursive: true });
     const { VERSION, readFrames, writeFrame } = await adapter(cli, 'frames');
     if (signal?.aborted) { outcome = 'aborted'; return; }
-    child = spawn(process.execPath, [cli, 'stdio'], {
-      cwd, env: childEnvironment(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
+    child = spawnCli([process.execPath, cli], ['stdio'], {
+      cwd, env: childEnvironment(), stdio: ['pipe', 'pipe', 'ignore'],
     });
     child.on('error', () => {});
     child.stdin.on('error', () => { child.kill(); });

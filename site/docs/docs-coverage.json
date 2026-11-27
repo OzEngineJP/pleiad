@@ -86,6 +86,7 @@
     "ops:statuses": "reference/ops",
     "ops:todos": "reference/ops",
     "ops:voice": "reference/ops",
+    "ops:workspace": "reference/ops",
     "ops:worktrees": "reference/ops",
     "setting:account": "reference/settings",
     "setting:addedContext": "reference/settings",

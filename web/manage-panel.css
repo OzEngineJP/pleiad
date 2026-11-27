@@ -211,7 +211,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-pc-workspace-row { display:flex; align-items:center; }
 .rm-pc-workspace-row > .rm-row { flex:1; min-width:0; }
 .rm-pc-workspace-gear { flex:none; display:grid; place-items:center; min-width:36px; min-height:36px; }
-.rm-pc-workspace-choices { min-width:0; margin:0 8px 8px; padding:6px 12px 10px; border:1px solid var(--line); border-radius:var(--r-s); }
+.rm-pc-workspace-choices { min-width:0; margin:0 8px 8px; padding:6px 12px 10px; border:0; background:var(--surface-2); border-radius:var(--r-s); }
 .rm-pc-workspace-choices legend { padding:0 4px; }
 .rm-pc-workspace-choice { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:32px; }
 .rm-rt { flex:1; min-width:0; display:flex; flex-direction:column; }
