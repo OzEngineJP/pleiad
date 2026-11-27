@@ -108,6 +108,7 @@ export function setupChannels(host) {
 
   const api = {
     completionScope: () => thread.completionScope?.() ?? feed.completionScope?.() ?? null,
+    foregroundChanged: () => each('foregroundChanged'),
     /** 出来事を部品へ渡す。この画面の出来事なら true（client.mjs の onEvent はそこで終わる） */
     onEvent(ev, replay = false) {
       each('onEvent', ev, replay);

@@ -335,7 +335,7 @@ export function createFeed(host) {
   // ---------------------------------------------------------------- 既読
   let readTimer = null;
   const active = () => !root.hidden && !root.inert && (root.closest('#chDeck')?.dataset.deck ?? 'feed') === 'feed'
-    && document.body.classList.contains('channels') && document.visibilityState !== 'hidden';
+    && document.body.classList.contains('channels') && (host.isForeground?.() ?? document.visibilityState !== 'hidden');
   function markRead() {
     host.completionPresenceChanged?.();
     clearTimeout(readTimer);
@@ -522,6 +522,7 @@ export function createFeed(host) {
   }
 
   return {
+    foregroundChanged() { if (active()) markRead(); },
     completionScope() {
       return S.ready && S.id && active() && nearBottom() ? { channelId: S.id, shownAt: shownReadPosition(S.posts) } : null;
     },

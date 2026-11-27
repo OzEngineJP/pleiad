@@ -248,7 +248,8 @@ export function createThread(host) {
 
   // スレッドを見ていて末尾にいる間は、そのスレッドの既読を返信まで進める。
   let readTimer = null, readSent = 0;
-  const watching = () => document.body.classList.contains('channels') && deck.state !== 'feed' && document.visibilityState !== 'hidden';
+  const watching = () => document.body.classList.contains('channels') && deck.state !== 'feed'
+    && (host.isForeground?.() ?? document.visibilityState !== 'hidden');
   function markRead() {
     host.completionPresenceChanged?.();
     clearTimeout(readTimer);
@@ -1177,6 +1178,7 @@ export function createThread(host) {
   }
 
   return {
+    foregroundChanged() { syncWatch(); if (watching()) markRead(); },
     completionScope() {
       return S.ready && S.threadId && watching() && nearBottom()
         ? { channelId: S.channelId, threadId: S.threadId, shownAt: shownReadPosition(S.posts) } : null;

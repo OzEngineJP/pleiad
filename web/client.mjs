@@ -8737,7 +8737,7 @@ function workContext(anchor) {
   if (!sessionId) return null;
   return { sessionId, at: anchor.closest('.m')?.dataset.at, modal: modalPaneFor(sessionId) };
 }
-/** この会話の右の欄をダイアログの中に出せるか（Channels のスレッドのダイアログは従来どおりメインで開く） */
+/** 選択したローカルの子の会話の右の欄を、委譲のダイアログの中に出せるか */
 function modalPaneFor(sessionId) {
   return Boolean(sessionId) && modalPaneTarget() === sessionId;
 }
@@ -8884,6 +8884,7 @@ const channelsUi = setupChannels({
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: (id) => viewAddress.go({ sessionId: id }),
   completionPresenceChanged: () => queueMicrotask(() => channelPresence.report()),
+  isForeground: watchingNow,
   // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
   noteView: (view) => {
     viewAddress.note(view);
@@ -11923,8 +11924,8 @@ const reportPresence = (force = false) => {
   channelPresence.report(force);
 };
 document.addEventListener('visibilitychange', () => reportPresence());
-addEventListener('plyremote:stop', () => { shellStopped = true; reportPresence(); });
-addEventListener('plyremote:start', () => { shellStopped = false; reportPresence(true); });
+addEventListener('plyremote:stop', () => { shellStopped = true; channelsUi.foregroundChanged(); reportPresence(); });
+addEventListener('plyremote:start', () => { shellStopped = false; channelsUi.foregroundChanged(); reportPresence(true); });
 presenceReporter.start();
 modalPresence.start();
 channelPresence.start();
