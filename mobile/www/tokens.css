@@ -1,0 +1,189 @@
+/* Generated from packages/design-tokens/tokens.css. Run node scripts/generate-design-tokens.mjs. */
+/* ==================== デザイントークン ====================
+   web/style.css と同じ 3 段構成。素の :root にライトの値を全部書き、ダークは上書きだけを持つ。
+
+     :root                              ライト（既定）
+     @media (prefers-color-scheme:dark) OS がダークで、利用者が light を選んでいないとき
+     :root[data-theme="dark"]           利用者が明示的にダークを選んだとき（トグルが勝つ）
+
+   どのトークンも素の :root に必ず定義があること。media の中だけで定義すると、
+   もう片方のテーマでその色が消える。
+
+   色の族は 4 つだけ。族の名前が用途を縛る（lint-design.mjs が機械的に見る）。
+     --surface-*  面。無彩色〜青みグレーの階調のみ。彩度（OKLCH の C）が 0.015 未満であること
+     --fill-*     有彩色の面。主要操作（送信・許可・回答）のボタン専用。文字は必ず --on-fill
+     --ink-*      文字。本文・強い・弱い・青 の 4 種と、差し色の --ink-mark
+     --line-*     線。会話の筋・枝・フォーカスの輪・光の走り。枠線には使わない
+   「薄い色地 + 同系の濃い文字」の札は、面が無彩色しか無いので作れない。
+   区切りは枠線ではなく、余白・面の階調・配置で作る（lint: border-use）。
+   片側だけの線（border-left や inset の影）は意味を持たせても持たせなくても使わない（lint: one-sided-line）。
+   意味（待っている・失敗・放置）は面の階調・記号・文字・位置で伝える。
+   `--xxx-bg` / `--xxx-fg` のような同じ語幹のペアは作らない（lint: paired-token）。 */
+:root{
+  --ink-brand:#000000;
+  --ink-antigravity:#1a73e8;
+  /* -- 面（surface）。参考画像の地 #dcdee8 を白側へ寄せた階調。会話は白、脇は薄いグレー -- */
+  --surface-paper:#ffffff;    /* 会話の地。一番長く見る場所なので白。コントラスト優先 */
+  --surface-0:#eceef4;        /* 脇のパネル（セッション一覧）の地 */
+  --surface-1:#f4f5f9;        /* 白の上に一段置く面。カード・入力欄・考えている枠。脇ではホバー */
+  --surface-2:#e8eaf1;        /* 沈んだ面。コード・利用者の発言・折り畳みの中身 */
+  --surface-3:#dcdee8;        /* さらに沈む面。表の見出し行・言語札・diff の削除行（参考画像の地そのもの） */
+  --surface-hover:#f4f5f9;    /* 一覧の行のホバー */
+  --surface-sel:#e3e5ed;      /* 候補一覧で今指しているもの・選んだ選択肢 */
+  --surface-veil:rgba(21,22,28,.32);   /* ダイアログの背後の覆い。無彩色で沈める */
+  --surface-thumb:#c9cbd2;    /* スクロールバーのつまみ。白の上でも脇のグレーの上でも見えて、文字より前に出ない */
+  --surface-thumb-hover:#acaeb7;   /* つまみに触れたとき。掴めることが分かる一段 */
+  --surface-qr:#ffffff;       /* ペアリングの QR の地。カメラが読めるよう明暗テーマによらず白（web/remote.mjs） */
+  --surface-console:#191b22;  /* ツール実行の端末面（web/tools.css の .tc-term）。明暗テーマ共通の固定の暗い面。無彩色の刻みに留める（提案の #191b26 は C=0.022 で lint の面の上限を越えるので一段落とす） */
+  --ink-console:#dfe1ee;      /* 端末面の上の本文。明暗テーマ共通 */
+  --ink-console-weak:#8f95b0; /* 端末面の上のプロンプト・補足。明暗テーマ共通 */
+
+  /* -- 塗り（fill）。唯一の有彩色の面。主要操作にだけ使う。文字は --on-fill 固定 -- */
+  --fill-primary:#3a499e;     /* 送信・許可・回答する */
+  --fill-primary-hover:#2f3c86;
+  --fill-off:#8189b3;         /* スイッチのオフのトラック。面（--surface-1・--surface-paper）に対して明暗どちらでも 3:1 以上で、オン（--fill-primary）より明るい */
+  --on-fill:#f4f5ff;          /* 塗りの上に乗る文字・アイコン。ほぼ白 */
+
+  /* -- 文字（ink）。濃い青が本文。「青い線と文字」を地に置く -- */
+  --ink:#1c2247;              /* 本文 */
+  --ink-strong:#0f1330;       /* strong・失敗の一語 */
+  --ink-weak:#596089;         /* 補足・時刻・パス・畳んだ中身・ラベル。最も沈んだ面（--surface-3）の上でも 4.5:1 以上 */
+  --ink-blue:#3a499e;         /* リンク・今いる枝・既定から外れた設定 */
+  --ink-unread:#5665cd;       /* 完了・未確認の静止した丸。明暗テーマ共通 */
+  --ink-mark:#aa2678;         /* 差し色。「あなたを待っている」にだけ使う。他の意味に流用しない */
+  --ink-danger:#b2303e;       /* 消す・元に戻せない操作の確定（削除…・消す）。--diff-del-ink と同じ赤を ink の族へ（ADR 0291） */
+  --ink-qr:#0f1330;           /* ペアリングの QR の点。明暗テーマによらず濃い（白い地の上で読ませる） */
+
+  /* -- bot の顔の色（--bc1〜--bc8）。用途は bot の顔と @ の塊だけ。作った順に 1 から割り当て、9 体目から循環する（承認済み 2026-11-26、ADR 0362） -- */
+  --bc1:#3a6fd8;--bc2:#e07a2e;--bc3:#2f9a6a;--bc4:#d0559a;--bc5:#8a55d0;--bc6:#c99a12;--bc7:#1f9aa8;--bc8:#d64550;
+
+  /* -- 線（line）。会話の筋・枝・フォーカスの輪・光の走り。枠を引くためのものではない -- */
+  --line:#c9cee0;             /* 会話の筋・脇の枝 */
+  --line-strong:#9eabde;      /* 分岐点の曲線・リンクの下線 */
+  --line-blue:#5665cd;        /* 今いる枝・伸びる枝・フォーカスの輪・光の走り */
+  --line-mark:#aa2678;        /* 差し色の線。待っているカードの節の輪にだけ */
+  --line-faint:#dfe2ec;       /* 脇のパネルに敷くグリッドの点。目を凝らして気づく程度 */
+
+  /* -- コードの文字。青の族の中で 4 段。色相を散らさない -- */
+  --ink-code-comment:#7c83a8;
+  --ink-code-string:#535cad;
+  --ink-code-number:#7a4c9e;  /* 青と赤紫の間 */
+  --ink-code-keyword:#3a499e;
+  --ink-code-fn:#1c2247;
+
+  /* -- 差分の色（--diff-*）。git パネルの差分と、変更の一覧の状態の文字（M / A / D / U）と +a −d にだけ使う。面は彩度を持つので、他の面・文字に流用しない（docs/design-system.md §2.1、ADR 0135。tests/lint-design.mjs が web/git.css の外を落とす） -- */
+  --diff-add-line:#e3f4e7;--diff-add-word:#b4e0c0;--diff-add-gutter:#d2ebd9;
+  --diff-del-line:#fce8eb;--diff-del-word:#f4bdc5;--diff-del-gutter:#f6d5da;
+  --diff-add-ink:#25773f;--diff-del-ink:#b2303e;--diff-mod-ink:#875900;
+
+  /* -- 影。浮いているもの（候補一覧・設定メニュー）にだけ。青みを持たせて地に馴染ませる -- */
+  --shadow:rgba(58,73,158,.16);
+
+  /* -- 通話の光（--glow-*）。通話中のメインの背景（web/voice.css の .vc-aurora）だけ。面は無彩色という規則の例外で、radial-gradient の色と濃さにだけ使う（lint-design が場所を絞る）。
+        --glow-ink-* は通話中だけ弱い字・リンクを 1 段濃く（ダークは明るく）して、光の上でも 4.5:1 を保つ。承認済み 2026-10-06（docs/design-system.md「通話モード」） -- */
+  --glow-1:#4b63e8;--glow-2:#b04ee6;--glow-strength:.40;
+  --glow-ink-weak:#454d7a;--glow-ink-blue:#34428f;
+
+  /* -- 余白。4 の倍数。数字を等幅にするので、余白も刻みを揃える -- */
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;
+
+  /* -- 線幅。筋と枝の stroke 幅 -- */
+  --hair:1px;
+
+  /* -- 角丸。全部曲線で揃える。小さな部品も角を立てない -- */
+  --r-s:8px;--r-m:14px;--r-l:20px;--r-pill:999px;
+
+  /* -- 文字 -- */
+  /* 欧文の書体 → 日本語の書体の順。欧文は Segoe UI（Windows）・San Francisco（macOS）、日本語は Yu Gothic UI・Hiragino Sans。
+     system-ui を先頭にすると日本語の Windows では欧文まで Yu Gothic UI で描かれ、バックスラッシュが「¥」の字形になる */
+  --font:"Segoe UI",-apple-system,BlinkMacSystemFont,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  /* 等幅はコードそのものだけ。後ろに日本語の書体を足し、日本語が MS Gothic に落ちないようにする */
+  --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",monospace;
+  --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;
+  --lh:1.6;
+  /* Markdown のリストと引用の字下げ。入力欄の行と履歴の <ul>/<ol>/<blockquote> が同じ値を同じ数え方で足す（web/md-structure.mjs の indentCss）。
+     リストは 1 段目 1.5em・2 段目から 1 段ごとに +1.2em、引用は 12px・入れ子 1 段ごとに +4px。承認済み（2026-11-06、ADR 0292） */
+  --md-list-indent:1.5em;--md-list-step:1.2em;--md-quote-indent:12px;--md-quote-nest:4px;
+  /* 役割の大きさ。部品は段（--fs-*）ではなく役割で指す。PC は上の段と同じ値で、700px 以下だけ下の @media で上げる。
+     ポップ・メニューは本文の子とは限らないので :root に置く。承認済み（2026-10-23、ADR 0256・docs/design-system.md「スマホの大きさの段階」） */
+  --fs-body:var(--fs);        /* 本文・入力欄 */
+  --fs-title:var(--fs-l);     /* 上部の題 */
+  --fs-ui:var(--fs-s);        /* 操作の字: メニュー・候補・ポップ・待ちの文言（PC のチップは --fs のまま） */
+  --fs-meta:var(--fs-xs);     /* 補足: 発言者・時刻・所属・脇の補足・メニューの補足・ツールの補足と結果 */
+  --fs-verb:var(--fs-xs);     /* ツールの動詞 */
+  --fs-target:var(--fs-s);    /* 行の主役: ツールの対象・脇の行の題 */
+  --fs-term:var(--fs-s);      /* 端末の出力・添付の札 */
+  --icon:16px;                /* 主要なアイコン */
+  --icon-s:12px;              /* 補助のアイコン: 開閉の印・まとまりの印・札の中の印 */
+  --hit:30px;                 /* 押せる大きさ（実体の箱。擬似要素で広げない） */
+
+  /* -- 動き。有機的 = ゆっくり抜ける。速い動きは状態の切り替えだけ -- */
+  --dur-fast:120ms;           /* ホバー・フォーカス */
+  --dur:240ms;                /* 開閉・出現 */
+  --dur-slow:560ms;           /* 枝の最小化・最大化 */
+  --dur-branch:900ms;         /* 枝が伸びる線 */
+  --dur-pill:360ms;           /* 終端ノードが横へ伸びて pill になる */
+  --ease-out:cubic-bezier(.2,.7,.2,1);       /* 部品の出入り */
+  --ease-organic:cubic-bezier(.65,0,.25,1);  /* 枝。ゆっくり始まり、ゆっくり止まる */
+  /* ばね（応答の長さ・弾み）。JS は web/motion.mjs が読む。smooth は大きな面の出入りと幅、snappy は浮かぶ一覧だけ。
+     承認済み（2026-11-11、docs/design-system.md §8「動きの語彙」）。動きを減らす設定は web/motion.mjs が判定して終わりの値へ飛ばす */
+  --spring-smooth-response:.45s;--spring-smooth-bounce:0;
+  --spring-snappy-response:.3s;--spring-snappy-bounce:.15;
+
+  color-scheme:light}
+
+/* スマホの大きさの段階（700px 以下）。本文 17・操作 15・補足 13・ツールの対象 16・動詞 14・端末と添付 14・題 20、
+   アイコンは主要 20・補助 16、押せる大きさ 44。余白は --sp-1〜4（4・8・12・16）を使う */
+@media (max-width:700px){
+  :root{--fs-body:17px;--fs-title:20px;--fs-ui:15px;--fs-meta:13px;--fs-verb:14px;--fs-target:16px;--fs-term:14px;
+    --icon:20px;--icon-s:16px;--hit:44px}
+}
+
+/* OS がダーク、かつ利用者がライトを選んでいない */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ink-brand:#ffffff;
+    --ink-antigravity:#8ab4f8;
+    --surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;
+    --surface-hover:#222329;--surface-sel:#2a2b32;
+    --surface-veil:rgba(0,0,0,.55);
+    --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
+    --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--fill-off:#8a91b8;--on-fill:#f4f5ff;
+    --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
+    --bc1:#6f9bf0;--bc2:#f0a060;--bc3:#5cc495;--bc4:#ec8cc0;--bc5:#b08cf0;--bc6:#e8c04a;--bc7:#52c4d0;--bc8:#f07c84;
+    --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
+    --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
+    --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
+    --shadow:rgba(0,0,0,.5);
+    --glow-1:#6e8cff;--glow-2:#c76bff;--glow-strength:.42;--glow-ink-weak:#b4bbdd;--glow-ink-blue:#b0bbea;
+    --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
+    --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
+    --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;
+    /* スクロールバーを暗色にする */
+    color-scheme:dark}}
+
+/* 利用者が明示的にダークを選んだ。OS の設定より優先する */
+:root[data-theme="dark"]{
+  --ink-brand:#ffffff;
+  --ink-antigravity:#8ab4f8;
+  --surface-paper:#1b1c23;--surface-0:#121318;--surface-1:#222329;--surface-2:#15161c;--surface-3:#2a2b32;
+  --surface-hover:#222329;--surface-sel:#2a2b32;
+  --surface-veil:rgba(0,0,0,.55);
+  --surface-thumb:#35373f;--surface-thumb-hover:#4a4c54;
+  --fill-primary:#5665cd;--fill-primary-hover:#6573d6;--fill-off:#8a91b8;--on-fill:#f4f5ff;
+  --ink:#dfe3f2;--ink-strong:#f4f6ff;--ink-weak:#8a91b8;--ink-blue:#9eabde;--ink-mark:#e07ab8;--ink-danger:#f28b98;
+  --bc1:#6f9bf0;--bc2:#f0a060;--bc3:#5cc495;--bc4:#ec8cc0;--bc5:#b08cf0;--bc6:#e8c04a;--bc7:#52c4d0;--bc8:#f07c84;
+  --line:#2c2f3f;--line-strong:#454a66;--line-blue:#728cd7;--line-mark:#c94f9a;--line-faint:#1a1b22;
+  --ink-code-comment:#6f7699;--ink-code-string:#b8c4e0;--ink-code-number:#c48fd4;
+  --ink-code-keyword:#8fa0e6;--ink-code-fn:#dfe3f2;
+  --shadow:rgba(0,0,0,.5);
+  --glow-1:#6e8cff;--glow-2:#c76bff;--glow-strength:.42;--glow-ink-weak:#b4bbdd;--glow-ink-blue:#b0bbea;
+  --diff-add-line:#1b3124;--diff-add-word:#2a5838;--diff-add-gutter:#213c2c;
+  --diff-del-line:#3a1f26;--diff-del-word:#6a2a36;--diff-del-gutter:#48252f;
+  --diff-add-ink:#6fce8f;--diff-del-ink:#f28b98;--diff-mod-ink:#dcb36a;
+  color-scheme:dark}
+
+/* 動きを減らす設定。枝の線は一瞬で引き、明滅は止める。状態が消えないよう色と形は残す */
+@media (prefers-reduced-motion:reduce){
+  :root{--dur-fast:0ms;--dur:0ms;--dur-slow:0ms;--dur-branch:0ms;--dur-pill:0ms}
+}

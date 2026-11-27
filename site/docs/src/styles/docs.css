@@ -1,3 +1,5 @@
+@import "../../../tokens.css";
+
 /* 公開サイト（site/styles.css）の色と書体に軽く合わせる。
    書体は site/assets/fonts/ のものを使わない（使う字だけに削ってあり、文書の字が欠けるため）。 */
 :root {
@@ -7,7 +9,7 @@
 
 :root[data-theme="light"] {
   --sl-color-accent-low: #dfe3f7;
-  --sl-color-accent: #3a499e;
+  --sl-color-accent: var(--ink-blue);
   --sl-color-accent-high: #232c63;
   --sl-color-bg: #f5f6fa;
 }

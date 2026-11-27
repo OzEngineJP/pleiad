@@ -1,3 +1,4 @@
+/* Generated from packages/design-tokens/tokens.css. Run node scripts/generate-design-tokens.mjs. */
 /* ==================== デザイントークン ====================
    web/style.css と同じ 3 段構成。素の :root にライトの値を全部書き、ダークは上書きだけを持つ。
 

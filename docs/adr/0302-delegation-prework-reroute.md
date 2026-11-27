@@ -1,7 +1,7 @@
 # 0302 自動の委譲が仕事を始める前に断られたら、次の候補へ任せ直す
 
 - 状態: 提案
-- 関連: [0229](0229-opencode-limit-retry-wait.md)（上限の待ち・委譲先を外す記録）、[0040](0040-delegation-routing-headroom.md)（委譲の振り分け）、[0164](0164-delegation-effort-tiers.md)（段の強さ）、[0264](0264-delegation-tier-accounts.md)（段ごとのアカウント）、[0089](0089-delegation-worktree.md)（委譲の worktree）、Issue #111
+- 関連: [0229](0229-opencode-limit-retry-wait.md)（上限の待ち・委譲先を外す記録）、[0040](0040-delegation-routing-headroom.md)（委譲の振り分け）、[0164](0164-delegation-child-effort.md)（段の強さ）、[0264](0264-delegation-account-scope.md)（段ごとのアカウント）、[0089](0089-worktree-on-demand.md)（委譲の worktree）、Issue #111
 
 ## 状況
 

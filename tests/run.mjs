@@ -855,6 +855,7 @@ const SUITES = [
   './unit/outline-digest.mjs',
   // 見た目の規則。web/ の CSS と index.html を lint する（docs/design-system.md §5）
   './unit/design-lint.mjs',
+  './unit/design-tokens.mjs',
   // 操作のメニューを開く「…」はどこでも縦の 3 点（docs/design-system.md「「…」の形」・ADR 0313）
   './unit/more-icon.mjs',
   // メインの頭（Chats・チャンネル・DM・スレッド・bot のページ）の ≡・⋮・虫眼鏡・✦ は web/icons.mjs の 1 つの絵
