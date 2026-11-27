@@ -21,27 +21,19 @@ export function startHostLoader({ shellOrigin, view, status, entry = '/', servic
     if (value === 'ready' && !active) void open();
   }
 
-  async function controller() {
+  async function activeWorker() {
     await navigator.serviceWorker.register(serviceWorker, { type: 'module', scope: '/' });
-    await navigator.serviceWorker.ready;
-    return navigator.serviceWorker.controller ?? await new Promise((resolve, reject) => {
-      function changed() {
-        clearTimeout(timer);
-        resolve(navigator.serviceWorker.controller);
-      }
-      const timer = setTimeout(() => {
-        navigator.serviceWorker.removeEventListener('controllerchange', changed);
-        reject(new Error('host view is not controlled by its Service Worker'));
-      }, 10_000);
-      navigator.serviceWorker.addEventListener('controllerchange', changed, { once: true });
-    });
+    // A remounted loader can register its route with an already active worker.
+    // The worker controls the nested view when that view navigates into scope.
+    const registration = await navigator.serviceWorker.ready;
+    return registration.active;
   }
 
   async function open() {
     if (binding || state !== 'ready') return;
     binding = true;
     try {
-      const sw = await controller();
+      const sw = await activeWorker();
       const streams = new MessageChannel();
       const reply = new MessageChannel();
       const marker = await new Promise((resolve, reject) => {
@@ -58,7 +50,8 @@ export function startHostLoader({ shellOrigin, view, status, entry = '/', servic
       active = streams.port1;
       target.searchParams.set(TAB_PARAM, marker);
       view.src = target.href;
-    } catch {
+    } catch (error) {
+      console.error('Could not open the host view:', error?.message);
       show('stopped');
     } finally {
       binding = false;

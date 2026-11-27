@@ -87,6 +87,7 @@ export function setupPcWorkspaces({ cmd, onChange, account }) {
   const open = new Map();
   let revision = 0;
   const changed = () => { revision += 1; onChange(); };
+  // i18n-dynamic: settings.remote.workspaces.
   const label = key => t(`settings.remote.workspaces.${key}`);
 
   async function update(hostId, state, change) {

@@ -206,10 +206,16 @@ export async function conversationWorkspaceAccess(workspaceId) {
   const owners = await nativeOwnerIndex();
   return id => {
     if (typeof id !== 'string' || !id) return false;
-    const owner = owners.get(id) ?? id;
+    const owner = Object.hasOwn(entries, id) ? id : owners.get(id) ?? id;
     const record = Object.hasOwn(entries, owner) ? entries[owner] : null;
     return (record?.info?.workspaceId ?? null) === workspaceId;
   };
+}
+
+export async function conversationWorkspaceId(id) {
+  const entries = await all();
+  const owner = Object.hasOwn(entries, id) ? id : await hostConversationOfNative(id);
+  return owner && Object.hasOwn(entries, owner) ? entries[owner].info?.workspaceId ?? null : null;
 }
 
 /** ネイティブの会話 id を持つ Pleiad の会話 id。無ければ null */
@@ -774,7 +780,9 @@ export function wrapBackend(native) {
     const now = Date.now();
     const parent = { sessionId: id, atMessage: cutId ?? null,
       ...(before !== undefined ? { beforeMessage: before } : {}) };
+    const workspaceId = await conversationWorkspaceId(id);
     const info = { ...source, sessionId: child, backend: native.id, parent,
+      ...(workspaceId ? { workspaceId } : {}),
       title: options.title ?? (native.capabilities?.title ? source.title ?? meta.title : meta.title ?? source.title),
       tag: native.capabilities?.tag ? source.tag : meta.status ?? source.tag,
       cwd: meta.cwd ?? source.cwd, createdAt: now, lastModified: now };

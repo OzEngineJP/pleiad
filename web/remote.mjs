@@ -18,10 +18,9 @@ import qrcode from './vendor/qrcode-generator.mjs';
 import {
   relayHost, deviceIcon, button, iconButton, groupHead, listRow, detailHead, keyValues, switchButton, segment,
   externalLink, waitLine, confirmCode, createWizard, setText, paintInto, field, textInput, qrFigure,
-  INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine, stateLine, todoList, liveRow,
+  INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine, stateLine, todoList, liveRow, setupPcWorkspaces,
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
-import { setupPcWorkspaces } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 import { inMobileShell } from './remote-badge.mjs';
 

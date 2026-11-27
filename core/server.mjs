@@ -464,7 +464,7 @@ import { channelEventRows, HIDDEN_BOT_KINDS, innerEnvelope, isInternalConversati
 import { textForTitleModel } from './prompt-title.mjs';
 import { createInternalCalls, INTERNAL_UNAVAILABLE } from './internal-call.mjs';
 import { internalConversationOwner, isInternalSessionId } from './internal-conversation.mjs';
-import { nativeOwnerIndex, conversationWorkspaceAccess } from './conversations.mjs';
+import { nativeOwnerIndex, conversationWorkspaceAccess, conversationWorkspaceId } from './conversations.mjs';
 import { capabilityValue } from './backends/capability-marks.mjs';
 import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
@@ -2962,6 +2962,7 @@ async function browserCanUseSession(scope, id) {
 
 async function browserAttachment(sessionId, file) {
   if (typeof file !== 'string' || !file || !path.isAbsolute(file)) return null;
+  if (!await resolveBackendForSession(sessionId)) return null;
   const { dir } = attachTarget(sessionId);
   if (path.dirname(path.resolve(file)) !== dir) return null;
   return fs.realpath(file).then(async real => {
@@ -8956,7 +8957,8 @@ agentTasks = await createAgentTasks({
     }
     const info = { title: args.title, cwd, createdAt: Date.now(), lastModified: Date.now() };
     let sessionId;
-    try { sessionId = await createConversation(backend, info); }
+    const workspaceId = await conversationWorkspaceId(owner);
+    try { sessionId = await createConversation(backend, workspaceId ? { ...info, workspaceId } : info); }
     catch (e) { if (worktree) await worktreeHost.abandon(worktree.id).catch(() => {}); throw e; }
     if (worktree) await worktreeHost.worktrees.update(worktree.id, { sessionId }).catch(() => {});
     try {
@@ -9075,7 +9077,8 @@ agentTasks = await createAgentTasks({
       return { sessionId: oldSessionId, backend: backend.id, model, effort, cwd, mode, routing, rollback };
     }
     const info = { title: task.title ?? null, cwd, createdAt: Date.now(), lastModified: Date.now() };
-    const sessionId = await createConversation(backend, info);
+    const workspaceId = await conversationWorkspaceId(owner);
+    const sessionId = await createConversation(backend, workspaceId ? { ...info, workspaceId } : info);
     try {
       await store.setMeta(sessionId, { ...info, backend: backend.id, unsent: true });
       await chromeProfiles?.inherit(owner, sessionId);
@@ -11755,6 +11758,9 @@ wss.on("connection", (ws, req) => {
         if (target !== null && !(await browserCanUseSession(browserScope, target))) {
           return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
         }
+        if (['attachFile', 'attachStart'].includes(msg.command) && !await resolveBackendForSession(target)) {
+          return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
+        }
         if (msg.command === 'sendMessage' && Array.isArray(args?.attachments) &&
             (await Promise.all(args.attachments.map(file => browserAttachment(target, file?.path)))).some(file => !file)) {
           return reply(false, t('send.invalidAttachments'));
@@ -11827,12 +11833,12 @@ wss.on("connection", (ws, req) => {
         case 'remotePcWorkspaces': {
           const { hostId, tenantId, enabled } = args ?? {};
           if (!plusSession.snapshot().signedIn || typeof hostId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(hostId)) {
-            return reply(false, t('settings.remote.failed'));
+            return reply(false, t('remote.pcWorkspacesInvalid'));
           }
           const endpoint = `/v1/hosts/${hostId}/workspaces`;
           if (tenantId === undefined) return reply(true, await plusSession.client.request('GET', endpoint));
           if (typeof tenantId !== 'string' || !/^[0-9a-f-]{36}$/.test(tenantId) || typeof enabled !== 'boolean') {
-            return reply(false, t('settings.remote.failed'));
+            return reply(false, t('remote.pcWorkspacesInvalid'));
           }
           return reply(true, await plusSession.client.request('PATCH', `${endpoint}/${tenantId}`, { body: { enabled } }));
         }

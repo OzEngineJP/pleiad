@@ -25,6 +25,8 @@ if (!engines.length) engines.push('chromium', 'firefox');
 const scratch = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-remote-'));
 const bytes = Buffer.from(Uint8Array.from({ length: 2 * 1024 * 1024 + 7 }, (_, i) => i % 251));
 const uid = 'user-1';
+const personalTenant = '07e2684e-5f8e-4a90-831a-2f63cc0d9823';
+const organizationTenant = '1578ef5a-fc6c-4aee-bc55-c3eeb486f724';
 const stops = [];
 const send = (res, body, type = 'text/html', headers = {}) =>
   res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', ...headers }).end(body);
@@ -77,7 +79,8 @@ try {
     isBound: async (account, hostId) => plus.state.hosts[hostId]?.uid === account,
     keysUrl: () => plus.ticketKeysUrl,
   });
-  const relay = createRelay({ enrollSecret: randomBytes(32).toString('base64url'), trustProxy: false, authz,
+  // All browser engines share the fixture relay, including the remounts for each workspace.
+  const relay = createRelay({ enrollSecret: randomBytes(32).toString('base64url'), trustProxy: false, authz, admitPerMinute: 10 * engines.length,
     logger: process.env.PW_REMOTE_DEBUG ? console.error : () => {} });
   const { port: relayPort } = await relay.listen(0, '127.0.0.1');
   stops.push(() => relay.close());
@@ -193,7 +196,7 @@ try {
       const issued = new Map();
       await page.exposeFunction('challenge', (hostId, publicKey) =>
         ticketRequest('/challenge', { purpose: 'device', publicKey, hostId }));
-      await page.exposeFunction('tickets', async (hostId, challengeId, proof, origin, wrongOrigin) => {
+      await page.exposeFunction('tickets', async (hostId, challengeId, proof, origin, wrongOrigin, tenantId) => {
         assert.equal(origin, shellOrigin);
         const issuedTickets = await ticketRequest('', { challengeId, proof });
         const claims = claimsOf(issuedTickets.admission);
@@ -202,30 +205,38 @@ try {
         const browserClaims = { deviceKind: 'browser', origin, exp: claims.iat + 60 };
         return {
           relay: plus.signTicket({ ...claimsOf(issuedTickets.relay), ...browserClaims }),
-          admission: plus.signTicket({ ...claims, ...browserClaims, origin: wrongOrigin ? 'https://wrong.example.test' : origin }),
+          admission: plus.signTicket({ ...claims, ...browserClaims, tenantId,
+            workspaceKind: tenantId === personalTenant ? 'personal' : 'organization',
+            origin: wrongOrigin ? 'https://wrong.example.test' : origin }),
         };
       });
       await page.goto(shellOrigin);
       await page.evaluate(async () => {
         const { mountBrowserHost } = await import('/_pleiad-remote/browser-shell.mjs');
         window.events = {};
+        window.mounts = {};
         window.mount = (options, wrongOrigin = false) => {
           const id = options.name + (wrongOrigin ? '-wrong' : '');
           const iframe = document.createElement('iframe');
           iframe.id = id;
           document.body.append(iframe);
           const events = window.events[id] = [];
-          mountBrowserHost({ ...options, iframe, account: 'fixture',
+          window.mounts[id] = mountBrowserHost({ ...options, iframe, account: 'fixture',
             onStatus: status => events.push(status),
             getTickets: async ({ hostId, devicePub, origin, prove }) => {
               const challenge = await window.challenge(hostId, devicePub);
-              return window.tickets(hostId, challenge.challengeId, await prove(challenge), origin, wrongOrigin);
+              return window.tickets(hostId, challenge.challengeId, await prove(challenge), origin, wrongOrigin, options.tenantId);
             },
           });
         };
+        window.unmount = id => {
+          window.mounts[id].close();
+          delete window.mounts[id];
+          document.getElementById(id).remove();
+        };
       });
       const mounted = [...allHosts.values()];
-      const options = ({ name, hostId, hostKey, hostOrigin, relayUrl }) => ({ name, hostId, hostKey, hostOrigin, relayUrl });
+      const options = ({ name, hostId, hostKey, hostOrigin, relayUrl }) => ({ name, hostId, hostKey, hostOrigin, relayUrl, tenantId: personalTenant });
       const state = async (name, value, count = 1) => {
         try {
           await page.waitForFunction(({ name, value, count }) =>
@@ -302,7 +313,7 @@ try {
       await unrelated.close();
       scenarios.push('reload and denial in an unbound tab');
 
-      const attached = await view.locator('html').evaluate(async (_, { sessionId, size }) => {
+      const upload = (frame, sessionId) => frame.locator('html').evaluate(async (_, { sessionId, size }) => {
         const { createHostSocket } = await import('/remote/browser-view.mjs');
         const app = createHostSocket(new URL('/ws', location.href));
         const replies = new Map();
@@ -334,8 +345,13 @@ try {
         const result = await cmd('attachFinish', { uploadId });
         app.close();
         return result.path;
-      }, { sessionId: desk.sessionId, size: bytes.length }, { timeout: 30_000 });
-      assert.deepEqual(await readFile(attached), bytes);
+      }, { sessionId, size: bytes.length }, { timeout: 30_000 });
+      const attachments = [];
+      for (let i = 0; i < views.length; i++) {
+        const file = await upload(views[i], mounted[i].sessionId);
+        assert.deepEqual(await readFile(file), bytes);
+        attachments.push(file);
+      }
       scenarios.push('streamed file upload');
 
       for (let i = 0; i < views.length; i++) {
@@ -347,7 +363,7 @@ try {
           link.download = name + '.bin';
           link.textContent = 'Download';
           document.body.prepend(link);
-        }, optionsForDownload(mounted[i]));
+        }, { file: attachments[i], ...optionsForDownload(mounted[i]) });
         const downloading = page.waitForEvent('download', { timeout: 12_000 });
         const [, download] = await Promise.all([
           views[i].locator('#fixture-download').evaluate(anchor => anchor.click()), downloading,
@@ -356,6 +372,71 @@ try {
         assert.deepEqual(await readFile(await download.path()), bytes);
       }
       scenarios.push('download link on each host');
+
+      await page.evaluate(value => {
+        window.unmount('desk');
+        window.mount(value);
+      }, { ...options(desk), name: 'desk-org', tenantId: organizationTenant });
+      await state('desk-org', 'ready');
+      const organization = page.frameLocator('#desk-org').frameLocator('#view');
+      await organization.locator('html[data-remote-embedded]').waitFor({ timeout: 30_000 }).catch(async error => {
+        const loader = page.frameLocator('#desk-org');
+        const status = await loader.locator('#status').textContent({ timeout: 2_000 }).catch(() => '');
+        const content = await organization.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
+        throw new Error(`Organization host view did not load. Loader: ${status}. Frame: ${content.slice(0, 240)}`, { cause: error });
+      });
+      const execute = (frame, commands) => frame.locator('html').evaluate(async (_, commands) => {
+        const { createHostSocket } = await import('/remote/browser-view.mjs');
+        const app = createHostSocket(new URL('/ws', location.href));
+        const responses = [];
+        return new Promise((resolve, reject) => {
+          app.onerror = reject;
+          const sendNext = () => {
+            const next = commands[responses.length];
+            if (!next) { app.close(); return resolve(responses); }
+            const [command, args] = next;
+            app.send(JSON.stringify({ kind: 'command', id: String(responses.length), command, args }));
+          };
+          app.onmessage = ({ data }) => {
+            const frame = JSON.parse(data);
+            if (frame.kind === 'ready') return sendNext();
+            if (frame.kind === 'response') { responses.push(frame); sendNext(); }
+          };
+        });
+      }, commands, { timeout: 20_000 });
+      const [empty, deniedOpen, deniedSend, created] = await execute(organization, [
+        ['listSessions', {}], ['loadSession', { sessionId: desk.sessionId }],
+        ['sendMessage', { sessionId: desk.sessionId, prompt: 'outside this workspace' }],
+        ['newSession', { backend: 'fake', cwd: path.dirname(desk.file) }],
+      ]);
+      assert.equal(empty.ok, true);
+      assert.doesNotMatch(JSON.stringify(empty.result), new RegExp(desk.sessionId));
+      assert.equal(deniedOpen.code, 'SESSION_NOT_FOUND');
+      assert.equal(deniedSend.code, 'SESSION_NOT_FOUND');
+      assert.equal(created.ok, true, JSON.stringify(created));
+      const { sessionId: orgSession } = created.result;
+      const [orgList, opened, sent] = await execute(organization, [
+        ['listSessions', {}], ['loadSession', { sessionId: orgSession }],
+        ['sendMessage', { sessionId: orgSession, messageId: 'test-org-message', prompt: 'Inside this workspace' }],
+      ]);
+      assert.ok(JSON.stringify(orgList.result).includes(orgSession));
+      assert.equal(opened.ok, true, JSON.stringify(opened));
+      assert.equal(sent.ok, true, JSON.stringify(sent));
+      await page.evaluate(value => {
+        window.unmount('desk-org');
+        window.mount(value);
+      }, options(desk));
+      await state('desk', 'ready');
+      await view.locator('html[data-remote-embedded]').waitFor({ timeout: 30_000 });
+      const [personalList, personalOpen] = await execute(view, [
+        ['listSessions', {}], ['loadSession', { sessionId: orgSession }],
+      ]);
+      assert.ok(JSON.stringify(personalList.result).includes(desk.sessionId));
+      assert.ok(!JSON.stringify(personalList.result).includes(orgSession));
+      assert.equal(personalOpen.code, 'SESSION_NOT_FOUND');
+      const localList = JSON.stringify(await desk.pc.cmd('listSessions'));
+      assert.ok(localList.includes(desk.sessionId) && localList.includes(orgSession));
+      scenarios.push('workspace-specific listing, opening, sending, and new conversation creation');
 
       const claims = issued.get(desk.hostId).at(-1);
       authz.handle.closeTag('k:' + hostIdFor(Buffer.from(claims.devicePub, 'base64url')), 1013, 'try again');
@@ -389,4 +470,4 @@ try {
   await rm(scratch, { recursive: true, force: true });
 }
 
-function optionsForDownload({ file, sessionId, name }) { return { file, sessionId, name }; }
+function optionsForDownload({ sessionId, name }) { return { sessionId, name }; }
