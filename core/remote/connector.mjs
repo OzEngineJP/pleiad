@@ -18,6 +18,7 @@ import WebSocket from 'ws';
 import { Handshake, prologueFor, derivePairing, confirmationCode } from './noise.mjs';
 import { Channel } from './channel.mjs';
 import { forwardStream, checkPath } from './forward.mjs';
+import { serveTaskLink, TASK_LINK_PATH } from './task-links.mjs';
 import { RESET_CODE } from './frames.mjs';
 import { AGENT_PATH } from './agent-protocol.mjs';
 import { createRemoteStore } from './devices.mjs';
@@ -148,7 +149,7 @@ function parseJson(buf) {
 export function createRemoteHost({
   dataDir, cipher, target, token, appVersion = '', emit = () => {}, env = process.env,
   backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {}, agent = null,
-  now = Date.now, reviewLimits = {}, onIdentity = null,
+  now = Date.now, reviewLimits = {}, onIdentity = null, taskLink = null,
   // 審査用ホスト専用: 審査用アカウント（起動のときの自動ログインで入ったもの）の uid を返す。null なら自動承認はしない
   reviewPlusUid = () => null,
 }) {
@@ -587,6 +588,13 @@ export function createRemoteHost({
     channels.get(deviceId).add(entry);
     ws.on('message', b => ch.receive(b));
     ch.on('stream', s => {
+      if (checkPath(s.request?.path)?.pathname === TASK_LINK_PATH) {
+        if (!scope || !taskLink || s.kind !== 'http' || s.request.method !== 'POST') {
+          return s.reset(RESET_CODE.FORBIDDEN);
+        }
+        void serveTaskLink(s, scope, taskLink).catch(() => s.reset());
+        return;
+      }
       // 端末の AI 用の口は接続口が自分で受ける（ローカルのサーバーへは転送しない。docs/remote.md §4.5）
       if (s.kind === 'ws' && checkPath(s.request?.path)?.pathname === AGENT_PATH) {
         const current = deviceCache.get(deviceId);

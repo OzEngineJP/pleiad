@@ -1,6 +1,6 @@
 // node tests/browser/remote-browser.mjs chromium firefox
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -27,6 +27,7 @@ const bytes = Buffer.from(Uint8Array.from({ length: 2 * 1024 * 1024 + 7 }, (_, i
 const uid = 'user-1';
 const personalTenant = '07e2684e-5f8e-4a90-831a-2f63cc0d9823';
 const organizationTenant = '1578ef5a-fc6c-4aee-bc55-c3eeb486f724';
+const taskLinks = new Map();
 const stops = [];
 const send = (res, body, type = 'text/html', headers = {}) =>
   res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', ...headers }).end(body);
@@ -84,7 +85,21 @@ try {
     logger: process.env.PW_REMOTE_DEBUG ? console.error : () => {} });
   const { port: relayPort } = await relay.listen(0, '127.0.0.1');
   stops.push(() => relay.close());
-  const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:' + relayPort });
+  const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:' + relayPort,
+    taskLink(path, account, headers, body) {
+      const [, , , tenant, requestId, operation] = path.split('/');
+      const link = taskLinks.get(requestId);
+      if (tenant !== personalTenant || !link || link.hostId !== body.hostId) return { status: 404, body: {} };
+      if (operation === 'ticket' && account === uid) return {
+        status: 200, body: { agent: 'fake', openRef: link.updates.at(-1)?.openRef ?? null, token: link.token },
+      };
+      if (operation === 'state' && !account && headers['x-pleiad-task-link-ticket'] === link.token) {
+        link.updates.push(body);
+        return { status: 200, body: { accepted: true } };
+      }
+      return { status: 403, body: {} };
+    },
+  });
   plus.state.accounts[uid] = { uid, email: 'fixture@example.test', status: 'plus',
     plan: { id: 'plus', name: 'Plus' }, limits: { hosts: 4, devicesPerHost: 16 }, sync: { enabled: false } };
   stops.push(() => plus.close());
@@ -302,6 +317,24 @@ try {
 
       const [desk, cloud] = mounted;
       const [view, second] = views;
+      const requestId = randomUUID();
+      const link = { hostId: desk.hostId, token: randomUUID(), updates: [] };
+      taskLinks.set(requestId, link);
+      const [task, duplicate] = await page.evaluate(requestId => Promise.all([
+        window.mounts.desk.taskLink({ action: 'start', requestId }),
+        window.mounts.desk.taskLink({ action: 'start', requestId }),
+      ]), requestId);
+      assert.deepEqual(task, duplicate);
+      assert.deepEqual(link.updates, [{ hostId: desk.hostId, openRef: task.sessionId, state: 'not_started', version: 1 }]);
+      assert.deepEqual(await page.evaluate(openRef => window.mounts.desk.taskLink({ action: 'open', openRef }), task.sessionId), task);
+      assert.deepEqual(await page.evaluate(requestId => window.mounts.desk.taskLink({ action: 'start', requestId }), requestId), task);
+      await assert.rejects(page.evaluate(openRef => window.mounts.cloud.taskLink({ action: 'open', openRef }), task.sessionId));
+      await desk.pc.runTurn({ sessionId: task.sessionId, prompt: 'echo:private-test' }, { ms: 20_000 });
+      await until(() => link.updates.at(-1)?.state === 'completed', 'task link completion');
+      assert.equal(link.updates.at(-1).openRef, task.sessionId);
+      assert.ok(link.updates.at(-1).version > 1);
+      assert.ok(link.updates.every(update => Object.keys(update).sort().join(',') === 'hostId,openRef,state,version'));
+      scenarios.push('task link request replay, host authorization and status from the fake backend');
       const oldMarker = await view.locator('html').evaluate(() => location.href);
       const reloaded = page.waitForEvent('framenavigated', { predicate: frame => frame.url().startsWith(desk.hostOrigin + '/?'), timeout: 20_000 });
       await view.locator('html').evaluate(() => { setTimeout(() => location.reload(), 0); });
@@ -378,6 +411,7 @@ try {
         window.mount(value);
       }, { ...options(desk), name: 'desk-org', tenantId: organizationTenant });
       await state('desk-org', 'ready');
+      await assert.rejects(page.evaluate(openRef => window.mounts['desk-org'].taskLink({ action: 'open', openRef }), task.sessionId));
       const organization = page.frameLocator('#desk-org').frameLocator('#view');
       await organization.locator('html[data-remote-embedded]').waitFor({ timeout: 30_000 }).catch(async error => {
         const loader = page.frameLocator('#desk-org');
