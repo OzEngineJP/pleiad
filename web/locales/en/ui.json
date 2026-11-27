@@ -527,7 +527,13 @@
       "platform": {
         "desktop": "Desktop",
         "ios": "iOS",
-        "android": "Android"
+        "android": "Android",
+        "browser": "Browser"
+      },
+      "browser": {
+        "previewUnavailable": "Executable HTML previews are unavailable over browser remote connections.",
+        "voiceUnavailable": "Voice calls are unavailable over browser remote connections.",
+        "downloadFailed": "The file could not be saved. {{error}}"
       },
       "pair": {
         "qrLabel": "Pairing QR code",

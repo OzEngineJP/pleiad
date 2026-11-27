@@ -1022,6 +1022,7 @@ plusSync.onChange(status => emitGlobal({ type: 'plusSyncStatus', status, session
 let plusDevicesNow = 0;
 const plusLink = createPlusLink({
   session: plusSession, verifier: plusVerifier, issuer: plusTickets, ticketVerifier: plusTicketVerifier, remote,
+  browserOrigin: BOOT_ENV.PLEIAD_REMOTE_BROWSER_ORIGIN,
   onAdmitted: () => { void plusHost.syncDeviceCount(); },
   // 中継の 4401 host（この PC の登録が外れた）→ 同期の 403 host と同じく台帳を見直す
   onHostLost: () => { void plusHost.recheck(); },

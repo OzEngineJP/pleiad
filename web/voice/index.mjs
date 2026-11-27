@@ -41,6 +41,8 @@ import { createSounds } from './sounds.mjs';
 import { createSendQueue } from './send-queue.mjs';
 import { t } from '../i18n.mjs';
 import { openExternalLink } from '../link-open.mjs';
+import { browserEmbedded, unavailableVoice } from '../remote/browser-view.mjs';
+import { notify } from '../file-actions.mjs';
 
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 /** 聞き取れなかった行の字（続けて 2 回目から回数と手がかり。キーが拒否されたときは 1 回目から別の文） */
@@ -117,8 +119,12 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
     const base = msOf(rec);
     const ms = base === 'speaking' && engine.bargeActive ? 'speaking-live' : base;   // 読み上げ中でも聞いている（話すと止まる）
     const time = on ? fmtTime(Math.floor((now() - engine.startedAt) / 1000)) : '';
-    rec.call.el.hidden = !usable() || !canStart(rec);
+    rec.call.el.hidden = !(browserEmbedded || usable()) || !canStart(rec);
     rec.call.paint({ on, time });
+    if (browserEmbedded) {
+      rec.call.el.title = unavailableVoice();
+      rec.call.el.setAttribute('aria-label', rec.call.el.title);
+    }
     const root = rec.slot.composer.root;
     const wasShown = root.classList.contains('vc-in-call') || root.classList.contains('vc-deny');
     root.classList.toggle('vc-in-call', on);
@@ -184,6 +190,7 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
 
   // ---- 通話の開始・終了
   async function start(rec) {
+    if (browserEmbedded) return notify(unavailableVoice());
     if (!usable() || !canStart(rec)) return;
     if (active && active !== rec) engine.end('switch');
     active = rec;

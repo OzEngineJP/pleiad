@@ -1,11 +1,16 @@
 import { externalOrigin, blockedOrigin } from '../browser-confirm-policy.mjs';
 import { api, button, node, text } from './bridge.mjs';
+import { browserEmbedded, unavailablePreview } from '../remote/browser-view.mjs';
 
 // The HTML file frame (its own <mark>.localhost origin; core/isolated-origins.mjs) reports blocked loads
 // through the server-injected VIOLATION_BRIDGE. Count them and offer "load once":
 // a new key that carries the one-time https origins (core/html-keys.mjs keeps
 // only external origins). Only https origins can be allowed; http is counted.
 export async function htmlFrame(content, file, signal) {
+  if (browserEmbedded) {
+    content.append(node('p', 'limit-note', unavailablePreview()));
+    return;
+  }
   const frame = node('iframe', 'html-preview'); frame.title = file.name;
   // 応答のヘッダーの CSP の sandbox と同じ（core/preview-policy.mjs の APP_SANDBOX）。アプリ専用の出どころなので allow-same-origin が付く
   frame.sandbox = 'allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-pointer-lock';

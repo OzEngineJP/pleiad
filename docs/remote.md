@@ -1,14 +1,15 @@
 # リモート対応
 
-作成 2026-09-23（issue #10、親 #17）。別の PC で動くホストの Pleiad を、デスクトップ版とモバイル版から設定を含めてすべて使うための設計。方式の理由は [ADR 0013](adr/0013-remote-via-relay-with-noise.md)。
+作成 2026-09-23（issue #10、親 #17）。PC やクラウドで動くホストの Pleiad に、デスクトップ版・モバイル版・ブラウザーから接続する。方式の理由は [ADR 0013](adr/0013-remote-via-relay-with-noise.md) と [ADR 0369](adr/0369-browser-remote-with-noise.md)。
 
 ## 1. 目的と範囲
 
 ### やること
 
 - デスクトップ版・モバイル版から、ホストの Pleiad を**ホストの画面と同じように**使う（会話・承認・設定・MCP・アカウントまで）
+- ブラウザーでは、Pleiad Plus の殻からホストの会話画面を開く。暗号化したチャネルで画面を読み、会話とファイルの送受信に使う（§3.4.1、§8.7）
 - 通信は自前の中継サーバー（Docker で動かす）を通す。ホストも端末も外向きに接続するので、ポート開放も VPN も要らない
-- **中継は中身を読めない。** 端末とホストの間で暗号化し、鍵は QR のペアリングで交換する
+- **中継は中身を読めない。** 端末とホストの間で暗号化する。鍵は QR のペアリングか Pleiad Plus の受け入れで確かめる
 - ホストの既存サーバーは今のまま `127.0.0.1:7420` で待ち受ける。外に出る口は増やさない
 - リモートの窓は、ローカルの窓と一目で見分けられる
 - 離れていても、返事が要るとき・失敗したとき・終わったときにスマホ（Android）へ通知する。同じ中継の通知の線で、中身はホストが端末ごとの鍵で暗号化する（§5.6・§11-5、[ADR 0086](adr/0086-notifications-through-relay.md)）
@@ -17,9 +18,8 @@
 
 - webhook の中継。`/hooks` 以下は接続口の防火壁が通さない。外部からの POST は利用者のトンネルを使う（[webhook の仕様](channels.md#webhook)）。
 
-- **リモートのための機能は足さない。** 通信を中継するだけ。画面はホストが配る `web/` をそのまま使う。例外は、端末の AI からホストへ作業を委譲する口（§4.5、[ADR 0146](adr/0146-remote-agent-delegation.md)）だけ
 - 端末ごとの権限（閲覧だけ・設定変更不可など）。当面は**全権限**（トークン保持者 = ホストの利用者、という今の信頼モデルのまま）。画面の権限は全権限のままで、端末の AI からの委譲を受けるかだけは端末ごとに決める（既定オフ。§4.5）
-- ブラウザー・PWA からのリモート接続。E2E の中継はアプリ内のプロキシが前提なので、端末はデスクトップ版かモバイル版
+- ブラウザーでの音声通話、実行できる HTML のプレビュー、端末の AI からの委譲。ブラウザーの対応範囲は §8.7 を参照
 - 複数の利用者で 1 台の中継を共有すること。中継は 1 人の持ち物（§5.4）。開発者が運営し、アカウントで分けて共有する「公式の中継」は [ADR 0263](adr/0263-accounts-and-hosted-relay.md)（提案）で別に足す。自分の中継はこのまま
 - P2P（WebRTC）、Tailscale・Cloudflare Tunnel（決定済み。第三者のアカウントや TLS 終端を挟まない）
 - FCM・APNs などの第三者のプッシュ通知（§11-5）、iOS への通知、リモートからのホストのアプリ更新、リモートからのログイン操作（§7.3）、モバイルからのフォルダー送信
@@ -45,13 +45,15 @@
   画面はホストが配るので、UI とサーバーの版ずれが起きない。ループバックなので `ws://` 固定（`web/client.mjs:3140`）も secure context 限定の API（`crypto.randomUUID()`、`web/client.mjs:3123`）もそのまま動く（WKWebView は §8.3 で確認）
 - 既存サーバーから見ると、リモートの端末は「ループバックから来たもう 1 つのタブ」。複数タブ・複数端末の同時接続は既に設計に入っている（全イベント配信・途中参加のスナップショット・承認の全端末同期・送信の冪等化）。流れの出来事は、各端末が開いている会話の分だけ届く（[ADR 0024](adr/0024-watch-open-session-stream.md)）
 - 中継は「どのホスト ID にどの端末がつないでよいか」をハッシュで照合し、通ったら 2 本の WebSocket をつなぐだけ
+- ブラウザーでは、殻の通信 Worker と、ホスト専用のオリジンにある Service Worker が、端末内プロキシに相当する。殻が開いたタブごとに `MessagePort` を渡す（§8.7）
 
 ### 2.1 置き場所
 
 | 部品 | 場所 | 言語 |
 |---|---|---|
 | 中継 | `relay/`（独立した `package.json`、依存は `ws` だけ。`Dockerfile`） | Node |
-| 暗号・フレーム・チャネル（共有） | `core/remote/noise.mjs`、`core/remote/frames.mjs`、`core/remote/channel.mjs`（ストリームの多重化と流量の制御。運び手に依存しない） | Node（ESM。デスクトップの main からは `import()`） |
+| 暗号・フレーム・チャネル | Noise は `core/remote/noise.mjs` と `web/remote/noise.mjs`。ストリームの多重化と流量の制御は共通の `web/remote/frames.mjs`、`web/remote/channel.mjs`（Node の入口は `core/remote/`） | Node / JS |
+| ブラウザーの殻と埋め込み画面をつなぐ部品 | `web/remote/browser-shell.mjs`、`browser-worker.mjs`、`browser-loader.mjs`、`browser-service-worker.mjs`、`browser-view.mjs` | JS（ビルド不要） |
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
 | 端末の AI からの委譲（§4.5） | ホスト: `core/remote/agent-port.mjs`（`/agent` の口・許可・上限・中継する承認）。端末: `core/remote/agent-link.mjs`（main がホストへ張る線）、`desktop/remote-agent-bridge.cjs`（main とローカルのサーバーの橋）、`core/remote-delegation.mjs`（ローカルのサーバーの側。`ply_delegate` の `host`・タスクの追跡・中継の承認） | Node |
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
@@ -137,6 +139,22 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 - 端末の鍵の順: Plus の記録の鍵 → 同じホストの QR の記録の鍵 → 端末の鍵。`pair` で `revoked` と断られたら新しい鍵で申し込み直す。その新しい鍵は許可されるまで手元に残し（デスクトップは秘密の `host-plus-pending:<hostId>`、Android は `plusPending:<hostId>`）、拒否のあとにもう一度選んでも同じ鍵で申し込む。PC は拒否した鍵を 1 時間 `rejected` で断るので、端末は待たずに「ホストで断られました」を出し、PC に窓は出ない（2026-10-22。前は選ぶたびに鍵を作り直し、拒否の 1 時間をすり抜けて窓を出し直させていた）。残した鍵が許可されたあと保存する前に取り消されていたら、別の新しい鍵で 1 度だけ始め直す
 
 端末の画面（中継越し）からの接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え・Plus のつなぎ直し・Plus のログインとログアウト・止めた申し込みの再開）を `host_only` で断る（`core/ops/policy.mjs` の `HOST_ONLY_COMMANDS`）。操作の一覧の口（`invoke { op }`）で来る Plus の同期のスイッチ・やり直し・登録し直し（`plus.syncSetEnabled`・`plus.syncReset`・`plus.hostReregister`）は、操作の `hostScreenOnly` で `HOST_SCREEN_ONLY` を返す。
+
+#### 3.4.1 ブラウザーの券と受け入れ
+
+ブラウザーは、端末の X25519 公開鍵を使って中継用の券とホスト受け入れ用の券を一組で得る。どちらも有効期間は 60 秒で、一回限り。殻は既存の [ADR 0249](adr/0249-plus-tickets.md) と同じ端末の鍵の所持証明を使う。チャレンジに `publicKey` を渡し、応答の `challengeId`・`nonce`・`serverPublicKey` を受け取る。通信 Worker が `proof` を作り、殻は `challengeId` と `proof` を送って `{ relay, admission, expiresAt }` を得る。
+
+| 券の用途 | 署名される欄 |
+|---|---|
+| 中継 | `iss: "pleiad-tickets"`、`aud: "relay"`、`role: "device"`、`uid`、`hostId`、`sub`（端末の公開鍵から導く識別子）、`lim`、`iat`、`exp`、`jti`、`deviceKind: "browser"`、`origin` |
+| ホスト受け入れ | `iss: "pleiad-tickets"`、`aud: "pleiad-host"`、`uid`、`hostId`、`devicePub`（端末の X25519 公開鍵をパディングなしの base64url にしたもの）、`iat`、`exp`、`jti`、`deviceKind: "browser"`、`origin` |
+
+1. 通信 Worker は公式の中継の `/v1/device` に WebSocket でつなぐ。`Sec-WebSocket-Protocol` に `pleiad-browser-v1` と中継券をこの順で提示する。中継はブラウザーが送った `Origin` を正確なオリジンの許可リストと券の `origin` に照合し、通ったら `pleiad-browser-v1` だけを返す。ホストへの接続は `admit: true` の経路に回す。
+2. 通信 Worker はホスト鍵を固定した Noise IK のメッセージ 1 に `{ name, platform: "browser", plus: { ticket: admission, origin } }` を載せる。ホストは署名・用途・期限・一回限りの `jti`・ホスト ID・相手の Noise 静的鍵・現在のアカウント・`deviceKind` を確かめる。`origin` はメッセージの値とホストが許可した殻のオリジンの両方に一致する必要がある。ホストは検証した端末種別とオリジンを接続に固定する。
+3. 端末がメッセージ 2 の後に `{ type: "pair" }` を送ると、未登録の鍵は PC の承認待ちになる。ホストは暗号化して `waiting` を返し、両側は同じ Noise ハンドシェイクのハッシュから同じ 6 桁の番号を求める。PC の「設定 › リモート」で番号を見比べて承認する。許可済みのブラウザー鍵は、`pair` と裏での再接続を示す `admit` のどちらでも承認を繰り返さずに通る。
+4. 承認すると、ホストは暗号化して `{ type: "approved", deviceId, hostName }` を返す。続けて同じ接続でチャネルの `HELLO` を交換する。ブラウザーは切断後、保存済みの鍵で新しい券を二枚得てつなぎ直す。「設定 › リモート」の端末一覧から取り消すと使用中の接続が閉じ、以後は同じ鍵に有効な新しい券があっても `revoked` で断る。
+
+ホストが許可する殻のオリジンの既定は `https://app.pleiad.dev`。起動時の `PLEIAD_REMOTE_BROWSER_ORIGIN` で正確なオリジンを一つ指定できる。HTTPS を使い、ローカル検証用のループバックだけ HTTP も受け付ける。
 
 ### 3.5 中継が知ること・知らないこと
 
@@ -712,6 +730,18 @@ Chrome の映像と入力は、既存の暗号化された WebSocket の道を�
 - デスクトップ版・ブラウザーの直のつなぎは束を使わない（ホストの静的ファイルの口のまま）。デスクトップ版のリモートの窓（`core/remote/device.mjs` のプロキシ）は束を使う
 - 試験: `tests/unit/remote-static-bundle.mjs`（形・壊れた束・ホストの口の 304/200/401・作り直し・端末のプロキシで束から返す・古いホスト・古いアプリ・取り消し）、`StaticCacheTest`（Kotlin）・`StaticCacheTests`（Swift）と、両方の `InteropTest(s)`（Node の本物のホストの束を保存し、`index.html`・`client.mjs` が同じ中身で返り、ホストの削除で消える）
 
+### 8.7 ブラウザーの殻とホストの画面
+
+殻は `web/remote/` のブラウザー用部品を版を固定して配る。殻と各ホストの画面にはそれぞれ別のオリジンを使う。殻のオリジンから `mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey, relayUrl, name, getTickets, onStatus })` を呼ぶ。`account` はアカウントごとの保存領域を分ける識別子で、`hostKey` はホストの X25519 公開鍵。通信 Worker は、秘密鍵を取り出せない `CryptoKey` と固定したホスト公開鍵を、殻の IndexedDB にアカウント・ホストごとに保存する。`getTickets({ hostId, devicePub, origin, prove })` は券の発行と殻の認証を担当し、`prove(challenge)` で鍵の所持証明を得る。取得に失敗した場合は `{ error, retry }` を返せる。`onStatus` の `waiting` には表示用の `code` が入り、`stopped` には終了の `reason` が入る。ホストの表示を外すときは `mountBrowserHost` が返した `close()` を呼ぶ。
+
+ホスト専用のオリジンの `/_pleiad-remote/loader` は殻から開く iframe を返す。そのページのモジュール `/_pleiad-remote/loader.mjs` から `startHostLoader({ shellOrigin, view, status })` を呼ぶ。`view` はその中に置く画面用 iframe。`/_pleiad-remote/` に `browser-loader.mjs`、`browser-service-worker.mjs`、`browser-wire.mjs`、`browser-recover.mjs` を配り、Service Worker の応答に `Service-Worker-Allowed: /` を付ける。ローダーを埋め込める出どころは殻の正確なオリジンに制限する。ホスト側の公開 HTTP はこの起動用ファイルだけを配り、アプリの画面やファイルの要求にはアクセスを許さない。
+
+Service Worker は、ローダーから渡された一回限りの目印で画面のタブを割り当てる。割り当てたタブのナビゲーションと同じオリジンの GET・HEAD を、タブ専用の `MessagePort` から暗号チャネルに流す。再読み込みで割り当てを引き継げない場合は、ローダーが画面のタブを照合し、新しい目印で開き直す。画面の `/ws` は同じチャネル上の仮想 WebSocket を使い、会話一覧などの脇を隠す。ダウンロードはチャネルでファイルを取得してからブラウザーの保存機能に渡す。ファイルの取得はホストのサイズ制限に従う。
+
+承認済みの端末だけを開く操作では、殻は `mountBrowserHost` に `interactive: false` を渡せる。この場合、新しい鍵は PC に承認の窓を開かず、殻に `approval` を返す。初回の承認を受け付ける操作の既定値は `interactive: true`。
+
+ブラウザーでは `/voice-ws` の音声通話と実行できる HTML のプレビューを利用できない。画面は制限の理由を表示し、ホストも対応する接続・プレビューを断る。隔離したページ用のオリジンと端末の AI からの委譲もブラウザー接続には開かない。ブラウザー端末の承認はホストの利用者に対するもので、ワークスペースごとに会話を分ける仕組みは [ADR 0373](adr/0373-personal-pc-in-workspaces.md) を参照。
+
 ## 9. 安全についての考え
 
 | 相手 | できること | 対策 |
@@ -743,6 +773,8 @@ Google Play の審査員に見せるホストは、全権限の端末を前提�
 ## 10. 検証
 
 `npm test` で確かめる（LLM は呼ばない）。中継とトンネルは fake バックエンドのホストで、端末 → 中継 → ホストの往復（会話の送信・承認・ファイルの取得・再接続）を自動で確かめる。端末の AI からの委譲（§4.5）は、`tests/unit/remote-agent.mjs`（ホストの `/agent` の口: 許可・上限・委譲・状態・中継する承認と人の答え・経過の読み出しの絞り込みと許可・取り消しで止まる・防火壁）と `tests/unit/remote-agent-e2e.mjs`（端末のローカルのサーバー → main の橋 → 中継 → ホスト）で確かめる。
+
+ブラウザーの共通ベクトルは `node tests/browser/remote-noise.mjs chromium firefox` で、ブラウザーからホストまでの接続は `node tests/browser/remote-browser.mjs chromium firefox` で確かめる。後者は参照中継と試験内のブラウザー用の入口を使い、承認、再読み込み、端末の取り消し、2 台のホスト、ファイルの送受信を検証する。Playwright の実行ファイルを指定するときは `PW_CHROMIUM`・`PW_FIREFOX` を使う。
 
 ## 11. 未決
 

@@ -4,6 +4,7 @@
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
 import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
+import { browserEmbedded, unavailablePreview } from './remote/browser-view.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('message', event => {
@@ -104,6 +105,11 @@ export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', 
 // iframe's own height report is ignored instead of clamping it to 900px.
 // bundle: 記録の行の束（core/viz-bundle.mjs）。隔離の origin があれば、束を URL で読ませる（相対パスの画像・fetch・WASM が効く）
 export function visualizationFrame(content, title, { fill = false, conversation = false, bundle = null } = {}) {
+  if (browserEmbedded) {
+    const note = document.createElement('p');
+    note.textContent = unavailablePreview();
+    return note;
+  }
   const frame = document.createElement('iframe');
   frame.className = fill ? 'visualize-frame visualize-fill' : 'visualize-frame';
   isolateFrame(frame);

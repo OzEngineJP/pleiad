@@ -14,6 +14,7 @@ import { createTree } from './tree.mjs';
 import { createSpring, reducedMotion } from './motion.mjs';
 import { announceSettled } from './panel-moving.mjs';
 import { modalPaneWidth } from './work-side.mjs';
+import { browserEmbedded, unavailablePreview } from './remote/browser-view.mjs';
 
 const KIND = { markdown:'Markdown', html:'HTML', image:t('filePreview.kind.image'), table:t('filePreview.kind.table'), text:t('filePreview.kind.text'), pdf:'PDF',
   unsupported:t('filePreview.kind.unsupported'), directory:t('filePreview.kind.directory') };
@@ -529,7 +530,13 @@ export function setupFilePreview({ getContext, useFile, canUse = null, onLayout,
         return;
       }
       // HTML は原文だけ（描画はブラウザーの仕事。docs/file-preview.md）
-      if (source || file.kind === 'text' || file.kind === 'html') return sourceView(file.text, reference?.line ?? null);
+      if (source || file.kind === 'text' || file.kind === 'html') {
+        sourceView(file.text, reference?.line ?? null);
+        if (browserEmbedded && file.kind === 'html') {
+          setNote([note.textContent, unavailablePreview()].filter(Boolean).join(' '));
+        }
+        return;
+      }
       if (file.kind === 'unsupported') return stateMessage(t('filePreview.error.unsupported'), file.reason);
       if (file.kind === 'markdown') {
         const result = await markdownContent(file.text, loadAsset);

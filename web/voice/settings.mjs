@@ -9,6 +9,7 @@ import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from '../
 import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from '../plus-key-row.mjs';
 import { openExternalLink } from '../link-open.mjs';
 import { button } from '../remote-parts.mjs';
+import { browserEmbedded, unavailableVoice } from '../remote/browser-view.mjs';
 
 const DEFAULTS = { sttModel: 'microsoft/mai-transcribe-2', sttFallbackModel: 'assemblyai/universal-3-5-pro', ttsModel: 'x-ai/grok-voice-tts-1.0', ttsVoice: 'eve' };
 const minutes = (seconds) => Math.round(seconds / 60);
@@ -24,6 +25,11 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
   const root = $('voicePanel');
   const tab = $('voiceTab');
   if (!root || !tab) return { event() {}, load() {} };
+  if (browserEmbedded) {
+    const load = () => root.replaceChildren(el('p', 'mp-note', unavailableVoice()));
+    tab.onclick = () => { page('voice'); load(); };
+    return { event() {}, load };
+  }
   let status = null, keys = null, message = '', busy = false, registering = false, focusKey = null;
 
   const invoke = (op, args = {}) => cmd('invoke', { op, args });

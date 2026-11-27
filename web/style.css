@@ -69,6 +69,9 @@ a:hover{text-decoration-color:var(--line-blue)}
 /* アイコンは全部 16px・線幅 1.6・丸端。14px の本文に対して 1.5 は細く消え、2 は重い */
 svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
 [hidden]{display:none!important}
+html[data-remote-embedded] body{grid-template-columns:minmax(0,1fr)!important}
+html[data-remote-embedded] :is(#sidebar,.side-opener){display:none!important}
+html[data-remote-embedded] body>main{grid-column:1}
 
 /* ---- スクロールバー。溝は透明にして、乗っている面（白・脇のグレー・コード）をそのまま見せる。
    つまみは丸い棒。10px の幅に 2px の透明な縁を取り、見える太さは 6px。触れると一段濃くなる ---- */

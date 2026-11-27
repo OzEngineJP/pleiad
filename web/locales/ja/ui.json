@@ -524,7 +524,13 @@
       "platform": {
         "desktop": "デスクトップ",
         "ios": "iPhone",
-        "android": "Android"
+        "android": "Android",
+        "browser": "ブラウザー"
+      },
+      "browser": {
+        "previewUnavailable": "ブラウザーのリモート接続では、実行できる HTML のプレビューを表示できません。",
+        "voiceUnavailable": "ブラウザーのリモート接続は音声通話に対応していません。",
+        "downloadFailed": "ファイルを保存できませんでした。{{error}}"
       },
       "pair": {
         "qrLabel": "ペアリングの QR コード",
