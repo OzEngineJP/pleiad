@@ -132,7 +132,7 @@ const wanted = managedBackendIds ?? String(process.env.AGENT_HOST_BACKENDS ?? DE
   .filter(Boolean);
 
 for (const id of wanted) {
-  const where = KNOWN[id] ?? (managedBackendIds && id === 'pleiad-agent' ? './pleiad-agent.mjs' : null);
+  const where = KNOWN[id];
   if (!where) {
     if (Object.hasOwn(RETIRED, id)) continue;
     console.error(`  知らないバックエンド: ${id}（無視した）`);

@@ -1152,6 +1152,7 @@ export function wrapBackend(native) {
           }
           if (ev.type === 'session' && r.nativeId && pendingDeliveryId) { const pending = pendingDeliveryId; pendingDeliveryId = null; promptDelivered(pending); }
           args.emit(hostEvent(ev, id, r.nativeId, native.id));
+          if (ev.type === 'session') return checkpoint;
         },
       });
     } catch (e) {

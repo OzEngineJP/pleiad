@@ -20,6 +20,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { ROOT } from './server.mjs';
+import { startPleiadAgentFixture } from './pleiad-agent-fixture.mjs';
 import { installFakeClaude } from './fake-claude.mjs';
 import { AGENTS } from '../../core/backends/agents.mjs';
 import { CAPABILITIES, RUN_ARG_FEATURES, gateRunArgs, isCapabilityState } from '../../core/backends/contract.mjs';
@@ -37,6 +38,8 @@ const node = (file) => `node "${path.join(ROOT, 'tests/lib', file)}"`;
 const dir = async (...parts) => { const p = path.join(...parts); await fs.mkdir(p, { recursive: true }); return p; };
 
 export const RIGS = {
+  'pleiad-agent': async () => ({ ...await startPleiadAgentFixture(), prompt: text => text,
+    slow: '[fixture:hold]', fail: '[fixture:fail]', running: 'text.delta' }),
   fake: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_STATE_DIR: await dir(scratch, 'fake-state') }, prompt: (text) => text, slow: 'slow', fail: 'fail' }),
   claude: async (scratch) => {
     const cli = await installFakeClaude(path.join(scratch, 'cli'));
@@ -588,6 +591,27 @@ async function probeGrok({ scratch, caps }) {
 
 /** エージェント → 1 ターン流して、印ごとの証拠を返す関数（{ scratch, caps } を受ける） */
 export const DELIVERY_PROBES = Object.freeze({
+  'pleiad-agent': async ({ scratch }) => {
+    const { startServer } = await import('./server.mjs');
+    const { open } = await import('./ws-client.mjs');
+    const fixture = await startPleiadAgentFixture({ token: 'test-credential-only' });
+    let server, client;
+    try {
+      server = await startServer({ dataDir: path.join(scratch, 'data'), env: fixture.env });
+      client = await open(server);
+      const result = await client.runTurn({ backend: 'pleiad-agent', cwd: scratch, prompt: 'check tools' });
+      if (result.outcome !== 'ok') throw new Error('The model relay did not complete');
+      const body = fixture.model.calls[0];
+      if (JSON.stringify(body).includes('test-credential-only')) throw new Error('Credential was present in model input');
+      if (body.tools.some(tool => !['list_files', 'read_file', 'search_files'].includes(tool.function.name))) {
+        throw new Error('Unexpected tool in hosted session');
+      }
+      return { seen: body.tools.map(tool => tool.function.name), evidence: {} };
+    } finally {
+      client?.close();
+      try { await server?.stop(); } finally { await fixture.close(); }
+    }
+  },
   claude: probeClaude,
   codex: probeCodex,
   antigravity: probeAntigravity,

@@ -357,6 +357,7 @@ function resolver(files) {
 // ---- 正本から引く「持つべき組」 ----
 export function expectedSets() {
   return {
+    nativeSources: new Set(DEFAULT_AGENT_IDS.filter(id => AGENTS[id].contextSources !== null)),
     // Hooks の機構をそのまま持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）
     nativeHooks: new Set(HOOK_AGENTS),
     // Hooks の統合の対象（機構そのまま＋記述の hooksAs で形を写せるもの。core/hooks-config.mjs の UNIFY_TARGETS）
@@ -388,7 +389,14 @@ export const ALLOWED = [
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
   { file: 'web/compat-presets.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの preset の対象' },
   { file: 'web/api-keys-settings.mjs', expect: 'compatEndpoints', reason: 'API キーの設定カードでエージェント名を出す対象（互換エンドポイントの利用者）' },
+  { file: 'web/hooks-card.mjs', expect: 'unifyTargets', reason: 'Hooks の統合先として画面に表示するエージェント' },
+  ...['core/context-doc-matrix.mjs', 'core/context-runtime.mjs', 'core/context-scan.mjs', 'core/context-settings.mjs', 'web/session-context.mjs'].map(file => ({
+    file, expect: 'nativeSources', reason: '指示・Skills・MCP の探索元の形式を持つエージェント',
+  })),
+  { file: 'core/context-mcp-matrix.mjs', expect: 'nativeSources', reason: '外部 MCP の列の既定順。記載のない列は末尾' },
   // 固定の組（記述から引けないもの。引けるなら expect にする）
+  { file: 'core/backend-shape-diagnostics.mjs', ids: ['claude', 'codex'], reason: '非公開の会話ログ形式を直接読むアダプター' },
+  { file: 'web/delegation-routing-view.mjs', expect: 'nativeSources', reason: '個別の表記を持つ既存のエージェントの補助名' },
   { file: 'core/context-settings.mjs', ids: ['claude', 'codex'], reason: 'DEFAULT_SOURCES: 既定で探す探索元。新しいエージェントを既定で足すかは別の判断' },
   { file: 'core/context-scan.mjs', ids: ['claude', 'codex'], reason: 'ユーザーの全体の指示ファイルの別名（gemini は形式名でエージェントの id ではない）' },
   { file: 'core/plus/sync/targets.mjs', ids: ['claude', 'codex'], reason: 'Plus の同期で扱う形式の名（gemini は形式名でエージェントの id ではない）' },

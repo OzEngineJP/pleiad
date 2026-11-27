@@ -9379,6 +9379,13 @@ function makeBotHost() {
 // codex（バックグラウンド端末）が使う
 for (const b of listBackends()) {
   b.attachHost?.({
+    async pleiadAgentModelKey({ protocol, url, official, keyId }) {
+      const { keys } = await apiKeys.list();
+      const key = keys.find(entry => entry.id === keyId);
+      if (!key) return null;
+      const valid = key.host ? key.host === url.host : url.origin === official && key.provider === protocol;
+      return valid ? apiKeys.keyValue(key.id) : null;
+    },
     background: (sessionId, tasks) => setBackground(b, sessionId, tasks),
     event: (emit => (sessionId, event) => emit(event, sessionId))(contractEmit((event, sessionId) => emitOutsideTurn(sessionId, event), b.id, { outsideTurn: true })),
   });
