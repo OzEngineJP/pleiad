@@ -473,6 +473,7 @@ export const backend = {
   defaultConnectionLabel: 'Pleiad Plus',
   capabilities: CAPABILITY_STATES[ID],
   traits: AGENT_TRAITS[ID],
+  internalCallSettings: ({ model, effort }) => ({ model, effort }),
   async internalTurn({ prompt, model, effort, cwd, endpoint, signal }) {
     let completion, failure;
     await runTurn({ prompt, model, effort, cwd: cwd || os.tmpdir(), endpoint, signal: { signal }, internal: true, emit(frame) {
