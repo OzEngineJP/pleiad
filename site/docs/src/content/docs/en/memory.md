@@ -7,7 +7,7 @@ Bots hold memories — short factual notes grounded in things you said — and r
 
 Memory settings live under "Memory" in Settings › "Bots".
 
-Use "Enable bots" in Settings › "Bots" to turn bot replies, proactive activity, and nightly memory organizing on or off together. Bots are off on a new installation. You can still open saved memories with "View memory" when bots are off.
+Use "Turn on bots" in Settings › "Bots" to turn bot replies, proactive activity, and nightly memory organizing on or off together. Bots are off on a new installation. You can still open saved memories with "See memories" when bots are off.
 
 ## When a memory is given
 
