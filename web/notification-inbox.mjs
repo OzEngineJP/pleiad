@@ -52,7 +52,8 @@ export function describeNotification(n, t, titleOf = () => '') {
   } else if (n.kind === 'failed') {
     line = name ? t('inbox.line.failed.named', { name }) : title ? t('inbox.line.failed.titled', { title }) : t('inbox.line.failed.plain');
   } else if (n.kind === 'done') {
-    line = title ? t('inbox.line.done.titled', { title }) : t('inbox.line.done.plain');
+    if (n.target?.channelId && n.target.channelId !== 'home') line = t('notify.completed');
+    else line = title ? t('inbox.line.done.titled', { title }) : t('inbox.line.done.plain');
   } else {
     line = name ? t('inbox.line.mention.named', { name }) : t('inbox.line.mention.plain');
   }
@@ -82,11 +83,11 @@ export function badgeState({ unread = 0, waiting = 0 } = {}, t) {
 
 /**
  * 行を押したときに開く先。設定 › Pleiad Plus の通知は、届いた変更（syncInbox）だけ「届いた変更」の面（pane: 'inbox'）、ほかは Plus の面。
- * bot の返事の失敗は、bot の中の会話（sessionId）でなく、失敗した返事のあるスレッド・DM（channelId・threadId・postId）を開く
+ * bot の完了・失敗は、返事のあるスレッド・DM（channelId・threadId・postId）を開く。
  */
 export function notificationTarget(n) {
   const target = n?.target ?? {};
-  if (n?.kind === 'failed' && target.channelId && target.channelId !== 'home') {
+  if ((n?.kind === 'done' || n?.kind === 'failed') && target.channelId && target.channelId !== 'home') {
     const { sessionId, uuid, ...place } = target;
     return place;
   }

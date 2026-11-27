@@ -72,6 +72,15 @@ export default async function (tt) {
       && JSON.stringify(failedDm) === JSON.stringify({ channelId: 'c_dm', postId: 'p9' })
       && notificationTarget({ kind: 'failed', target: { sessionId: 's1', uuid: 'u1' } }).sessionId === 's1'
       && notificationTarget({ kind: 'failed', target: { sessionId: 's1', channelId: 'home' } }).sessionId === 's1', JSON.stringify([failed, failedDm]));
+    const botDone = { kind: 'done', target: { sessionId: 's9', channelId: 'c1', threadId: 't1', postId: 'p9' },
+      channelName: 'release-ci', threadTitle: '依存の更新', title: 'bot の会話' };
+    d = describeNotification(botDone, t, () => 'bot の内部の題');
+    tt.ok('bot の完了通知は「作業が完了しました」とスレッドの題を表示する',
+      d.line === '作業が完了しました' && d.icon === 'done' && d.place.includes('依存の更新'), JSON.stringify(d));
+    tt.ok('bot の完了通知も、返事のあるスレッド・DM を開く',
+      JSON.stringify(notificationTarget(botDone)) === JSON.stringify(failed)
+      && JSON.stringify(notificationTarget({ kind: 'done', target: { sessionId: 's9', channelId: 'c_dm', postId: 'p9' } })) === JSON.stringify(failedDm)
+      && notificationTarget({ kind: 'done', target: { sessionId: 's1', channelId: 'home' } }).sessionId === 's1');
 
     let b = badgeState({ unread: 0, waiting: 0 }, t);
     tt.ok('未読が無ければ印なし・名前は「通知」', b.show === false && b.label === '通知' && b.text === '');
