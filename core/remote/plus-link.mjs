@@ -152,7 +152,7 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       try { fresh = jtis.consume(p.jti, p.exp); } catch { throw new AdmissionError('unavailable'); }
       if (!fresh) throw new AdmissionError('account');
       return { uid: p.uid, scope: browser ? Object.freeze({
-        deviceKind: 'browser', origin: p.origin, hostId, uid: p.uid, devicePub: p.devicePub,
+        deviceKind: 'browser', origin: p.origin, hostId, uid: p.uid, devicePub: p.devicePub, tenantId: p.tenantId,
       }) : null };
     }
     if (cleanLabel(hello.platform, 32) === 'browser') throw new AdmissionError('account');

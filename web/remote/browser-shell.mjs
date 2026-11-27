@@ -14,10 +14,11 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
   }
   const worker = new Worker(new URL('./browser-worker.mjs', import.meta.url), { type: 'module' });
   const proofs = new Map();
+  const readyListeners = new Set();
   let binding, closed = false, status = { type: 'status', state: 'connecting' };
   let proofId = 0;
   const bind = event => {
-    if (event.origin !== origin || event.source !== iframe.contentWindow || event.data?.type !== 'pleiad:loader') return;
+    if (!iframe || event.origin !== origin || event.source !== iframe.contentWindow || event.data?.type !== 'pleiad:loader') return;
     const { port1, port2 } = new MessageChannel();
     const requests = new MessageChannel();
     binding?.close();
@@ -29,6 +30,9 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
   worker.onmessage = async ({ data }) => {
     if (data.type === 'status') {
       status = data;
+      if (data.state === 'ready' || data.state === 'stopped') {
+        for (const listener of readyListeners) listener(data.state);
+      }
       // Approval details belong to the shell, which displays the matching code.
       binding?.postMessage({ type: 'status', state: data.state });
       onStatus(data);
@@ -67,18 +71,69 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
     onStatus(status);
   };
   worker.postMessage({ account, hostId, hostKey, relayUrl: relay.href, name, interactive });
+  const controls = new MessageChannel();
+  worker.postMessage({ type: 'bind' }, [controls.port1]);
+  const requests = new Set();
   // The host Service Worker passes the bootstrap route through to the origin.
-  iframe.src = new URL(LOADER_PATH, origin).href;
+  if (iframe) iframe.src = new URL(LOADER_PATH, origin).href;
   return {
+    taskLink(input, { signal } = {}) {
+      if (closed || signal?.aborted) return Promise.reject(new Error('host request cancelled'));
+      return new Promise((resolve, reject) => {
+        const { port1, port2 } = new MessageChannel();
+        const decoder = new TextDecoder();
+        let responseStatus, body = '';
+        const finish = (error, result) => {
+          clearTimeout(deadline);
+          readyListeners.delete(send);
+          requests.delete(cancel);
+          signal?.removeEventListener('abort', cancel);
+          if (error) port1.postMessage({ type: 'cancel' });
+          port1.close();
+          if (error) reject(error);
+          else resolve(result);
+        };
+        const cancel = () => finish(new Error('host request cancelled'));
+        const deadline = setTimeout(cancel, 330_000);
+        requests.add(cancel);
+        signal?.addEventListener('abort', cancel, { once: true });
+        port1.onmessage = ({ data }) => {
+          if (data.type === 'response') responseStatus = data.head.status;
+          if (data.type === 'data') {
+            body += decoder.decode(data.data, { stream: true });
+            port1.postMessage({ type: 'credit', index: data.index });
+            if (body.length > 4096) cancel();
+          }
+          if (data.type === 'end') {
+            try {
+              if (responseStatus !== 200) throw new Error('host denied task link');
+              finish(null, JSON.parse(body + decoder.decode()));
+            } catch (error) { finish(error); }
+          }
+          if (data.type === 'reset') finish(new Error('host request disconnected'));
+        };
+        const send = (state) => {
+          readyListeners.delete(send);
+          if (state !== 'ready') return cancel();
+          controls.port2.postMessage({ type: 'http', head: {
+            method: 'POST', path: '/_remote/task-link', taskLink: input,
+          } }, [port2]);
+        };
+        if (status.state === 'ready' || status.state === 'stopped') send(status.state);
+        else readyListeners.add(send);
+      });
+    },
     close() {
       closed = true;
       window.removeEventListener('message', bind);
       binding?.postMessage({ type: 'status', state: 'stopped' });
       binding?.close();
+      for (const cancel of requests) cancel();
+      controls.port2.close();
       worker.terminate();
       for (const finish of proofs.values()) finish({ error: true });
       proofs.clear();
-      iframe.src = 'about:blank';
+      if (iframe) iframe.src = 'about:blank';
     },
   };
 }

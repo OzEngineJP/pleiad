@@ -1,6 +1,6 @@
 // node tests/browser/remote-browser.mjs chromium firefox
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -25,6 +25,8 @@ if (!engines.length) engines.push('chromium', 'firefox');
 const scratch = await mkdtemp(path.join(os.tmpdir(), 'pleiad-browser-remote-'));
 const bytes = Buffer.from(Uint8Array.from({ length: 2 * 1024 * 1024 + 7 }, (_, i) => i % 251));
 const uid = 'user-1';
+const tenantId = randomUUID();
+const taskLinks = new Map();
 const stops = [];
 const send = (res, body, type = 'text/html', headers = {}) =>
   res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', ...headers }).end(body);
@@ -81,7 +83,21 @@ try {
     logger: process.env.PW_REMOTE_DEBUG ? console.error : () => {} });
   const { port: relayPort } = await relay.listen(0, '127.0.0.1');
   stops.push(() => relay.close());
-  const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:' + relayPort });
+  const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:' + relayPort,
+    taskLink(path, account, headers, body) {
+      const [, , , tenant, requestId, operation] = path.split('/');
+      const link = taskLinks.get(requestId);
+      if (tenant !== tenantId || !link || link.hostId !== body.hostId) return { status: 404, body: {} };
+      if (operation === 'ticket' && account === uid) return {
+        status: 200, body: { agent: 'fake', openRef: link.updates.at(-1)?.openRef ?? null, token: link.token },
+      };
+      if (operation === 'state' && !account && headers['x-pleiad-task-link-ticket'] === link.token) {
+        link.updates.push(body);
+        return { status: 200, body: { accepted: true } };
+      }
+      return { status: 403, body: {} };
+    },
+  });
   plus.state.accounts[uid] = { uid, email: 'fixture@example.test', status: 'plus',
     plan: { id: 'plus', name: 'Plus' }, limits: { hosts: 4, devicesPerHost: 16 }, sync: { enabled: false } };
   stops.push(() => plus.close());
@@ -202,20 +218,21 @@ try {
         const browserClaims = { deviceKind: 'browser', origin, exp: claims.iat + 60 };
         return {
           relay: plus.signTicket({ ...claimsOf(issuedTickets.relay), ...browserClaims }),
-          admission: plus.signTicket({ ...claims, ...browserClaims, origin: wrongOrigin ? 'https://wrong.example.test' : origin }),
+          admission: plus.signTicket({ ...claims, ...browserClaims, tenantId, origin: wrongOrigin ? 'https://wrong.example.test' : origin }),
         };
       });
       await page.goto(shellOrigin);
       await page.evaluate(async () => {
         const { mountBrowserHost } = await import('/_pleiad-remote/browser-shell.mjs');
         window.events = {};
+        window.connections = {};
         window.mount = (options, wrongOrigin = false) => {
           const id = options.name + (wrongOrigin ? '-wrong' : '');
           const iframe = document.createElement('iframe');
           iframe.id = id;
           document.body.append(iframe);
           const events = window.events[id] = [];
-          mountBrowserHost({ ...options, iframe, account: 'fixture',
+          window.connections[id] = mountBrowserHost({ ...options, iframe, account: 'fixture',
             onStatus: status => events.push(status),
             getTickets: async ({ hostId, devicePub, origin, prove }) => {
               const challenge = await window.challenge(hostId, devicePub);
@@ -291,6 +308,23 @@ try {
 
       const [desk, cloud] = mounted;
       const [view, second] = views;
+      const requestId = randomUUID();
+      const link = { hostId: desk.hostId, token: randomUUID(), updates: [] };
+      taskLinks.set(requestId, link);
+      const [created, duplicate] = await page.evaluate(requestId => Promise.all([
+        window.connections.desk.taskLink({ action: 'start', requestId }),
+        window.connections.desk.taskLink({ action: 'start', requestId }),
+      ]), requestId);
+      assert.deepEqual(created, duplicate);
+      assert.deepEqual(link.updates, [{ hostId: desk.hostId, openRef: created.sessionId, state: 'not_started', version: 1 }]);
+      assert.deepEqual(await page.evaluate(openRef => window.connections.desk.taskLink({ action: 'open', openRef }), created.sessionId), created);
+      await assert.rejects(page.evaluate(openRef => window.connections.cloud.taskLink({ action: 'open', openRef }), created.sessionId));
+      await desk.pc.runTurn({ sessionId: created.sessionId, prompt: 'echo:private-test' }, { ms: 20_000 });
+      await until(() => link.updates.at(-1)?.state === 'completed', 'task link completion');
+      assert.equal(link.updates.at(-1).openRef, created.sessionId);
+      assert.ok(link.updates.at(-1).version > 1);
+      assert.ok(link.updates.every(update => Object.keys(update).sort().join(',') === 'hostId,openRef,state,version'));
+      scenarios.push('task link request replay, host authorization and status from the fake backend');
       const oldMarker = await view.locator('html').evaluate(() => location.href);
       const reloaded = page.waitForEvent('framenavigated', { predicate: frame => frame.url().startsWith(desk.hostOrigin + '/?'), timeout: 20_000 });
       await view.locator('html').evaluate(() => { setTimeout(() => location.reload(), 0); });

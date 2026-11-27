@@ -66,7 +66,7 @@ const B64U32_RX = /^[A-Za-z0-9_-]{43}$/;
 const TICKET_TYP = 'pleiad-ticket+jwt';
 const REAUTH_SECONDS = 300;
 
-export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' } = {}) {
+export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid', taskLink } = {}) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const kid = 'test-key-1';
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid, alg: 'RS256', use: 'sig' };
@@ -276,6 +276,11 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       const next = state.rotateRefresh ? `rt-${++seq}` : rt;
       if (next !== rt) { refreshTokens.delete(rt); refreshTokens.set(next, entry); }
       return json(res, 200, { id_token: issueIdToken(entry.uid, { auth_time: entry.authTime }), refresh_token: next, expires_in: '3600' });
+    }
+    if (taskLink && req.method === 'POST' && url.pathname.startsWith('/v1/task-links/')) {
+      const { status, body } = await taskLink(url.pathname, uidOf(req), req.headers,
+        JSON.parse((await readBody(req)) || '{}'));
+      return json(res, status, body);
     }
     if (url.pathname === '/v1/account') {
       const uid = uidOf(req);

@@ -44,7 +44,7 @@ const STATUSES = path.join(DIR, "statuses.json");
 
 // sidecar が持つメタ情報のうち、外から丸ごと上書きしてよいもの。
 // history / parent / mode / model は専用の口があるので、ここには入れない。
-const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt", "compacting"]);
+const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt", "compacting", "taskLinkFailed"]);
 
 /**
  * 設定など、上限が決まっている小さな JSON ファイル（prefs.json・statuses.json）。読みは一度きりでキャッシュ、
@@ -541,7 +541,7 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "deliveries", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "rebuilds", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "shellAlwaysAllow", "computerApps", "rewind", "scheduledSends", "bot", "botStartFailures", "deletedBot", "antigravityFailures", "contextBase", "chromeProfile", "prs", "worktreePending", "selectedSettings", "creationReady", "closedQuestions", "sessionNotes"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "deliveries", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "rebuilds", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "shellAlwaysAllow", "computerApps", "rewind", "scheduledSends", "bot", "botStartFailures", "deletedBot", "antigravityFailures", "contextBase", "chromeProfile", "prs", "worktreePending", "selectedSettings", "creationReady", "taskLink", "taskLinkStatus", "closedQuestions", "sessionNotes"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

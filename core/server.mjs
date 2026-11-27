@@ -148,6 +148,7 @@ import { createHooksAgents } from './hooks-agents.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
 import { deliverable, classifyNativeRun } from './hooks-plan.mjs';
 import { createRemoteHost } from './remote/connector.mjs';
+import { createTaskLinkHandler } from './remote/task-links.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
 import { viewAnswer, viewInstructions, pickDescendants } from './remote/agent-view.mjs';
 import { streamMessages } from '../web/stream-messages.mjs';
@@ -932,7 +933,15 @@ const remoteAgentPort = createAgentPort({
 // まだ初期化されていない。remote.setPlusProvider() が積んだ状態の便りが、モジュールの評価の途中で動いて
 // 「remote status: Cannot access 'LIST_NEUTRAL_EVENTS' before initialization」で落ちていた。announce() で立ててから remote.start() する
 let remoteEmitReady = false;
+const taskLinks = createTaskLinkHandler({
+  create: createSession, lookup: conversationForCreation,
+  read: store.get, list: store.getAll,
+  save: (id, status) => store.setSessionData(id, 'taskLinkStatus', status, { durable: true }),
+  request: (...args) => plusSession.client.request(...args),
+  identity: ({ uid, hostId }) => plusSession.snapshot().uid === uid && plusHost.host()?.hostId === hostId,
+});
 const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, token: TOKEN, appVersion: APP_VERSION,
+  taskLink: taskLinks.handle,
   reviewPlusUid: () => reviewPlusLogin?.uid() ?? null,
   agent: {
     attach: (stream, device) => remoteAgentPort.attach(stream, device),
@@ -5208,6 +5217,7 @@ async function initializeSession(args, creation) {
     if (Object.keys(selectedSettings).length) await store.setSessionData(sessionId, 'selectedSettings', selectedSettings);
     if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] }, { durable: true });
     await chromeProfiles?.startNew(sessionId);
+    if (args?.taskLink) await store.setSessionData(sessionId, 'taskLink', args.taskLink, { durable: true });
     if (creation) await store.setSessionData(sessionId, 'creationReady', true, { durable: true });
   } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
   emitGlobal({ type: "sessionsChanged", sessionId: null });
@@ -9904,6 +9914,7 @@ async function beginTurn(ctx) {
   // 発言の吹き出しの後に送り、画面は messageId の吹き出しの前へ置く（履歴と同じ並び）
   if (sessionId && !hooks.compact) {
     const stops = (await store.get(sessionId).catch(() => null))?.stops;
+    if (store.peek(sessionId)?.taskLink) void taskLinks.publish(sessionId).catch(() => {});
     ctx.interruption = interruptionNote(agentLocale, stops, stops?.reason);
   }
   if (args.messageId) emit({ type: "userMessage", messageId: args.messageId, text: String(prompt ?? ""), at: args.at, initial: true, pending: true,
@@ -10863,9 +10874,11 @@ async function endTurn(turn, emit, { record = true } = {}) {
     // 始まらなかったターン（record が false）は前の中断の印を消さない（開始で消していないので）
     const patch = requeued ? { turnStartedAt: null }
       : { completedAt, turnStartedAt: null, ...(turn.compactTrigger ? { compacting: null } : {}), ...(record || stopped ? { interrupted } : {}) };
+    if (!requeued && store.peek(turn.info.sessionId)?.taskLink) patch.taskLinkFailed = turn.outcome !== 'ok';
     await store.setMeta(turn.info.sessionId, patch).catch(err => {
       console.error("  完了の記録に失敗:", String(err?.message ?? err));
     });
+    if (store.peek(turn.info.sessionId)?.taskLink) void taskLinks.publish(turn.info.sessionId).catch(() => {});
     // このターンで進んだ分を検索の写しへ（裏で読み直す。待たない）
     if (!requeued) sessionSearch.refresh(turn.info.sessionId);
     // 中断で終わったターンが抱えていた裏の作業・承認待ちを、会話の「止めたもの」に残す（次のターンで伝える）
@@ -13078,6 +13091,7 @@ async function announce() {
   mainPort.postMessage(readyMessage);
   remoteEmitReady = true;
   remote.start().catch(() => {});
+  taskLinks.start();
   // 更新のあとの最初の起動で、既存のアカウントの専用フォルダを準備する（共有へのリンク・退避。作れなければ理由を画面に出す。前の版のトークンも消す）。
   // 退避から 30 日を過ぎた項目は、起動時とそのあと 1 日ごとに消す（ADR 0350）
   void prepareAllAccountConnectors().catch(() => {});
