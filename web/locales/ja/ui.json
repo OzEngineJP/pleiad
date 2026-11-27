@@ -3277,7 +3277,6 @@
       "noList": "一覧がありません。ID を入力してください。",
       "chipTitle": "{{label}}（エージェント・モデル・エフォート。次のターンから適用）",
       "switchedTitle": "安全装置で {{model}} が答えています",
-      "chipAria": "モデルとエフォート: {{label}}",
       "loading": "モデルの一覧を読み込んでいます",
       "loadingAria": "{{backend}} · モデルを読み込んでいます"
     },

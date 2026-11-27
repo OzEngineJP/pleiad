@@ -83,11 +83,11 @@ const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * 候補の id。`backend:model` と `backend@<アカウント id>:model`（ADR 0264）。最初の `:` で分け、前半に `@` があればその後ろがアカウント。
  * model に `:`・`@` が入ってもそのまま。account は `@` が無ければ null（アカウントを持てるエージェントではログイン中のアカウント）
  */
-export function parseCandidate(id) {
+export function parseCandidate(id, { allowDefault = false } = {}) {
   const s = typeof id === 'string' ? id : '';
   const at = s.indexOf(':');
-  if (at <= 0 || at === s.length - 1 || s.length > 240 || /[\x00-\x1f\x7f\s]/.test(s)) return null;
-  const head = s.slice(0, at), model = s.slice(at + 1);
+  if (at <= 0 || (!allowDefault && at === s.length - 1) || s.length > 240 || /[\x00-\x1f\x7f\s]/.test(s)) return null;
+  const head = s.slice(0, at), model = s.slice(at + 1) || null;
   const mark = head.indexOf('@');
   if (mark < 0) return { backend: head, model, account: null };
   const account = head.slice(mark + 1);
@@ -107,7 +107,7 @@ export const isEndpointRef = s => typeof s === 'string' && s.startsWith('ep-');
  */
 export function candidateId(backend, model, account = null, endpoint = null) {
   const scope = endpoint || account;
-  return scope ? `${backend}@${scope}:${model}` : `${backend}:${model}`;
+  return scope ? `${backend}@${scope}:${model ?? ''}` : `${backend}:${model ?? ''}`;
 }
 /** 振り分けの target（{ backend, model, account, endpoint? }）の候補の id */
 export const targetCandidate = target => candidateId(target.backend, target.model, target.account || null, target.endpoint || null);
@@ -482,9 +482,23 @@ export function sameIdentity(a, b) {
  * blocked(backend, model, account) は、上限で再試行を待っている・上限で止まったばかりの枠（ADR 0229）。
  *   { reason: 'retry_waiting' | 'recently_limited', until? }（until は戻る見込みの時刻 ms）を返せば、その枠は使えない
  */
-export function checkCandidate(candidate, { usage, settings, now, blocked = () => null, endpoints = [] }) {
-  const parsed = parseCandidate(candidate);
+export function checkCandidate(candidate, { usage, settings, now, blocked = () => null, endpoints = [], limitsOnly = false }) {
+  const parsed = parseCandidate(candidate, { allowDefault: limitsOnly });
   const entry = parsed ? usage?.[parsed.backend] : null;
+  if (limitsOnly && parsed && !parsed.endpoint) {
+    const account = parsed.account ?? (entry?.accountable || Array.isArray(entry?.accounts) ? '' : null);
+    const row = Array.isArray(entry?.accounts) ? entry.accounts.find(a => a.account === account) : entry;
+    const held = blocked(parsed.backend, parsed.model, account);
+    if (held) return { ok: false, ...held, account };
+    const checkedAt = row && Object.hasOwn(row, 'checkedAt') ? row.checkedAt : entry?.checkedAt;
+    const accountLabel = row?.label ?? null;
+    const windows = windowsFor(parsed.backend, parsed.model, row ? row.windows : entry?.windows);
+    const limited = checkedAt != null && now - checkedAt <= STALE_MS && windows.find(w => usedNow(w, now) >= 100);
+    if (limited) return { ok: false, reason: 'quota_high', window: brief(limited, usedNow(limited, now)), account, accountLabel, checkedAt };
+    if (entry?.available === false || (parsed.account && Array.isArray(entry?.accounts) && !row) || row?.runnable === false)
+      return { ok: false, reason: 'unavailable', detail: entry?.available === false ? 'not_installed' : row ? 'no_token' : 'no_account', account, accountLabel, checkedAt };
+    return { ok: true, account, accountLabel, checkedAt, windows: windows.map(w => brief(w, usedNow(w, now))) };
+  }
   // 互換の接続先の候補は公式の使用量を使わない（ADR 0361）。使用量をまだ一度も取っていない（取り置きが空）ときも接続先の状態で決める。
   // 止めるのは、エージェントが入っていない・無効と分かっているときだけ
   if (parsed?.endpoint && (entry?.available || (!entry && !Object.keys(usage ?? {}).length))) return checkEndpoint(parsed, { endpoints, blocked });
@@ -641,10 +655,16 @@ export function manualRouting({ kind, candidate, check, of, from, effortTier = n
 export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {}, blocked, endpoints = [] }) {
   const difficulty = judged.signals ? difficultyOf(judged.signals) : 'mid';
   const order = levelOrder(settings);
+  const base = settings.table[kind]?.[DIFFICULTIES.indexOf(difficulty)] ?? order.at(-1);
+  return routeFromLevel({ kind, judged, difficulty, base, settings, usage, now, rejected, blocked, endpoints });
+}
+
+export function routeFromLevel({ kind = null, judged = {}, difficulty = null, base, settings, usage, now = Date.now(),
+  rejected = {}, blocked, endpoints = [], limitsOnly = false }) {
+  const order = levelOrder(settings);
   const kindName = kindAt(settings, kind)?.name || null;
   const levels = new Map((settings?.levels ?? []).map((l, i) => [l.id, { name: l.name, index: i }]));
   const info = level => levels.get(level) ?? null;
-  const base = settings.table[kind]?.[DIFFICULTIES.indexOf(difficulty)] ?? order.at(-1);
   const index = Math.max(0, order.indexOf(base));
   const skipped = [];
   const seen = [];
@@ -670,8 +690,8 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   const inspect = (tier, chooseSoft) => {
     const localSoft = [];
     for (const candidate of settings.tiers[tier] ?? []) {
-      const parsed = parseCandidate(candidate);
-      const assessed = checkCandidate(candidate, { usage, settings, now, blocked, endpoints });
+      const parsed = parseCandidate(candidate, { allowDefault: limitsOnly });
+      const assessed = checkCandidate(candidate, { usage, settings, now, blocked, endpoints, limitsOnly });
       const check = Object.hasOwn(rejected, candidate) ? { ok: false, reason: rejected[candidate], checkedAt: assessed.checkedAt,
         account: assessed.account, accountLabel: assessed.accountLabel ?? null, ...endpointFields(assessed) } : assessed;
       if (check.checkedAt != null) seen.push(check.checkedAt);
@@ -722,12 +742,12 @@ const modelKnownInUsage = (entry, parsed) => {
  * アカウントを持つ候補（scoped: アカウントを書いた候補・アカウントを登録したエージェントの候補）は、そのアカウントの行の使用量だけ
  * （account・accountLabel。ログイン中は ''）
  */
-export function candidateStates({ settings, usage, now = Date.now(), blocked, endpoints = [] }) {
+export function candidateStates({ settings, usage, now = Date.now(), blocked, endpoints = [], limitsOnly = false }) {
   const order = levelOrder(settings);
   const ids = [...new Set(order.flatMap(level => settings.tiers[level] ?? []))];
   return ids.map(candidate => {
-    const parsed = parseCandidate(candidate);
-    const check = checkCandidate(candidate, { usage, settings, now, blocked, endpoints });
+    const parsed = parseCandidate(candidate, { allowDefault: limitsOnly });
+    const check = checkCandidate(candidate, { usage, settings, now, blocked, endpoints, limitsOnly });
     // 互換の接続先の候補（ADR 0361）: 使用量は読めない（windows は空）。画面は「使用量は読めない」と出す
     if (parsed?.endpoint) {
       return { candidate, backend: parsed.backend, model: parsed.model, account: null, endpoint: parsed.endpoint, endpointLabel: check.endpointLabel ?? null,
@@ -744,7 +764,7 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked, en
       tiers: order.filter(level => (settings.tiers[level] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
       // 一覧に見当たらない（注意だけ。使えるかは CLI が決めるので usable は変えない。ADR 0311）
-      ...(parsed && entry?.available && !modelKnownInUsage(entry, parsed) ? { modelNotListed: true } : {}),
+      ...(parsed?.model && entry?.available && !modelKnownInUsage(entry, parsed) ? { modelNotListed: true } : {}),
       ...(check.until ? { until: new Date(check.until).toISOString() } : {}),
       ...(check.window ? { window: check.window } : {}),
       checkedAt: at ? new Date(at).toISOString() : null,

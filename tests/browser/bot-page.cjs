@@ -6,7 +6,6 @@
 //   Antigravity（承認モードは 5 つ。ADR 0365）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。
 //   作ると、その bot の DM が開いて入力欄に焦点がある（ADR 0358）。DM の見出しの名前から bot のページへ行ける。
-//   畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて、右に今の値だけを出し、長い説明文と「今週」は無い。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する（フォルダーを足す確認に使う）
   const ROOT = 'C:/path/to/ply';
@@ -33,8 +32,10 @@ async page => {
     ws.onerror = () => reject(new Error('ws'));
   }), { op, args });
   const open = detail => page.evaluate(d => document.dispatchEvent(new CustomEvent('channels:show', { detail: d })), detail);
-  const botPage = async id => { await open({ kind: 'bot', id }); await page.waitForSelector('#botView:not([hidden])'); await page.waitForSelector('#channelsView .top.bot-top #botName'); await page.waitForFunction(() => document.querySelector('#botModelChip .v')?.textContent && !document.querySelector('#botModelChip .v').textContent.includes('…')); };
-  const pickChip = async (chip, key) => { await page.locator(chip).click(); if (key.startsWith('backend:')) await page.locator('#botModelPop [data-key="nav:agent"]').click(); await page.locator(`[data-key="${key}"]`).click(); };
+  const candidateChip = '#botView .rt-cand-row .rt-picker-chip';
+  const candidatePop = '#botView .rt-picker:not([hidden])';
+  const botPage = async id => { await open({ kind: 'bot', id }); await page.waitForSelector('#botView:not([hidden])'); await page.waitForSelector('#channelsView .top.bot-top #botName'); await page.waitForSelector(candidateChip); };
+  const pickChip = async (chip, key) => { await page.locator(chip).click(); await page.locator(`[data-key="${key}"]`).click(); };
   const botOf = async name => (await call('bots.list')).bots.find(b => b.name === name);
   // 作る 3 段を通して作る（名前 → 色 → 人格）。作ると DM が開いて入力欄に焦点がある
   const openNew = async () => { await open({ kind: 'bot', id: 'new' }); await page.waitForSelector('#botView:not([hidden]) #botObName'); };
@@ -62,7 +63,7 @@ async page => {
   check(await page.evaluate(() => { const h = document.getElementById('channelsPageTitle').getBoundingClientRect(); return h.width <= 1 && h.height <= 1; }), 'bot のページの上に、汎用の「Channels」の見出しは出さない');
   await shot('01-new');
   await page.locator('#botObName').fill('Owl');
-  await page.keyboard.press('Enter');
+  await page.locator('#botObName').press('Enter');
   await page.waitForSelector('#botView .bp-ob-step .bp-swatches');
   check(await page.locator('#botView .bp-ob-step .bp-swatch').count() === 8 && await page.locator('#botView .bp-ob-step .bp-swatch[aria-pressed="true"]').count() === 1, '2 段目は 8 色で、1 つが選ばれている');
   await page.locator('#botView .bp-ob-step .bp-swatch[data-color="5"]').click();
@@ -109,16 +110,16 @@ async page => {
   const withIcon = await waitBot('Owl2', b => b.color === 2, '色を選ぶと保存される');
   check(await page.locator('#botColorPop').isHidden(), '選ぶと面が閉じる');
   // 入力欄と同じ 2 段の面: 1 段目の「モデル」の行 → 2 段目のモデルの一覧
-  await page.locator('#botModelChip').click();
-  await page.locator('#botModelPop [data-key="nav:model"]').click();
-  const modelKeys = await page.locator('#botModelPop [data-key^="model:"]').evaluateAll(n => n.map(x => x.dataset.key));
+  await page.locator(candidateChip).click();
+  await page.locator(`${candidatePop} [data-key="nav:model"]`).click();
+  const modelKeys = await page.locator(`${candidatePop} [data-key^="model:"]`).evaluateAll(n => n.map(x => x.dataset.key));
   check(modelKeys.length >= 2, '入力欄と同じモデルの面が開く');
-  const other = modelKeys.find(k => k !== `model:${withIcon.model}`);
-  await page.locator(`#botModelPop [data-key="${other}"]`).click();
+  const other = modelKeys.find(k => k !== 'model:' && k !== `model:${withIcon.model}`);
+  await page.locator(`${candidatePop} [data-key="${other}"]`).click();
   await waitBot('Owl2', b => `model:${b.model}` === other || b.model === other.slice(6), 'モデルを選ぶと保存される');
   // エフォートは 1 段目の棒の行（role=slider）。既定でない端の段へ Home / End で移ると保存される
-  if (await page.locator('#botModelPop').isHidden()) await page.locator('#botModelChip').click();
-  const slider = page.locator('#botModelPop [data-key="effort"]');
+  if (!await page.locator(candidatePop).count()) await page.locator(candidateChip).click();
+  const slider = page.locator(`${candidatePop} [data-key="effort"]`);
   const bars = await slider.locator('i').evaluateAll(n => n.map(x => x.classList.contains('def')));
   check(bars.length >= 2 && bars.includes(false), 'エフォートの段が出る');
   await slider.focus();
@@ -126,7 +127,7 @@ async page => {
   const level = (await slider.getAttribute('aria-valuetext')).split(/[（(]/)[0].trim();
   await waitBot('Owl2', b => b.effort === level, 'エフォートを選ぶと保存される');
   // 保存の後に面が描き直されて、棒のフォーカスが外れていることがある。面の中の棒へ押して確かに Esc を届ける（1 段目の Esc で閉じる）
-  await page.locator('#botModelPop [data-key="effort"]').press('Escape');
+  await slider.press('Escape');
   const sw = page.locator('#botSendSwitch');
   check(await sw.isVisible() && await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
   await sw.click();
@@ -227,15 +228,12 @@ async page => {
 
   // ---- Antigravity: 承認モードは 5 つ（ACP。ADR 0365）。「1 つだけ」の 1 行は出ない。全部自動（yolo）ではフォルダーは「すべてのフォルダー」
   await makeBot('Kit');
-  await botPage((await botOf('Kit')).id);
-  await pickChip('#botModelChip', 'backend:antigravity');
-  await page.waitForFunction(() => document.querySelector('#botModelChip').dataset.backend === 'antigravity');
+  const kit = await call('bots.update', { botId: (await botOf('Kit')).id, backend: 'antigravity' });
+  await botPage(kit.id);
   check(!(await page.locator('#botView .bp-fact').isVisible()), 'Antigravity は承認モードを複数選べるので、「だけ」の 1 行は出ない');
   await page.locator('#botModeChip').click();
   check(await page.locator('#botModePop [role=option]').count() === 5, '承認モードの面に選べるのは 5 つ（都度確認・編集は自動・自動判断・計画のみ・全部自動）');
   await page.keyboard.press('Escape');
-  const kit = await waitBot('Kit', b => b.backend === 'antigravity', 'bot のエージェントを Antigravity に替えられる');
-  await botPage(kit.id);
   check(kit.mode === 'default', 'Antigravity の bot の承認モードは、作業場所に限るモードが無いので語彙の先頭の default（都度確認）');
   await pickChip('#botModeChip', 'mode:yolo');
   await waitBot('Kit', b => b.mode === 'yolo', 'Antigravity の全部自動（yolo）にする');
@@ -244,10 +242,7 @@ async page => {
 
   // ---- Codex: 全部自動 (full) は書き込みを作業場所に限るので、フォルダーは活性のまま。Bypass は非活性
   await makeBot('Lynx');
-  await botPage((await botOf('Lynx')).id);
-  await pickChip('#botModelChip', 'backend:codex');
-  await page.waitForFunction(() => document.querySelector('#botModelChip').dataset.backend === 'codex');
-  const lynx = await waitBot('Lynx', b => b.backend === 'codex', 'bot のエージェントを Codex に替えられる');
+  const lynx = await call('bots.update', { botId: (await botOf('Lynx')).id, backend: 'codex' });
   await botPage(lynx.id);
   await pickChip('#botModeChip', 'mode:full');
   await waitBot('Lynx', b => b.mode === 'full', 'Codex の全部自動にする');

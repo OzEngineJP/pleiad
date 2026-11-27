@@ -1012,6 +1012,13 @@ export default async function (t) {
         await tick();
         const restNotes = w.posts.filter((p) => String(p.text).includes('届けていません'));
         t.ok('上限: 休憩中の @ には、その場所（スレッド）へ 1 回だけ Pleiad のお知らせを出す', restNotes.length === 1 && restNotes[0].threadId === 'p_other' && w.started.length === before, JSON.stringify(restNotes));
+        owl.routing = { levels: [{ id: 'level_1' }], tiers: { level_1: ['fake:', 'fake:other'] } };
+        let routed = false;
+        w.d.bots.routeSession = async () => { routed = true; return null; };
+        await w.d.onPosted({ ...other, id: 'p_other3', threadId: 'p_other', text: '@Owl 予備候補を確認' }, w.channel);
+        t.ok('上限: 休憩中でも予備候補を確認し、候補が尽きていれば同じ場所に知らせを重ねない',
+          routed && w.posts.filter((p) => String(p.text).includes('届けていません')).length === 1);
+        delete owl.routing;
         await w.d.turnExtras(w.turn);
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '復帰しました。' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
@@ -1025,6 +1032,27 @@ export default async function (t) {
         const kept = k.posts.find((p) => p.turn);
         t.ok('上限: bot が書いた分は残し、解除の時刻が分からなければ時刻なしで知らせる（休憩中にはしない）', kept.text === '途中まで書いた返事です。' && kept.state === 'stopped'
           && k.posts.some((p) => String(p.text).includes('しばらく答えられません')) && k.d.restingUntil(await k.d.bots.get({ botId: 'b_1' })) === null, JSON.stringify(k.posts.map((p) => [p.text, p.state])));
+      }
+      // 上限で別候補に替える際、未着手の依頼だけ新しい会話に渡し直す。
+      for (const startedTool of [false, true]) {
+        const w = world('none', { realStart: true });
+        const bot = await w.d.bots.get({ botId: 'b_1' });
+        bot.routing = { levels: [{ id: 'level_1' }], tiers: { level_1: ['fake:', 'fake:other'] } };
+        w.d.bots.routeSession = async ({ limited }) => limited ? { candidate: 'fake:other' } : { keep: true };
+        w.d.bots.createSession = async () => {
+          w.sessions.s2 = { bot: { ...w.sessions.s1.bot, postCursor: null, delivered: [] } };
+          return { sessionId: 's2' };
+        };
+        w.turns.delete('s1');
+        await w.d.onPosted(w.posts[0], w.channel);
+        await until(() => w.d.activeCount() === 1, { label: '上限の試験で bot が応答を始める' });
+        w.d.onTurnEvent(w.turn, startedTool ? { type: 'tool.start', name: 'shell' } : { type: 'thinking.delta', text: '考え中' });
+        await w.d.onTurnEnd(w.turn, { outcome: 'limited', interrupted: { reason: 'limit' } });
+        const item = (await w.d.inbox.list({})).find(i => i.postId === 'p_root');
+        t.ok(startedTool ? 'bot: 操作を始めていれば依頼は再試行せず、切り替えを知らせる' : 'bot: 思考だけなら依頼を次の候補へ移す',
+          w.threads['c_1/p_root'].sessions.b_1 === 's2' && item?.sessionId === (startedTool ? 's1' : 's2')
+          && w.started.filter(({ args }) => args.sessionId === 's2').length === (startedTool ? 0 : 1)
+          && w.posts.some(p => p.author.kind === 'system' && p.text.includes('候補')) === startedTool, JSON.stringify({ item, posts: w.posts }));
       }
       // E1-2（Antigravity）: 会話を続けるときに人格（エージェント定義）を渡し直しても最初の指示のまま動くので、人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す
       {

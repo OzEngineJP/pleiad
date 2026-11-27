@@ -4,7 +4,7 @@
 //
 // 設定は Chats の入力欄と同じ程度に簡単にする:
 //   名前・色（顔を押すと 8 色の面）・人格（自由文）… 離れたときに bots.update。前の版の絵文字・画像は保存に残すが読まない（ADR 0362）
-//   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
+//   エージェント・モデル・接続先・思考の強さ … 委譲の設定と共通の候補の選択。bots.setRouting
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
 //   接続先 … モデルの面の「接続先」の行（入力欄と同じ 1 つの一覧: CLI のログイン → 登録したアカウント → 互換の接続先。週の使用量は公式の枠の行だけ）。
 //     bots.setAccount（人だけ。ADR 0224・0359）。そのエージェントが接続先を選べ（capabilities.accounts・compatEndpoints。
@@ -16,22 +16,20 @@
 // 認証・1 日の上限・長い注記は出さない（接続先は、どれで動くかを選ぶ行だけ。登録・トークン・資格情報・互換の接続先は設定の各エージェントの「接続先」）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { createRoutingLevels } from '../routing-levels.mjs';
+import { applyPatch } from '../delegation-settings.mjs';
 import { moreIcon } from '../icons.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
-import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel, effortStops, connShown } from '../composer-controls.mjs';
-import { endpointChipLabel } from '../composer-labels.mjs';
+import { panel, renderMode, folderBrowser, isDanger, resolvedModel, connShown } from '../composer-controls.mjs';
 import { compatModelLabel } from '../compat-models.mjs';
-import { weekUsage } from '../header-usage.mjs';
-import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
 import { botIcon, BOT_COLOR_COUNT } from './bot-icon.mjs';
 import { foldRow } from './fold-row.mjs';
 import * as M from './bot-model.mjs';
 
 // 線画（composer-controls.mjs のチップと同じ。あちらは内部の定数）
-const MODEL = ['M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z', 'M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3'];
 const SHIELD = ['M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z'];
 const WARN = ['M12 3.5l9.5 16.5h-19z', 'M12 10v4.5M12 17.2v.3'];
 const CARET = ['M7 10l5 5 5-5'];
@@ -88,7 +86,6 @@ export function createBotPage(host) {
     gone: false,
     connAsked: new Set(), // 接続先の候補（アカウント・互換）を読み始めた backend（host.conn.load。登録が変わったら捨てる）
     connDone: new Set(),  // 読み終えた backend（読み終えるまでは「削除された接続先」と見せない）
-    quotaAsked: new Set(),// 面を開いている間に使用量を頼んだ backend（閉じたら忘れ、次に開いたとき読み直す）
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
   };
@@ -192,16 +189,6 @@ export function createBotPage(host) {
   personaBlk.append(el('h4', null, t('channels:bot.persona.title')), persona);
 
   // 動かし方: モデルと承認モードのチップ（入力欄と同じ面）
-  const modelName = el('span', 'v');
-  const modelChip = el('button', 'chip fieldish model');
-  modelChip.type = 'button';
-  modelChip.id = 'botModelChip';
-  modelChip.append(glyph(MODEL), modelName, caret());
-  const modelPop = el('div', 'pop cpop');
-  modelPop.id = 'botModelPop';
-  modelPop.setAttribute('role', 'dialog');
-  modelPop.setAttribute('aria-label', t('chat.composer.model'));
-  modelPop.hidden = true;
   const modeName = el('span', 'v');
   const shield = glyph(SHIELD);
   const warn = glyph(WARN);
@@ -215,7 +202,7 @@ export function createBotPage(host) {
   modePop.setAttribute('aria-label', t('chat.composer.mode'));
   modePop.hidden = true;
   const chips = el('div', 'bp-kvr bp-chips');
-  chips.append(modelChip, modeChip);
+  chips.append(modeChip);
   const lockNote = el('span', 'bp-locknote');
   const lockText = document.createTextNode(t('channels:bot.modeHumanOnly'));
   lockNote.append(glyph(LOCK), lockText);
@@ -251,7 +238,10 @@ export function createBotPage(host) {
   let removingTarget = false;
   const sendTargets = el('div', 'bp-send-targets');
   sendTargets.setAttribute('aria-label', t('channels:bot.send.targets'));
-  runBlk.append(runHead, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn);
+  const routingBody = el('div');
+  const routingStatus = el('p', 'bp-nt');
+  routingStatus.setAttribute('role', 'status');
+  runBlk.append(runHead, routingBody, routingStatus, chips, lockNote, modeFact, folderTitle, folderBox, folderNote, addBtn);
 
   // 記憶・使用量
   const memory = createMemoryList(host, {
@@ -328,7 +318,7 @@ export function createBotPage(host) {
   right.append(foldBlk, memBlk);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
-  root.append(head, ob, err, connWarn, notice, grid, modelPop, modePop, addPop, colorPop);
+  root.append(head, ob, err, connWarn, notice, grid, modePop, addPop, colorPop);
   body.append(root);
 
   // ---------------------------------------------------------------- 浮く面（入力欄と同じ。チップは画面の途中にあるので、広い方（なるべく下）に置き直す）
@@ -348,16 +338,70 @@ export function createBotPage(host) {
     };
     return p;
   };
-  // 使用量はホストの 1 本の取得口（usageSource）を購読する。新しい値が届いたら開いている面を描き直す
-  host.onUsage?.(() => { if (modelPanel.open) { modelPanel.render(); modelPanel.place(); } });
-  const modelPanel = place(panel(modelChip, modelPop, { width: 360, onHide: () => S.quotaAsked.clear(),
-    render: () => { askQuota(); askConn(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
   const colorPanel = place(panel(av, colorPop, { width: 212, initialFocus: '[aria-pressed="true"]', render: () => {
     colorPop.replaceChildren(el('h4', 'bp-color-t', t('channels:bot.iconTitle')), swatches(S.bot?.color, (c) => { colorPanel.hide(); if (c !== S.bot?.color) update({ color: c }); }));
   } }));
-  const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); colorPanel.hide(false); };
+  const closePanels = () => { modePanel.hide(false); addPanel.hide(false); colorPanel.hide(false); };
+
+  let routingData = null;
+  let routingSerial = 0;
+  const routing = createRoutingLevels({
+    root, advancedBody: routingBody, getData: () => routingData,
+    paintAdvanced: paintRouting, save: saveRouting, showMenu: host.showMenu,
+    labelOf: id => backendLabel(id), modelsOf: (backend, account) => routingModels(backend, account),
+    modelName: (backend, model, account) => S.vocab.get(JSON.stringify([backend, account ?? '', botCwd(vm()), '']))?.models?.[model]?.label,
+    agents: () => backends().map(b => b.id).filter(id => id !== 'fake'),
+    openAccount: host.openRoutingAccount, openConns: host.openRoutingConnections,
+    cmd: host.cmd, announceOrder: msg => { routingStatus.textContent = msg; },
+    refreshUsage: refreshRouting, allowDefault: true, minCandidates: 1,
+  });
+
+  function paintRouting() {
+    if (!routing.busy) routing.replace(routingData ? [routing.block()] : []);
+  }
+
+  async function routingModels(backend, account = '') {
+    return (await vocabOf(backend, '', botCwd(vm()), account)).models;
+  }
+
+  async function refreshRouting() {
+    const botId = S.id;
+    const serial = ++routingSerial;
+    if (!botId || S.draft || S.gone || vm()?.plain) return;
+    try {
+      const latest = await host.invoke('bots.routing', { botId });
+      if (serial !== routingSerial || botId !== S.id) return;
+      routingData = latest;
+      routingStatus.textContent = '';
+      paintRouting();
+      await Promise.all((latest.candidates ?? []).filter(c => c.backend && !c.endpoint)
+        .map(c => routingModels(c.backend, c.account).catch(() => null)));
+      if (serial === routingSerial && botId === S.id) paintRouting();
+    } catch (e) {
+      if (serial === routingSerial && botId === S.id) routingStatus.textContent = t('routing.settings.loadFailed', { error: message(e) });
+    }
+  }
+
+  function saveRouting(patch) {
+    const botId = S.id;
+    const { defaults, settings } = routingData;
+    const next = applyPatch(settings, patch, defaults);
+    routingData = { ...routingData, settings: next };
+    const serial = ++routingSerial;
+    paintRouting();
+    return queue(async () => {
+      try {
+        const { levels, tiers, efforts } = next;
+        const bot = await host.invoke('bots.setRouting', { botId, settings: { levels, tiers, efforts } });
+        if (S.id === botId) applyBot(bot);
+      } catch (e) {
+        if (S.id === botId) setError(t('channels:bot.saveFailed', { error: message(e) }));
+      }
+      if (serial === routingSerial && S.id === botId) await refreshRouting();
+    });
+  }
 
   // ---------------------------------------------------------------- 語彙（バックエンドごとの承認モード・モデル・エフォート）
   /** bot が走る作業場所（最初のフォルダー。core/bots/sessions.mjs の pickCwd）。モデルの一覧・段はその場所のプロジェクト設定で変わる */
@@ -407,12 +451,8 @@ export function createBotPage(host) {
       S.connDone.add(backend);
       if (!vm()) return;
       if (vm().backend === backend) paintRun();
-      // 面を開いた後に届いたら、行を足して描き直す（使用量が届いたときと同じ）
-      if (modelPanel.open) { modelPanel.render(); modelPanel.place(); }
     });
   }
-  /** モデルの面を描くとき、一覧のほかのエージェントの登録も読んでおく（棒を出すかの判定） */
-  function askConn() { for (const b of backends()) connLoad(b.id); }
   /**
    * 今の bot（か下書き）の接続先の見え方。入力欄の面と同じ 2 つの口（アカウントの候補・互換の接続先の値）。bot なし（組み込み）には出さない。
    * 「既定」の札は新しい会話の既定の印なので外す。互換を選んでいる間は、アカウントの選び（別に覚えている）を見せない
@@ -462,16 +502,6 @@ export function createBotPage(host) {
     if (row) return compatModelLabel(cur.model || row.roles?.main || '').text;
     return S.v ? resolvedModel(S.v.models, cur.model ?? '').label : '';
   }
-  /** モデルの面を開いている間に 1 度ずつ、エージェントの使用量を読みに行く（アカウントの行とエージェントの行の週の使用量。結果は host.onUsage の購読で届き、面を描き直す） */
-  function askQuota() {
-    if (typeof host.quota !== 'function') return;
-    for (const b of backends()) {
-      if (S.quotaAsked.has(b.id)) continue;
-      S.quotaAsked.add(b.id);
-      Promise.resolve(host.quota(b.id)).catch(() => {});
-    }
-  }
-
   // ---------------------------------------------------------------- 描画
   function paintHead() {
     const cur = vm();
@@ -508,28 +538,10 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur) return;
     const v = S.v;
-    // 互換の接続先は入力欄と同じ「接続先 · モデル · 段」。CLI のログインでないアカウントは、チップの末尾に名前（「Opus 5.5 · high · OZ」）。読み上げと title にも入れる
-    const row = endpointRowOf();
-    let head, tail, full, conn = '';
-    if (row) {
-      const m = compatModelLabel(cur.model || row.roles?.main || '');
-      ({ head, tail, full } = endpointChipLabel({ connection: row.name, model: m.text, fullModel: m.id, effort: effortStops(v?.efforts, cur.effort ?? '').current }));
-    } else {
-      const label = v ? modelChipLabel(v.models, cur.model ?? '', v.efforts, cur.effort ?? '') : cur.model || '…';
-      ({ head, tail } = splitChipLabel(label));
-      conn = connName();
-      full = conn ? `${label} · ${conn}` : label;
-    }
-    modelName.classList.add('split');
-    modelName.replaceChildren(el('span', 'mn', head), ...(tail ? [el('span', 'ef', tail)] : []), ...(conn ? [el('span', 'ef conn-chip', ` · ${conn}`)] : []));
-    modelChip.title = t('composer.model.chipTitle', { label: full });
-    modelChip.setAttribute('aria-label', t('composer.model.chipAria', { label: full }));
     // 接続先も人だけが変えられる（bots.setAccount）。行を出しているときだけ注記に足す
     const view = connView();
     lockText.data = connShown({ accounts: view.accounts, account: cur.account ?? '', endpoint: view.endpoint }) ? t('channels:bot.modeAccountHumanOnly') : t('channels:bot.modeHumanOnly');
     paintConnWarn();
-    modelChip.dataset.value = cur.model ?? '';
-    modelChip.dataset.backend = cur.backend ?? '';
     const m = v?.modes?.[cur.mode];
     const danger = isDanger(m);
     modeName.replaceChildren(el('span', 'full', m?.label ?? cur.mode ?? ''));
@@ -544,7 +556,7 @@ export function createBotPage(host) {
     show(modeFact, Boolean(only));
     if (only) modeFact.textContent = t('channels:bot.modeOnly', { backend: backendLabel(cur.backend), mode: v.modes[only]?.label ?? only });
     // 開いている面も描き直す（語彙が届いた・選んだ直後）
-    for (const p of [modelPanel, modePanel]) if (p.open) { p.render(); p.place(); }
+    if (modePanel.open) { modePanel.render(); modePanel.place(); }
   }
 
   function folderRow(f, disabled) {
@@ -706,24 +718,6 @@ export function createBotPage(host) {
     });
   }
 
-  /**
-   * bot の接続先を変える（人だけ。bots.setAccount）。互換の接続先を選ぶ（endpoint）か、CLI のログイン（account ''）・アカウント（endpoint '' で公式へ戻す）。
-   * 接続先を変えるとモデル・エフォートは既定へ戻る（サーバーと同じ。互換のモデルは公式では通らない）。作る 3 段には接続先の欄が無い（作った後に bot のページで選ぶ。ADR 0362）
-   */
-  async function setConn({ endpoint = '', account = '' }) {
-    if (S.draft) return;
-    const botId = S.id;
-    setError('');
-    await queue(async () => {
-      try {
-        const bot = await host.invoke('bots.setAccount', { botId, account, endpoint });
-        if (S.id === botId) applyBot(bot);
-      } catch (e) {
-        if (S.id === botId) { setError(t('channels:bot.saveFailed', { error: message(e) })); paintAll(); }
-      }
-    });
-  }
-
   // ---------------------------------------------------------------- 作る 3 段（名前 → 色 → 人格。ADR 0362）
   let createBusy = false;
   const obButton = (label, primary, onClick) => {
@@ -818,30 +812,6 @@ export function createBotPage(host) {
     }
   }
 
-  const modelOn = {
-    backend: (id) => update({ backend: id }),
-    model: (id) => update({ model: id }),
-    effort: (v) => update({ effort: v }),
-    // 互換の接続先を選ぶ（アカウントの選びは別に覚えたまま）／CLI のログイン・アカウントを選ぶ（互換は外れて公式へ戻る）
-    endpoint: (id) => setConn({ endpoint: id, account: vm()?.account ?? '' }),
-    conn: ({ endpoint, account }) => setConn({ endpoint, account }),
-  };
-  function modelTarget() {
-    const cur = vm();
-    const v = S.v ?? { modes: {}, models: {}, efforts: {} };
-    const view = connView();
-    return {
-      backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
-      backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
-      // 一覧のほかのエージェントがアカウントを登録しているか（今のエージェントは accounts・endpoint で決まる。composer-labels.mjs の agentRowUsage）
-      backendHasAccounts: (id) => Boolean(host.conn?.hasAccounts(id)),
-      agentView: (id) => host.agentView?.(id) ?? null,
-      models: v.models, model: cur.model ?? '',
-      efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
-      ...(view.accounts ? { accounts: view.accounts, account: cur.account ?? '' } : {}),
-      ...(view.endpoint ? { endpoint: view.endpoint } : {}),
-    };
-  }
   function paintModePop() {
     const cur = vm();
     renderMode({ pop: modePop, target: { mode: cur.mode, modes: S.v?.modes ?? {} }, on: { mode: (id) => setMode(id) }, hide: () => modePanel.hide() });
@@ -944,6 +914,9 @@ export function createBotPage(host) {
 
   async function open(id) {
     closePanels();
+    routingData = null;
+    routingStatus.textContent = '';
+    paintRouting();
     for (const d of root.querySelectorAll('details.bp-frow')) d.open = false;   // 畳んだ行は開き直すたびに閉じる
     if (S.id !== id) { paused = null; activitySeq++; }
     S.id = id;
@@ -975,6 +948,7 @@ export function createBotPage(host) {
       nameIn.value = bot.name;
       persona.value = bot.persona ?? '';
       paintAll();
+      refreshRouting();
       await loadVocab();
     } catch (e) {
       if (S.id !== id) return;
@@ -1012,6 +986,9 @@ export function createBotPage(host) {
       closePanels();
       root.hidden = true;
       S.id = null;
+      routingSerial += 1;
+      routingData = null;
+      paintRouting();
       S.draft = null;
       memory.setBot(null);
       paused = null;
@@ -1044,7 +1021,7 @@ export function createBotPage(host) {
      */
     connChanged() {
       S.connAsked.clear(); S.connDone.clear(); S.vocab.clear();
-      if (!root.hidden && vm()) { connLoad(vm().backend); loadVocab(); }
+      if (!root.hidden && vm()) { connLoad(vm().backend); loadVocab(); refreshRouting(); }
     },
   };
 }

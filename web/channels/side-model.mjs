@@ -16,9 +16,10 @@ export function sideChannels(channels) {
  * 作業中・あなた待ちでなく、使用量の上限で休んでいる（bots.list の restingUntil が先）なら 'resting'（ADR 0119）
  * @returns {'idle'|'working'|'waiting'|'resting'}
  */
-export function botState(bot, { sessions = [], runningIds = new Set(), waitingIds = new Set(), now = Date.now() } = {}) {
-  const mine = sessions.filter((s) => s?.bot?.botId === bot.id);
-  const state = !mine.length ? (bot.state ?? 'idle')
+export function botState(bot, { sessions = [], runningIds = new Set(), waitingIds = new Set(), now = Date.now(), homeChannels = new Set() } = {}) {
+  const all = sessions.filter((s) => s?.bot?.botId === bot.id);
+  const mine = all.filter(s => !homeChannels.has(s.bot.channelId));
+  const state = !all.length ? (bot.state ?? 'idle')
     : mine.some((s) => waitingIds.has(s.id)) ? 'waiting'
     : mine.some((s) => runningIds.has(s.id)) ? 'working' : 'idle';
   return state === 'idle' && Number(bot.restingUntil) > now ? 'resting' : state;

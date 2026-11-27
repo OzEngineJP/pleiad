@@ -27,7 +27,8 @@ import { normalizeComputerUse } from './computer-use/policy.mjs';
 import { appendFileSync, statSync } from 'node:fs';
 import { gzip as gzipCallback } from 'node:zlib';
 import { promisify } from 'node:util';
-import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, tierEndpoints, targetCandidate, endpointSlot, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
+import { DIFFICULTIES, SIGNALS, kindOrder, levelOrder, kindAt, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, routeFromLevel, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, tierEndpoints, targetCandidate, endpointSlot, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
+import { botCandidates, botRoutingDefaults, botRoutingSettings, resolveBotRoutingMode } from './bots/routing.mjs';
 import { judgeDifficulty, normalizeKey, JUDGE_USE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm } from './delegation-usage.mjs';
 import { canDelegate, resolveDelegatedMode, modePosition, scopeRank, autonomyRank, SCOPES, AUTONOMIES } from './modes.mjs';
@@ -1944,7 +1945,10 @@ const routingUsage = createUsageMonitor({
   backends: listBackends,
   installed: id => installation(id).installed,
   read: providerQuota,
-  candidates: () => [...new Set(levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []))],
+  candidates: async () => [...new Set([
+    ...levelOrder(routingSettingsCache).flatMap(level => routingSettingsCache.tiers[level] ?? []),
+    ...(await botHost?.opsDeps().bots.list() ?? []).filter(bot => !bot.plain).flatMap(bot => botCandidates(botRoutingSettings(bot))),
+  ])],
   // 候補に書かれたアカウントの一覧で確かめる。アカウントごとに一覧を持つエージェント（'token'）だけ（ほかのエージェントはこれまでどおりバックエンドの一覧）
   scopeForAccount: async (b, acct) => {
     if (!acct || accountKind(b) !== 'token') return b;
@@ -2020,11 +2024,11 @@ async function routeDelegation(args, lng, cwd) {
   for (;;) {
     ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked, endpoints }));
     if (!ok) break;
-    const picked = getBackend(routing.target.backend);
+    const picked = routingBackend(routing.target);
     // モデルが一覧にあるかは見ない（使えるかは CLI/API が決め、断られたら次の候補で作り直す。ADR 0311）。
     // 見るのは、エージェントが有効か・モデル名の形だけ（互換の接続先の候補は、接続先を持てるエージェントか）
-    if (picked && isModelId(routing.target.model) && (!routing.target.endpoint || endpointCapable(picked))) break;
-    rejected[targetCandidate(routing.target)] = picked ? 'model_unknown' : 'unavailable';
+    if (picked) break;
+    rejected[targetCandidate(routing.target)] = getBackend(routing.target.backend) ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {
     // 候補の行は言語によらない形（画面の委譲カードがこの行を読んで理由ごとにまとめる。web/delegation-routing-view.mjs の parseRoutingFailure）
@@ -2064,8 +2068,95 @@ async function keyChoiceInfo(use) {
   return { via, hasKey: await apiKeys.hasUse(use).catch(() => false), keyRef: via === 'key' ? ref : null, plus: await plusKeyInfo() };
 }
 /** 設定 › 委譲（段 B の画面）が読む今の状態。キーは hasKey だけ */
-async function delegationRoutingState() {
-  const settings = routingSettingsCache;
+function routingBackend(target, { allowDefault = false } = {}) {
+  const backend = getBackend(target.backend);
+  if (!backend || (target.endpoint && !endpointCapable(backend))) return null;
+  return (allowDefault && target.model == null) || isModelId(target.model) ? backend : null;
+}
+
+async function confirmRoutingTarget(target, cwd, { allowDefault = false } = {}) {
+  const raw = routingBackend(target, { allowDefault });
+  if (!raw) return null;
+  const endpoint = target.endpoint ?? '';
+  const account = endpoint ? '' : target.account ?? '';
+  if (account && !accountKind(raw)) return null;
+  if (endpoint) await compatEndpoints.resolve(endpoint, raw.id);
+  const credentials = account ? await accountResolve(raw, account) : null;
+  if (account && !credentials) return null;
+  const backend = endpoint ? raw : await backendForAccount(raw, credentials);
+  const model = allowDefault ? await resolveModel(null, target.model ?? undefined, backend, cwd, endpoint) : target.model;
+  if (target.model && !model) return null;
+  return { backend, model, account, endpoint };
+}
+
+async function routedEffort({ settings, tier, candidate, backend, model, cwd, endpoint }) {
+  const row = await endpointRow(endpoint);
+  const decided = decideEffort({ settings, tier, candidate, capability: await effortCapability(backend, model, cwd, row) });
+  return { decided, effort: await resolveEffort(null, decided.send, backend, model, cwd, row) };
+}
+
+function botSlotBlocked(backend, model, account) {
+  const held = slotBlocked(backend, model, account);
+  return held?.reason === 'recently_limited' || held?.reason === 'retry_waiting' ? held : null;
+}
+
+async function routeBotSession(bot, meta, { limited = false, channel, cwd, sessionId } = {}) {
+  const settings = botRoutingSettings(bot);
+  const candidates = botCandidates(settings);
+  if (bot.plain || candidates.length < 2) return undefined;
+  const primary = candidates[0];
+  const parse = candidate => parseCandidate(candidate, { allowDefault: true });
+  const pinned = candidates.includes(meta?.bot?.routingCandidate) ? meta.bot.routingCandidate : primary;
+  const endpointStates = await routingEndpoints(candidates.map(c => parse(c)?.endpoint).filter(Boolean));
+  const usage = routingUsage.snapshot();
+  const base = settings.levels[0].id;
+  const original = parse(pinned);
+  const checked = original && original.model == null && meta?.backend === original.backend && meta.model
+    && (meta.claudeAccount ?? '') === (original.account ?? '') && (meta.compatEndpoint ?? '') === (original.endpoint ?? '')
+    ? candidateId(original.backend, meta.model, original.account, original.endpoint) : pinned;
+  const blocked = (b, m, a) => botSlotBlocked(b, m, a ?? limitAccount(b, ''));
+  const state = checkCandidate(checked, { usage, settings, now: Date.now(), blocked, endpoints: endpointStates, limitsOnly: true });
+  const hitLimit = limited || ['recently_limited', 'retry_waiting', 'quota_high'].includes(state.reason);
+  if (!hitLimit) {
+    const keep = !!original && meta?.backend === original.backend;
+    if (keep && pinned !== primary) {
+      const mode = resolveBotRoutingMode(bot.mode, getBackend(bot.backend), getBackend(meta.backend));
+      if (!mode) throw new Error('The selected bot candidate no longer supports the approval mode');
+      if (meta.mode !== mode) await store.setMode(sessionId, mode);
+    }
+    return { candidate: pinned, keep, target: null };
+  }
+
+  const parent = getBackend(bot.backend);
+  if (!parent?.modes()[bot.mode]) return null;
+  const rejected = Object.assign(Object.create(null), { [pinned]: 'recently_limited' });
+  while (true) {
+    const { ok, routing } = routeFromLevel({ settings, base, usage, rejected, blocked, endpoints: endpointStates, limitsOnly: true });
+    if (!ok) return null;
+    const { target, tier } = routing;
+    const candidate = targetCandidate(target);
+    try {
+      const location = cwd ?? meta?.cwd ?? channel?.cwd ?? bot.folders?.[0]?.path ?? os.homedir();
+      const confirmed = await confirmRoutingTarget(target, location, { allowDefault: true });
+      if (!confirmed) throw new Error('Candidate unavailable');
+      const { backend, model, account, endpoint } = confirmed;
+      const mode = resolveBotRoutingMode(bot.mode, parent, backend);
+      if (!mode) throw new Error('Approval mode unavailable');
+      const state = checkCandidate(candidateId(backend.id, model || null, account, endpoint),
+        { usage, settings, now: Date.now(), blocked, endpoints: endpointStates, limitsOnly: true });
+      if (!state.ok) throw new Error('Candidate unavailable');
+      const { effort } = await routedEffort({ settings, tier, candidate, backend, model, cwd: location, endpoint });
+      const retarget = meta?.backend === backend.id && (meta.compatEndpoint ?? '') === endpoint
+        && (endpoint || (meta.claudeAccount ?? '') === account);
+      return { candidate, keep: false, retarget, target: { backend, mode, model, effort, account, endpoint } };
+    } catch {
+      rejected[candidate] = 'unavailable';
+    }
+  }
+}
+
+async function delegationRoutingState(bot = null) {
+  const settings = bot ? { ...botRoutingSettings(bot), table: {}, kinds: [], avoidPercent: 100 } : routingSettingsCache;
   const usage = routingUsage.snapshot();
   const storage = await apiKeySecrets.status().catch(() => null);
   // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）。
@@ -2081,8 +2172,9 @@ async function delegationRoutingState() {
     const list = modelLists.get(key);
     return { ...backend, models: () => list };
   };
-  const endpointStates = await routingEndpoints();
-  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked, endpoints: endpointStates }).map(async c => {
+  const endpointStates = await routingEndpoints(bot ? botCandidates(settings).map(c => parseCandidate(c, { allowDefault: true })?.endpoint).filter(Boolean) : []);
+  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: bot ? botSlotBlocked : slotBlocked,
+    endpoints: endpointStates, limitsOnly: Boolean(bot) }).map(async c => {
     const raw = c.backend ? getBackend(c.backend) : null;
     // 互換の接続先の候補は接続先の段（ADR 0361。消えた接続先は段を持たない）
     if (raw && c.endpoint) {
@@ -2094,6 +2186,10 @@ async function delegationRoutingState() {
   }));
   const prefs = await store.getPrefs();
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
+  if (bot) {
+    const defaults = { ...botRoutingDefaults(bot), tiers: {}, efforts: {}, table: {} };
+    return { settings, defaults, conversationEfforts, candidates, accounts: await routingAccounts(usage), endpoints: await routingEndpointRows(endpointStates) };
+  }
   const credit = await apiKeys.plusCredit().catch(() => null);
   return { settings, defaults: normalizeSettings({}), difficulties: DIFFICULTIES, signals: SIGNALS, conversationEfforts,
     kindDescriptions: Object.fromEntries(settings.kinds.map(k => [k.id, kindDescription(currentLocale(), k)])),
@@ -8665,11 +8761,11 @@ agentTasks = await createAgentTasks({
     if (auto && model !== args.model) throw new Error(agentT(lng, 'routing.modelUnavailable', { model: args.model, backend: backend.id }));
     // 自動の振り分け・人が選び直した委譲の子の強さは、上書き → 段の既定 → そのモデルに合わせる（ADR 0164）。
     // 振り分けでは断らず、モデルが持たない強さは合わせて記録に残す。固定の委譲は依頼元が書いた値のまま（検証する）
-    const decided = auto ? decideEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
-      candidate: candidateId(backend.id, model, accountKind(backend) && !endpoint ? account || null : null, endpoint || null), capability: await effortCapability(backend, model, cwd, await endpointRow(endpoint)) }) : null;
-    const effort = !auto && args.effort !== undefined
+    const { effort, decided } = auto ? await routedEffort({ settings: routingSettingsCache, tier: manual ? args.routing.effortTier ?? null : args.routing.tier ?? null,
+      candidate: candidateId(backend.id, model, accountKind(backend) && !endpoint ? account || null : null, endpoint || null), backend, model, cwd, endpoint })
+      : { effort: args.effort !== undefined
       ? await validateEffort(backend, args.effort, model, cwd, await endpointRow(endpoint), { allowUnlistedModel: true })
-      : await resolveEffort(null, decided ? decided.send : args.effort, backend, model, cwd, await endpointRow(endpoint));
+      : await resolveEffort(null, undefined, backend, model, cwd, await endpointRow(endpoint)) };
     // 承認モードは委譲を受け付けた側（agentBridge の call）が親の強さから決めてある。
     // ここで決め直すと「聞いた内容」と「実際に動く強さ」がずれるので、来た値をそのまま使う。
     const modes = backend.modes();
@@ -8767,13 +8863,9 @@ agentTasks = await createAgentTasks({
         const skipped = formatSkippedCandidates(next.skipped);
         return { exhausted: agentT(lng, 'routing.exhausted', { kind: prev.kind, difficulty: next.difficulty, avoidPercent: routingSettingsCache.avoidPercent, skipped }) };
       }
-      const picked = getBackend(next.target.backend);
-      if (!picked) { rejected[targetCandidate(next.target)] = 'unavailable'; continue; }
-      // 互換の接続先の候補はアカウントを使わない（接続先を持てるエージェントか、だけを見る。ADR 0361）
-      const ep = next.target.endpoint ? String(next.target.endpoint) : '';
-      const acct = !ep && accountKind(picked) ? next.target.account ?? '' : '';
-      const scoped = ep ? (endpointCapable(picked) ? picked : null) : await backendForAccount(picked, await accountResolve(picked, acct)).catch(() => null);
-      if (scoped && isModelId(next.target.model)) {
+      const confirmed = await confirmRoutingTarget(next.target, cwd).catch(() => null);
+      if (confirmed) {
+        const scoped = confirmed.backend;
         if (continuing) {
           const decision = source.id === scoped.id ? { mode: child.mode, escalation: false }
             : resolveDelegatedMode({ parentMode: child.mode, parentModes: source.modes(), childModes: scoped.modes() });
@@ -8783,13 +8875,13 @@ agentTasks = await createAgentTasks({
           }
           switchMode = decision.mode;
         }
-        backend = scoped; account = acct; endpoint = ep; model = next.target.model; break;
+        ({ backend, account, endpoint, model } = confirmed);
+        break;
       }
-      rejected[targetCandidate(next.target)] = 'model_unknown';
+      rejected[targetCandidate(next.target)] = getBackend(next.target.backend) ? 'model_unknown' : 'unavailable';
     }
-    const decided = decideEffort({ settings: routingSettingsCache, tier: next.tier ?? null,
-      candidate: candidateId(backend.id, model, accountKind(backend) && !endpoint ? account || null : null, endpoint || null), capability: await effortCapability(backend, model, cwd, await endpointRow(endpoint)) });
-    const effort = await resolveEffort(null, decided.send, backend, model, cwd, await endpointRow(endpoint));
+    const { decided, effort } = await routedEffort({ settings: routingSettingsCache, tier: next.tier ?? null,
+      candidate: candidateId(backend.id, model, account || null, endpoint || null), backend, model, cwd, endpoint });
     const modes = backend.modes();
     const mode = continuing ? switchMode : modes[task.mode] ? task.mode : firstMode(modes);
     const label = accountKind(backend) && next.target.accountLabel && (next.target.account ?? null) === account ? { accountLabel: next.target.accountLabel } : {};
@@ -9125,6 +9217,9 @@ function makeBotHost() {
     // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
     internalCall: internalCalls.call,
     getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+    routeBotSession,
+    botRoutingView: bot => delegationRoutingState(bot),
+    refreshBotRouting: () => { if (ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {}); },
     // bot のアカウントを検査する側（checkModelEffort）は、引けないアカウントを投げて断る。会話・心拍の側は、投げずに使えないバックエンドを受ける
     // （ログイン中の一覧へ黙って落とさない。保存済みの会話は読める）
     backendForAccount: async (backend, accountId) => !backend || !accountId || !accountKind(backend)
@@ -12797,7 +12892,7 @@ async function announce() {
   setInterval(() => { void sweepClaudeUsageArchives(); }, 24 * 60 * 60 * 1000).unref();
   // Pleiad Plus: ログインの読み込みと中継の接続のあとで、登録とつながりの条件を最初に見直す
   void syncPlusLink();
-  if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
+  if (ROUTING_USAGE_AUTO) routingUsage.start();
   // Claude Agent SDK（配布物は持たず、初めて要るときに npm から取る。ADR 0208）: 取得の状態を全端末へ配る。
   // 同意済みで固定の版が無ければ（更新で版が変わった）裏で取り、少し後に古い版を片付ける。取り終えたらモデルの一覧を引き直す
   for (const b of listBackends()) {

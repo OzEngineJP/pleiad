@@ -1,9 +1,9 @@
 // 画面のアカウントごとのモデル一覧・表示・選択（ADR 0329）:
 //   - web/delegation-settings.mjs: modelsOf(backend, account) と候補追加メニューのアカウント絞り込み
 //   - web/delegation-routing-view.mjs: routingLine / skippedPhrase / routingFailureParts / retryPanel が account を modelName へ渡す
-//   - web/channels/bot-page.mjs: bot のページの account 選択で語彙引き直し（setAccount）、モデルは update、接続先の登録が変わったら（connChanged）S.vocab 破棄。
+//   - web/channels/bot-page.mjs: 候補のアカウントごとの語彙とモデルの保存、接続先の再取得。
 //     作るのは 3 段（名前 → 色 → 人格）で bots.create を 1 回だけ呼び、DM へ移る（ADR 0362）
-//     互換の接続先（ADR 0359）: bot のページで選ぶと setAccount({endpoint})、語彙は接続先の段（account は渡さない）、見出しとチップに接続先の名前、消えた・使えない接続先は一文で知らせる
+//     互換の接続先（ADR 0359）: 候補と見出しに接続先の名前、消えた・使えない接続先は一文で知らせる
 //   - web/channels/thread-composer.mjs: 宛先・設定のチップを持たず、語彙を取りに行かない（ADR 0362）
 //   - web/history-pane.mjs / web/client.mjs: 作業の詳細（読むだけの筋）の発言者のモデル名は、会話のアカウントの一覧で引く
 import assert from 'node:assert/strict';
@@ -19,16 +19,37 @@ import { COMPOSER_PARTS, rememberComposerTemplate } from '../../web/composer/com
 import { el } from '../../web/dom.mjs';
 import { N, stubPickerGeometry } from '../lib/dom-stub.mjs';
 import { keepProps } from '../lib/keep-props.mjs';
+import { botCandidates, botRoutingDefaults } from '../../core/bots/routing.mjs';
+import { parseCandidate } from '../../core/delegation-routing.mjs';
 
 export const name = 'web-account-models';
 export const title = '画面: 委譲設定・委譲表示・bot ページ・スレッド入力欄のアカウント別モデル一覧';
 
 const tick = () => new Promise((r) => setImmediate(r));
 
+function botRoutingView(bot) {
+  const defaults = botRoutingDefaults(bot);
+  const settings = bot.settings ?? defaults;
+  return {
+    defaults, settings,
+    candidates: botCandidates(settings).map(candidate => ({ candidate, ...parseCandidate(candidate, { allowDefault: true }), usable: true })),
+    accounts: { claude: [{ account: '' }, { account: 'verified', name: 'verified' }, { account: 'plain', name: 'plain' }] },
+    endpoints: { claude: [{ id: 'ep-good', name: '社内 gateway', kind: 'anthropic', state: 'ready', models: ['glm-5'], roles: { main: 'glm-5' } }] },
+  };
+}
+
+function routingPrimary(settings) {
+  const { backend, model, account, endpoint } = parseCandidate(botCandidates(settings)[0], { allowDefault: true });
+  return { backend, model: model ?? '', account: account ?? '', endpoint: endpoint ?? '', settings };
+}
+
+const candidateChip = view => view.querySelector('.rt-picker-chip');
+const candidateOption = (view, key) => view.querySelector('.rt-picker').querySelectorAll('button').find(b => b.dataset?.key === key);
+
 /** web/client.mjs の connChoices と同じ形の取得口（CLI のログイン + アカウント 2 つ + 互換の接続先 1 つ。失敗している接続先 failed-ep も 1 つ） */
 function connChoicesFake() {
   const EPS = [
-    { id: 'ep1', name: '社内 gateway', kind: 'anthropic', baseUrl: 'https://gw.example', ready: true, models: ['glm-5'], modelInfo: {}, roles: { main: 'glm-5' } },
+    { id: 'ep-good', name: '社内 gateway', kind: 'anthropic', baseUrl: 'https://gw.example', ready: true, models: ['glm-5'], modelInfo: {}, roles: { main: 'glm-5' } },
     { id: 'failed-ep', name: '壊れた接続先', kind: 'anthropic', baseUrl: 'https://bad.example', ready: false, models: [], modelInfo: {}, roles: {} },
   ];
   return {
@@ -46,7 +67,7 @@ function connChoicesFake() {
         selected, row, lost: null, roleNames: [],
         options: [
           { value: '', label: 'CLI のログイン', sub: '公式', isDefault: true },
-          ...EPS.map((e) => ({ value: e.id, label: e.name, sub: e.baseUrl, warn: e.ready === false, isDefault: e.id === 'ep1' })),
+          ...EPS.map((e) => ({ value: e.id, label: e.name, sub: e.baseUrl, warn: e.ready === false, isDefault: e.id === 'ep-good' })),
           ...(selected && !row ? [{ value: selected, label: '削除された接続先', sub: '選び直してください', gone: true }] : []),
         ],
         manage: null,
@@ -310,7 +331,8 @@ export default async function (t) {
           if (op === 'channels.list') return { channels: [] };
           if (op === 'bots.get') return { ...row };
           if (op === 'bots.create') return { id: 'b_new_1', name: args.name, color: args.color, backend: args.backend, persona: args.persona ?? '', dmChannelId: 'c_dm_new', account: '', model: '', effort: '', mode: 'default', folders: [], sendToOthers: true, sendTargets: [] };
-          if (op === 'bots.setAccount') { row = { ...row, account: args.account, model: '' }; return { ...row }; }
+          if (op === 'bots.routing') return botRoutingView(row);
+          if (op === 'bots.setRouting') { row = { ...row, ...routingPrimary(args.settings) }; return { ...row }; }
           if (op === 'bots.update') { row = { ...row, ...args }; delete row.botId; return { ...row }; }
           return {};
         },
@@ -323,8 +345,8 @@ export default async function (t) {
       const botView = body.querySelector('#botView');
       // モデル面を開いて承認のあるアカウントを選ぶ → そのアカウント向けの vocab を引き直す。
       // 面は 2 段（上の段の行 → 選ぶ一覧。docs/design-system.md「モデル選択の面」）なので、接続先の行から一覧へ進む
-      const popButton = (key) => botView.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
-      botView.querySelector('#botModelChip').click();
+      const popButton = key => candidateOption(botView, key);
+      candidateChip(botView).click();
       await tick();
       await tick();
       assert.ok(Boolean(popButton('nav:conn')), 'bot ページのモデル面の上の段に接続先の行が出る');
@@ -335,7 +357,7 @@ export default async function (t) {
       assert.ok(Boolean(acctBtn), 'bot ページのモデル面にアカウント選択行が出る');
       acctBtn.click();
       for (let i = 0; i < 5; i++) await tick();
-      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.setAccount' && a.account === 'verified'), JSON.stringify(invokeOrder));
+      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.setRouting' && routingPrimary(a.settings).account === 'verified'), JSON.stringify(invokeOrder));
       assert.ok(vocabCalls.some((c) => c.backend === 'claude' && c.account === 'verified'), JSON.stringify(vocabCalls));
 
       // アカウントを選ぶと上の段へ戻る。モデルの行から一覧へ進む
@@ -344,14 +366,14 @@ export default async function (t) {
       assert.ok(Boolean(mythosBtn), '承認のあるアカウントを選ぶと Mythos 5.2 が選択肢に出る');
       mythosBtn.click();
       for (let i = 0; i < 5; i++) await tick();
-      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.update' && a.model === 'claude-mythos-5-2'), JSON.stringify(invokeOrder));
+      assert.ok(invokeOrder.some(([op, a]) => op === 'bots.setRouting' && routingPrimary(a.settings).model === 'claude-mythos-5-2'), JSON.stringify(invokeOrder));
 
       // 接続先の登録が変わったら S.vocab を捨て、再取得する（web/client.mjs が一覧を取り直せる状態にしてから connChanged を呼ぶ）
       const vBefore = vocabCalls.length;
       page.connChanged();
       for (let i = 0; i < 5; i++) await tick();
       assert.ok(vocabCalls.length > vBefore, 'connChanged で語彙を引き直す');
-      t.ok('bot-page: account ごとに語彙を引き直し、account は setAccount・model は update で保存する', true);
+      t.ok('bot-page: アカウントごとに語彙を引き、接続先とモデルを候補として保存する', true);
 
       // 作る 3 段: 名前 → 色 → 人格。エージェントは今の入力欄のもの、モデル・承認モードは既定。作ったら DM へ移る。
       // bots.create で落ちたときは 3 段目に留まり、理由を出す
@@ -450,43 +472,42 @@ export default async function (t) {
             if (op === 'channels.list') return { channels: [] };
             if (op === 'bots.get') return stored;
             if (op === 'bots.create') { stored = botRow({ id: 'b_new_2', name: args.name }); return stored; }
-            if (op === 'bots.setAccount') { stored = botRow({ ...stored, account: args.account ?? '', endpoint: args.endpoint ?? '', model: '', effort: '' }); return stored; }
+            if (op === 'bots.routing') return botRoutingView(stored);
+            if (op === 'bots.setRouting') { stored = botRow({ ...stored, ...routingPrimary(args.settings) }); return stored; }
             return {};
           },
         };
         return { host, calls, cmds };
       };
       const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
-      const popBtn = (view, key) => view.querySelector('#botModelPop').querySelectorAll('button').find((b) => b.dataset?.key === key);
-
-      // (b) 互換で動く bot: 見出し・チップに接続先の名前。CLI のログインへ戻す／アカウントを選ぶ／互換へ戻すは bots.setAccount に {account, endpoint} で書く
+      // 互換で動く bot: 見出しと候補に接続先の名前。公式と互換の接続先を切り替えて保存できる
       {
         const body = mount();
-        const { host, calls } = makeHost(botRow({ endpoint: 'ep1', model: 'glm-5' }));
+        const { host, calls } = makeHost(botRow({ endpoint: 'ep-good', model: 'glm-5' }));
         const page = createBotPage(host);
         page.show({ kind: 'bot', id: 'b_ep' });
         await settle(8);
         const view = body.querySelector('#botView');
-        assert.match(view.querySelector('#botModelChip').textContent, /社内 gateway/, '互換の bot のチップに接続先の名前');
+        assert.match(candidateChip(view).textContent, /社内 gateway/, '互換の bot の候補に接続先の名前');
         assert.match(view.textContent, /社内 gateway/, '見出しの行にも接続先の名前');
         assert.equal(view.querySelector('.bp-conn-warn').hidden, true, '使える接続先なら一文を出さない');
         const write = async (key) => {
           calls.length = 0;
-          view.querySelector('#botModelChip').click();
+          if (!view.querySelector('.rt-picker') || view.querySelector('.rt-picker').hidden) candidateChip(view).click();
           await settle(3);
-          popBtn(view, 'nav:conn').click();
+          candidateOption(view, 'nav:conn').click();
           await settle(3);
-          popBtn(view, key).click();
+          candidateOption(view, key).click();
           await settle(6);
-          return calls.filter(([op]) => op === 'bots.setAccount').map(([, a]) => a);
+          return calls.filter(([op]) => op === 'bots.setRouting').flatMap(([, a]) => botCandidates(a.settings));
         };
-        assert.deepEqual(await write('account:'), [{ botId: 'b_ep', account: '', endpoint: '' }], 'CLI のログインへ戻す = 互換を外す');
-        assert.deepEqual(await write('account:verified'), [{ botId: 'b_ep', account: 'verified', endpoint: '' }], 'アカウントを選ぶ = 互換を外して公式へ');
-        assert.deepEqual(await write('endpoint:ep1'), [{ botId: 'b_ep', account: 'verified', endpoint: 'ep1' }], '互換を選ぶ = アカウントの選びは別に覚えたまま');
+        assert.deepEqual(await write('account:'), ['claude:sonnet'], 'CLI のログインに戻す');
+        assert.deepEqual(await write('account:verified'), ['claude@verified:sonnet'], '登録したアカウントを選ぶ');
+        assert.deepEqual(await write('endpoint:ep-good'), ['claude@ep-good:glm-5'], '互換の接続先を選ぶ');
       }
 
       // (c) 接続先が消えている／確認に失敗している: 入力欄と同じ一文を出す（読み終えるまでは出さない）
-      for (const [row, key] of [[{ endpoint: 'gone-ep' }, 'chat.endpoint.deletedWarning'], [{ endpoint: 'failed-ep' }, 'chat.endpoint.failedWarning']]) {
+      for (const [row, key] of [[{ endpoint: 'ep-gone' }, 'chat.endpoint.deletedWarning'], [{ endpoint: 'failed-ep' }, 'chat.endpoint.failedWarning']]) {
         const body = mount();
         const { host } = makeHost(botRow(row));
         const page = createBotPage(host);
