@@ -2018,6 +2018,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     setFace(next) {
       if (next === face) return;
       face = next;
+      if ($("newSession")) $("newSession").hidden = face === "channels";
       renderedRows.clear();
       render();
     },

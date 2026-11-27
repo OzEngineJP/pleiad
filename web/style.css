@@ -272,6 +272,15 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 .qbox input:focus-visible{outline:none}
 .qbox input::placeholder{color:var(--ink-weak)}
 .qbox input::-webkit-search-cancel-button{display:none}
+.qbox #filterBtn{width:32px;height:32px;flex:none;border-radius:var(--r-pill)}
+.side-add-row{display:flex;align-items:center;gap:6px;min-height:32px;padding:0 8px;text-align:left;border-radius:var(--r-s);background:transparent;color:var(--ink);font-size:var(--fs-body);font-weight:400;cursor:pointer}
+.side-add-row > svg.i{width:20px;height:16px;flex:none;color:var(--ink-weak)}
+.side-add-row:hover,.side-add-row:focus-visible{background:var(--surface-hover)}
+#newSession{margin:4px 10px 0;flex:none}
+@media (pointer:coarse), (max-width:700px){
+  .qbox #filterBtn{width:44px;height:44px}
+  .side-add-row{min-height:44px;font-size:var(--fs-target)}
+}
 .qclear{flex:none;width:24px;height:24px;margin-right:3px;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;padding:0}
 .qclear:hover{background:var(--surface-hover);color:var(--ink)}
 .qclear svg.i{width:12px;height:12px}
@@ -476,7 +485,7 @@ button.conn-lost:hover{color:var(--ink)}
    歯車を押すと、脇のセッション一覧が設定メニューに、会話が選んだページに入れ替わる。
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
-body.settings > #sidebar > :is(.side-face,.side-face-row,.search,.fchips,.filter-outside,.res-head,.groups,#authNeed),
+body.settings > #sidebar > :is(.side-face,.side-face-row,.search,.fchips,.filter-outside,.res-head,.groups,#authNeed,#newSession),
 body.settings #notifBell,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。

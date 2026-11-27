@@ -4,11 +4,10 @@
 
 
 /* ---- 脇の 2 面（チャット / bot。web/channels/side-tabs.mjs）と新しいチャット（#newSession） */
-.side-face-row{display:flex;align-items:center;gap:4px;margin:2px 10px 8px;flex:none}
+.side-face-row{display:flex;margin:2px 10px 8px;flex:none}
 .side-face{flex:1;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:3px;border-radius:var(--r-pill);background:var(--surface-3);position:relative}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .side-face{background:var(--surface-1)}}
 :root[data-theme="dark"] .side-face{background:var(--surface-1)}
-.side-new{width:32px;height:32px;color:var(--ink);flex:none}
 .side-face-plate{position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 4px);border-radius:var(--r-pill);background:var(--surface-paper);box-shadow:0 1px 2px var(--shadow);transition:transform var(--dur) var(--ease-out);z-index:0;pointer-events:none}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .side-face-plate{background:var(--surface-3)}}
 :root[data-theme="dark"] .side-face-plate{background:var(--surface-3)}
