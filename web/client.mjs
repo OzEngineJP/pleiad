@@ -11746,7 +11746,7 @@ memorySettings = setupMemorySettings({
   getAuth: (id) => state.auth.get(id),
   setAuth: (id, st) => { if (id) { state.auth.set(id, st); renderAuth(); } },
   // 設定を閉じて、その bot のページへ（記憶の欄がそこにある）
-  openBot: (id) => { onboarding.close(); document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })); },
+  openBot: (id) => { onboarding.close(); document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id, memory: true } })); },
   // 記憶の整理に使うエージェント（memoryLearnBackend は心拍と共用。core の learn.mjs と同じ解決順: 空なら会話の既定、それも無ければ先頭。
   // 明示の id が残って消えた（stale）ときは core もそこで失敗するので、別のエージェントの認証を当てない = null）
   learnBackend: () => {

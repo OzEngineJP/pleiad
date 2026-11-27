@@ -195,7 +195,8 @@ export function coreFitCounts(userEntries, botEntries, { workspace = null, now =
 const coreLine = (locale, e) => {
   if (!e.kind) return `- ${e.text}`;
   const label = agentT(locale, `memory.kind.${e.kind}`);
-  return `- [${e.kind === 'promise' && e.status === 'done' ? agentT(locale, 'memory.kind.promiseDone') : label}] ${e.text}`;
+  return `- [${e.kind === 'promise' && e.status === 'dropped' ? agentT(locale, 'memory.kind.stop')
+    : e.kind === 'promise' && e.status === 'done' ? agentT(locale, 'memory.kind.promiseDone') : label}] ${e.text}`;
 };
 
 /** 核の写しの notes 1 件。記憶が 1 つも無いときは null（始まりに空の包みを足さない） */

@@ -80,47 +80,14 @@
     },
     "memory": {
       "title": "Memory",
-      "autoLearn": "Relearn from conversations every night",
-      "learnAt": "Time",
-      "autoLearnNote": "Reads what you said and adds what each bot should know from now on. It also keeps deciding, a little each night, when each memory should be given",
-      "episodeSummary": "Carry a thread's story into the next thread",
-      "episodeSummaryNote": "Briefly sums up a thread that has gone quiet and hands it over at the start of the same bot's next thread",
+      "autoLearn": "Organize memories every night",
+      "learnAt": "Organization time",
       "status": {
-        "off": "Off",
-        "offSub": "Saved memories stay available",
-        "offSubUntiered": "Saved memories stay available. The {{n}} with no set time to be given are passed only when they relate to the topic",
-        "running": "Organizing",
-        "authWait": "Waiting for sign-in",
-        "authWaitSub": "Resumes when you sign in to {{agent}}",
-        "authWaitStoppedSub": "Sign in to {{agent}}, then press Try again to resume",
-        "unconfirmed": "Connection unconfirmed",
-        "unconfirmedSub": "Haven't checked whether {{agent}} is connected",
-        "halted": "Stopped",
-        "haltedSub": "Automatic retry stopped — by a problem such as authentication or by the retry limit",
-        "failed": "Failed",
-        "retryAt": "Retrying at {{when}}",
-        "waiting": "On",
-        "moreDeferred": "Messages it couldn't finish reading, and {{n}} busy conversations, are left for the next run",
-        "loadFailed": "Couldn't load status"
-      },
-      "sort": {
-        "untiered": "{{n}} memories with no set time to be given",
-        "none": "Every memory has a set time to be given",
-        "nightly": "Deciding {{perNight}} each night (about {{nights}} more nights)",
-        "placed": "Decided {{n}}: every time {{always}} · only in this folder {{workspace}} · not given {{archive}}",
-        "running": "Deciding now",
-        "failed": "Last night didn't go well. It continues from where it left off tonight",
-        "undone": "Undone ({{restored}} restored · {{kept}} kept because you changed them). It won't decide again until you turn the nightly organizing back on"
+        "organizeFailed": "Could not organize memories."
       },
       "act": {
-        "now": "Organize now",
-        "retry": "Try again",
+        "retry": "Retry",
         "login": "Sign in",
-        "check": "Check connection",
-        "undo": "Undo what was decided",
-        "skipped": "Skipped — nightly organizing is off",
-        "skippedRunning": "Already organizing",
-        "failed": "Couldn't complete the action",
         "saveFailed": "Couldn't save"
       },
       "bots": "See memories"

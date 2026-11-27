@@ -248,7 +248,11 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     if (parsed.thought) seq = brain.append(bot.id, { kind: 'think', text: parsed.thought, refs: parsed.refs, taint, tokens, meta: rowMeta }).seq;
     else if (parsed.do === 'none' || !parsed.thought) seq = brain.append(bot.id, { kind: 'quiet', tokens, meta: { ...rowMeta, by: 'model' } }).seq;
     if (parsed.loops.length) {
-      const { applied } = brain.applyLoops(bot.id, parsed.loops, { taint, workNotesVersion: WORK_NOTES_VERSION });
+      const loopOps = parsed.loops.map((op) => {
+        const event = op.sourcePostId && seen.find((e) => e.postId === op.sourcePostId);
+        return event ? { ...op, sources: [{ kind: 'post', channelId: event.channelId, threadId: event.threadId, postId: event.postId }] } : op;
+      });
+      const { applied } = brain.applyLoops(bot.id, loopOps, { taint, workNotesVersion: WORK_NOTES_VERSION });
       for (const a of applied) brain.append(bot.id, { kind: 'loop', text: agentT(locale(), `brain.loop.${a.op}`, { text: a.text }), refs: [a.id], taint, meta: { workNotesVersion: WORK_NOTES_VERSION } });
     }
     const reservedAt = parsed.wakeAt ? at + clampMs(parsed.wakeAt, at) : null;

@@ -1,6 +1,6 @@
 // bot の頭の中の保存（ADR 0126）。SQLite の行（core/db.mjs の brainTable・memoryStateTable。ADR 0115）。
 //   brain_stream … 思考の流れ。心拍ごとに 1 行の追記。bot ごとに 30 日・3,000 行まで（それより古い行は追記のたびに落とす）
-//   brain_loops  … 気がかり。1 件 1 行。開いているものは 1 体 12 件まで（超えたら、いちばん長く触っていないものを手放す）。手放した・解決したものは 30 日で消す
+//   brain_loops  … 気がかり。開いているものは 1 体 12 件まで。解決したものと手放したものも記憶の一覧に残す。
 //   memory_state … kind 'brain'（id = botId）= 心拍の状態（カーソル・次に起きる時刻・欲求の前回値・止めた印）
 //
 //   createBrainStore({ dataDir, now, emit }) → BrainStore
@@ -40,12 +40,11 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
     if (!handle) { handle = openData(dataDir); stream = brainTable(handle.db); states = memoryStateTable(handle.db); }
     return stream;
   };
-  const changed = (botId) => { try { emit({ type: 'brainChanged', botId }); } catch { /* 画面への知らせの失敗で保存を戻さない */ } };
+  const changed = (botId, loopsChanged = false) => { try { emit({ type: 'brainChanged', botId, loopsChanged }); } catch { /* 画面への知らせの失敗で保存を戻さない */ } };
 
   function prune(botId) {
     const t = open();
     t.prune(botId, now() - STREAM_KEEP_DAYS * DAY_MS, STREAM_KEEP_MAX);
-    t.pruneLoops(botId, now() - STREAM_KEEP_DAYS * DAY_MS);
   }
 
   const service = {
@@ -76,7 +75,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
      * 気がかりの足す・直す・手放す。add の id が既にあれば直す。開いているものが MAX_OPEN_LOOPS を超えるときは、いちばん長く触っていないものを手放す。
      * taint（外から来た文を材料にした）は一度付いたら外れない。返りの applied は { op, id, text, evicted? }（流れに 1 行ずつ残す材料）
      */
-    applyLoops(botId, ops, { taint = null, workNotesVersion = WORK_NOTES_VERSION } = {}) {
+    applyLoops(botId, ops, { taint = null, sources = [], workNotesVersion = WORK_NOTES_VERSION } = {}) {
       const t = open();
       const applied = [];
       let rejected = 0;
@@ -93,24 +92,26 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
               t.putLoop(botId, oldest.id, 'dropped', at, loopData(oldest));
               evicted = oldest.id;
             }
-            t.putLoop(botId, id, 'open', at, loopData({ text: clip(op.text, 200), wakeOn: op.wakeOn ?? null, due: op.due ?? null, taint: taintOf(taint), createdAt: at, workNotesVersion }));
+            t.putLoop(botId, id, 'open', at, loopData({ text: clip(op.text, 200), wakeOn: op.wakeOn ?? null, due: op.due ?? null, taint: taintOf(taint), sources: op.sources ?? sources, createdAt: at, workNotesVersion }));
             applied.push({ op: 'add', id, text: clip(op.text, 200), ...(evicted ? { evicted } : {}) });
             continue;
           }
           const target = current ?? null;
-          if (!target || (target.status !== 'open' && op.op !== 'add')) { rejected++; continue; }
+          if (!target || (target.status !== 'open' && op.op !== 'add')
+            || (op.expect && (target.updatedAt !== op.expect.updatedAt || target.text !== op.expect.text))) { rejected++; continue; }
           if (op.op === 'resolve' || op.op === 'drop') {
             t.putLoop(botId, target.id, op.op === 'resolve' ? 'resolved' : 'dropped', at, loopData(target));
             applied.push({ op: op.op, id: target.id, text: target.text });
           } else {   // update（と、開いている id への add）
             const next = { ...target, text: op.text ? clip(op.text, 200) : target.text, ...(op.wakeOn !== undefined ? { wakeOn: op.wakeOn } : {}), ...(op.due !== undefined ? { due: op.due } : {}),
+              sources: target.sources?.length ? target.sources : op.sources ?? sources,
               taint: target.taint ?? taintOf(taint), workNotesVersion: op.text ? workNotesVersion : target.workNotesVersion ?? null };
             t.putLoop(botId, target.id, 'open', at, loopData(next));
             applied.push({ op: 'update', id: target.id, text: next.text });
           }
         }
       });
-      if (applied.length) changed(botId);
+      if (applied.length) changed(botId, true);
       return { applied, rejected };
     },
 
@@ -129,7 +130,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
     clear(botId) {
       const t = open();
       const out = { stream: t.clearStream(botId), loops: t.clearLoops(botId) };
-      changed(botId);
+      changed(botId, out.loops > 0);
       return out;
     },
     purgeBot(botId) {
@@ -146,5 +147,11 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
 
 /** brain_loops の data 列に入れる欄（id・status・updatedAt は列に持つ） */
 function loopData(l) {
-  return { text: l.text ?? '', wakeOn: l.wakeOn ?? null, due: l.due ?? null, taint: l.taint ?? null, createdAt: l.createdAt ?? l.updatedAt ?? 0, ...(l.workNotesVersion ? { workNotesVersion: l.workNotesVersion } : {}) };
+  return { text: l.text ?? '', wakeOn: l.wakeOn ?? null, due: l.due ?? null, taint: l.taint ?? null, createdAt: l.createdAt ?? l.updatedAt ?? 0,
+    ...(l.sources?.length ? { sources: l.sources } : {}), ...(l.workNotesVersion ? { workNotesVersion: l.workNotesVersion } : {}) };
+}
+
+export function concernSources(session, sessionId) {
+  if (session?.channelId) return [{ kind: 'post', channelId: session.channelId, ...(session.threadId ? { threadId: session.threadId } : {}) }];
+  return sessionId ? [{ kind: 'message', sessionId }] : [];
 }
