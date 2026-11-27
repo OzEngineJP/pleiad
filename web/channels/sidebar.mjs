@@ -221,9 +221,8 @@ export function createSidebar(host, getTabs) {
   async function startCreate(anchor, reveal) {
     const fromTree = document.activeElement?.id === 'groups';
     if (host.botEnablement && !await host.botEnablement.request(anchor)) return;
-    createOpener = () => (fromTree ? document.getElementById('groups') : anchor.classList.contains('cs-add')
-      ? document.querySelector('#groups [data-key="section:channels"] .cs-add')
-      : document.getElementById('side-add-channel'))?.focus();
+    const openerId = fromTree ? 'groups' : anchor.id;
+    createOpener = () => document.getElementById(openerId)?.focus();
     reveal();
     S.creating = true;
     S.createError = '';

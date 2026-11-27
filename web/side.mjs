@@ -327,9 +327,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     buildPlaces(wanted);
 
     const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
-    // ルーティン・「チャンネル ＋」の節（web/channels/sidebar.mjs が描く）は、絞り込んでいないとき、この一覧に入る（buildPlaces）
+    // ルーティンとチャンネル名の入力欄は web/channels/sidebar.mjs で描く。開いた入力欄は一覧を描き直しても再利用する。
     for (const node of channelExtras()) if (node?.dataset.sideKey) old.set(node.dataset.sideKey, node);
+    const focus = document.activeElement;
+    const addId = focus?.id.startsWith('side-add-') && root.contains(focus) ? focus.id : null;
     reconcile(root, wanted, old);
+    if (addId && !root.contains(focus)) $(addId)?.focus({ preventScroll: true });
     renderedRows = nextRows;
     dirty = false;
 
@@ -799,6 +802,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       head.onclick = toggle;
       const name = el("span", "grp-name", label);
       const button = el("button", "btn btn-icon grp-add cs-add");
+      button.id = `side-add-${key}-heading`;
       button.type = "button";
       button.tabIndex = -1;
       button.title = addLabel;
