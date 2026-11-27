@@ -70,6 +70,7 @@ export const COMMANDS = new Set([
   'plusLogin',            // {} -> { started: true }。外のブラウザーでログインを始める。人だけ
   'plusLoginCancel',      // {} -> PlusStatus。進行中のログインをやめる。人だけ
   'plusLogout',           // {} -> PlusStatus。人だけ
+  'remotePcWorkspaces',   // { hostId, tenantId?, enabled? } -> { workspaces }
   'presence',             // { visible, sessionId } -> 'ok'。見ている会話を知らせる（変わるたびと 1 分ごと）
   'notifyStatus',         // {} -> { pc: { done, reply, failed }, devices: [{ id, name, platform, connected, notify: { registered, enabled, muted, lastSentAt } }], relayConnected }
   'setNotifyPc',          // { done?, reply?, failed? } -> notifyStatus。notifyStatus イベントで全接続へ

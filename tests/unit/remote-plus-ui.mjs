@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { methodOptions, stateLine, todoList, liveRow } from '../../web/remote-parts.mjs';
+import { methodOptions, stateLine, todoList, liveRow, setupPcWorkspaces } from '../../web/remote-parts.mjs';
 import { createRemoteStore } from '../../core/remote/devices.mjs';
 import { plusRemoteLine, ownRemoteLine, lockedReason, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
 import { N } from '../lib/dom-stub.mjs';
@@ -138,6 +138,42 @@ export default async function (t) {
   t.ok('選択した radio は aria-checked と tabindex に反映する', options[0].getAttribute('aria-checked') === 'true' && options[0].getAttribute('tabindex') === '0' && options[1].getAttribute('aria-checked') === 'false');
   options[1].onclick();
   t.ok('radio を押すと選択が変わる', picked === 'own');
+
+  let account = null;
+  let pending;
+  let requested;
+  const pcSettings = setupPcWorkspaces({
+    account: () => account,
+    onChange: () => {},
+    cmd: (name, args) => {
+      requested = [name, args];
+      return new Promise(resolve => { pending = resolve; });
+    },
+  });
+  const pcRow = () => pcSettings.row(new N('div'), 'local-pc', 'PC');
+  t.ok('Plus にログインしていないときは PC のワークスペース設定を出さない', !pcRow().querySelector('.rm-pc-workspace-gear'));
+  account = 'owner';
+  const gear = pcRow().querySelector('.rm-pc-workspace-gear');
+  t.ok('PC の行の設定ボタンを押すまではチェック欄を閉じておく', gear?.getAttribute('aria-expanded') === 'false');
+  gear.onclick();
+  t.ok('PC の行を開くと Plus に利用先を問い合わせる', requested[0] === 'remotePcWorkspaces' && requested[1].hostId === 'local-pc');
+  const choices = [
+    { id: 'personal', kind: 'personal', enabled: true, reason: 'personal_workspace' },
+    { id: 'team', kind: 'organization', name: 'チーム', enabled: false, reason: null },
+    { id: 'blocked', kind: 'organization', name: '制限付き', enabled: false, reason: 'pc_not_allowed' },
+  ];
+  pending({ workspaces: choices });
+  await Promise.resolve();
+  const [personal, team, blocked] = pcRow().querySelectorAll('input');
+  t.ok('個人は選択済みで固定し、組織の制限を行の中に出す',
+    personal.checked && personal.disabled && !blocked.checked && blocked.disabled &&
+    pcRow().textContent.includes('許可していません'));
+  team.checked = true;
+  team.onchange();
+  t.ok('変更は PC とワークスペースを指定して保存する', requested[1].tenantId === 'team' && requested[1].enabled === true);
+  pending({ workspaces: choices.map(row => row.id === 'team' ? { ...row, enabled: true } : row) });
+  await Promise.resolve();
+  t.ok('保存後のチェック状態は Plus の返事を使う', pcRow().querySelectorAll('input')[1].checked);
 
   // ---- 「この PC へ」の画面（setupRemote を DOM の代役で描く）
   // 自分の中継サーバーを何も設定していなくても、まとまりと「未設定」の一行と「編集」を出す（承認 2026-10-21。docs/remote.md）

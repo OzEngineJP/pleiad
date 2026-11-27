@@ -11,6 +11,7 @@ import WebSocket from 'ws';
 import { RESET_CODE } from './frames.mjs';
 import { AGENT_PATH } from './agent-protocol.mjs';
 import { LOCALHOST_MARK } from '../isolated-origins.mjs';
+import { BROWSER_SCOPE_HEADER, forwardBrowserScope } from './browser-workspace.mjs';
 
 const COOKIE_NAME = 'agent_host_token';
 /** 端末から通す要求のヘッダー（小文字）。これ以外は捨てる。 */
@@ -144,11 +145,14 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
 
 function forwardHttp(stream, method, path, headers, { host, port }, token, limit, pagePorts, ports, scope) {
   let responded = false;
+  const admission = scope && forwardBrowserScope(scope);
+  if (admission) headers[BROWSER_SCOPE_HEADER] = admission.handle;
   const req = http.request({
     host, port, method, path, agent: false,
     headers: token == null ? { ...headers, host: `localhost:${port}` }
       : { ...headers, cookie: `${COOKIE_NAME}=${encodeURIComponent(token)}` },
   });
+  if (admission) req.once('close', admission.release);
   stream.on('reset', () => req.destroy());
   req.on('error', () => {
     if (stream.destroyed) return;
@@ -202,8 +206,12 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
   const list = Array.isArray(protocols) ? protocols.filter(p => typeof p === 'string' && /^[\x21-\x7e]{1,64}$/.test(p)).slice(0, 8) : [];
   // ホストのサーバーから見るとループバックの接続なので、印を付けて「サーバーのある PC の画面」と区別させる
   // （core/os-open.mjs の isLocalRequest。エクスプローラーで表示・ブラウザーで開くをリモートの端末から動かさない）
-  const local = new WebSocket(url, list, { perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000,
-    headers: { 'x-forwarded-for': 'pleiad-remote', ...(device?.id ? { 'x-pleiad-device': String(device.id) } : {}) } });
+  const admission = scope && forwardBrowserScope(scope);
+  const headers = { 'x-forwarded-for': 'pleiad-remote' };
+  if (device?.id) headers['x-pleiad-device'] = String(device.id);
+  if (admission) headers[BROWSER_SCOPE_HEADER] = admission.handle;
+  const local = new WebSocket(url, list, { perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000, headers });
+  if (admission) local.once('close', admission.release);
   let opened = false;
   let inflight = 0;
 

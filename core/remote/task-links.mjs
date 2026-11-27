@@ -56,7 +56,7 @@ export function createTaskLinkHandler({ create, lookup, read, save, list, reques
     const { uid, tenantId, hostId } = scope;
     if (input?.action === 'open' && typeof input.openRef === 'string' && uuid.test(input.openRef)) {
       const meta = await read(input.openRef);
-      const link = meta.taskLink;
+      const link = meta?.taskLink;
       if (!meta?.creationReady || link?.uid !== uid || link.tenantId !== tenantId || link.hostId !== hostId) return null;
       await ticket(link);
       return { sessionId: input.openRef };
@@ -68,7 +68,7 @@ export function createTaskLinkHandler({ create, lookup, read, save, list, reques
     const requestId = 'task-link:' + tenantId + ':' + input.requestId;
     const existing = await lookup(requestId);
     if (openRef && existing?.id !== openRef) return null;
-    const { sessionId } = await create({ requestId, backend: agent, taskLink: link });
+    const { sessionId } = await create({ requestId, backend: agent, taskLink: link }, scope);
     await publish(sessionId);
     return { sessionId };
   }

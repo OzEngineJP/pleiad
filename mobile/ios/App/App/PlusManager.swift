@@ -15,7 +15,7 @@ final class PlusManager {
     private let apiBase: String
     private let log: (String) -> Void
 
-    private let worker = DispatchQueue(label: "pleiad-plus", qos: .userInitiated)
+    private let worker = DispatchQueue(label: "dev.pleiad.plus.session", qos: .userInitiated)
     private var ticker: DispatchSourceTimer?
 
     // config と flowError は worker が書き、画面の state()・プラグインの list/open が別のスレッドから読む

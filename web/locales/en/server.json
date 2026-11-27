@@ -1320,7 +1320,8 @@
       "unreadable": "Can't read {{file}} (the file is corrupted)",
       "badFormat": "{{file}} has an unexpected format"
     },
-    "hostOnly": "This can only be done on the host's own screen"
+    "hostOnly": "This can only be done on the host's own screen",
+    "pcWorkspacesInvalid": "Invalid PC workspace selection"
   },
   "upload": {
     "invalidName": "The folder name contains characters that can't be used.",

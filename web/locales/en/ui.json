@@ -375,6 +375,14 @@
       "locked": "Can't connect to the relay because the saved secrets can't be read.",
       "addDevice": "Add device",
       "addHost": "Add PC",
+      "workspaces": {
+        "title": "Workspaces that use this PC",
+        "button": "Workspace settings for {{name}}",
+        "personal": "Personal",
+        "pcNotAllowed": "This organization does not allow personal PCs",
+        "loading": "Loading workspaces…",
+        "failed": "Close and reopen workspace settings to try again"
+      },
       "groups": {
         "plus": "Pleiad Plus",
         "plusConnect": "Use the official relay",

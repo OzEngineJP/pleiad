@@ -1317,7 +1317,8 @@
       "unreadable": "{{file}} を読み込めません（形式が壊れています）",
       "badFormat": "{{file}} の形式が違います"
     },
-    "hostOnly": "この操作はホストの画面でだけできます"
+    "hostOnly": "この操作はホストの画面でだけできます",
+    "pcWorkspacesInvalid": "この PC を使うワークスペースの指定が正しくありません"
   },
   "upload": {
     "invalidName": "フォルダーの名前に使えない字が入っています。",

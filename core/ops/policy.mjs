@@ -55,7 +55,7 @@ export const HUMAN_ONLY = Object.freeze({
  */
 export const HOST_ONLY_COMMANDS = new Set([
   'setRemoteSettings', 'remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'plusHostRebind',
-  'plusLogin', 'plusLoginCancel', 'plusLogout', 'remotePlusRequestsResume',
+  'plusLogin', 'plusLoginCancel', 'plusLogout', 'remotePlusRequestsResume', 'remotePcWorkspaces',
 ]);
 export const HUMAN_ONLY_COMMANDS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.commands));
 export const HUMAN_ONLY_SETTINGS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.settings));

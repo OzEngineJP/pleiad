@@ -145,6 +145,8 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       if ((p.deviceKind !== undefined && !browser) || browser !== (cleanLabel(hello.platform, 32) === 'browser') || (browser &&
         (hello.platform !== 'browser' || !allowedBrowserOrigin || p.origin !== allowedBrowserOrigin || hello.plus.origin !== p.origin ||
           !Number.isInteger(p.iat) || !Number.isInteger(p.exp) || p.exp <= p.iat || p.exp - p.iat > 60 ||
+          typeof p.tenantId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(p.tenantId) ||
+          !['personal', 'organization'].includes(p.workspaceKind) ||
           p.exp <= Math.floor(now() / 1000)))) {
         throw new AdmissionError('account');
       }
@@ -152,7 +154,8 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       try { fresh = jtis.consume(p.jti, p.exp); } catch { throw new AdmissionError('unavailable'); }
       if (!fresh) throw new AdmissionError('account');
       return { uid: p.uid, scope: browser ? Object.freeze({
-        deviceKind: 'browser', origin: p.origin, hostId, uid: p.uid, devicePub: p.devicePub, tenantId: p.tenantId,
+        deviceKind: 'browser', origin: p.origin, hostId, uid: p.uid, devicePub: p.devicePub,
+        tenantId: p.tenantId, workspaceKind: p.workspaceKind,
       }) : null };
     }
     if (cleanLabel(hello.platform, 32) === 'browser') throw new AdmissionError('account');
