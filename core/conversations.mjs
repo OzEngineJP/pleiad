@@ -201,6 +201,17 @@ export async function nativeOwnerIndex() {
   return index;
 }
 
+export async function conversationWorkspaceAccess(workspaceId) {
+  const entries = await all();
+  const owners = await nativeOwnerIndex();
+  return id => {
+    if (typeof id !== 'string' || !id) return false;
+    const owner = owners.get(id) ?? id;
+    const record = Object.hasOwn(entries, owner) ? entries[owner] : null;
+    return (record?.info?.workspaceId ?? null) === workspaceId;
+  };
+}
+
 /** ネイティブの会話 id を持つ Pleiad の会話 id。無ければ null */
 export async function hostConversationOfNative(nativeId) {
   if (!nativeId) return null;

@@ -73,7 +73,7 @@ export function agentLine(host) {
 }
 
 /** @param onChange 見え方が変わった（設定 › リモートが描き直す） */
-export function setupRemoteHosts({ onChange, cmd, page }) {
+export function setupRemoteHosts({ onChange, cmd, page, pcWorkspaces }) {
   const bridge = typeof window !== 'undefined' && !window.plyRemote ? window.plyDesktop?.hosts : null;
   /** ホストの一覧・この PC の資格情報を暗号化できるか・読めなかった理由 */
   let hosts = [], encrypted = true, loadError = '', inited = null;
@@ -246,7 +246,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
           } else {
             for (const h of plusHosts) {
               const line = hostLine(h, { plusState: plus.state });
-              plusSec.append(listRow({
+              const row = listRow({
                 icon: deviceIcon(h),
                 name: line.name,
                 sub: line.sub,
@@ -256,7 +256,8 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
                   else if (line.canOpen) openHost(h.hostId, { via: 'plus' });
                   else if (line.revoked) openDetail(h.hostId);
                 },
-              }));
+              });
+              plusSec.append(pcWorkspaces?.row(row, h.hostId, line.name) ?? row);
             }
           }
         }

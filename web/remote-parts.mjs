@@ -16,6 +16,7 @@ const ICONS = {
   plus: [['path', { d: 'M8 3v10M3 8h10' }]],
   external: [['path', { d: 'M7 3.5H4.5c-.6 0-1 .4-1 1v7c0 .6.4 1 1 1h7c.6 0 1-.4 1-1V9M9.5 3h3.5v3.5M13 3 8 8' }]],
   check: [['path', { d: 'm3.5 8.5 3 3 6-7' }]],
+  gear: [['circle', { cx: 8, cy: 8, r: 2 }], ['path', { d: 'M6.5 1.5h3l.4 2 1 .6 1.9-.6 1.5 2.6-1.5 1.3v1.2l1.5 1.3-1.5 2.6-1.9-.6-1 .6-.4 2h-3l-.4-2-1-.6-1.9.6-1.5-2.6 1.5-1.3V7.4L1.7 6.1l1.5-2.6 1.9.6 1-.6z' }]],
   copy: [['rect', { x: 5.5, y: 5.5, width: 8, height: 8, rx: 1.4 }], ['path', { d: 'M10.5 3.2V3c0-.6-.4-1-1-1H3.5c-.6 0-1 .4-1 1v6c0 .6.4 1 1 1h.2' }]],
   user: [['circle', { cx: 8, cy: 5.8, r: 2.6 }], ['path', { d: 'M2.8 14c.7-2.5 2.8-4 5.2-4s4.5 1.5 5.2 4' }]],
 };
@@ -70,15 +71,99 @@ export function groupHead(text, tail = null) {
 
 /** 一覧の 1 行。押すと詳しい画面。sub は弱い字の 2 行目（「オフライン」だけ） */
 export function listRow({ icon, name, sub = '', onclick, key }) {
-  const row = button('', onclick, 'rm-row');
+  const row = onclick ? button('', onclick, 'rm-row') : el('div', 'rm-row');
   if (key) row.dataset.fk = key;
   const text = el('span', 'rm-rt');
   text.append(el('span', 'rm-nm', name));
   if (sub) text.append(el('span', 'rm-sub', sub));
   const end = el('span', 'rm-end');
   end.append(rmIcon('chevron'));
-  row.append(rmIcon(icon), text, end);
+  row.append(rmIcon(icon), text);
+  if (onclick) row.append(end);
   return row;
+}
+
+export function setupPcWorkspaces({ cmd, onChange, account }) {
+  const open = new Map();
+  let revision = 0;
+  const changed = () => { revision += 1; onChange(); };
+  const label = key => t(`settings.remote.workspaces.${key}`);
+
+  async function update(hostId, state, change) {
+    state.busy = true;
+    state.error = false;
+    changed();
+    try {
+      const { workspaces } = await cmd('remotePcWorkspaces', { hostId, ...change });
+      state.rows = workspaces;
+    } catch {
+      state.error = true;
+    } finally {
+      state.busy = false;
+      if (open.get(hostId) === state && state.account === account()) changed();
+    }
+  }
+
+  return {
+    sig: () => revision,
+    row(row, hostId, name) {
+      const current = account();
+      if (!hostId || !current) return row;
+      const saved = open.get(hostId);
+      const state = saved?.account === current ? saved : null;
+      const box = el('div', 'rm-pc-workspaces');
+      const header = el('div', 'rm-pc-workspace-row');
+      const id = `rm-pc-workspace-${hostId}`;
+      const gear = button('', () => {
+        if (state) { open.delete(hostId); changed(); return; }
+        const opening = { account: current, rows: [] };
+        open.set(hostId, opening);
+        void update(hostId, opening);
+      }, 'rm-gh-btn rm-pc-workspace-gear');
+      gear.append(rmIcon('gear'));
+      gear.dataset.fk = id;
+      gear.title = label('title');
+      gear.setAttribute('aria-label', t('settings.remote.workspaces.button', { name }));
+      gear.setAttribute('aria-expanded', String(Boolean(state)));
+      if (state) gear.setAttribute('aria-controls', id);
+      header.append(row, gear);
+      box.append(header);
+      if (!state) return box;
+
+      const fieldset = el('fieldset', 'rm-pc-workspace-choices');
+      fieldset.id = id;
+      fieldset.setAttribute('aria-busy', String(state.busy));
+      fieldset.append(el('legend', null, label('title')));
+      for (const workspace of state.rows) {
+        const choice = el('label', 'rm-pc-workspace-choice');
+        const check = el('input');
+        check.type = 'checkbox';
+        check.checked = workspace.enabled;
+        check.disabled = state.busy || workspace.reason !== null;
+        check.dataset.fk = `${id}-${workspace.id}`;
+        check.onchange = () => {
+          const enabled = check.checked;
+          check.checked = workspace.enabled;
+          void update(hostId, state, { tenantId: workspace.id, enabled });
+        };
+        choice.append(check, el('span', null, workspace.kind === 'personal' ? label('personal') : workspace.name));
+        if (workspace.reason === 'pc_not_allowed') choice.append(el('span', 'rm-sub', label('pcNotAllowed')));
+        fieldset.append(choice);
+      }
+      if (state.busy && !state.rows.length) {
+        const status = el('p', 'rm-weak', label('loading'));
+        status.setAttribute('role', 'status');
+        fieldset.append(status);
+      }
+      if (state.error) {
+        const error = el('p', 'rm-err', label('failed'));
+        error.setAttribute('role', 'alert');
+        fieldset.append(error);
+      }
+      box.append(fieldset);
+      return box;
+    },
+  };
 }
 
 /** 詳しい画面の頭（「‹ リモート」と、絵つきの名前） */

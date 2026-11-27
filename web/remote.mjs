@@ -21,6 +21,7 @@ import {
   INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine, stateLine, todoList, liveRow,
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
+import { setupPcWorkspaces } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 import { inMobileShell } from './remote-badge.mjs';
 
@@ -197,12 +198,16 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   /** 「編集」の中で、中継の設定を消すかの確かめを出しているか */
   let removingRelay = false;
 
-  const hosts = setupRemoteHosts({ onChange: () => paint(), cmd, page });
+  const pcWorkspaces = setupPcWorkspaces({
+    cmd, onChange: () => paint(),
+    account: () => hostScreen && plusStatus?.signedIn ? plusStatus.uid ?? plusStatus.account?.email : null,
+  });
+  const hosts = setupRemoteHosts({ onChange: () => paint(), cmd, page, pcWorkspaces });
   hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); hosts.startPolling?.(); refresh(); });
 
   // ---- 描く
   function paint() {
-    const sig = JSON.stringify([tab, detailId, revokedKey, confirming, busy, message, reviewMode, hostScreen, Boolean(editing), removingRelay, statusSig(), tab ==='other' ? hosts.sig() : '']);
+    const sig = JSON.stringify([tab, detailId, revokedKey, confirming, busy, message, reviewMode, hostScreen, Boolean(editing), removingRelay, statusSig(), pcWorkspaces.sig(), tab ==='other' ? hosts.sig() : '']);
     paintInto(root, sig, () => {
       if (tab === 'other' && hosts.available) {
         const view = hosts.build();
@@ -230,7 +235,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function plusSignature() {
     const s = plusStatus ?? {}, account = s.account ?? {};
     return [s.available, s.state, s.needsUpdate, s.signedIn, s.login?.phase, account.status, account.email,
-      s.reachable, s.error?.code, s.urls?.account, s.host?.state];
+      s.reachable, s.error?.code, s.urls?.account, s.uid, s.host?.state, s.host?.hostId];
   }
 
   function tabRow() {
@@ -352,6 +357,11 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       group.append(row);
     } else if (line && STATE_KINDS.has(line.kind)) group.append(stateLine(line.kind, line.text));
     else if (line) group.append(el('p', 'rm-warn', line.text));
+    const pc = plusStatus?.host;
+    if (hostScreen && plusStatus?.signedIn && pc?.state === 'registered' && pc.hostId) {
+      const name = status?.hostName || t('settings.remote.tabs.this');
+      group.append(pcWorkspaces.row(listRow({ icon: 'monitor', name }), pc.hostId, name));
+    }
     // 公式の中継からの申し込みを何度も断ったので、新しい申し込みを止めている間の一行。解除はホストの画面だけ
     const paused = status?.plus?.paused;
     if (paused?.until) {

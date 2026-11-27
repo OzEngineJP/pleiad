@@ -27,21 +27,21 @@ export function createBulkReplies({ minBytes = BULK_MIN_BYTES, ttlMs = 60_000, m
   };
   return {
     /** text（返事の JSON）が小さければ null。大きければ置いて、取りに来る URL（/bulk/<id>）を返す */
-    offer(text) {
+    offer(text, partition = null) {
       if (typeof text !== 'string' || Buffer.byteLength(text) < minBytes) return null;
       const body = Buffer.from(text, 'utf8');
       const id = crypto.randomBytes(16).toString('hex');
-      held.set(id, { body, at: now() });
+      held.set(id, { body, at: now(), partition });
       total += body.length;
       sweep();
       return held.has(id) ? `${BULK_PATH}${id}` : null;
     },
     /** GET /bulk/<id> を返す。自分の口でなければ false。画面のトークンの確かめは呼ぶ側が済ませておく */
-    async handle(req, res, url) {
+    async handle(req, res, url, partition = null) {
       if (!url.pathname.startsWith(BULK_PATH)) return false;
       sweep();
       const id = /^[0-9a-f]{32}$/.test(url.pathname.slice(BULK_PATH.length)) ? url.pathname.slice(BULK_PATH.length) : null;
-      const item = req.method === 'GET' && id ? drop(id) : null;
+      const item = req.method === 'GET' && id && held.get(id)?.partition === partition ? drop(id) : null;
       const headers = { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' };
       if (!item) { res.writeHead(404, { ...headers, 'content-type': 'text/plain; charset=utf-8' }); res.end('not found'); return true; }
       let body = item.body;

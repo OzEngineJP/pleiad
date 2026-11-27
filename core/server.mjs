@@ -61,6 +61,8 @@ import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { createStaticBundle } from './static-bundle.mjs';
 import { BUNDLE_PATH } from './remote/static-bundle.mjs';
+import { BROWSER_SCOPE_HEADER, takeBrowserScope, browserWorkspaceKey, browserPartition,
+  browserCommandTarget, browserHttpResource } from './remote/browser-workspace.mjs';
 import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE, defaultAppAllowed } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
 import { windowShotGuard } from './chrome/window-shots.mjs';
@@ -462,7 +464,7 @@ import { channelEventRows, HIDDEN_BOT_KINDS, innerEnvelope, isInternalConversati
 import { textForTitleModel } from './prompt-title.mjs';
 import { createInternalCalls, INTERNAL_UNAVAILABLE } from './internal-call.mjs';
 import { internalConversationOwner, isInternalSessionId } from './internal-conversation.mjs';
-import { nativeOwnerIndex } from './conversations.mjs';
+import { nativeOwnerIndex, conversationWorkspaceAccess } from './conversations.mjs';
 import { capabilityValue } from './backends/capability-marks.mjs';
 import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
 import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
@@ -2879,7 +2881,8 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
-  clients: () => runtime.sockets, watching: client => watching.get(client), watchingModal: client => watchingModal.get(client),
+  clients: () => [...runtime.sockets].filter(client => !browserConnections.has(client)),
+  watching: client => watching.get(client), watchingModal: client => watchingModal.get(client),
   watchingThread: client => {
     const slot = watchingThread.get(client);
     return slot ? (botHost?.threadSessions?.(slot.channelId, slot.threadId) ?? []) : [];
@@ -2933,8 +2936,28 @@ async function startPageListeners() {
 const AGY_RELAY_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH];
 watchMcpContacts();
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
+const browserConnections = new WeakMap();
+
+async function browserCanUseSession(scope, id) {
+  return (await conversationWorkspaceAccess(browserWorkspaceKey(scope)))(id) && !(await isInternalSessionId(id));
+}
+
+async function browserAttachment(sessionId, file) {
+  if (typeof file !== 'string' || !file || !path.isAbsolute(file)) return null;
+  const { dir } = attachTarget(sessionId);
+  if (path.dirname(path.resolve(file)) !== dir) return null;
+  return fs.realpath(file).then(async real => {
+    const root = await fs.realpath(UPLOAD_DIR);
+    return path.dirname(real) === path.join(root, path.basename(dir)) ? real : null;
+  }).catch(() => null);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const browserHandle = req.headers[BROWSER_SCOPE_HEADER];
+  const browserScope = browserHandle === undefined ? null : takeBrowserScope(browserHandle);
+  const browserResource = browserScope && browserHttpResource(url.pathname);
+  if (browserHandle !== undefined && !browserResource) return sendStatus(req, res, 404, 'not found');
   // 審査モード（ADR 0172）: エージェントの MCP・CLI の口・webhook は閉じる（fake の台本は ply_* のツールを使えないが、口そのものも無い）
   if (isReviewMode() && REVIEW_CLOSED_PATHS.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) { res.writeHead(404); return res.end(); }
   // agy が中継を起こしたか（組織の管理ポリシーで MCP が止められたことに気づく。core/mcp-contact.mjs）
@@ -2950,7 +2973,7 @@ const server = http.createServer(async (req, res) => {
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
-  if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
+  if (!browserScope && !isReviewMode() && await botHost?.handleHttp(req, res)) return;
   // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない
   if (url.pathname.startsWith(PAGES_PATH)) {
     for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
@@ -2969,6 +2992,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
     return res.end(t('auth.tokenRequired'));
   }
+  if (browserResource === 'conversation' &&
+      !(await browserCanUseSession(browserScope, url.searchParams.get('sessionId')).catch(() => false))) {
+    return sendStatus(req, res, 404, 'not found');
+  }
   // 画面が「このページのトークンがまだ通るか」を確かめる口（web/connection-status.mjs）。通れば 204、通らなければ上の 401。本文は返さない
   if (url.pathname === "/auth-check") {
     res.writeHead(204, { "cache-control": "no-store" });
@@ -2977,11 +3004,11 @@ const server = http.createServer(async (req, res) => {
   // 画面の殻の束（端末のプロキシが版ごとに保存して自分で配る。docs/remote.md §8.6、ADR 0181）
   if (url.pathname === BUNDLE_PATH) return staticBundle.handle(req, res, url);
   // WS の外で渡す大きい返事（core/bulk-replies.mjs。ADR 0179）。トークンの認証は上で済んでいる
-  if (await bulkReplies.handle(req, res, url)) return;
+  if (await bulkReplies.handle(req, res, url, browserPartition(browserScope))) return;
 
   // コンピューターの操作のスクリーンショット（core/computer-use/shots.mjs）。id は 32 桁の hex だけ。トークンの認証は上で済んでいる（/local-file は使わない。ADR 0075）
   const computerShot = /^\/computer-shot\/([0-9a-f]{32})\.jpg$/.exec(url.pathname)?.[1];
-  if (computerShot) {
+  if (computerShot && !browserScope) {
     const body = await computerShots.read(computerShot);
     if (!body) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }); return res.end('not found'); }
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff', 'content-length': body.length });
@@ -3011,7 +3038,10 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ error:failure, path:resolved?.path ?? url.searchParams.get('path') }));
         }
       }
-      const { body, headers } = await readLocalFile(url.searchParams.get("path"), access, { download:url.searchParams.get('download') === '1' });
+      const requested = url.searchParams.get('path');
+      const file = browserScope ? await browserAttachment(url.searchParams.get('sessionId'), requested) : requested;
+      if (!file && browserScope) return sendStatus(req, res, 404, 'not found');
+      const { body, headers } = await readLocalFile(file, access, { download: Boolean(browserScope) || url.searchParams.get('download') === '1' });
       res.writeHead(200, headers);
       return res.end(body);
     }
@@ -3291,7 +3321,7 @@ async function conversationTitleOf(sessionId) {
 // 状態のグループの名前替え・削除（renameStatusGroup）が、古くて上位 limit 件に入らない会話の tag を取りこぼさないため。
 // tag を持たないエージェントの状態は sidecar にあり、sidecar の行は件数に関わらず全部足すので limit のままでよい
 const EVERY_NATIVE = Number.MAX_SAFE_INTEGER;
-async function sessionList({ limit = 100, track = true, includeInternal = false, everyTag = false } = {}) {
+async function sessionList({ limit = 100, track = true, includeInternal = false, everyTag = false, browserScope = null } = {}) {
   const backends = listBackends();
   const [side, ...lists] = await Promise.all([
     store.getAll().catch(() => ({})),
@@ -3299,6 +3329,7 @@ async function sessionList({ limit = 100, track = true, includeInternal = false,
   ]);
 
   const rows = new Map();
+  const inWorkspace = browserScope ? await conversationWorkspaceAccess(browserWorkspaceKey(browserScope)) : () => true;
 
   // ネイティブの一覧にだけ出る旧内部会話（Pleiad の記録はネイティブ id を segments に持つ）も、
   // host 側の印を見て外す（Issue #180。id の prefix では判定しない）
@@ -3309,7 +3340,7 @@ async function sessionList({ limit = 100, track = true, includeInternal = false,
   };
   backends.forEach((b, i) => {
     // 欠けた行（sessionId の無いもの）は飛ばす。1 行のせいで一覧全体を失敗させない
-    for (const s of lists[i]) if (s?.sessionId && (includeInternal || (!isInternalConversationMeta(side[s.sessionId]) && !hiddenNative(s.sessionId))))
+    for (const s of lists[i]) if (s?.sessionId && inWorkspace(s.sessionId) && (includeInternal || (!isInternalConversationMeta(side[s.sessionId]) && !hiddenNative(s.sessionId))))
       rows.set(s.sessionId, withWorktree(sessionRow(b, s, side[s.sessionId])));
   });
 
@@ -3317,6 +3348,7 @@ async function sessionList({ limit = 100, track = true, includeInternal = false,
   // まだ一度も触っていないもの）は出さない。出しても開けないので一覧を濁すだけ。
   // 対応を終えたエージェントの会話は出す（読めるが続けられない。sessionBackend の retired）
   for (const [id, extra] of Object.entries(side)) {
+    if (!inWorkspace(id)) continue;
     if (!includeInternal && (isInternalConversationMeta(extra) || hiddenNative(id))) continue;
     const b = rows.has(id) || !extra.backend ? null : sessionBackend(extra.backend);
     if (!b) continue;
@@ -3724,13 +3756,23 @@ function sendTo(frame) {
   const text = secretMasker.json(JSON.stringify(frame));
   const event = frame.kind === P.EVENT ? frame.event : null;
   let sent = false;
+  const scoped = [];
   for (const ws of runtime.sockets) {
     if (ws.readyState !== ws.OPEN) continue;
+    if (browserConnections.has(ws)) {
+      if (event?.sessionId && wanted(ws, event)) scoped.push(ws);
+      continue;
+    }
     // 見ていない会話の分は送らないが、届け先が居たことにする（誰も居ないときだけ溜める）
     sent = true;
     if (!event || wanted(ws, event)) ws.send(text);
   }
-  return sent;
+  if (scoped.length) {
+    void Promise.all(scoped.map(async ws => {
+      if (await browserCanUseSession(browserConnections.get(ws), event.sessionId) && ws.readyState === ws.OPEN && wanted(ws, event)) ws.send(text);
+    })).catch(error => console.error('Could not route browser conversation event:', error.message));
+  }
+  return sent || scoped.length > 0;
 }
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
 const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
@@ -3903,7 +3945,7 @@ chromeConnection?.onChange(state => {
  */
 const chromeControlSend = event => {
   const text = JSON.stringify({ kind: P.EVENT, event });
-  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
+  for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && !browserConnections.has(ws)) ws.send(text);
 };
 chromeControl?.onChange(state => chromeControlSend({ type: 'chromeControl', ...state }));
 // The protected desktop pill needs only window refs and the control state. No page content is sent.
@@ -3967,7 +4009,7 @@ function sendChromeWindow(ids) {
     if (last ? JSON.stringify(last) === JSON.stringify(summary) : !summary.windows) continue;
     if (summary.windows) chromeWindowSent.set(id, summary); else chromeWindowSent.delete(id);
     const text = JSON.stringify(chromeWindowFrame(id, summary));
-    for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN) ws.send(text);
+    for (const ws of runtime.sockets) if (ws.readyState === ws.OPEN && !browserConnections.has(ws)) ws.send(text);
   }
 }
 chromeRelay?.view.onChange((sessionId, kind, from) => sendChromeWindow(kind === 'rebind' ? [from, sessionId] : [sessionId]));
@@ -5085,22 +5127,22 @@ const opsSessions = {
 
 /** 新しい会話を作る（sessions.new。WS の newSession の中身）。まだ送っていない（unsent）下書きの会話ができる */
 const sessionCreations = new Map();
-async function createSession(args) {
-  if (!args?.requestId) return initializeSession(args);
+async function createSession(args, workspaceId = null) {
+  if (!args?.requestId) return initializeSession(args, undefined, workspaceId);
   const { requestId, ...input } = args;
-  const fingerprint = sha256(JSON.stringify(input));
+  const fingerprint = sha256(JSON.stringify(workspaceId === null ? input : [workspaceId, input]));
   const pending = sessionCreations.get(requestId);
   if (pending) {
     if (pending.fingerprint !== fingerprint) throw new Error(t('queue.idConflict'));
     return pending.work;
   }
-  const work = initializeSession(input, { requestId, fingerprint });
+  const work = initializeSession(input, { requestId, fingerprint }, workspaceId);
   sessionCreations.set(requestId, { fingerprint, work });
   try { return await work; }
   finally { sessionCreations.delete(requestId); }
 }
 
-async function initializeSession(args, creation) {
+async function initializeSession(args, creation, workspaceId) {
   const existing = creation && await conversationForCreation(creation.requestId);
   if (existing) {
     if (existing.creation.fingerprint !== creation.fingerprint) throw new Error(t('queue.idConflict'));
@@ -5129,7 +5171,9 @@ async function initializeSession(args, creation) {
   const now = Date.now();
   // 既定のタイトルは保存しない（空）。画面が今の言語で既定名を出す（web/style.css の .row-t:empty など）。過去の記録には「新しいセッション」が残っている
   const info = { title: "", cwd, tag: status, createdAt: now, lastModified: now };
-  const sessionId = existing?.id ?? await createConversation(backend, { ...info, ...(creation ? { creation } : {}) });
+  const sessionId = existing?.id ?? await createConversation(backend, {
+    ...info, ...(workspaceId === null ? {} : { workspaceId }), ...(creation ? { creation } : {}),
+  });
   try {
     await store.setMeta(sessionId, { backend: backend.id, ...info, status, unsent: true });
     // 互換の接続先（決定 2・3）: 同じエージェントの引き継ぎなら元の会話の接続先（予約中ならそれ）を継ぐ。
@@ -5180,7 +5224,7 @@ async function initializeSession(args, creation) {
     await chromeProfiles?.startNew(sessionId);
     if (creation) await store.setSessionData(sessionId, 'creationReady', true, { durable: true });
   } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
-  emitGlobal({ type: "sessionsChanged", sessionId: null });
+  emitGlobal({ type: "sessionsChanged", sessionId });
   return { sessionId };
 }
 
@@ -11476,8 +11520,12 @@ async function scheduleWritableSendMessage(input, by = 'human') {
 }
 
 wss.on("connection", (ws, req) => {
+  const browserHandle = req.headers[BROWSER_SCOPE_HEADER];
+  const browserScope = takeBrowserScope(browserHandle);
+  if (browserHandle !== undefined && !browserScope) return ws.close(1008);
+  if (browserScope) browserConnections.set(ws, browserScope);
   // OS の操作（revealPath / openPath）を許すのは、サーバーのある PC の画面からの接続だけ（core/os-open.mjs）
-  const local = isLocalRequest(req);
+  const local = !browserScope && isLocalRequest(req);
   // 中継越しの端末の画面（接続口が付ける x-pleiad-device）。見ている印と通知鍵の登録はこの端末のものとして扱う
   const via = local ? null : remote.deviceInfo(req.headers['x-pleiad-device']);
   if (via) connectionDevices.set(ws, via);
@@ -11496,7 +11544,7 @@ wss.on("connection", (ws, req) => {
     version: APP_VERSION,
     build: BUILD,
     homeDir: os.homedir(),
-    resumedTurn: resumed,
+    resumedTurn: !browserScope && resumed,
     startedAt: SERVER_STARTED_AT,
     // この PC の今の時刻（ms）。画面は端末の時計とのずれを覚え、出来事の時刻（tool.start の at など）から経過を数えるときに補う（web/server-clock.mjs）
     now: Date.now(),
@@ -11515,8 +11563,10 @@ wss.on("connection", (ws, req) => {
   if (local) hostScreens.add(ws);
   if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
   // 待機中でない Chrome の窓の今の状態（会話ごと。つなぎ直した画面が、引き継ぎ中などを取りこぼさない）
-  for (const state of chromeControl?.snapshot() ?? []) ws.send(JSON.stringify({ kind: P.EVENT, event: { type: 'chromeControl', ...state } }));
-  for (const text of chromeWindowFrames()) ws.send(text);
+  if (!browserScope) {
+    for (const state of chromeControl?.snapshot() ?? []) ws.send(JSON.stringify({ kind: P.EVENT, event: { type: 'chromeControl', ...state } }));
+    for (const text of chromeWindowFrames()) ws.send(text);
+  }
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
@@ -11565,7 +11615,8 @@ wss.on("connection", (ws, req) => {
       }
       finishCmd();
       if (ws.readyState !== ws.OPEN) return;
-      const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(secretMasker.json(JSON.stringify(payload ?? null))) : null;
+      const bulk = ok && msg.bulk === true && !local
+        ? bulkReplies.offer(secretMasker.json(JSON.stringify(payload ?? null)), browserPartition(browserScope)) : null;
       ws.send(secretMasker.json(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) })));
     };
 
@@ -11601,6 +11652,23 @@ wss.on("connection", (ws, req) => {
 
     let releaseUpdateGate;
     try {
+      if (browserScope) {
+        let target = browserCommandTarget(msg.command, args);
+        if (msg.command === 'resolvePermission' && !args?.always && args?.scope !== 'always') {
+          target = runtime.waiting.get(args?.id)?.payload.sessionId;
+        }
+        if (['attachChunk', 'attachFinish', 'attachCancel'].includes(msg.command)) {
+          target = attachPending.get(args?.uploadId)?.sessionId;
+        }
+        if (target === undefined) return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
+        if (target !== null && !(await browserCanUseSession(browserScope, target))) {
+          return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
+        }
+        if (msg.command === 'sendMessage' && Array.isArray(args?.attachments) &&
+            (await Promise.all(args.attachments.map(file => browserAttachment(target, file?.path)))).some(file => !file)) {
+          return reply(false, t('send.invalidAttachments'));
+        }
+      }
       const operation = msg.command === 'invoke' ? opsRegistry.get(msg.args?.op) : opsRegistry.getLegacy(msg.command);
       // Only definitions guaranteed to remain reads can be abandoned during
       // shutdown. Dynamic risks and unknown commands keep protecting writes.
@@ -11665,6 +11733,18 @@ wss.on("connection", (ws, req) => {
           return reply(true, await plusSession.cancelLogin());
         case 'plusLogout':
           return reply(true, await plusSession.logout());
+        case 'remotePcWorkspaces': {
+          const { hostId, tenantId, enabled } = args ?? {};
+          if (!plusSession.snapshot().signedIn || typeof hostId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(hostId)) {
+            return reply(false, t('settings.remote.failed'));
+          }
+          const endpoint = `/v1/hosts/${hostId}/workspaces`;
+          if (tenantId === undefined) return reply(true, await plusSession.client.request('GET', endpoint));
+          if (typeof tenantId !== 'string' || !/^[0-9a-f-]{36}$/.test(tenantId) || typeof enabled !== 'boolean') {
+            return reply(false, t('settings.remote.failed'));
+          }
+          return reply(true, await plusSession.client.request('PATCH', `${endpoint}/${tenantId}`, { body: { enabled } }));
+        }
         case 'contextSettings':
           return await viaOp('context.settings');
         // 会話の文脈（context.session。ADR 0105）。突き合わせはこの接続の探索の錠の中（別のスキャンが走っていれば飛ばす）
@@ -11801,10 +11881,15 @@ wss.on("connection", (ws, req) => {
         // delta・since は画面の受け方の指定なので、操作（sessions.list）の入力には渡さない
         case "listSessions": {
           const { delta, since, ...input } = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-          return await viaOp('sessions.list', args === undefined ? undefined : input, { shape: (rows) => {
-            const slim = rows.map(slimRow);
-            return delta === true ? listDeltas.reply(ws, slim, { since }) : slim;
-          } });
+          return await viaOp('sessions.list', args === undefined ? undefined : input, {
+            withDeps: deps => browserScope ? { ...deps, sessions: {
+              ...deps.sessions, rows: () => sessionList({ track: false, browserScope }),
+            } } : deps,
+            shape: (rows) => {
+              const slim = rows.map(slimRow);
+              return delta === true ? listDeltas.reply(ws, slim, { since }) : slim;
+            },
+          });
         }
 
         // リモート（ホスト側）。秘密・トークンは返さない（core/remote/connector.mjs）
@@ -12112,7 +12197,7 @@ wss.on("connection", (ws, req) => {
             return reply(true, { threadStream: threadStreamFor(channelId, threadId) });
           }
           setWatch(ws, slot, sessionId);
-          browserUnifyWs.snapshot(ws, sessionId);
+          if (!browserScope) browserUnifyWs.snapshot(ws, sessionId);
           return reply(true, "ok");
         }
 
@@ -12142,7 +12227,7 @@ wss.on("connection", (ws, req) => {
           // 以後の流れはこの会話の分だけが届き、読み出しの間に来た分は streamCursor で重複を除く
           if (msg.args?.watch) {
             if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
-            browserUnifyWs.snapshot(ws, sessionId);
+            if (!browserScope) browserUnifyWs.snapshot(ws, sessionId);
           }
           if (!sessionId) return reply(true, { messages: [], presents: [] });
           // Hold the reference even if the turn ends during the asynchronous reads.
@@ -12257,8 +12342,9 @@ wss.on("connection", (ws, req) => {
             return reply(false, t('queue.idConflict'));
           }
           return await viaOp('sessions.new', request, {
-            withDeps: deps => requestId ? {
-              ...deps, conversations: { ...deps.conversations, create: input => createSession({ ...input, requestId }) },
+            withDeps: deps => requestId || browserScope ? {
+              ...deps, conversations: { ...deps.conversations,
+                create: input => createSession({ ...input, requestId }, browserScope ? browserWorkspaceKey(browserScope) : null) },
             } : deps,
             shape: async result => {
               if (includeSession !== true) return result;
@@ -12519,7 +12605,7 @@ wss.on("connection", (ws, req) => {
           // 返すパスは置き場（UPLOAD_DIR）からたどった形にする。r.dest は realpath 済みで、データ置き場の途中にジャンクション・
           // 8.3 の短い名前（CI の Windows の TEMP など）があると UPLOAD_DIR と字面が違い、送信時の presentAttachments が置き場の外として落とすため
           const file = path.join(dir, rel);
-          attachPending.set(r.uploadId, { file, mime: String(mime ?? "") });
+          attachPending.set(r.uploadId, { file, mime: String(mime ?? ""), sessionId });
           return reply(true, { uploadId: r.uploadId, path: file, received: r.received[0], chunkBytes: r.chunkBytes });
         }
         case "attachChunk": {

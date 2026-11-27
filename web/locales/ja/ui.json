@@ -373,6 +373,14 @@
       "locked": "保存した秘密情報を読めないため、中継につなげません。",
       "addDevice": "端末を追加",
       "addHost": "PC を追加",
+      "workspaces": {
+        "title": "この PC を使うワークスペース",
+        "button": "{{name}} のワークスペース設定",
+        "personal": "個人",
+        "pcNotAllowed": "この組織は個人の PC の利用を許可していません",
+        "loading": "ワークスペースを読み込み中…",
+        "failed": "ワークスペースの設定を読み込み直してください"
+      },
       "groups": {
         "plus": "Pleiad Plus",
         "plusConnect": "公式の中継を使う",
