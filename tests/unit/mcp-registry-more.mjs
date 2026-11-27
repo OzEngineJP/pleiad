@@ -136,6 +136,7 @@ export default async function (t) {
       t.ok('編集してもロック名は変わらない', (await ply.registration('new')).lockId === 'old');
       await ply.rename('hdr', 'hdr2');
       t.ok('静的な秘密も引き継ぐ', (await ply.connection('hdr2', tmp)).headers['X-Key'] === 'HDR_SENTINEL' && (await secrets.keys('mcp:hdr:')).length === 0);
+      t.ok('起動の待ちは指定が無ければ 60 秒（ADR 0368）', (await ply.connection('hdr2', tmp)).timeout === 60000);
       const errors = [];
       for (const [from, to] of [['new', 'hdr2'], ['missing', 'x'], ['new', 'ply'], ['new', 'bad name']]) { try { await ply.rename(from, to); errors.push(null); } catch (e) { errors.push(e.code); } }
       t.ok('既にある名前・無い登録・予約名・不正な名前には変えられない', errors.every(c => c === 'INVALID'), JSON.stringify(errors));

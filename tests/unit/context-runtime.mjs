@@ -95,6 +95,10 @@ export default async function(t) {
     runtime=await resolveRuntime(policy,{home});
     t.ok('MCP の生の定義は会話の記録に含めない',!JSON.stringify(runtime.report).includes('SECRET_VALUE'));
     t.ok('既存登録を転送用に変換',mcpTransportConfig(runtime.servers[0],cwd).command===process.execPath);
+    {
+      const of=definition=>mcpTransportConfig({...runtime.servers[0],definition:{...runtime.servers[0].definition,...definition}},cwd).timeout;
+      t.ok('起動の待ちの既定は 60 秒（npx の冷えた起動は 20 秒を超える。ADR 0368）。指定は 60 秒で頭打ち',of({})===60000&&of({startup_timeout_sec:5})===5000&&of({startup_timeout_sec:600})===60000,JSON.stringify([of({}),of({startup_timeout_sec:5}),of({startup_timeout_sec:600})]));
+    }
     const bridge=createContextBridge();
     server=http.createServer(bridge.handle);await new Promise(r=>server.listen(0,'127.0.0.1',r));
     const origin=`http://127.0.0.1:${server.address().port}`;
