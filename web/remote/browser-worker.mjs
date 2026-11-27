@@ -23,6 +23,12 @@ function serve(channel, { data, port }, finished) {
     releases.set(++index, release);
     send('data', { index, data: text ? decode.decode(bytes) : Uint8Array.from(bytes) });
   };
+  const cancel = () => {
+    for (const release of releases.values()) release();
+    releases.clear();
+    stream.reset();
+    port.close();
+  };
   try {
     if (data.type === 'http') {
       stream = channel.openHttp(data.head);
@@ -47,22 +53,21 @@ function serve(channel, { data, port }, finished) {
         releases.delete(message.index);
         if (!releases.size && (stream.remoteDone || stream.destroyed)) port.close();
       } else if (message.type === 'cancel') {
-        for (const release of releases.values()) release();
-        stream.reset();
-        port.close();
+        cancel();
       } else if (data.type === 'ws' && message.type === 'send') {
         stream.send(message.data).catch(() => stream.reset());
       } else if (data.type === 'ws' && message.type === 'close') {
         stream.close(message.code, message.reason).catch(() => stream.reset());
       }
     };
+    return cancel;
   } catch {
     stream?.reset();
     finish('reset', { reason: 'could not open stream' });
   }
 }
 
-function attempt(url, tickets, options, device, interactive, onReady) {
+function attempt(url, tickets, options, device, isInteractive, onReady) {
   return new Promise(resolve => {
     const socket = new WebSocket(url, [RELAY_PROTOCOL, tickets.relay]);
     socket.binaryType = 'arraybuffer';
@@ -84,7 +89,8 @@ function attempt(url, tickets, options, device, interactive, onReady) {
         const reason = event.code === 4401 && ({
           revoked: 'revoked', account: 'account', host: 'host', 'update required': 'update_required',
         })[event.reason];
-        resolve(terminal ?? (reason || null));
+        const rate = event.code === 4429 && event.reason === 'admit rate';
+        resolve(terminal ?? (rate ? 'rate' : reason || null));
         channel?.close();
       });
     };
@@ -103,7 +109,7 @@ function attempt(url, tickets, options, device, interactive, onReady) {
         if (!transport) {
           await handshake.readMessage(data);
           transport = await handshake.split();
-          socket.send(await transport.encrypt(json({ type: interactive ? 'pair' : 'admit' })));
+          socket.send(await transport.encrypt(json({ type: isInteractive() ? 'pair' : 'admit' })));
           return;
         }
         const message = JSON.parse(decode.decode(await transport.decrypt(data)));
@@ -148,27 +154,31 @@ self.onmessage = async ({ data: options }) => {
   let nextId = 0;
   let device;
   const waiting = new Map();
+  const bindings = new Map();
+  let interactive = options.interactive !== false;
   let active = 0, channel, stopped;
   const reject = (port, reason) => { port.postMessage({ type: 'reset', reason }); port.close(); };
   const pump = () => {
     while (channel && !channel.closed && active < MAX_ACTIVE && waiting.size) {
-      const [port, data] = waiting.entries().next().value;
+      const [port, { data, cancels }] = waiting.entries().next().value;
       waiting.delete(port);
       active++;
       let done = false;
-      serve(channel, { port, data }, () => {
+      const cancel = serve(channel, { port, data }, () => {
         if (done) return;
         done = true;
         active--;
+        cancels?.delete(port);
         queueMicrotask(pump);
       });
+      if (cancel && !done) cancels?.set(port, cancel);
     }
   };
-  const onRequest = ({ data, ports: [port] }) => {
+  const onRequest = ({ data, ports: [port] }, cancels) => {
     if (!port) return;
     if (!channel || channel.closed) return reject(port, stopped ?? 'host disconnected');
     if (!['ws', 'http'].includes(data?.type) || waiting.size >= MAX_QUEUED) return reject(port, 'request unavailable');
-    waiting.set(port, data);
+    waiting.set(port, { data, cancels });
     port.onmessage = ({ data: message }) => {
       if (message.type === 'cancel') { waiting.delete(port); port.close(); }
     };
@@ -176,7 +186,24 @@ self.onmessage = async ({ data: options }) => {
   };
   self.onmessage = async ({ data, ports: [bus] }) => {
     if (data.type === 'bind' && bus) {
-      bus.onmessage = onRequest;
+      const cancels = data.requestsId ? new Map() : undefined;
+      if (cancels) bindings.set(data.requestsId, { bus, cancels });
+      bus.onmessage = (event) => onRequest(event, cancels);
+      return;
+    }
+    if (data.type === 'unbind') {
+      const binding = bindings.get(data.requestsId);
+      if (!binding) return;
+      bindings.delete(data.requestsId);
+      binding.bus.close();
+      for (const [port, request] of waiting) {
+        if (request.cancels === binding.cancels) { waiting.delete(port); port.close(); }
+      }
+      for (const cancel of binding.cancels.values()) cancel();
+      return;
+    }
+    if (data.type === 'interactive') {
+      interactive = true;
       return;
     }
     const reply = replies.get(data.id);
@@ -194,8 +221,7 @@ self.onmessage = async ({ data: options }) => {
 
   try { device = await browserIdentity(options); }
   catch (error) { stopped = error.message; return report('stopped', { reason: stopped }); }
-  let interactive = options.interactive !== false;
-  let delay = 500;
+  let delay = 1_000;
   while (true) {
     report('connecting');
     const id = ++nextId;
@@ -207,21 +233,27 @@ self.onmessage = async ({ data: options }) => {
       if (tickets?.error) {
         if (!tickets.retry) stopped = tickets.error;
       } else if (tickets?.relay && tickets?.admission) {
-        stopped = await attempt(options.relayUrl, tickets, options, device, interactive, (ready, info) => {
+        let paired;
+        stopped = await attempt(options.relayUrl, tickets, options, device, () => (paired = interactive), (ready, info) => {
           channel = ready;
           interactive = false;
-          delay = 500;
+          delay = 1_000;
           report('ready', info);
         });
+        if (stopped === 'approval' && interactive && !paired) stopped = null;
       } else stopped = 'tickets unavailable';
     } catch { stopped = 'invalid relay configuration'; }
     channel = null;
     for (const port of waiting.keys()) reject(port, 'host disconnected');
     waiting.clear();
     if (stopped && !['unavailable', 'rate'].includes(stopped)) return report('stopped', { reason: stopped });
+    const rateLimited = stopped === 'rate';
+    if (rateLimited) delay = Math.max(delay, 2_000);
     stopped = null;
-    report('disconnected');
-    await new Promise(resolve => setTimeout(resolve, delay));
-    delay = Math.min(delay * 2, 15_000);
+    // Stagger retries when several tabs hit the host's admission limit together.
+    const retryInMs = Math.round(delay + Math.random() * delay / 4);
+    report('disconnected', rateLimited ? { reason: 'rate', retryInMs } : {});
+    await new Promise(resolve => setTimeout(resolve, retryInMs));
+    delay = Math.min(delay * 2, 30_000);
   }
 };

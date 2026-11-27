@@ -5,7 +5,7 @@ import { exactOrigin, LOADER_PATH } from './browser-wire.mjs';
  * The host origin only receives stream ports.
  */
 export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey, relayUrl, name,
-  interactive = true, getTickets, onStatus = () => {} }) {
+  interactive = true, getTickets, onStatus = () => {}, requests: commandPort, sessionId }) {
   const origin = exactOrigin(hostOrigin);
   const relay = new URL(relayUrl);
   if (origin === location.origin || relay.username || relay.password || relay.search || relay.hash ||
@@ -16,17 +16,13 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
   const proofs = new Map();
   const readyListeners = new Set();
   let binding, closed = false, status = { type: 'status', state: 'connecting' };
+  let detachFrame;
   let proofId = 0;
-  const bind = event => {
-    if (!iframe || event.origin !== origin || event.source !== iframe.contentWindow || event.data?.type !== 'pleiad:loader') return;
-    const { port1, port2 } = new MessageChannel();
-    const requests = new MessageChannel();
-    binding?.close();
-    binding = port1;
-    worker.postMessage({ type: 'bind' }, [requests.port1]);
-    event.source.postMessage({ type: 'pleiad:bind', state: status.state }, origin, [port2, requests.port2]);
+  const bindRequests = (port) => {
+    const requestsId = crypto.randomUUID();
+    worker.postMessage({ type: 'bind', requestsId }, [port]);
+    return () => worker.postMessage({ type: 'unbind', requestsId });
   };
-  window.addEventListener('message', bind);
   worker.onmessage = async ({ data }) => {
     if (data.type === 'status') {
       status = data;
@@ -67,16 +63,53 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
   };
   worker.onerror = () => {
     status = { type: 'status', state: 'stopped', reason: 'browser communication worker failed' };
+    for (const listener of readyListeners) listener(status.state);
+    for (const cancel of requests) cancel();
     binding?.postMessage({ type: 'status', state: status.state });
     onStatus(status);
   };
   worker.postMessage({ account, hostId, hostKey, relayUrl: relay.href, name, interactive });
+  if (commandPort) bindRequests(commandPort);
   const controls = new MessageChannel();
   worker.postMessage({ type: 'bind' }, [controls.port1]);
   const requests = new Set();
-  // The host Service Worker passes the bootstrap route through to the origin.
-  if (iframe) iframe.src = new URL(LOADER_PATH, origin).href;
+  function attachFrame(frame, sessionId) {
+    detachFrame?.();
+    let unbindRequests;
+    const release = () => {
+      unbindRequests?.();
+      binding?.close();
+      binding = undefined;
+    };
+    const bind = event => {
+      if (event.origin !== origin || event.source !== frame.contentWindow || event.data?.type !== 'pleiad:loader') return;
+      release();
+      const { port1, port2 } = new MessageChannel();
+      const requests = new MessageChannel();
+      binding = port1;
+      unbindRequests = bindRequests(requests.port1);
+      event.source.postMessage({ type: 'pleiad:bind', state: status.state }, origin, [port2, requests.port2]);
+    };
+    window.addEventListener('message', bind);
+    // The host Service Worker passes the bootstrap route through to the origin.
+    const loader = new URL(LOADER_PATH, origin);
+    if (sessionId) loader.searchParams.set('open', sessionId);
+    frame.src = loader.href;
+    const detach = () => {
+      if (detachFrame !== detach) return;
+      window.removeEventListener('message', bind);
+      binding?.postMessage({ type: 'status', state: 'stopped' });
+      release();
+      frame.src = 'about:blank';
+      detachFrame = undefined;
+    };
+    return detachFrame = detach;
+  }
+  if (iframe) attachFrame(iframe, sessionId);
   return {
+    attachFrame,
+    bindRequests,
+    allowApproval() { worker.postMessage({ type: 'interactive' }); },
     taskLink(input, { signal } = {}) {
       if (closed || signal?.aborted) return Promise.reject(new Error('host request cancelled'));
       return new Promise((resolve, reject) => {
@@ -125,15 +158,12 @@ export function mountBrowserHost({ iframe, hostOrigin, account, hostId, hostKey,
     },
     close() {
       closed = true;
-      window.removeEventListener('message', bind);
-      binding?.postMessage({ type: 'status', state: 'stopped' });
-      binding?.close();
+      detachFrame?.();
       for (const cancel of requests) cancel();
       controls.port2.close();
       worker.terminate();
       for (const finish of proofs.values()) finish({ error: true });
       proofs.clear();
-      if (iframe) iframe.src = 'about:blank';
     },
   };
 }

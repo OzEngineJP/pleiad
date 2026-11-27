@@ -48,6 +48,7 @@ export const DEFAULTS = Object.freeze({
   // 認可の差し込み（§5.7）: 判定を待つ上限と、admit の頻度
   authzTimeoutMs: 5_000,
   admitPerMinute: 10,
+  admitWindowMs: 60_000,
   // 通知の線（docs/remote.md §5.6）。通知の暗号文は読めないので、大きさと数と寿命だけで抑える
   notifyMaxBlobChars: 2048,
   notifyQueueMax: 16,
@@ -280,12 +281,64 @@ export function createRelay(opts = {}) {
     if (route !== '/v1/host' && route !== '/v1/host/accept' && route !== '/v1/device' && route !== '/v1/device/notify') {
       return rejectUpgrade(socket, 404);
     }
+    let decision;
+    try {
+      decision = authz?.browserUpgrade?.({ route, headers: Object.freeze({ ...req.headers }) });
+    } catch {
+      return browserUpgradeFailed(socket, route);
+    }
+    if (decision == null) return upgrade(req, socket, head, ip, url, route);
+    void authorizeBrowserUpgrade(req, socket, head, ip, url, route, decision);
+  }
+
+  function browserUpgradeFailed(socket, route) {
+    log('warn', 'browser-upgrade-failed', { route });
+    if (!socket.destroyed) rejectUpgrade(socket, 503);
+  }
+
+  async function authorizeBrowserUpgrade(req, socket, head, ip, url, route, decision) {
+    socket.pause();
+    let timer;
+    try {
+      const grant = await Promise.race([
+        decision,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('authz timeout')), o.authzTimeoutMs);
+          timer.unref();
+        }),
+      ]);
+      if (socket.destroyed) return;
+      if (grant?.status === 403 || grant?.status === 503) {
+        if (grant.status === 403 && grant.count !== false) recordFailure(ip);
+        return rejectUpgrade(socket, grant.status);
+      }
+      const offered = req.headers['sec-websocket-protocol']?.split(',').map(value => value.trim());
+      const hostId = hostIdOf(grant?.hostId);
+      if (route !== '/v1/device' || !hostId ||
+          typeof grant.protocol !== 'string' || !offered?.includes(grant.protocol)) {
+        return browserUpgradeFailed(socket, route);
+      }
+      // Only echo the selected subprotocol. Other entries may contain credentials.
+      req.headers['sec-websocket-protocol'] = grant.protocol;
+      upgrade(req, socket, head, ip, url, route, { hostId, tags: cleanTags(grant.tags), admit: true });
+      socket.resume();
+    } catch {
+      browserUpgradeFailed(socket, route);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function upgrade(req, socket, head, ip, url, route, browser = null) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.ip = ip;
       ws.route = route;
       ws.missedPongs = 0;
       ws.on('pong', () => { ws.missedPongs = 0; });
       ws.on('error', () => {});   // 1009 などは close で扱う
+      if (browser) {
+        return dispatch(ws, req, url, browser);
+      }
       const decide = (route === '/v1/host' || route === '/v1/host/accept') ? authz?.host
         : authz?.device;
       if (typeof decide === 'function') {
@@ -642,8 +695,11 @@ export function createRelay(opts = {}) {
     // 相手を確かめるのはホスト（Noise のハンドシェイクの中）。ほかの経路・ほかの場合は無視する（§5.7）
     if (grant?.admit && deviceId == null) {
       const now = Date.now();
-      h.admitTimes = h.admitTimes.filter((t) => now - t < 60_000);
-      if (h.admitTimes.length >= o.admitPerMinute) return closeWs(ws, CLOSE.LIMIT, 'admit rate');
+      h.admitTimes = h.admitTimes.filter((t) => now - t < o.admitWindowMs);
+      if (h.admitTimes.length >= o.admitPerMinute) {
+        log('debug', 'admit-rate', { host: short(hostId) });
+        return closeWs(ws, CLOSE.LIMIT, 'admit rate');
+      }
       h.admitTimes.push(now);
       if (active.size >= o.maxConnsPerHost) return closeWs(ws, CLOSE.LIMIT, 'too many connections');
       return startConn(ws, h, { admit: true, tags: grant.tags, pending: grant.pending });

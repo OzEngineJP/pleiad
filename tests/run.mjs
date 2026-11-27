@@ -478,6 +478,7 @@ const SUITES = [
   './unit/server-secrets.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
+  './unit/remote-browser-shell.mjs',
   './unit/remote-pairing-vectors.mjs',
   // ペアリングの QR の読み書き（Kotlin・Swift と同じベクトル）と、アプリの入れ方の QR を読んだときの言い分け
   './unit/remote-pairing-payloads.mjs',

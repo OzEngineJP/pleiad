@@ -30,8 +30,8 @@ async function startRelay(authz, opts = {}) {
   return { relay, port };
 }
 
-function client(port, path, headers = {}, extra = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, { headers, perMessageDeflate: false, ...extra });
+function client(port, path, headers = {}, { protocols = [], ...extra } = {}) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, protocols, { headers, perMessageDeflate: false, ...extra });
   const msgs = [];
   const waiters = [];
   ws.on('message', (data, isBinary) => {
@@ -90,6 +90,37 @@ const freePort = () => new Promise((res, rej) => {
 });
 
 export default async function (t) {
+  {
+    const hostId = newHostId();
+    const protocol = 'browser-test';
+    const { relay, port } = await startRelay({
+      browserUpgrade({ headers }) {
+        const offered = headers['sec-websocket-protocol'];
+        if (offered === 'reject') return { status: 403 };
+        if (offered === 'timeout') return new Promise(() => {});
+        if (offered === 'error') throw new Error('test');
+        if (offered?.includes(protocol)) return Promise.resolve({ protocol, hostId, tags: ['browser'] });
+        return null;
+      },
+    }, { authzTimeoutMs: 100, admitPerMinute: 1 });
+    const browser = (...protocols) => client(port, '/v1/device', {}, { protocols });
+    try {
+      const ctl = await host(port, hostId, [], newIp(), SECRET);
+      const allowed = browser('test-credential', protocol);
+      t.ok('ブラウザーの応答には認可が選んだサブプロトコルだけを載せる',
+        (await allowed.opened).open && allowed.ws.protocol === protocol);
+      const incoming = await ctl.json();
+      t.ok('ブラウザーはホストへ接続する', incoming.type === 'incoming' && incoming.admit === true);
+      const limited = await browser(protocol, 'test-credential').closedWithin();
+      t.ok('ブラウザーもホストの入場枠を消費する', limited?.code === CLOSE.LIMIT && limited.reason === 'admit rate');
+      t.ok('拒否は WebSocket に切り替える前に返す', (await browser('reject').opened).status === 403);
+      t.ok('認可の例外は 503', (await browser('error').opened).status === 503);
+      t.ok('認可の時間切れは 503', (await browser('timeout').opened).status === 503);
+    } finally {
+      await relay.close();
+    }
+  }
+
   // ── host が通す: 登録用の秘密なしでつながり sync が効く。ctx の中身 ──
   {
     const ctxs = [];

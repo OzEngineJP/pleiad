@@ -1,7 +1,14 @@
 import { exactOrigin, TAB_PARAM } from './browser-wire.mjs';
 
+const STATUS_MESSAGES = {
+  waiting: 'Check the confirmation code on the host.',
+  stopped: 'The host connection ended. Check the shell for details.',
+  connecting: 'Connecting to the host…',
+};
+
 /** Run on the host origin in the iframe document provided by the shell. */
-export function startHostLoader({ shellOrigin, view, status, entry = '/', serviceWorker = new URL('./browser-service-worker.mjs', import.meta.url) }) {
+export function startHostLoader({ shellOrigin, view, status, entry = '/', messages = {},
+  serviceWorker = new URL('./browser-service-worker.mjs', import.meta.url) }) {
   const origin = exactOrigin(shellOrigin);
   if (window.parent === window || origin === location.origin) throw new Error('host loader requires a separate shell');
   const target = new URL(entry, location.origin);
@@ -13,10 +20,8 @@ export function startHostLoader({ shellOrigin, view, status, entry = '/', servic
     view.hidden = value === 'stopped';
     if (status) {
       status.hidden = value === 'ready';
-      status.textContent = ({
-        waiting: 'Check the confirmation code on the host.',
-        stopped: 'The host connection ended. Check the shell for details.',
-      })[value] ?? 'Connecting to the host…';
+      const key = value === 'waiting' || value === 'stopped' ? value : 'connecting';
+      status.textContent = messages[key] ?? STATUS_MESSAGES[key];
     }
     if (value === 'ready' && !active) void open();
   }
