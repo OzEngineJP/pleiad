@@ -20,7 +20,7 @@ export const UNDO_MS = 12000;
 const FADE_MS = 240;
 const TEXT_MAX = 300;
 const WORKSPACE_MAX = 500;
-const TIERS = ['always', 'workspace', 'archive'];
+const TIERS = ['standard', 'always', 'workspace', 'archive'];
 
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));

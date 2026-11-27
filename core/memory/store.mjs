@@ -34,7 +34,7 @@ export const MEMORY_TEXT_MAX = 300;
 export const USER_LAYER = 'user';
 
 /** 段（ADR 0110 の段 2）。always = いつも渡す・workspace = その作業場所の会話にだけ渡す・archive = 保存だけ。段なし = 未振り分け（従来どおり） */
-export const MEMORY_TIERS = ['always', 'workspace', 'archive'];
+export const MEMORY_TIERS = ['always', 'workspace', 'standard', 'archive'];
 export const isTier = (tier) => MEMORY_TIERS.includes(tier);
 export const WORKSPACE_MAX = 500;
 /** 作業場所の形か（スラッシュ形・末尾なし・500 字まで）。canonical は core/git-root.mjs の canonicalWorkspace が作る */

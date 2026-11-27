@@ -80,6 +80,7 @@ async function verifyOne(src, resolvers) {
     const channelId = post.channelId ?? src.channelId;
     const stored = { kind: 'post', channelId, postId: post.id ?? src.postId, ...(src.threadId ? { threadId: src.threadId } : {}), quote, at: Number.isFinite(post.at) ? post.at : 0 };
     const by = post.author?.kind;
+    if (by === 'human') stored.author = { kind: 'human' };
     if (by === 'human') return post.taint ? { problem: 'tainted' } : { kind: 'human', source: stored };
     if (by === 'bot' || by === 'agent' || by === 'routine') return { kind: 'ai', source: stored };
     return { problem: 'notHuman' };
@@ -92,6 +93,7 @@ async function verifyOne(src, resolvers) {
     if (!includesQuote(msg.text, quote)) return { problem: 'quote' };
     const at = typeof msg.at === 'number' ? msg.at : Date.parse(msg.at ?? '');
     const stored = { kind: 'message', sessionId: src.sessionId, messageId: src.messageId, quote, at: Number.isFinite(at) ? at : 0 };
+    if (msg.role === 'user') stored.author = { kind: 'human' };
     // 委譲の子・bot・ルーティンの会話の最初の user の行は、親の AI・仕組みが書いた依頼で、人の発言ではない。
     // 完了通知・別の会話の AI が送った発言（sessions.send の sentBy。ADR 0104・0114）も人の発言ではない
     if (msg.role === 'user' && msg.origin && msg.firstUser) return { problem: 'notHuman' };

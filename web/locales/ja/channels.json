@@ -282,11 +282,12 @@
     "folder": {"open": "やりかけ", "decision": "決めたこと", "pref": "好み", "share": "分担", "note": "メモ", "done": "完了", "stop": "やめたこと"},
     "tier": {
       "none": "渡す場面は未定",
-      "always": "毎回渡す",
-      "workspace": "このフォルダーのときだけ",
+      "standard": "その他",
+      "always": "重要（共通）",
+      "workspace": "重要（この作業場所）",
       "archive": "渡さない"
     },
-    "tierLabel": "渡す範囲",
+    "tierLabel": "重要度",
     "workspaceLabel": "作業場所",
     "workspacePlaceholder": "/ 区切りの場所（例: D:/dev/app）",
     "loading": "読み込んでいます…",

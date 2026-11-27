@@ -2111,6 +2111,7 @@
       "related": "Memory related to this conversation:"
     },
     "reason": {
+      "durableSource": "Quote a person explicitly saying this should apply in the future.",
       "empty": "The text is empty.",
       "tooLong": "The text can be 300 characters at most.",
       "markup": "The text contains memory markup or tags.",

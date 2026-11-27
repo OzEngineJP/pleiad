@@ -18,8 +18,8 @@ export const RELATED_MAX = 5;
 /** 核の写しの 1 層あたりのトークンの目安（新しいものから入れ、残りは件数だけ）。段の無い既存の記憶に使う */
 export const CORE_LAYER_TOKENS = 1200;
 /** 段の付いた記憶の核の写しの目安。「いつも」と、今の作業場所の「この作業場所で」で分ける */
-export const CORE_ALWAYS_TOKENS = 6000;
-export const CORE_WORKSPACE_TOKENS = 3000;
+export const CORE_ALWAYS_TOKENS = 400;
+export const CORE_WORKSPACE_TOKENS = 800;
 /** 関係する記憶の 1 件の上限と、末尾 1 回の合計の上限（トークン）。件数は RELATED_MAX */
 export const RELATED_ITEM_TOKENS = 150;
 export const RELATED_TOTAL_TOKENS = 2000;
@@ -83,7 +83,7 @@ export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOK
     const picked = [];
     let used = 0;
     for (const e of [...live].sort((a, b) => (strength.get(b.id) - strength.get(a.id)) || (humanFirst(a) - humanFirst(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
-      const cost = estimateTokens(e.text) + 3;
+      const cost = estimateTokens(coreLine(locale, e)) + 1;
       if (used + cost > layerTokens && picked.length) break;
       picked.push(e); used += cost;
     }
@@ -131,8 +131,7 @@ export function fitEntries(entries, { max, perItem, total }) {
  */
 export const tieredOrder = (a, b) => {
   const human = (e) => (e.by?.kind === 'human' || e.origBy?.kind === 'human' ? 0 : 1);
-  const stop = (e) => (e.kind === 'stop' ? 0 : 1);
-  return (human(a) - human(b)) || (stop(a) - stop(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at) || (a.id < b.id ? -1 : 1);
+  return (human(a) - human(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at) || (a.id < b.id ? -1 : 1);
 };
 
 /**
@@ -141,11 +140,9 @@ export const tieredOrder = (a, b) => {
  * 「保存だけ」は返さない。「この作業場所で」は workspace が今の作業場所と同じものだけ。合わないものは入りきらなかった数に入れない。
  * 返りは pickCore と同じ形に、omittedByTier・inactiveWorkspace を足したもの。
  */
-export function pickTieredCore(userEntries, botEntries, { workspace = null, now = Date.now(), layerTokens = CORE_LAYER_TOKENS,
+export function pickTieredCore(userEntries, botEntries, { workspace = null, locale = 'ja',
   alwaysTokens = CORE_ALWAYS_TOKENS, workspaceTokens = CORE_WORKSPACE_TOKENS } = {}) {
-  const untiered = (list) => list.filter((e) => !e.tier);
-  const legacy = pickCore(untiered(userEntries), untiered(botEntries), { layerTokens, now });
-  const all = [...userEntries, ...botEntries].filter((e) => e.tier);
+  const all = [...userEntries, ...botEntries].filter((e) => e.kind !== 'promise');
   const take = (list, budget) => {
     const picked = [];
     let used = 0;
@@ -157,20 +154,16 @@ export function pickTieredCore(userEntries, botEntries, { workspace = null, now 
     }
     return { picked, omitted: list.length - picked.length };
   };
-  const always = take(all.filter((e) => e.tier === 'always'), alwaysTokens);
+  const always = take(all.filter((e) => e.tier === 'always' && !e.workspace), Math.max(0, alwaysTokens - 70));
   const matching = all.filter((e) => e.tier === 'workspace' && sameWorkspace(e.workspace, workspace));
   const inactiveWorkspace = all.filter((e) => e.tier === 'workspace' && !sameWorkspace(e.workspace, workspace)).length;
-  const local = take(matching, workspaceTokens);
+  const local = take(matching, Math.max(0, workspaceTokens - 70));
   const keep = new Set([...always.picked, ...local.picked].map((e) => e.id));
-  const mergeLayer = (legacyPicked, source) => {
-    const tagged = source.filter((e) => keep.has(e.id));
-    return [...legacyPicked, ...tagged].map((e, i) => [e, i]).sort(([a, i], [b, j]) => (kindOrder(a) - kindOrder(b)) || (i - j)).map(([e]) => e);
-  };
-  const user = mergeLayer(legacy.user, userEntries);
-  const bot = mergeLayer(legacy.bot, botEntries);
-  const omittedByTier = { untiered: legacy.omitted, always: always.omitted, workspace: local.omitted };
-  const omitted = omittedByTier.untiered + omittedByTier.always + omittedByTier.workspace;
-  return { user, bot, omitted, omittedByTier, inactiveWorkspace, faded: legacy.faded, ids: [...user, ...bot].map((e) => e.id) };
+  const user = userEntries.filter((e) => keep.has(e.id));
+  const bot = botEntries.filter((e) => keep.has(e.id));
+  const omittedByTier = { untiered: 0, always: always.omitted, workspace: local.omitted };
+  const omitted = always.omitted + local.omitted;
+  return { user, bot, omitted, omittedByTier, inactiveWorkspace, faded: 0, ids: [...user, ...bot].map((e) => e.id) };
 }
 
 /**
@@ -213,15 +206,18 @@ export function coreSnapshot({ core, locale }) {
  * 毎ターンの末尾の notes 1 件。
  *   now … ms。delta … foldDelta の items。related … 関係する記憶（MemoryEntry の配列）
  */
-export function turnContext({ now, delta = [], related = [], locale }) {
-  const lines = [agentT(locale, 'memory.turn.time', { time: formatNow(now, locale) })];
-  if (delta.length) {
-    const shown = delta.slice(-DELTA_MAX);
-    lines.push('', agentT(locale, 'memory.turn.changes'));
-    for (const d of shown) lines.push(`- ${agentT(locale, `memory.turn.${d.kind}`, { layer: layerLabel(locale, d.layer), text: d.text })}`);
+export function turnContext({ now, delta = [], locale }) {
+  const time = agentT(locale, 'memory.turn.time', { time: formatNow(now, locale) });
+  const build = (shown) => {
+    const lines = [time];
+    if (delta.length) lines.push('', agentT(locale, 'memory.turn.changes'), ...shown);
     if (delta.length > shown.length) lines.push(`- ${agentT(locale, 'memory.more', { n: delta.length - shown.length })}`);
+    return turnContextEnvelope(lines.join('\n'));
+  };
+  const shown = [];
+  for (const d of delta.slice(-DELTA_MAX).reverse()) {
+    const line = `- ${agentT(locale, `memory.turn.${d.kind}`, { layer: layerLabel(locale, d.layer), text: d.text })}`;
+    if (estimateTokens(build([line, ...shown])) <= 300) shown.unshift(line);
   }
-  const near = fitEntries(related, { max: RELATED_MAX, perItem: RELATED_ITEM_TOKENS, total: RELATED_TOTAL_TOKENS });
-  if (near.length) lines.push('', agentT(locale, 'memory.turn.related'), ...near.map((e) => `- ${e.text}`));
-  return turnContextEnvelope(lines.join('\n'));
+  return build(shown);
 }

@@ -1072,7 +1072,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
         // 作業場所は会話の cwd（このターンの cwd。無ければ保存済みの会話の cwd）。無い会話は「この作業場所で」の記憶を受けない
         let cwd = turn.info?.cwd ?? null;
         if (!cwd) { try { cwd = (await host.store.get(sessionId))?.cwd ?? null; } catch { /* 読めなければ作業場所なし */ } }
-        const tail = await memory.turnContext({ bot, session: sb, sessionId, incomingText: pre?.incomingText ?? turn.stream?.user?.text ?? '', cwd, locale: turn.agentLocale });
+        const tail = await memory.turnContext({ bot, session: sb, sessionId, channelId, cwd, locale: turn.agentLocale });
         rec.tail = tail;
         notes = tail.notes ?? [];
       } catch (e) { log('could not build the turn tail:', errText(e)); }
