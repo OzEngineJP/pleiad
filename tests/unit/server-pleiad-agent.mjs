@@ -1,16 +1,19 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { createPlusClient } from '../../core/plus/client.mjs';
 import { createPlusModelConnection } from '../../core/plus/model-connection.mjs';
 import { startPleiadAgentFixture } from '../lib/pleiad-agent-fixture.mjs';
 import { installFakePlusModels, startFakePlus } from '../lib/fake-plus.mjs';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
+import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { connectHolder } from '../../core/holder/client.mjs';
 import { defaultHolderRoot } from '../../core/process.mjs';
 import { hash } from '../../core/context-runtime.mjs';
 import { ROOT, startServer } from '../lib/server.mjs';
-import { open } from '../lib/ws-client.mjs';
+import { open, sleep } from '../lib/ws-client.mjs';
 
 export const name = 'server-pleiad-agent';
 export const title = 'Pleiad Agent の道具・添付と送信待ち';
@@ -19,12 +22,48 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agent-'));
   const cwd = path.join(scratch, '日本語 の作業場所');
   const desktopDir = path.join(scratch, 'desktop');
+  const clockFile = path.join(scratch, 'routine-clock');
+  const minute = 60_000;
+  const routineStart = Math.floor(Date.now() / minute) * minute + 30_000;
+  const setClock = now => fs.writeFile(clockFile, String(now));
+  const packagedRoot = process.env.PLEIAD_TEST_PACKAGED_APP;
+  const serverEntry = packagedRoot ? { entry: path.join(packagedRoot, 'core', 'server.mjs') } : {};
+  let releaseSuggestion;
+  const staleSuggestion = new Promise(resolve => { releaseSuggestion = resolve; });
+  let releaseChild;
+  const childResponse = new Promise(resolve => { releaseChild = resolve; });
   const fixture = await startPleiadAgentFixture({ token: 'fixture-key-only',
     usage: { prompt_tokens: 10, completion_tokens: 3, cost: 0.01 },
-    reply: body => body.messages.at(-1)?.content === '[fixture:visualize]' ? [
+    reply: async body => {
+      const prompt = body.messages.at(-1)?.content;
+      if (body.messages.length === 1 && !body.tools?.length && typeof prompt === 'string') {
+        if (prompt.startsWith('This is an app-generated request')) {
+          if (!prompt.includes('new suggestion target')) {
+            await staleSuggestion;
+            return JSON.stringify({ suggestion: 'Obsolete suggestion' });
+          }
+          return JSON.stringify({ suggestion: 'Current suggestion' });
+        }
+        return 'Proposed title';
+      }
+      if (prompt === 'delegate to fixture') return { tool: { name: 'mcp__ply_agents__ply_delegate',
+        args: { kind: 'mechanical', backend: 'fake', task: 'echo:native parent child' } } };
+      if (prompt === 'computer screenshot fixture') return { tool: { name: 'mcp__ply_computer__screenshot',
+        args: { title: '画面を確かめる' } } };
+      if (prompt === 'browser handoff fixture') return { tool: { name: 'mcp__ply_browser__hand_to_user',
+        args: { reason: 'login', message: 'ログインしてください' } } };
+      if (typeof prompt === 'string' && prompt.includes('child approval fixture')) return {
+        tool: { name: 'write_file', args: { filePath: 'delegated.txt', content: 'approved child result' } },
+      };
+      if (typeof prompt === 'string' && prompt.includes('child of fixture')) {
+        await childResponse;
+        return 'Pleiad Agent child response';
+      }
+      return prompt === '[fixture:visualize]' ? [
       'visualize' + JSON.stringify({ path: path.join(cwd, 'chart.html'), title: 'Figure' }),
       'visualize' + JSON.stringify({ path: path.join(cwd, 'invalid.html'), title: 'Invalid figure' }),
-    ].join('\n') : undefined });
+      ].join('\n') : undefined;
+    } }, { packagedRoot });
   const plus = await startFakePlus();
   const runtime = { tenantId: '11111111-1111-4111-8111-111111111111',
     cloudHostId: '22222222-2222-4222-8222-222222222222', generation: 2, token: 'r'.repeat(43) };
@@ -32,13 +71,19 @@ export default async function (t) {
   const completions = installFakePlusModels(plus, { upstream: fixture.model.baseUrl + '/chat/completions',
     upstreamKey: 'fixture-key-only', runtime, desktopToken });
   const byok = await startFakeCompatApi({ keys: ['desktop-fixture-key'], models: [{ id: 'desktop-fixture', vision: true }] });
-  const options = { dataDir: path.join(scratch, 'data'), env: {
+  const options = { ...serverEntry, dataDir: path.join(scratch, 'data'), env: {
     ...fixture.env, AGENT_HOST_KIND: 'cloud', AGENT_HOST_BACKENDS: 'fake,claude',
     AGENT_HOST_PLUS_API: plus.url, AGENT_HOST_PLEIAD_AGENT_BASE_URL: 'http://127.0.0.1:1/v1',
     PLEIAD_CLOUD_RUNTIME_TOKEN: runtime.token, PLEIAD_CLOUD_TENANT_ID: runtime.tenantId,
     PLEIAD_CLOUD_HOST_ID: runtime.cloudHostId, PLEIAD_CLOUD_GENERATION: String(runtime.generation),
   } };
-  let server, client;
+  const desktopOptions = { ...serverEntry, dataDir: desktopDir, env: {
+    ...fixture.env, AGENT_HOST_BACKENDS: 'pleiad-agent,fake', AGENT_HOST_PLUS_API: plus.url,
+    AGENT_HOST_WORKTREES: 'on', AGENT_HOST_COMPUTER_DRIVER: 'fake',
+    TEST_ROUTINES_CLOCK: clockFile,
+    NODE_OPTIONS: `--loader="${pathToFileURL(path.join(ROOT, 'tests/lib/routines-clock-loader.mjs')).href}"`,
+  } };
+  let server, client, chrome;
   async function waitForCard(sessionId, kind, from) {
     try {
       return await client.waitFor(e => e.type === 'permission' && e.sessionId === sessionId && e.kind === kind, { from, ms: 20_000 });
@@ -223,11 +268,104 @@ export default async function (t) {
     const resultsBefore = completions.length;
     client.close();
     await server.stop();
-    server = await startServer({ dataDir: desktopDir, env: {
-      ...fixture.env, AGENT_HOST_BACKENDS: 'pleiad-agent,fake', AGENT_HOST_PLUS_API: plus.url,
+    await setClock(routineStart);
+    server = await startServer(desktopOptions);
+    let holdChildApproval = false;
+    client = await open({ ...server, onEvent(event, api) {
+      if (event.type === 'permission' && !(holdChildApproval && event.toolName === 'write_file')) {
+        return api.cmd('resolvePermission', { id: event.id, allow: true }).catch(() => {});
+      }
     } });
-    client = await open({ ...server, autoAllow: true });
     const desktopSession = (await client.cmd('newSession', { backend: 'pleiad-agent', cwd })).sessionId;
+    const releaseSession = (await client.cmd('newSession', { backend: 'pleiad-agent', cwd })).sessionId;
+    await client.cmd('setTurnSettings', { sessionId: releaseSession, model: 'fixture', effort: 'high' });
+    await client.runTurn({ sessionId: releaseSession, prompt: 'title and suggestions' });
+    await client.cmd('setTitle', { sessionId: releaseSession, title: 'Title written by a person' });
+    const beforeTitle = await client.cmd('loadSession', { sessionId: releaseSession });
+    const suggestedTitle = await client.cmd('suggestTitle', { sessionId: releaseSession });
+    const titleCall = fixture.model.calls.at(-1);
+    const afterTitle = await client.cmd('loadSession', { sessionId: releaseSession });
+    t.ok('題の提案は手動の題や履歴を変えず、選んだモデルで道具なしの要求を送る',
+      suggestedTitle.title === 'Proposed title' &&
+      (await client.cmd('listSessions')).find(row => row.id === releaseSession)?.title === 'Title written by a person' &&
+      JSON.stringify(beforeTitle.messages) === JSON.stringify(afterTitle.messages) &&
+      titleCall.model === 'fixture' && titleCall.messages.length === 1 && !titleCall.tools?.length);
+
+    const suggestionMark = client.mark();
+    await client.cmd('setPref', { key: 'composer.suggestions', value: true });
+    await client.runTurn({ sessionId: releaseSession, prompt: 'old suggestion target' });
+    const waitFor = async (predicate) => {
+      for (let attempt = 0; attempt < 160; attempt++) {
+        const value = await predicate();
+        if (value) return value;
+        await sleep(50);
+      }
+      throw new Error('The expected fixture operation did not finish');
+    };
+    await waitFor(() => fixture.model.calls.some(body => body.messages.at(-1)?.content?.startsWith?.('This is an app-generated request')));
+    try {
+      await client.runTurn({ sessionId: releaseSession, prompt: 'new suggestion target' });
+      const candidate = await client.waitFor(e => e.type === 'promptSuggestion' && e.sessionId === releaseSession &&
+        e.text === 'Current suggestion', { from: suggestionMark });
+      releaseSuggestion();
+      t.ok('次の発言を送ると古い候補を破棄し、新しい候補だけを出す', candidate.text === 'Current suggestion' &&
+        !client.since(suggestionMark).some(e => e.type === 'promptSuggestion' && e.text === 'Obsolete suggestion'));
+    } finally {
+      releaseSuggestion();
+      await client.cmd('setPref', { key: 'composer.suggestions', value: false });
+    }
+
+    const delegatedByNative = await client.runTurn({ sessionId: releaseSession, prompt: 'delegate to fixture' });
+    const repo = path.join(scratch, 'delegate repo');
+    await fs.mkdir(repo);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, windowsHide: true });
+    git('init', '--quiet');
+    git('-c', 'user.name=Pleiad Test', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '--allow-empty', '-m', 'Seed');
+    const { sessionId: fakeParentId } = await client.cmd('newSession', { backend: 'fake', cwd: repo });
+    const fakeParent = await client.runTurn({ sessionId: fakeParentId, prompt: 'ply:' + JSON.stringify({
+      name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'pleiad-agent', task: 'child of fixture', isolate: true },
+    }) });
+    const delegatedTask = async (parent, backend, status) => waitFor(async () => (await client.cmd('agentTasks')).find(task =>
+      task.parentSessionId === parent && task.backend === backend && task.status === status));
+    const isolatedChild = await delegatedTask(fakeParent.sessionId, 'pleiad-agent', 'running');
+    try {
+      t.ok('明示して分離した Pleiad Agent の子には親と別の作業ツリーが割り当てられる',
+        Boolean(isolatedChild.worktree?.path && path.resolve(isolatedChild.worktree.path) !== path.resolve(repo)) &&
+        path.resolve(isolatedChild.cwd) === path.resolve(isolatedChild.worktree.path), JSON.stringify({
+          cwd: isolatedChild.cwd, workspace: isolatedChild.workspace, worktree: isolatedChild.worktree,
+        }));
+    } finally {
+      releaseChild();
+    }
+    const [fakeChild, nativeChild] = await Promise.all([
+      delegatedTask(releaseSession, 'fake', 'completed'), delegatedTask(fakeParent.sessionId, 'pleiad-agent', 'completed'),
+    ]);
+    t.ok('Pleiad Agent は既存の委譲を通じて、別のエージェントの親にも子にもなれる',
+      delegatedByNative.outcome === 'ok' && fakeChild.sessionId && nativeChild.sessionId);
+    holdChildApproval = true;
+    const childApprovalMark = client.mark();
+    const { sessionId: approvalParentId } = await client.cmd('newSession', { backend: 'fake', cwd: repo });
+    await client.runTurn({ sessionId: approvalParentId, mode: 'default', prompt: 'ply:' + JSON.stringify({
+      name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'pleiad-agent', task: 'child approval fixture' },
+    }) });
+    const childCard = await client.waitFor(event => event.type === 'permission' && event.toolName === 'write_file', { from: childApprovalMark });
+    const writingChild = await waitFor(async () => (await client.cmd('agentTasks')).find(task => task.sessionId === childCard.sessionId && task.status === 'running'));
+    const writtenBeforeApproval = await fs.stat(path.join(repo, 'delegated.txt')).then(() => true, error => {
+      if (error.code !== 'ENOENT') throw error;
+      return false;
+    });
+    await client.cmd('resolvePermission', { id: childCard.id, allow: true });
+    holdChildApproval = false;
+    await waitFor(async () => (await client.cmd('agentTasks')).find(task => task.taskId === writingChild.taskId && task.status === 'completed'));
+    t.ok('委譲の親にひも付く承認待ちの子は、承認後に作業を終える', !writtenBeforeApproval && writingChild.parentSessionId === approvalParentId &&
+      await fs.readFile(path.join(repo, 'delegated.txt'), 'utf8') === 'approved child result');
+
+    const screenshot = await client.runTurn({ backend: 'pleiad-agent', cwd, prompt: 'computer screenshot fixture' });
+    const shot = screenshot.events.find(event => event.type === 'tool.result' && event.computer?.tool === 'screenshot');
+    const loadedShot = (await client.cmd('loadSession', { sessionId: screenshot.sessionId })).messages.flatMap(message => message.toolCalls ?? [])
+      .find(call => call.id === shot?.id);
+    t.ok('Pleiad Agent の画面撮影は会話の途中と履歴に画像を出す', shot?.images?.length === 1 &&
+      shot.images[0].url === loadedShot?.images?.[0]?.url && !shot.text.includes('[ply_computer]'));
     const nativeInstruction = 'Fixture instruction from CLAUDE.md';
     const hostInstruction = 'Fixture instruction from AGENTS.md';
     await fs.writeFile(path.join(cwd, 'CLAUDE.md'), nativeInstruction);
@@ -333,9 +471,92 @@ export default async function (t) {
     t.ok('エージェントの切り替え後も同じ会話で両方の履歴を読める',
       switched.outcome === 'ok' && handedOff.messages.some(m => m.uuid === secondUser.uuid) &&
       handedOff.messages.some(m => m.role === 'user' && m.text === 'echo:switched'));
+
+    const hostOp = (op, args) => client.cmd('invoke', { op, args });
+    await hostOp('settings.set', { key: 'botEnabled', value: true });
+    const bot = await hostOp('bots.create', { name: 'Owl', backend: 'pleiad-agent' });
+    const channel = await hostOp('channels.create', { name: 'release-check' });
+    const readChannel = threadId => hostOp('channels.read', { channelId: channel.id, ...(threadId ? { threadId } : {}) });
+    const waitForReply = root => waitFor(async () => (await readChannel(root.id)).posts.find(post =>
+      post.turn?.botId === bot.id && post.state === 'done' && post.text));
+    const post = await hostOp('channels.post', { channelId: channel.id, text: '@Owl Channel request' });
+    const reply = await waitForReply(post);
+    t.ok('Pleiad Agent のボットが呼びかけを受け取り、スレッドに返信する',
+      reply.threadId === post.id && reply.text.includes('Channel request'));
+
+    const routine = await hostOp('routines.create', { name: 'Restart fixture', botId: bot.id, channelId: channel.id,
+      prompt: 'Routine request', trigger: { kind: 'cron', expr: '* * * * *' } });
+    client.close();
+    await server.stop();
+    await setClock(routineStart + 5 * minute);
+    server = await startServer(desktopOptions);
+    client = await open(server);
+    const roots = async () => (await readChannel()).posts.filter(post => post.author.routineId === routine.id);
+    const missed = await waitFor(async () => (await roots())[0]);
+    const scheduledReply = await waitForReply(missed);
+    t.ok('再起動時に Pleiad Agent のルーティンを一度だけ実行し、取りこぼしと返信を同じスレッドに表示する',
+      missed.routine?.missed === true && scheduledReply.text.includes('Routine request') && (await roots()).length === 1);
+
+    client.close();
+    await server.stop();
+    chrome = await startFakeChrome({ permission: 'auto' });
+    const browserData = path.join(scratch, 'browser');
+    server = await startServer({ dataDir: browserData, entry: path.join(ROOT, 'tests/lib/parent-port-server.mjs'),
+      env: { ...fixture.env, AGENT_HOST_CHROME_USER_DATA: chrome.userDataDir, AGENT_HOST_AGENT_BROWSER_PRESTART: 'off',
+        TEST_PARENT_PORT_ENTRY: serverEntry.entry ?? '' } });
+    client = await open({ ...server, onEvent(event, api) {
+      if (event.type === 'permission' && !event.browserHandoff) {
+        return api.cmd('resolvePermission', { id: event.id, allow: true }).catch(() => {});
+      }
+    } });
+    await client.cmd('chromeConnect');
+    await client.waitFor(event => event.type === 'chromeBrowser' && event.state === 'connected', { ms: 20_000 });
+    const handoff = async () => {
+      const { sessionId } = await client.cmd('newSession', { backend: 'pleiad-agent', cwd });
+      const from = client.mark();
+      await client.cmd('sendMessage', { sessionId, messageId: 'browser-handoff-fixture', prompt: 'browser handoff fixture' });
+      const card = await client.waitFor(event => event.type === 'permission' && event.sessionId === sessionId &&
+        event.browserHandoff?.state === 'asked', { from, ms: 20_000 });
+      return { card, from, sessionId };
+    };
+    const resumed = await handoff();
+    const configs = path.join(browserData, 'agent-browser');
+    const cdpUrl = await waitFor(async () => {
+      for (const dir of await fs.readdir(configs).catch(() => [])) {
+        const text = await fs.readFile(path.join(configs, dir, 'agent-browser.json'), 'utf8').catch(() => null);
+        if (text) return JSON.parse(text).cdp;
+      }
+      return null;
+    });
+    const browserAgent = new WebSocket(cdpUrl);
+    try {
+      await new Promise((resolve, reject) => {
+        browserAgent.addEventListener('error', () => reject(new Error('Fake Chrome did not connect')), { once: true });
+        browserAgent.addEventListener('open', resolve, { once: true });
+      });
+      browserAgent.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: 'about:blank' } }));
+      await client.waitFor(event => event.type === 'chromeWindow' && event.sessionId === resumed.sessionId && event.windows > 0,
+        { from: resumed.from, ms: 20_000 });
+      const watch = await client.cmd('browserScreencast', { sessionId: resumed.sessionId, source: 'chrome', width: 400, height: 300, device: 'phone' });
+      await client.cmd('chromeTakeOver', { sessionId: resumed.sessionId, by: 'screen', tabId: watch.tabId, width: 400, height: 300, scale: 1 });
+      await client.waitFor(event => event.type === 'permissionUpdate' && event.browserHandoff?.state === 'operating',
+        { from: resumed.from, ms: 20_000 });
+      await client.cmd('chromeResume', { sessionId: resumed.sessionId });
+      await client.waitFor(event => event.type === 'turnEnd' && event.sessionId === resumed.sessionId, { from: resumed.from, ms: 20_000 });
+    } finally {
+      browserAgent.close();
+    }
+    const stopped = await handoff();
+    await client.cmd('abort', { sessionId: stopped.sessionId });
+    await client.waitFor(event => event.type === 'turnEnd' && event.sessionId === stopped.sessionId, { from: stopped.from, ms: 20_000 });
+    t.ok('偽の Chrome で Pleiad Agent から操作の手渡しを依頼でき、再開と停止で待ちを抜ける',
+      resumed.card.browserHandoff.message === 'ログインしてください' && stopped.card.id !== resumed.card.id);
   } finally {
+    releaseSuggestion();
+    releaseChild();
     client?.close();
     try { await server?.stop(); } finally {
+      await chrome?.stop();
       await byok.close();
       await plus.close();
       await fixture.close();

@@ -5573,6 +5573,7 @@ async function suggestWritableTitleOf(args) {
     const prompt = typeof backend.titlePrompt === 'function' ? await backend.titlePrompt(lng) : agentT(lng, 'title.internal');
     // 共通の内部呼出し（Issue #180。usage は internalTask 欄付きで記録。kind 'title'）。外側の返りは従来どおり文字列
     const out = await internalCalls.call({ kind: 'title', backend, prompt: prompt + NL + NL + gist, locale: lng,
+      ...(backend.id === 'pleiad-agent' ? { model: saved.model, effort: saved.effort } : {}),
       endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? '') });
     if (out?.aborted) throw new Error('aborted');
     title = String(out?.text ?? "");
@@ -11048,6 +11049,7 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
     if (saved.compatEndpoint && !endpoint) return null;
     // 共通の内部呼出しで回す（usage は internalTask 欄付きで記録される。kind 'suggest'）
     const out = await internalCalls.call({ kind: 'suggest', backend, prompt: suggestionPrompt(gist), signal,
+      ...(backend.id === 'pleiad-agent' ? { model: saved.model, effort: saved.effort } : {}),
       endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? ''), locale: await ensureAgentLocale(id) });
     return out?.aborted ? null : (out?.text ?? null);
   });

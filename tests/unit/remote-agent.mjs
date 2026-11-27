@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRelay } from '../../relay/server.mjs';
 import { startServer } from '../lib/server.mjs';
+import { startPleiadAgentFixture } from '../lib/pleiad-agent-fixture.mjs';
 import { createFakeGates } from '../lib/fake-gate.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { pairDevice, connectDevice } from '../lib/remote-device.mjs';
@@ -307,7 +308,8 @@ export default async function (t) {
   const relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} });
   const relayPort = (await relay.listen(0, '127.0.0.1')).port;
   const gates = await createFakeGates(scratch);
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', ...gates.env }, dataDir, timeoutMs: 30_000 });
+  const native = await startPleiadAgentFixture({ reply: () => 'Reply from the paired Pleiad Agent host' });
+  const server = await startServer({ env: { ...native.env, AGENT_HOST_BACKENDS: 'fake,pleiad-agent', ...gates.env }, dataDir, timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   const cmd = (command, args = {}) => within(c.cmd(command, args), 15_000, `コマンド ${command}`);
   const devices = [], agents = [];
@@ -553,6 +555,13 @@ export default async function (t) {
     await phoneAgent.send({ t: 'answer', id: relay3.id, receipt: relay3.receipt, allow: true });
     t.ok('スマホの端末の答えは受けない', (await phoneAgent.fresh(e => e.t === 'answered' && e.id === relay3.id, 5000, 'スマホの答え')).ok === false);
 
+    const delegatedToAgent = await ax.call('delegate', { kind: 'mechanical', backend: 'pleiad-agent', task: 'Remote fixture' }, reqP);
+    if (!delegatedToAgent.ok || !delegatedToAgent.result?.task) throw new Error(JSON.stringify(delegatedToAgent));
+    const remoteAgentId = delegatedToAgent.result.task.taskId;
+    const remoteAgentDone = await ax.next(e => e.t === 'task' && e.task.taskId === remoteAgentId && e.task.status === 'completed', 20_000, 'Pleiad Agent の完了');
+    t.ok('ペアリングした別の端末は、Pleiad Agent に委譲して結果を受け取れる',
+      remoteAgentDone.task.backend === 'pleiad-agent' && remoteAgentDone.task.result.includes('Reply from the paired Pleiad Agent host'));
+
     // ---- 取り消し: 任された作業も止まり、口は閉じる
     const aRev = ax;
     await cmd('remoteRevoke', { id: desk2.id });
@@ -565,6 +574,7 @@ export default async function (t) {
     c.close();
     await within(server.stop(), 15_000, 'サーバーの停止').catch(e => t.note(e.message));
     await within(relay.close(), 5000, '中継の停止').catch(e => t.note(e.message));
+    await native.close();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }

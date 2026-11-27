@@ -3,6 +3,7 @@
 // Chrome の OS の層（chrome-os）は偽の main として答える: FAKE_CHROME_OS=unsupported なら使えない OS、それ以外は使える層
 // （確認の窓は見つけない・前に出すは成功・閉じるは何もしない。窓の動きは tests/unit/chrome-connection.mjs が偽の Chrome で確かめる）。
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const log = process.env.FAKE_PARENT_PORT_LOG;
 const chromeOsSupported = process.env.FAKE_CHROME_OS !== 'unsupported';
@@ -25,4 +26,4 @@ process.parentPort = {
   },
   on(type, fn) { if (type === 'message') listeners.push(fn); },
 };
-await import('../../core/server.mjs');
+await import(process.env.TEST_PARENT_PORT_ENTRY ? pathToFileURL(process.env.TEST_PARENT_PORT_ENTRY).href : '../../core/server.mjs');
