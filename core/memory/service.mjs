@@ -51,7 +51,7 @@ import { createMemoryStore, fingerprintOf, isLayer, isTier, isWorkspace, oneLine
 import { createMemoryIndex } from './index.mjs';
 import { MemoryError, checkText, checkSources, sourceResolvers, capWeight } from './guard.mjs';
 import { strengthOf, FADED_BELOW } from './strength.mjs';
-import { foldDelta, pickTieredCore, coreFitCounts, coreSnapshot, turnContext as turnContextText, sameWorkspace, fitEntries, RELATED_MAX, RELATED_ITEM_TOKENS, RELATED_TOTAL_TOKENS, SEARCH_MAX, SEARCH_TOTAL_TOKENS } from './tail.mjs';
+import { foldDelta, pickTieredCore, coreFitCounts, coreSnapshot, turnContext as turnContextText, sameWorkspace, fitEntries, SEARCH_MAX, SEARCH_TOTAL_TOKENS } from './tail.mjs';
 
 export { MemoryError };
 
@@ -74,7 +74,10 @@ const withStrength = (entry, at) => {
 
 /** 会話の作業場所（here）から見える記憶か。保存だけ（archive）は見えない。「この作業場所で」は here と同じ作業場所のものだけ（here が無ければ見えない）。
  *  段の無い記憶・「いつも」はどの会話にも見える。memory.search だけはほかの作業場所も引ける（これは使わない） */
-const visibleIn = (here) => (entry) => !archived(entry) && (entry.tier !== 'workspace' || sameWorkspace(entry.workspace, here));
+const visibleIn = (here) => (entry) => entry.kind !== 'promise' && (
+  (entry.tier === 'always' && !entry.workspace) || (entry.tier === 'workspace' && sameWorkspace(entry.workspace, here))
+);
+const durable = (quote) => /(?:今後|次回以降|常に|毎回|原則|恒久|標準|既定|デフォルト|\b(?:always|never|by default|from now on|going forward|every time)\b)/iu.test(quote);
 
 export function createMemoryService({ dataDir, channels = null, emit = () => {}, now = Date.now, localeOf = () => 'ja', loadSqlite, log = () => {}, withLayer = (_layer, fn) => fn(), workspaceOf = canonicalWorkspace } = {}) {
   const dir = path.join(dataDir, 'memory');
@@ -92,12 +95,21 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
    * updatedAt は進めず、変更記録に「システムが段を付けた（migration）」と前後を残す。段を外せば元に戻り、外した後の起動でもやり直さない（記録にある id は飛ばす）。
    * ToDo・気がかりへは写さない。返りは変えた層
    */
-  async function archiveLegacy() {
+  async function archiveLegacy({ promisesOnly = false } = {}) {
     const done = store.migrated(PROMISE_ARCHIVE_MIGRATION);
+    const classified = store.migrated('memory-importance');
     const layers = new Set();
     for (const entry of store.entries()) {
-      if (entry.kind !== 'promise' || entry.tier || done.has(entry.id)) continue;
-      if (await store.edit({ id: entry.id, tier: 'archive', by: { kind: 'system' }, migration: PROMISE_ARCHIVE_MIGRATION })) layers.add(entry.layer);
+      if (promisesOnly && entry.kind !== 'promise') continue;
+      if (entry.tier === 'archive' || done.has(entry.id) || classified.has(entry.id)) continue;
+      const human = (store.lastPlacedBy(entry.id) ?? entry.by)?.kind === 'human';
+      const verified = entry.sources.some((source) => source.author?.kind === 'human' && durable(source.quote ?? ''));
+      const important = (entry.tier === 'workspace' && entry.workspace && (human || verified))
+        || (entry.tier === 'always' && !entry.workspace && (human || verified));
+      const tier = entry.kind === 'promise' ? 'archive' : important ? entry.tier : 'standard';
+      if (tier === entry.tier) continue;
+      const migration = entry.kind === 'promise' ? PROMISE_ARCHIVE_MIGRATION : 'memory-importance';
+      if (await store.edit({ id: entry.id, tier, by: { kind: 'system' }, migration, runId: 'memory-migration-v1', reason: tier === 'archive' ? 'legacyPromise' : 'unconfirmedImportance' })) layers.add(entry.layer);
     }
     return [...layers];
   }
@@ -127,7 +139,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const isHuman = (author) => author?.kind === 'human';
   const rejected = (reason, detail) => new MemoryError('MEMORY_REJECTED', reason, detail);
   /** 約束は人でなければ記憶に書かない。会話に ToDo があれば ToDo へ、無ければ気がかりへ置くよう断る（ctx.hasTodos は core/ops/memory.mjs が付ける） */
-  const promiseRefusal = (ctx) => rejected(ctx?.hasTodos ? 'promiseTodo' : 'promiseLoop');
+  const promiseRefusal = () => rejected('promiseTodo');
 
   /** 外から来た作業場所の形をそろえて検査する（\ は / へ・末尾の / は落とす。形が合わなければ MEMORY_REJECTED）。空は「無し」（null） */
   const placeOf = (value) => {
@@ -140,19 +152,14 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const hereOf = async (ctx) => (typeof ctx?.sessionCwd === 'string' && ctx.sessionCwd ? (await workspaceOf(ctx.sessionCwd).catch(() => null)) ?? null : null);
 
   /** 新しい記憶の段と作業場所（省いたときの既定は冒頭の write の説明） */
-  async function newPlacement({ tier, workspace }, human, ctx) {
+  async function newPlacement({ tier, workspace }, ctx) {
     if (tier != null && !isTier(tier)) throw rejected('tier');
     const given = placeOf(workspace);
-    if (tier == null) {
-      if (given) return { tier: 'workspace', workspace: given };
-      if (human) return { tier: 'always' };
-      const here = await hereOf(ctx);
-      return here ? { tier: 'workspace', workspace: here } : { tier: 'always' };
-    }
-    if (tier !== 'workspace') return { tier };
+    const effective = tier ?? (given ? 'workspace' : 'standard');
+    if (effective !== 'workspace') return { tier: effective, ...(effective === 'standard' && given ? { workspace: given } : {}) };
     const place = given ?? await hereOf(ctx);
     if (!place) throw rejected('workspaceUnknown');
-    return { tier, workspace: place };
+    return { tier: effective, workspace: place };
   }
 
   /** 直しの段と作業場所。今の行から変わるものだけを返す（無ければ空）。workspace は null で外す */
@@ -162,8 +169,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     const effective = tier ?? (given ? 'workspace' : old.tier);   // workspace だけ渡したら、write と同じく workspace の段にする
     const out = {};
     if (effective != null && effective !== old.tier) out.tier = effective;
-    if (workspace === null && effective !== 'workspace') { if (old.workspace) out.workspace = null; }
-    else if (given && effective === 'workspace' && given !== old.workspace) out.workspace = given;
+    if ((workspace === null || workspace === '' || tier === 'always') && effective !== 'workspace') { if (old.workspace) out.workspace = null; }
+    else if (given && (effective === 'workspace' || effective === 'standard') && given !== old.workspace) out.workspace = given;
     if (effective === 'workspace' && !(out.workspace ?? old.workspace)) {
       const place = await hereOf(ctx);
       if (!place) throw rejected('workspaceUnknown');
@@ -231,13 +238,16 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       await catchUp();
       return store.get(id);
     },
-    async search({ query, layer, layers, limit = 5 } = {}) {
+    async search({ query, layer, layers, limit = 5, workspace, sessionCwd } = {}) {
       await ensureIndex();
       const scope = layer ? [layer] : layers?.length ? layers : null;
       const at = now();
       // 保存だけ（archive）は探しても出さない（AI へ渡す道なので。人は一覧で見る）。ほかの作業場所の記憶は引ける。8 件・合計 1200 トークンまで
       const max = Math.min(SEARCH_MAX, Math.max(1, Number.isFinite(limit) ? Math.trunc(limit) : 5));
-      const hits = await index.search({ query, ...(scope ? { layers: scope } : {}), limit: max, accept: (e) => !archived(e) });
+      const place = workspace !== undefined ? placeOf(workspace) : await hereOf({ sessionCwd });
+      const scoped = workspace !== undefined || sessionCwd !== undefined;
+      const hits = await index.search({ query, ...(scope ? { layers: scope } : {}), limit: max,
+        accept: e => !archived(e) && (!scoped || !e.workspace || sameWorkspace(e.workspace, place)) });
       return fitEntries(hits, { max, perItem: RESULT_TOKENS, total: SEARCH_TOTAL_TOKENS }).map((e) => withStrength(e, at));
     },
 
@@ -258,16 +268,17 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
-      if (!human && kind === 'promise' && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);   // 書かない（保存もしない）。ToDo か気がかりへ
-      const placement = await newPlacement({ tier, workspace }, human, ctx);
+      if (!human && kind === 'promise') throw promiseRefusal();
       const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
       const note = why == null || why === '' ? undefined : checkText(why, { human, isTombstoned: null }).slice(0, 300);
       const proven = await verified(sources, author, ctx);
+      if (!human && !proven.humanQuotes.some(durable)) throw rejected('durableSource');
+      const placement = await newPlacement({ tier: human ? tier : 'standard', workspace: workspace ?? (!human ? await hereOf(ctx) : undefined) }, ctx);
       const fp = fingerprintOf(clean);
       if (store.entries(layer).some((e) => fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const tags = { kind, weight: capWeight(weight, { human, kind, humanQuotes: proven.humanQuotes }), status, ...placement };
-      const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, ...tags });
+      const added = await store.add({ layer, text: clean, why: note, sources: proven.sources, by: author, via: ctx.sessionId, unique: true, runId: ctx.runId, reason: note, ...tags });
       if (added.duplicate) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       const { entry } = added;
       bump(budget);
@@ -283,8 +294,9 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       // 直した結果が約束になる（今が約束のままの直しも含む）なら、人でなければ書かない。保存だけへ寄せる直し（段だけ archive）は通す
       const resultKind = kind === undefined ? old.kind : kind;
       const onlyArchiving = tier === 'archive' && [text, why, sources, kind, weight, status, workspace].every((v) => v === undefined);
-      if (!human && resultKind === 'promise' && !onlyArchiving && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);
-      const placement = await editedPlacement({ tier, workspace }, old, ctx);
+      if (!human && resultKind === 'promise' && !onlyArchiving) throw promiseRefusal();
+      const protectedPlacement = !human && ctx.runId && (store.lastPlacedBy(id) ?? old.by)?.kind === 'human';
+      const placement = protectedPlacement ? {} : await editedPlacement({ tier, workspace }, old, ctx);
       const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;
       const budget = changing ? ensureBudget(old.layer, author, ctx) : null;
@@ -296,12 +308,13 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
         const fp = fingerprintOf(clean);
         if (store.entries(old.layer).some((e) => e.id !== id && fingerprintOf(e.text) === fp)) throw new MemoryError('MEMORY_REJECTED', 'duplicate');
       }
+      if (!human && changing && !proven.humanQuotes.some(durable)) throw rejected('durableSource');
       const cappedWeight = capWeight(weight, { human, kind: kind ?? old.kind ?? null, humanQuotes: proven.humanQuotes });
       // 段・作業場所だけの依頼で何も変わらないときは、記録も updatedAt も動かさない
       const others = [clean, note, kind, cappedWeight, status].some((v) => v !== undefined) || proven.sources.length > 0;
       if (placing && !others && !Object.keys(placement).length) return old;
       const done = await store.edit({ id, text: clean, why: note, sources: proven.sources.length ? proven.sources : undefined, by: author, via: ctx.sessionId,
-        kind, weight: cappedWeight, status, ...placement });
+        kind, weight: cappedWeight, status, runId: ctx.runId, reason: note, ...placement });
       if (!done) throw notFound(id);
       bump(budget);
       announce(done.entry.layer);
@@ -315,18 +328,18 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
      * unlessHumanPlaced を真にすると、段・作業場所を最後に変えたのが人（画面の選び直し）の記憶には触れない（夜の整理が人の選んだ段を戻さないため）。
      * 返りは { placed: true, entry } か { placed: false, reason: 'notFound' | 'changed' | 'human' | 'same' }
      */
-    async place({ id, tier, workspace, reason, migration, expect, by = { kind: 'system' }, unlessHumanPlaced = false } = {}) {
+    async place({ id, tier, workspace, reason, migration, runId, expect, by = { kind: 'system' }, unlessHumanPlaced = false } = {}) {
       await catchUp();
       const old = store.get(id);
       if (!old) return { placed: false, reason: 'notFound' };
       if (expect && ((old.tier ?? null) !== (expect.tier ?? null) || (old.workspace ?? null) !== (expect.workspace ?? null))) return { placed: false, reason: 'changed' };
-      if (unlessHumanPlaced && store.lastPlacedBy(id)?.kind === 'human') return { placed: false, reason: 'human' };
+      if (unlessHumanPlaced && (store.lastPlacedBy(id) ?? old.by)?.kind === 'human') return { placed: false, reason: 'human' };
       if (tier != null && !isTier(tier)) throw rejected('tier');
       const place = workspace == null ? null : placeOf(workspace);
       if (tier === 'workspace' && !place) throw rejected('workspaceUnknown');
       if ((old.tier ?? null) === (tier ?? null) && (old.workspace ?? null) === place) return { placed: false, reason: 'same' };
       const note = reason ? [...oneLine(reason)].slice(0, 80).join('') : undefined;
-      const done = await store.edit({ id, tier: tier ?? null, workspace: place, by, reason: note, ...(migration ? { migration } : {}) });
+      const done = await store.edit({ id, tier: tier ?? null, workspace: place, by, reason: note, runId, ...(migration ? { migration } : {}) });
       if (!done) return { placed: false, reason: 'notFound' };
       announce(done.entry.layer);
       return { placed: true, entry: done.entry };
@@ -341,7 +354,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
     /** 段の無い既存の約束を保存だけにする移行（冒頭の archiveLegacy）。起動の最初の読み込みで済んでいるが、振り分けの最初にもう一度呼ぶ（何度呼んでも同じ）。変えた層の配列 */
     async archiveLegacyPromises() {
       await catchUp();
-      const moved = await archiveLegacy();
+      const moved = await archiveLegacy({ promisesOnly: true });
       for (const layer of moved) announce(layer);
       return moved;
     },
@@ -368,16 +381,33 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       return done.entry;
     },
 
+    async runChanges(runId) {
+      await catchUp();
+      return store.runChanges(runId);
+    },
+    async undoRunChange(runId, id, rev) {
+      await catchUp();
+      const layer = store.get(id)?.layer;
+      if (!layer) return false;
+      return withLayer(layer, async () => {
+        const restored = await store.undoRunChange(runId, id, rev);
+        if (restored) announce(layer);
+        return restored;
+      });
+    },
     rev: () => store.rev(),
 
-    async turnContext({ bot, session = {}, sessionId = null, incomingText = '', cwd = null, now: at = now(), locale } = {}) {
-      await ensureIndex();
+    async turnContext({ bot, session = {}, sessionId = null, channelId = null, cwd = null, now: at = now(), locale = localeOf(), includeClock = true } = {}) {
+      await catchUp();
       if (sessionId) userWrites.delete(sessionId);   // 新しいターンの始まり: user 層への書き込みの数え直し
       const layers = bot?.id ? [USER_LAYER, bot.id] : [USER_LAYER];
       const rev = store.rev();
       const due = session.snapshotDue === true;
       // この会話の作業場所（cwd の git の本体。git の外・cwd が無い会話は null = 「この作業場所で」の記憶は 1 件も渡さない）
-      const here = await hereOf({ sessionCwd: cwd });
+      const sessionPlace = await hereOf({ sessionCwd: cwd });
+      const channel = channelId ? await channels?.get({ channelId }).catch(() => null) : null;
+      const channelPlace = channelId ? await hereOf({ sessionCwd: channel?.cwd || bot?.folders?.[0]?.path }) : sessionPlace;
+      const here = sameWorkspace(sessionPlace, channelPlace) ? sessionPlace : null;
       const visible = visibleIn(here);
       let delivered = due ? [] : [...(session.delivered ?? [])];
       const notes = [];
@@ -386,7 +416,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       if (due) {
         // 核の写しが今の全体を含むので、差分は要らない。保存だけ（archive）は入れない。入りきらなかった数は返りの omitted に（段ごと）
         const live = (layer) => store.entries(layer).filter((e) => !archived(e));
-        const core = pickTieredCore(live(USER_LAYER), bot?.id ? live(bot.id) : [], { workspace: here, now: at });
+        const core = pickTieredCore(live(USER_LAYER), bot?.id ? live(bot.id) : [], { workspace: here, locale });
         const snapshot = coreSnapshot({ core, locale });
         if (snapshot) notes.push(snapshot);
         delivered = core.ids;
@@ -398,19 +428,8 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
         delta = folded.items;
         delivered = [...delivered, ...folded.skipped, ...delta.filter((d) => d.kind !== 'forget').map((d) => d.id)];
       }
-      // 関係する記憶: 段の付いたもの（始まりに入りきらなかった「いつも」と、今の作業場所の「この作業場所で」。入ったものは渡し済みで外れる）を先に、
-      // 残りの枠を段の無い記憶で埋める。保存だけ・ほかの作業場所は出さない。5 件・1 件 150 トークン・合計 2000 トークンまで
-      let hits = [];
-      if (incomingText) {
-        hits = await index.related({ text: incomingText, layers, exclude: delivered, limit: RELATED_MAX, accept: (e) => Boolean(e.tier) && visible(e) });
-        if (hits.length < RELATED_MAX) {
-          const more = await index.related({ text: incomingText, layers, exclude: [...delivered, ...hits.map((h) => h.entry.id)], limit: RELATED_MAX - hits.length, accept: visible });
-          hits = [...hits, ...more];
-        }
-      }
-      const related = fitEntries(hits.map((h) => h.entry), { max: RELATED_MAX, perItem: RELATED_ITEM_TOKENS, total: RELATED_TOTAL_TOKENS });
-      delivered = [...new Set([...delivered, ...related.map((e) => e.id)])].slice(-DELIVERED_MAX);
-      notes.push(turnContextText({ now: at, delta, related, locale }));
+      delivered = [...new Set(delivered)].slice(-DELIVERED_MAX);
+      if (includeClock || delta.length) notes.push(turnContextText({ now: at, delta, locale }));
       return { notes, memRev: rev, delivered, snapshotDue: false, ...(omitted ? { omitted } : {}) };
     },
   };

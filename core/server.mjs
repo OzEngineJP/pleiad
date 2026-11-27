@@ -162,6 +162,7 @@ import { createNotifications } from './notifications.mjs';
 import { normalizeEditingState } from '../web/md-editing-state.mjs';
 import { createDrafts } from './drafts.mjs';
 import { createTodos } from './todos.mjs';
+import { todoContext } from './brain/inner.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
 import { createFolderUploads } from './folder-uploads.mjs';
@@ -457,7 +458,7 @@ import { taskStop, toolStop, backgroundStop, approvalStop, waitStop, interruptio
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { THREAD_STREAM_EVENTS, threadStreamSnapshot } from './bots/thread-stream.mjs';
-import { channelEventRows, HIDDEN_BOT_KINDS, isInternalConversationMeta } from './channels/types.mjs';
+import { channelEventRows, HIDDEN_BOT_KINDS, innerEnvelope, isInternalConversationMeta } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
 import { createInternalCalls, INTERNAL_UNAVAILABLE } from './internal-call.mjs';
 import { internalConversationOwner, isInternalSessionId } from './internal-conversation.mjs';
@@ -4133,7 +4134,12 @@ function makeEmit(turn) {
         const kept = turn.contextRecord?.delivered?.entries;
         if (kept) for (const key of Object.keys(kept)) delete kept[key];
         // bot の会話なら核の記憶の写しを次のターンで取り直す（snapshotDue）
-        if (turn.info.sessionId) botHost?.onCompacted(turn.info.sessionId);
+        if (turn.info.sessionId) {
+          botHost?.onCompacted(turn.info.sessionId);
+          const ctx = turnContexts.get(turn);
+          if (ctx) ctx.sessionNotes = null;
+          store.setSessionData(turn.info.sessionId, 'sessionNotes', null).catch(() => {});
+        }
       }
       for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason', 'beforeMessageId', 'afterMessageId'])
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
@@ -7361,6 +7367,10 @@ function opsDeps(lng = currentLocale()) {
     // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
     drafts: threadDrafts,
     todos: sessionTodos,
+    memoryTodoSessions: async botId => Object.entries(await store.getAll())
+      .filter(([, row]) => !row.unsent && !row.deletedBot && !isInternalConversationMeta(row)
+        && (row.bot?.botId ?? null) === botId)
+      .map(([id]) => id),
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
@@ -9232,7 +9242,7 @@ worktreeSweepSoon();
 // bot・Channels・ルーティン。保持役からターンを付け直す前に組み立てる
 function makeBotHost() {
   return createBotHost({
-    store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
+    store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox, todos: sessionTodos,
     createConversation, runTurn, noticeTarget, noticeBlocked: id => noticeBlocked(id), abortSessions, emitGlobal,
     updating: () => updateGate.locked,
     reserveBotStart: () => updateGate.locked ? null : updateGate.enter(),
@@ -9702,6 +9712,11 @@ async function prepareTurn(args, hooks, compactionRevision) {
 function bindTurnContext(ctx) {
   const { args, turn, emit } = ctx;
   ctx.onPromptDelivered = (nativeId = null) => {
+    if (ctx.sessionNotes && !ctx.sessionNotesDelivered) {
+      ctx.sessionNotesDelivered = true;
+      store.setSessionData(ctx.sessionId, 'sessionNotes', ctx.sessionNotes)
+        .catch(e => console.error('Could not record delivered conversation notes:', e.message));
+    }
     touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
     // 内部のターン（完了通知など）の依頼元へ「受け取られた」と知らせる。以後は引き継げる。記録の確定（agentTasks・settingApprovals）が済むまで引き継ぎを待たせる
     if (ctx.hooks?.onAccepted && !ctx.acceptedSent) {
@@ -9831,6 +9846,26 @@ async function beginTurn(ctx) {
   // bot の会話なら、人格（botInstructions）と、ターンの末尾（記憶の核の写し・差分。notes）を足す。bot でなければ空
   const botExtras = await botHost?.turnExtras(turn) ?? { botInstructions: null, notes: [] };
   const notes = [...(ctx.interruption ? [ctx.interruption.text] : []), ...(ctx.heldNote ? [ctx.heldNote.text] : []), ...botExtras.notes];
+  if (turn.info.sessionId && !ctx.hooks?.internal && !ctx.hooks?.onAccepted) {
+    const meta = await store.get(turn.info.sessionId);
+    if (!meta?.bot && !isInternalConversationMeta(meta)) {
+      const previous = meta?.sessionNotes;
+      const memory = botHost?.opsDeps().memory;
+      const memoryOptions = { session: previous?.memory ?? { snapshotDue: true }, sessionId: turn.info.sessionId, cwd, locale: agentLocale, includeClock: false };
+      const memoryNotes = await memory?.turnContext(memoryOptions).catch(e => {
+        console.error('Could not build the memory context:', e.message);
+        return null;
+      });
+      if (memoryNotes) notes.push(...memoryNotes.notes);
+      const { items } = sessionTodos.list({ id: turn.info.sessionId });
+      const { text, versions } = todoContext({ items, previous: previous?.todos,
+        wrap: body => innerEnvelope({ kind: 'tail', at: new Date().toISOString() }, body) });
+      if (text) notes.push(text);
+      const snapshot = memoryNotes ? { memRev: memoryNotes.memRev, delivered: memoryNotes.delivered } : previous?.memory;
+      if (text || Object.keys(previous?.todos ?? {}).length || snapshot?.memRev !== previous?.memory?.memRev)
+        ctx.sessionNotes = { todos: versions, memory: snapshot };
+    }
+  }
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）

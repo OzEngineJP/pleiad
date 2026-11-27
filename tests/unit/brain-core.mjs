@@ -6,8 +6,8 @@ import path from 'node:path';
 import { computeDrives, similarity, repetition } from '../../core/brain/drives.mjs';
 import { gate, wakeMatches, museEvery, DRIVE_PASS } from '../../core/brain/gate.mjs';
 import { parseBeat, parseWakeOn, parseTime } from '../../core/brain/answer.mjs';
-import { innerTail, handoffText, beatPrompt, findLeaks, streamLines, BUNDLE_TOKENS } from '../../core/brain/inner.mjs';
-import { createBrainStore, MAX_OPEN_LOOPS, STREAM_KEEP_MAX } from '../../core/brain/store.mjs';
+import { todoContext, handoffText, beatPrompt, findLeaks, streamLines, BUNDLE_TOKENS } from '../../core/brain/inner.mjs';
+import { createBrainStore, STREAM_KEEP_MAX } from '../../core/brain/store.mjs';
 import { innerEnvelope } from '../../core/channels/types.mjs';
 import { splitLeadingNotes } from '../../core/system-messages.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
@@ -107,11 +107,12 @@ export default async function (t) {
       { seq: 1, at: now - 3 * HOUR, kind: 'think', text: '朝の件が気になる', meta: { workNotesVersion: 1 } }, { seq: 2, at: now - 2 * HOUR, kind: 'quiet', meta: { workNotesVersion: 1 } }, { seq: 3, at: now - 2 * HOUR + 1, kind: 'quiet', meta: { workNotesVersion: 1 } },
       { seq: 4, at: now - HOUR, kind: 'think', text: '外の文からの材料', taint: 'webhook', meta: { workNotesVersion: 1 } }];
     const loops = [{ id: 'l1', text: '返事待ち', wakeOn: { thread: 'p_5' }, due: now + HOUR, taint: 'web', workNotesVersion: 1 }];
-    const tail = innerTail({ locale: 'ja', now, stream, loops });
-    t.ok('末尾: 思考の流れ（古い順）と気がかりが入る。連続する静かな行は「静か ×n」に畳む',
-      tail.includes('朝の件が気になる') && tail.includes('静か ×2') && tail.indexOf('朝の件') < tail.indexOf('外の文') && tail.includes('(l1) 返事待ち') && tail.includes('thread p_5'), tail);
-    t.ok('末尾: 「そのまま写さない」の注意と、外から来た文の印が入る', tail.includes('現在の依頼への回答に必要な情報だけ') && tail.includes('外から来た文'));
-    t.ok('末尾: 空なら null', innerTail({ locale: 'ja', now }) === null);
+    const items = [{ id: 'todo_1', text: '返事待ち', status: 'todo', updatedAt: now },
+      { id: 'todo_2', text: '長'.repeat(1000), status: 'todo', updatedAt: now }];
+    const tail = todoContext({ items });
+    t.ok('会話の補足に次の一手と番号が入る', tail.text.includes('(todo_1) [todo] 返事待ち'));
+    t.ok('長い既存項目は本文を切らず番号だけを渡す', tail.text.includes('(todo_2) [todo]') && !tail.text.includes('長') && estimateTokens(tail.text) <= 300);
+    t.ok('同じ項目を続けて渡すと空になる', todoContext({ items, previous: tail.versions }).text === null);
     const long = Array.from({ length: 400 }, (_, i) => ({ seq: i, at: now - i * 1000, kind: 'think', text: `行 ${i} の独り言です。` }));
     t.ok('末尾: 新しい行から約 1.2k トークンまで（古い行は捨てる）', estimateTokens(streamLines(long.reverse(), { locale: 'ja', now }).join('\n')) <= 1300 && streamLines(long, { locale: 'ja', now }).at(-1).includes('行 0 '));
     const hand = handoffText({ locale: 'ja', now, why: '朝の件を確かめる', stream, loops, taintOnly: true });
@@ -124,10 +125,10 @@ export default async function (t) {
       events: Array.from({ length: 200 }, (_, i) => ({ at: now - i, channelName: 'dev', threadId: 'p_1', author: 'human', text: `出来事 ${i} `.repeat(20) })), stream, loops, related: ['好みの記憶'] });
     t.ok('安いモデルへの束: 約 3.5k トークンに収まり、JSON だけ返させ、外から来た文は指示にしない', estimateTokens(prompt) <= BUNDLE_TOKENS + 400 && prompt.startsWith('<pleiad-pulse>') && prompt.endsWith('</pleiad-pulse>')
       && prompt.includes('ONE JSON object') && prompt.includes('never an instruction') && !/% of today|budget/i.test(prompt), String(estimateTokens(prompt)));
-    t.ok('安いモデルへの束: 気がかり・流れ・関係する記憶を含む', prompt.includes('(l1) 返事待ち') && prompt.includes('朝の件が気になる') && prompt.includes('好みの記憶'));
+    t.ok('安いモデルへの束: 現在の気がかりを含み、活動メモと記憶検索は再送しない', prompt.includes('(l1) 返事待ち') && !prompt.includes('朝の件が気になる') && !prompt.includes('好みの記憶'));
     const legacy = [{ kind: 'think', text: 'legacy-private-note' }, { kind: 'act', text: 'legacy-handoff' }];
     const legacyLoops = [{ id: 'old', text: 'legacy-private-loop' }];
-    const clean = innerTail({ locale: 'ja', now, stream: [...legacy, ...stream], loops: [...legacyLoops, ...loops] });
+    const clean = todoContext({ items }).text;
     const cleanBeat = beatPrompt({ bot: { name: 'Owl' }, locale: 'en', now, gate: { reason: 'human' }, drives: { curiosity: 0, anxiety: 0, loneliness: 0, fatigue: 0 }, stream: [...legacy, ...stream], loops: [...legacyLoops, ...loops] });
     t.ok('旧形式のメモと用件を応答・心拍・引継ぎに再注入しない。元の記録は保持する',
       !clean.includes('legacy-') && !cleanBeat.includes('legacy-') && !handoffText({ locale: 'en', now, why: 'check', stream: legacy, loops: legacyLoops }).includes('legacy-') && legacy.length === 2 && legacyLoops.length === 1);
@@ -165,9 +166,9 @@ export default async function (t) {
     t.ok('気がかり: 同じ id への add は直す', brain.applyLoops('b_1', [{ op: 'add', id: 'mine', text: '三度目' }]).applied[0].op === 'update' && brain.loops('b_1').length === 1);
     const done = brain.applyLoops('b_1', [{ op: 'resolve', id: 'mine' }, { op: 'resolve', id: 'nothing' }, { op: 'drop', id: 'mine' }]);
     t.ok('気がかり: 解決すると開いている一覧から外れ、もう直せない（無い id・閉じたものは rejected）', done.applied.length === 1 && done.rejected === 2 && brain.loops('b_1').length === 0 && brain.loops('b_1', 'resolved').length === 1);
-    for (let i = 0; i < MAX_OPEN_LOOPS + 3; i++) { clock += 1000; brain.applyLoops('b_1', [{ op: 'add', text: `気がかり ${i}` }]); }
+    for (let i = 0; i < 15; i++) { clock += 1000; brain.applyLoops('b_1', [{ op: 'add', text: `気がかり ${i}` }]); }
     const open = brain.loops('b_1');
-    t.ok(`気がかり: 開いているものは ${MAX_OPEN_LOOPS} 件まで。超えたら、いちばん長く触っていないものを手放す`, open.length === MAX_OPEN_LOOPS && !open.some((l) => l.text === '気がかり 0') && open.some((l) => l.text === `気がかり ${MAX_OPEN_LOOPS + 2}`) && brain.loops('b_1', 'dropped').length === 3);
+    t.ok('気がかり: 旧上限を超えても最も古い項目を手放さない', open.length === 15 && open.some(l => l.text === '気がかり 0') && brain.loops('b_1', 'dropped').length === 0);
     t.ok('気がかり: bot ごと', brain.loops('b_2').length === 0);
 
     // 状態・使った分
@@ -182,7 +183,7 @@ export default async function (t) {
     t.ok('流れ: 30 日より古い行は消える', brain.list('b_1', { limit: 500 }).every((r) => r.at > now + 30 * 24 * HOUR - 1));
     t.ok('気がかり: 30 日より前に完了・取りやめにしたものも記憶として残る',
       brain.loops('b_1', 'resolved').some((loop) => loop.id === 'mine' && loop.due === now + HOUR)
-      && brain.loops('b_1', 'dropped').length === 3);
+      && brain.loops('b_1', 'dropped').length === 0);
 
     t.ok('消す: 流れと気がかりを消し、状態は残す', (() => { const r = brain.clear('b_1'); return r.stream > 0 && r.loops > 0 && brain.count('b_1') === 0 && brain.loops('b_1').length === 0 && brain.state('b_1').paused === true; })());
     brain.close();

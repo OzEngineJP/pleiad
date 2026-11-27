@@ -86,6 +86,35 @@
       "title": "記憶",
       "autoLearn": "毎晩、記憶を整理する",
       "learnAt": "整理する時刻",
+      "changes": {
+        "title": "前回の整理",
+        "absent": "項目なし",
+        "before": "変更前　{{text}}",
+        "after": "変更後　{{text}}",
+        "reasonLabel": "理由　{{text}}",
+        "undo": "この変更を取り消す",
+        "restored": "変更を取り消しました。",
+        "stoppedOff": "自動整理がオフになったため、途中で止まりました。",
+        "unavailable": "変更を読み込めないか、すでに更新されています。",
+        "more": "さらに表示",
+        "empty": "表示できる変更はありません。",
+        "reason": {
+          "legacyPromise": "以前の約束を記録として保存しました。",
+          "unconfirmedImportance": "これからも使うと確認できる範囲に合わせました。",
+          "organizer": "会話の発言を根拠に整理しました。",
+          "deadlineElapsed": "期限から7日経ちました。",
+          "trackingElapsed": "追い始めてから14日経ちました。",
+          "resolvedByPerson": "人の発言から解決したと判断しました。",
+          "cancelledByPerson": "人の発言から取りやめたと判断しました。"
+        },
+        "status": {
+          "open": "追跡中",
+          "resolved": "解決済み",
+          "dropped": "取りやめ",
+          "expired": "期限切れ",
+          "done": "完了"
+        }
+      },
       "status": {
         "organizeFailed": "記憶を整理できませんでした。"
       },

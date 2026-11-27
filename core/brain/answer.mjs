@@ -73,7 +73,8 @@ export function parseBeat(raw, { now = Date.now() } = {}) {
   for (const l of Array.isArray(o.loops) ? o.loops : []) {
     if (!l || !LOOP_OPS.includes(l.op) || loops.length >= 4) continue;
     const id = typeof l.id === 'string' && /^[\w-]{1,40}$/.test(l.id.trim()) ? l.id.trim() : null;
-    const text = clip(l.text, LOOP_TEXT_MAX);
+    const text = typeof l.text === 'string' ? l.text.replace(/\s+/g, ' ').trim() : '';
+    if ([...text].length > LOOP_TEXT_MAX) continue;
     if (l.op === 'add' && !text) continue;
     if (l.op !== 'add' && !id) continue;
     const sourcePostId = typeof l.sourcePostId === 'string' && /^[\w-]{1,80}$/.test(l.sourcePostId) ? l.sourcePostId : null;

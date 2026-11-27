@@ -67,8 +67,8 @@ export default async function (t) {
       listSessions: async () => [...side].map(([id, meta]) => ({ id, ...meta })) });
 
     // ---- ほかの会話のターンが走っていても、予定の回は走る（以前は全部のターンが 0 になるまで待ち、ずっと走れなかった）
-    const quiet = await chat('覚えて: 報告は表と箇条書きで構造的にまとめる');
-    const running = await chat('覚えて: 走っている会話のこの発言は次の回に読む');
+    const quiet = await chat('覚えて: 今後、報告は表と箇条書きで構造的にまとめる');
+    const running = await chat('覚えて: 今後、走っている会話のこの発言は次の回に読む');
     busy.add(running);
     const first = await learner.runIfDue();
     t.ok('ほかの会話のターンが走っていても走る', first.read === 1 && first.changed === 1, JSON.stringify(first));
@@ -101,7 +101,7 @@ export default async function (t) {
     // ---- 分類不能な失敗は 1 回で停止（halted。認証エラーなど見分けの付かない失敗を繰り返さない）。
     //      解除は明示の「もう一度」（learnNow）か再有効化だけ
     prefs = { backend: 'fake', memoryAutoLearn: true };
-    await chat('覚えて: 失敗の後でもこの発言を忘れずに覚える');
+    await chat('覚えて: 今後、失敗の後でもこの発言を忘れずに覚える');
     failWith = new Error('backend is down');
     let error = null;
     try { await learner.runIfDue(); } catch (e) { error = e; }
@@ -116,7 +116,7 @@ export default async function (t) {
 
     // ---- 許可リストの一時エラー（learner turn: limited）は間隔を空けて試し直す（毎分モデルを呼ばない）
     at += DAY;
-    await chat('覚えて: 一時エラーの後でもこの発言を忘れずに覚える');
+    await chat('覚えて: 今後、一時エラーの後でもこの発言を忘れずに覚える');
     failWith = new Error('learner turn: limited');
     const before = asks;
     try { await learner.runIfDue(); } catch (e) { error = e; }
@@ -132,8 +132,8 @@ export default async function (t) {
     // ---- 対象を絞った実行（スレッドが静かになった後の整理の土台）。予定の回には数えない
     const lastRunAt = learner.state().lastRunAt;
     at += 5 * MIN;
-    const target = await chat('覚えて: 絞った実行ではこの会話だけを読む');
-    await chat('覚えて: 絞った実行では読まれない会話の発言。金曜のデプロイはやめて');
+    const target = await chat('覚えて: 今後、絞った実行ではこの会話だけを読む');
+    await chat('覚えて: 今後、絞った実行では読まれない会話の発言。金曜のデプロイはやめて');
     const scoped = await learner.runNow({ scope: { sessionIds: [target] } });
     const texts = (await memory.list({ layer: 'user' })).map((e) => e.text);
     t.ok('scope の会話だけを読む', scoped.read === 1 && texts.some((x) => x.includes('この会話だけ')) && !texts.some((x) => x.includes('読まれない')));
@@ -154,7 +154,7 @@ export default async function (t) {
     const memory2 = createMemoryService({ dataDir: dir2, channels: channels2, now: () => at });
     await memory2.start();
     const convs = new Map();   // id → { meta, messages }
-    const said = (n, when) => ({ role: 'user', uuid: `u-${n}`, text: `覚えて: 合成の発言 ${n} 番目のメモです`, at: when });
+    const said = (n, when) => ({ role: 'user', uuid: `u-${n}`, text: `覚えて: 今後、合成の発言 ${n} 番目のメモです`, at: when });
     convs.set('syn-many', { meta: { backend: 'fake', lastModified: at }, messages: Array.from({ length: 230 }, (_, n) => said(n, at - MIN)) });
     convs.set('syn-old', { meta: { backend: 'fake', lastModified: at - 20 * DAY }, messages: [said('old', at - 20 * DAY)] });
     convs.set('syn-mixed', { meta: { backend: 'fake', lastModified: at }, messages: [said('mixed-old', at - 20 * DAY), said('mixed-new', at - MIN)] });

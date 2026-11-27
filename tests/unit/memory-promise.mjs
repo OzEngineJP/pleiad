@@ -1,5 +1,5 @@
 // 約束を記憶に書かない・既存の約束を保存だけへ・保存だけ（archive）を AI の配送・検索・夜の整理から外す（記憶の段 2 の実装単位 2。ADR 0363）:
-// AI・夜の整理が kind=promise を書く・直すのは MEMORY_REJECTED（ToDo のある会話は promiseTodo・無ければ promiseLoop。保存しない）・人は書ける・
+// AI・夜の整理が kind=promise を書く・直すのは MEMORY_REJECTED（ToDo のある会話は promiseTodo・無ければ promiseTodo。保存しない）・人は書ける・
 // 段の無い既存の約束は起動で AI なしに archive へ（updatedAt 据え置き・記録に migration と前後・何度起動しても同じ・段を外せば戻り、外した後は再度行わない）・
 // archive は turnContext（核の写し・差分・関係する記憶）・search・夜の整理の材料に出ず、list・get には出る。段の無い記憶はこれまでどおり。
 import os from 'node:os';
@@ -19,12 +19,12 @@ const BOT = 'b_owl12345';
 const HUMAN = { kind: 'human' };
 const BOT_AUTHOR = { kind: 'bot', botId: BOT };
 const LEARNER = { kind: 'bot', botId: 'learner' };
-const Q_FRI = '金曜に出さないでほしい';
+const Q_FRI = '今後、デプロイは金曜に出さないでほしい';
 const code = async (fn) => { try { await fn(); return null; } catch (e) { return e instanceof MemoryError ? `${e.code}:${e.reason}` : `ERR:${e.message}`; } };
 
 const channels = {
   list: async () => [{ id: 'c_dev0001', name: 'dev' }],
-  read: async () => ({ posts: [{ id: 'p_human01', channelId: 'c_dev0001', text: 'デプロイは金曜に出さないでほしい。週末に直せないから', at: 100, author: { kind: 'human' } }], nextBefore: null }),
+  read: async () => ({ posts: [{ id: 'p_human01', channelId: 'c_dev0001', text: '今後、デプロイは金曜に出さないでほしい。週末に直せないから', at: 100, author: { kind: 'human' } }], nextBefore: null }),
 };
 const sessions = { read: async () => null, get: async () => null };
 const botOfSession = async (id) => (String(id).startsWith('sbot') ? { botId: BOT, kind: 'thread' } : null);
@@ -43,19 +43,19 @@ export default async function (t) {
     const svc = createMemoryService({ dataDir: path.join(root, 'write'), channels, now: clock });
     await svc.start();
     const wPromise = (author, ctx, extra = {}) => svc.write({ layer: 'user', text: '来週までに見積もりを出す約束', sources: grounds, kind: 'promise', ...extra }, author, ctx);
-    t.ok('AI が約束を書くと MEMORY_REJECTED（promiseLoop: ToDo の無い会話は気がかりへ）。保存もされない',
-      await code(() => wPromise(BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseLoop' && !svc.store.entries().some((e) => e.kind === 'promise'));
+    t.ok('AI が約束を書くと MEMORY_REJECTED（promiseTodo）。保存もされない',
+      await code(() => wPromise(BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseTodo' && !svc.store.entries().some((e) => e.kind === 'promise'));
     t.ok('ToDo のある会話（ctx.hasTodos）は promiseTodo（ToDo へ）', await code(() => wPromise(BOT_AUTHOR, botCtx({ hasTodos: true }))) === 'MEMORY_REJECTED:promiseTodo');
     t.ok('bot でない AI・夜の整理（learner）も同じ。保存もされない',
-      await code(() => wPromise({ kind: 'agent', sessionId: 'sx' }, { sessions, botOfSession, sessionId: 'sx' })) === 'MEMORY_REJECTED:promiseLoop'
-      && await code(() => wPromise(LEARNER, botCtx({ sessionId: undefined }))) === 'MEMORY_REJECTED:promiseLoop' && svc.store.entries().length === 0);
+      await code(() => wPromise({ kind: 'agent', sessionId: 'sx' }, { sessions, botOfSession, sessionId: 'sx' })) === 'MEMORY_REJECTED:promiseTodo'
+      && await code(() => wPromise(LEARNER, botCtx({ sessionId: undefined }))) === 'MEMORY_REJECTED:promiseTodo' && svc.store.entries().length === 0);
     const human = await wPromise(HUMAN, {}, { sources: undefined });
-    t.ok('人は約束を書ける（今までどおり。段は always）', human.kind === 'promise' && human.tier === 'always');
+    t.ok('人は約束を書ける（今までどおり。段は standard）', human.kind === 'promise' && human.tier === 'standard');
     const aiStop = await svc.write({ layer: 'user', text: '金曜はデプロイしない（決めたこと）', sources: grounds, kind: 'stop' }, BOT_AUTHOR, botCtx());
     t.ok('AI は約束以外の種類（stop など）をこれまでどおり書ける', aiStop.kind === 'stop');
 
     // 直し: 約束にする直しは断る。約束でない行を約束に変える・約束の本文を AI が直すのも断る。保存だけへ寄せるのは通る
-    t.ok('AI が約束でない行を約束に直すのは MEMORY_REJECTED（種類の直し）', await code(() => svc.edit({ id: aiStop.id, kind: 'promise' }, BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseLoop'
+    t.ok('AI が約束でない行を約束に直すのは MEMORY_REJECTED（種類の直し）', await code(() => svc.edit({ id: aiStop.id, kind: 'promise' }, BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseTodo'
       && svc.store.get(aiStop.id).kind === 'stop');
     t.ok('AI が約束の行の本文を直すのも断る（結果が約束のまま）', await code(() => svc.edit({ id: human.id, text: '来週までに見積もりと設計を出す約束' }, BOT_AUTHOR, botCtx({ hasTodos: true }))) === 'MEMORY_REJECTED:promiseTodo'
       && svc.store.get(human.id).text === '来週までに見積もりを出す約束');
@@ -63,11 +63,11 @@ export default async function (t) {
       && (await svc.edit({ id: human.id, kind: 'promise' }, HUMAN, {})).kind === 'promise');
     const archivedByAi = await svc.edit({ id: human.id, tier: 'archive' }, BOT_AUTHOR, botCtx());
     t.ok('AI が約束の行を保存だけ（archive）に寄せるのは通る（段だけの直し）', archivedByAi.tier === 'archive' && archivedByAi.kind === 'promise');
-    t.ok('保存だけに寄せるときに本文・種類も直すのは断る（約束のまま）', await code(() => svc.edit({ id: human.id, tier: 'archive', text: '別の約束の本文に直す' }, BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseLoop');
+    t.ok('保存だけに寄せるときに本文・種類も直すのは断る（約束のまま）', await code(() => svc.edit({ id: human.id, tier: 'archive', text: '別の約束の本文に直す' }, BOT_AUTHOR, botCtx())) === 'MEMORY_REJECTED:promiseTodo');
     t.ok('人は約束を直せる', (await svc.edit({ id: human.id, text: '人が直した約束の本文', tier: 'always' }, HUMAN, {})).text === '人が直した約束の本文');
     svc.stop();
 
-    // ---- ops: memory.write は ToDo のある会話か（ctx.todos.list）で理由を分ける
+    // ---- ops: ToDo サービスへ保存できないときの案内
     const svcOps = createMemoryService({ dataDir: path.join(root, 'ops'), channels });
     await svcOps.start();
     const asked = [];
@@ -80,13 +80,13 @@ export default async function (t) {
     const withTodo = await write('sbot-todo');
     t.ok('memory.write: ToDo のある会話では「ToDo へ」と案内して断る（promiseTodo の案内文）', withTodo.code === 'MEMORY_REJECTED' && /todos\.add/.test(withTodo.error ?? withTodo.message ?? JSON.stringify(withTodo)), JSON.stringify(withTodo));
     const noTodo = await write('sbot-none');
-    t.ok('memory.write: ToDo の無い会話では「気がかりへ」と案内して断る（promiseLoop の案内文）', noTodo.code === 'MEMORY_REJECTED' && /brain\.loopAdd/.test(noTodo.error ?? noTodo.message ?? JSON.stringify(noTodo)), JSON.stringify(noTodo));
+    t.ok('memory.write: ToDo に直接保存できない会話では「ToDo へ」と案内して断る（promiseTodo の案内文）', noTodo.code === 'MEMORY_REJECTED' && /todos\.add/.test(noTodo.error ?? noTodo.message ?? JSON.stringify(noTodo)), JSON.stringify(noTodo));
     const noList = await write('sbot-unknown');
-    t.ok('ToDo の一覧が引けない会話も promiseLoop（気がかりへ）', noList.code === 'MEMORY_REJECTED' && /brain\.loopAdd/.test(noList.error ?? noList.message ?? JSON.stringify(noList)));
+    t.ok('ToDo の一覧が引けない会話も promiseTodo（ToDo へ）', noList.code === 'MEMORY_REJECTED' && /todos\.add/.test(noList.error ?? noList.message ?? JSON.stringify(noList)));
     t.ok('どれも保存されない', !svcOps.store.entries().some((e) => e.kind === 'promise'));
     t.ok('約束でない書き込みは ToDo の有無に関わらず通る', (await write('sbot-todo', { kind: 'stop', text: '本番は金曜に出さない' })).ok === true);
 
-    // ---- ops: 置き先の道具（ctx.todos.add・ctx.brain）があれば、断ったうえで ToDo か気がかりへ実際に置く（記憶には書かない）
+    // ---- ops: 同じ会話の ToDo に保存し、識別子を返す
     const reasonOf = (r) => r.error ?? r.message ?? JSON.stringify(r);
     const redirDir = path.join(root, 'redirect');
     const todosReal = createTodos({ dataDir: redirDir });
@@ -101,28 +101,28 @@ export default async function (t) {
       const memoryBefore = svcOps.store.entries().length;
 
       const toTodo = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
-      t.ok('memory.write: ToDo のある会話は、断ったうえで ToDo に実際に足す（理由は「ToDo に追加しました」）',
-        toTodo.code === 'MEMORY_REJECTED' && /ToDo に追加しました/.test(reasonOf(toTodo)) && todoTexts('sbot-todo').join() === `見積もり,${PROMISE}`, JSON.stringify([toTodo, todoTexts('sbot-todo')]));
+      t.ok('memory.write: ToDo のある会話は、ToDo に実際に足し、その識別子を返す',
+        toTodo.ok && Boolean(toTodo.result.todoId) && todoTexts('sbot-todo').join() === `見積もり,${PROMISE}`, JSON.stringify([toTodo, todoTexts('sbot-todo')]));
       const added = todosReal.list({ kind: 'session', id: 'sbot-todo' }).items[1];
       t.ok('足した項目は未着手・書いた者は agent（todos.add と同じ形）。気がかりには足さない', added.status === 'todo' && added.by?.kind === 'agent' && loopTexts().length === 0);
       await invoke('sbot-todo', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
       t.ok('言い直しても同じ ToDo は増えない', todoTexts('sbot-todo').length === 2);
 
       const toLoop = await invoke('sbot-none', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
-      t.ok('memory.write: ToDo の無い bot の会話は、気がかりに実際に置く（理由は「気がかりに置きました」）。ToDo は作らない',
-        toLoop.code === 'MEMORY_REJECTED' && /気がかりに置きました/.test(reasonOf(toLoop)) && loopTexts().join() === PROMISE && todoTexts('sbot-none').length === 0, JSON.stringify([toLoop, loopTexts()]));
-      t.ok('気がかりを足したことが流れ（stream）にも 1 行残る', brainReal.list(BOT, {}).some((r) => r.kind === 'loop' && r.text.includes(PROMISE)));
+      t.ok('memory.write: 空の ToDo にも同じ方法で追加する',
+        toLoop.ok && Boolean(toLoop.result.todoId) && loopTexts().length === 0 && todoTexts('sbot-none').join() === PROMISE, JSON.stringify([toLoop, loopTexts()]));
+      t.ok('ToDo を気がかりとして二重に記録しない', !brainReal.list(BOT, {}).some((r) => r.kind === 'loop' && r.text.includes(PROMISE)));
       await invoke('sbot-none', 'memory.write', { layer: 'self', text: PROMISE, sources: grounds, kind: 'promise' });
-      t.ok('言い直しても同じ気がかりは増えない', loopTexts().length === 1);
+      t.ok('言い直しても同じ ToDo は増えない', todoTexts('sbot-none').length === 1);
 
       const toAgentTodo = await invoke('sx-agent', 'memory.write', { layer: 'user', text: PROMISE, sources: grounds, kind: 'promise' });
-      t.ok('bot でない AI の会話（気がかりが無い）は、ToDo を作って足す', toAgentTodo.code === 'MEMORY_REJECTED' && /ToDo に追加しました/.test(reasonOf(toAgentTodo)) && todoTexts('sx-agent').join() === PROMISE
-        && loopTexts().length === 1);
+      t.ok('bot でない AI の会話（気がかりが無い）は、ToDo を作って足す', toAgentTodo.ok && Boolean(toAgentTodo.result.todoId) && todoTexts('sx-agent').join() === PROMISE
+        && loopTexts().length === 0);
 
       // 置けないときは、元の断り（自分で置く案内）のまま
       const failing = { list: todosReal.list, add: () => { throw new Error('boom'); } };
       const fallbackLoop = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: '別の約束です、ToDo に入らないとき', sources: grounds, kind: 'promise' }, { ...deps2, todos: failing });
-      t.ok('ToDo へ足せないときは bot なら気がかりへ置く', /気がかりに置きました/.test(reasonOf(fallbackLoop)) && loopTexts().includes('別の約束です、ToDo に入らないとき'));
+      t.ok('ToDo へ足せないときはエラーを返し、気がかりへの追加はない', fallbackLoop.code === 'MEMORY_REJECTED' && !loopTexts().includes('別の約束です、ToDo に入らないとき'));
       const noPlace = await invoke('sbot-todo', 'memory.write', { layer: 'self', text: '置き先が無いときの約束です', sources: grounds, kind: 'promise' }, { ...deps, todos: failing });
       t.ok('どこにも置けないときは元の案内（todos.add）のまま断る。何も足さない', noPlace.code === 'MEMORY_REJECTED' && /todos\.add/.test(reasonOf(noPlace)) && !/追加しました|置きました/.test(reasonOf(noPlace))
         && !todoTexts('sbot-todo').includes('置き先が無いときの約束です') && !loopTexts().includes('置き先が無いときの約束です'));
@@ -132,7 +132,7 @@ export default async function (t) {
       const stopEntry = svcOps.store.entries().find((e) => e.text === '本番は土日に出さない');
       const editTo = await invoke('sbot-todo', 'memory.edit', { id: stopEntry.id, kind: 'promise' });
       t.ok('約束でない書き込みは ToDo にも気がかりにも足さない。edit で約束にする直しは断るだけで置かない（記憶も約束にならない）',
-        stopIn.ok === true && editTo.code === 'MEMORY_REJECTED' && todoTexts('sbot-todo').length === 2 && loopTexts().length === 2 && svcOps.store.get(stopEntry.id).kind === 'stop');
+        stopIn.ok === true && editTo.code === 'MEMORY_REJECTED' && todoTexts('sbot-todo').length === 2 && loopTexts().length === 0 && svcOps.store.get(stopEntry.id).kind === 'stop');
       t.ok('約束はどの経路でも記憶に保存されない（約束でない 2 件だけ増えた）', svcOps.store.entries().length === memoryBefore + 1 && !svcOps.store.entries().some((e) => e.kind === 'promise'));
     } finally {
       todosReal.close();
@@ -161,7 +161,7 @@ export default async function (t) {
     t.ok('起動で段の無い約束（user 層・bot の層とも）は archive になる', after(oldPromise.id).tier === 'archive' && after(botPromise.id).tier === 'archive');
     t.ok('updatedAt・by・本文は動かさない（AI も通さない）', after(oldPromise.id).updatedAt === oldPromise.updatedAt && after(oldPromise.id).by.kind === 'human' && !after(oldPromise.id).origBy
       && after(oldPromise.id).text === oldPromise.text && after(botPromise.id).by.botId === BOT && after(botPromise.id).updatedAt === botPromise.updatedAt);
-    t.ok('約束でない行・種類の無い行・すでに段のある約束は触らない（段なしはこれまでどおり）', after(keep.id).tier === undefined && after(plainOld.id).tier === undefined && after(placed.id).tier === 'always');
+    t.ok('約束は以前の段に関わらず archive、未分類の記憶は standard', after(keep.id).tier === 'standard' && after(plainOld.id).tier === 'standard' && after(placed.id).tier === 'archive');
     const logOf = (service, id) => service.store.recordsSince(0).filter((r) => r.id === id && r.op === 'edit');
     const rec = logOf(mig, oldPromise.id);
     t.ok('変更記録に「システムが archive にした」と前後（place）・移行の名前（migration）が残る', rec.length === 1 && rec[0].migration === PROMISE_ARCHIVE_MIGRATION && rec[0].by.kind === 'system'
@@ -173,7 +173,7 @@ export default async function (t) {
     const again = createMemoryService({ dataDir, channels, now: tick });
     await again.start();
     await again.list({});
-    t.ok('もう一度起動しても記録は増えない（同じ結果・rev も同じ）', again.rev() === rev1 && logOf(again, oldPromise.id).length === 1 && again.store.recordsSince(0).filter((r) => r.migration === PROMISE_ARCHIVE_MIGRATION).length === 2);
+    t.ok('もう一度起動しても記録は増えない（同じ結果・rev も同じ）', again.rev() === rev1 && logOf(again, oldPromise.id).length === 1 && again.store.recordsSince(0).filter((r) => r.migration === PROMISE_ARCHIVE_MIGRATION).length === 3);
     // 戻せる: 段を外すと段なしに戻り、次の起動でもやり直さない
     const restored = (await again.store.edit({ id: oldPromise.id, tier: null, by: HUMAN })).entry;
     t.ok('段を外すと元（段なし）に戻る。updatedAt・by は動かない', restored.tier === undefined && restored.updatedAt === oldPromise.updatedAt && restored.kind === 'promise' && restored.by.kind === 'human');
@@ -226,7 +226,7 @@ export default async function (t) {
     await legacy.start();
     await legacy.store.add({ layer: 'user', text: '段のない古い好み：コーヒーは濃いめ', by: HUMAN });
     const l0 = await legacy.turnContext({ bot: { id: BOT }, session: { snapshotDue: true, memRev: 0, delivered: [] }, incomingText: 'コーヒー', now: AT, locale: 'ja' });
-    t.ok('段の無い記憶はこれまでどおり核の写し・検索に出る', flat(l0.notes).includes('コーヒーは濃いめ') && (await legacy.search({ query: 'コーヒーは濃いめ' })).length === 1);
+    t.ok('未分類の記憶は検索にだけ出る', !flat(l0.notes).includes('コーヒーは濃いめ') && (await legacy.search({ query: 'コーヒーは濃いめ' })).length === 1);
     legacy.stop();
   } finally {
     await fs.rm(root, { recursive: true, force: true });

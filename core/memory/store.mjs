@@ -21,6 +21,7 @@
 //   夜の整理の振り分け（core/memory/sort.mjs）も同じ印（migration: 'sort:<走りの id>'）と、短い理由 reason を付ける。取り消しは 'sort-undo:<走りの id>'。
 //   migrations(name) は、その移行が変えた段・作業場所の前後（from・to）を id ごとに返す。
 // 変更はすべて 1 本のキューで直列にする（rev を欠番なく進めるため）。md を先に書き、log を後に足す。
+import { isDeepStrictEqual } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -34,7 +35,7 @@ export const MEMORY_TEXT_MAX = 300;
 export const USER_LAYER = 'user';
 
 /** 段（ADR 0110 の段 2）。always = いつも渡す・workspace = その作業場所の会話にだけ渡す・archive = 保存だけ。段なし = 未振り分け（従来どおり） */
-export const MEMORY_TIERS = ['always', 'workspace', 'archive'];
+export const MEMORY_TIERS = ['always', 'workspace', 'standard', 'archive'];
 export const isTier = (tier) => MEMORY_TIERS.includes(tier);
 export const WORKSPACE_MAX = 500;
 /** 作業場所の形か（スラッシュ形・末尾なし・500 字まで）。canonical は core/git-root.mjs の canonicalWorkspace が作る */
@@ -299,7 +300,7 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
 
   const entriesOf = (layer) => (cache.get(layer) ?? []).map(publicEntry);
 
-  return {
+  const api = {
     /** 起動時: 記録を読み、markdown と突き合わせる。直された層の配列 */
     init: () => serial(async () => { ready = false; await ensureReady(); return syncNow(); }),
     sync: () => serial(async () => { await ensureReady(); return syncNow(); }),
@@ -339,22 +340,26 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     hash: () => crypto.createHash('sha256').update(JSON.stringify([...cache.keys()].sort().map((l) => [l, cache.get(l).map((e) => [e.id, e.text, e.why ?? '', e.updatedAt, e.tier ?? '', e.workspace ?? ''])]))).digest('hex'),
 
     /** 追加。by は発言者、via は書いた会話。entry は id・at 以外が入った形 */
-    add: ({ layer, text, why, sources = [], by, via, unique = false, kind, weight, status, tier, workspace }) => serial(async () => {
+    add: ({ layer, text, why, sources = [], by, via, unique = false, kind, weight, status, tier, workspace, runId, reason }) => serial(async () => {
       await ensureReady(); await syncNow();
       // 同じ文を同時に 2 回書いても、直列化の中で見れば後の 1 つは弾ける（呼び出し側の事前の検査は直列化の外）
       if (unique && (cache.get(layer) ?? []).some((e) => fingerprintOf(e.text) === fingerprintOf(text))) return { duplicate: true };
       const at = now();
       const entry = { id: newId('memory', at), layer, text: oneLine(text), ...(why ? { why } : {}), sources, at, updatedAt: at, by,
         ...tagsOf({ kind, weight, status, tier, workspace }), hadMeta: true };
-      cache.set(layer, [...(cache.get(layer) ?? []), entry]);
-      await writeLayer(layer);
-      const rec = await appendLog({ op: 'add', layer, id: entry.id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(via ? { via } : {}) });
+      const previous = cache.get(layer) ?? [];
+      const record = { op: 'add', layer, id: entry.id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(via ? { via } : {}),
+        ...(runId ? { runId, reason, after: keptEntry(entry) } : {}) };
+      let rec = runId ? await appendLog(record) : null;
+      cache.set(layer, [...previous, entry]);
+      try { await writeLayer(layer); } catch (error) { cache.set(layer, previous); throw error; }
+      rec ??= await appendLog(record);
       return { entry: publicEntry(entry), rev: rec.rev };
     }),
 
     /** 本文・理由・出どころ・種類・重み・状態・段・作業場所を直す。種類・重み・状態・段・作業場所は null で外す（undefined は触らない）。
      *  段・作業場所だけの直し（振り分け）は updatedAt を進めない（記憶の強さ・並び・「直した」の表示を、振り分けで動かさないため）。無い id は null */
-    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration, reason }) => serial(async () => {
+    edit: ({ id, text, why, sources, by, via, kind, weight, status, tier, workspace, migration, reason, runId }) => serial(async () => {
       await ensureReady(); await syncNow();
       for (const [layer, list] of cache) {
         const i = list.findIndex((e) => e.id === id);
@@ -378,21 +383,62 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         // 書き手が替わったら、元の書き手を残す（人の行を AI が直したときに、元が人だったと分かるように）
         if (authorKey(old.by) !== authorKey(entry.by)) entry.origBy = old.origBy ?? old.by;
         if (!entry.why) delete entry.why;
-        const next = [...list]; next[i] = entry;
-        cache.set(layer, next);
-        await writeLayer(layer);
         // 段・作業場所が変わったときは前後を記録に残す（戻すとき・後から見るとき用）。migration はコードの一括移行の名前（同じ名前では 1 つの id に 1 度だけ行う）
         const from = placeOf(old), to = placeOf(entry);
         const placed = JSON.stringify(from) !== JSON.stringify(to);
-        const rec = await appendLog({ op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by, ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}),
-          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}), ...(reason ? { reason } : {}) });
+        const record = { op: 'edit', layer, id, text: entry.text, fp: fingerprintOf(entry.text), by,
+          ...(entry.origBy ? { origBy: entry.origBy } : {}), ...(via ? { via } : {}),
+          ...(placed ? { place: { from, to } } : {}), ...(migration ? { migration } : {}), ...(reason ? { reason } : {}),
+          ...(runId ? { runId, before: keptEntry(old), after: keptEntry(entry) } : {}) };
+        let rec = runId ? await appendLog(record) : null;
+        const next = [...list]; next[i] = entry;
+        cache.set(layer, next);
+        try { await writeLayer(layer); } catch (error) { cache.set(layer, list); throw error; }
+        rec ??= await appendLog(record);
         return { entry: publicEntry(entry), rev: rec.rev };
       }
       return null;
     }),
 
     /** コードの一括移行 name（edit の migration）を、すでに行った記憶の id。人が段を外しても、次の起動で同じ移行をやり直さないために使う */
-    migrated: (name) => new Set(records.filter((r) => r.op === 'edit' && r.migration === name).map((r) => r.id)),
+    runChanges(runId) {
+      const changes = new Map();
+      const last = new Map(records.map(record => [record.id, record.rev]));
+      const entries = new Map([...cache.values()].flat().map(entry => [entry.id, entry]));
+      for (const record of records) {
+        if (record.runId !== runId) continue;
+        const first = changes.get(record.id);
+        const current = entries.get(record.id);
+        changes.set(record.id, { id: record.id, layer: record.layer, rev: record.rev,
+          before: first ? first.before : record.before ?? null, after: record.after, reason: record.reason ?? 'organizer',
+          canUndo: Boolean(current && last.get(record.id) === record.rev && isDeepStrictEqual(keptEntry(current), record.after)) });
+      }
+      return [...changes.values()];
+    },
+
+    undoRunChange: (runId, id, rev) => serial(async () => {
+      await ensureReady(); await syncNow();
+      const change = api.runChanges(runId).find(row => row.id === id && row.rev === rev && row.canUndo);
+      if (!change) return false;
+      const { layer, before } = change;
+      const old = cache.get(layer);
+      const next = before ? old.map(entry => entry.id === id ? { ...before, hadMeta: true } : entry) : old.filter(entry => entry.id !== id);
+      cache.set(layer, next);
+      try { await writeLayer(layer); } catch (error) { cache.set(layer, old); throw error; }
+      await appendLog({ op: before ? 'edit' : 'forget', id, layer, text: (before ?? change.after).text,
+        fp: fingerprintOf((before ?? change.after).text), by: { kind: 'human' }, reason: 'undo',
+        ...(before ? { place: { from: placeOf(change.after), to: placeOf(before) } } : { entry: change.after }) });
+      return true;
+    }),
+
+    migrated: (name) => {
+      const latest = new Map(records.map(record => [record.id, record.rev]));
+      const entries = new Map([...cache.values()].flat().map(entry => [entry.id, entry]));
+      return new Set(records.filter(record => record.op === 'edit' && record.migration === name
+        && (record.rev !== latest.get(record.id) || !entries.has(record.id)
+          || !isDeepStrictEqual(keptEntry(entries.get(record.id)), record.before)))
+        .map(record => record.id));
+    },
 
     /** 一括移行 name が段・作業場所を変えた記憶ごとの、最初の前（from）と最後の後（to）。振り分けを取り消すとき、今も to のままのものだけ戻すために使う */
     migrations: (name) => {
@@ -443,4 +489,5 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
       return { entry: publicEntry(entry), rev: rec.rev };
     }),
   };
+  return api;
 }

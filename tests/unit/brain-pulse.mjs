@@ -74,10 +74,10 @@ export default async function (t) {
     const r = await pulse.beat(bot.id);
     const prompt = prompts.at(-1);
     t.ok('新しい人の投稿は、ふるいを通って安いモデルに渡る（束に出来事の本文・道具を使わず JSON だけの指示が入る）', r.gate.reason === 'human' && prompts.length === 1 && prompt.includes('来週の発表の資料') && prompt.includes('<pleiad-pulse>') && prompt.includes('Do not use tools'));
-    const think = rows().find((x) => x.kind === 'think');
-    t.ok('返事は思考の流れに 1 行（独り言・理由・欲求・使ったトークン・内部呼出しの id）', think.text.includes('発表の資料が気になる') && think.meta.reason === 'human' && think.meta.call === 'fake-call' && think.tokens.input === 1000 && think.meta.drives);
+    const think = rows().find((x) => x.kind === 'quiet' && x.tokens);
+    t.ok('返事は思考の流れに 1 行（独り言・理由・欲求・使ったトークン・内部呼出しの id）', think.text === '' && think.meta.reason === 'human' && think.meta.call === 'fake-call' && think.tokens.input === 1000 && think.meta.drives);
     const loop = brain.loops(bot.id)[0];
-    t.ok('気がかりが足され、1 変化 1 行が流れに残る', loop.id === 'doc' && loop.wakeOn.word === '資料' && rows().some((x) => x.kind === 'loop' && x.refs[0] === 'doc' && x.text.includes('気がかりを足した')));
+    t.ok('気がかりが足され、1 変化 1 行が流れに残る', loop.id === 'doc' && loop.wakeOn.word === '資料' && !rows().some((x) => x.kind === 'loop' && x.text.includes(loop.text)));
     const st = brain.state(bot.id);
     t.ok('次に起きる時刻: bot が 1 分と決めても、下限の 5 分に収める', st.nextAt === clock + PULSE_FLOOR_MS && st.reservedAt === clock + PULSE_FLOOR_MS && st.cursorAt === clock && st.lastHumanAt === post.at);
     t.ok('自発の分は、bot 専用の使用量には数えない（数える口が無い）。流れの行に、その回のトークンの数だけ残る', brain.spentTokens === undefined && (await pulse.status(bot.id)).budget === undefined && think.tokens.output === 200);
@@ -152,7 +152,7 @@ export default async function (t) {
     const act = rows().find((x) => x.kind === 'act');
     t.ok('「確かめる・話す」は賢いモデルへの引き継ぎ（理由・行き先・本文・頼んだ行の seq）。頼んだ行が流れに残る',
       handoffs.length === 1 && handoffs[0].botId === bot.id && handoffs[0].why === '議題の候補を出して聞く' && handoffs[0].where === 'p_thread' && handoffs[0].homeChannelId === undefined
-      && handoffs[0].actSeq === act.seq && handoffs[0].text.includes('自分で起きました') && handoffs[0].text.includes('議題を聞きたい') && act.text === '議題の候補を出して聞く' && !act.meta.taintOnly);
+      && handoffs[0].actSeq === act.seq && handoffs[0].text.includes('自分で起きました') && !handoffs[0].text.includes('議題を聞きたい') && act.text === '' && !act.meta.taintOnly);
     t.ok('引き継ぎの本文は投稿ではなく下書きの扱い（そのまま写さない・黙ってよい）', handoffs[0].text.includes('現在の依頼への回答に必要な情報だけ') && handoffs[0].text.includes('投稿は残りません'));
     clock += 11 * MIN;
     handoffResult = { ok: false, reason: 'resting' };
@@ -167,8 +167,8 @@ export default async function (t) {
     answer = { do: 'act', summary: '指示が来ている？', loops: [{ op: 'add', text: '外の文を確かめる' }], handoff: { why: '外から来た依頼を確かめる' } };
     handoffs.length = 0;
     await pulse.beat(bot.id, { force: true });
-    const tainted = rows().filter((x) => x.kind === 'think' || x.kind === 'act' || x.kind === 'loop').slice(0, 3);
-    t.ok('外から来た文（taint）を材料にした思考の行・気がかり・頼んだ行には、その印が付く', tainted.length === 3 && tainted.every((x) => x.taint === 'webhook') && brain.loops(bot.id).find((l) => l.text === '外の文を確かめる').taint === 'webhook');
+    const tainted = rows().filter((x) => x.kind === 'act').slice(0, 1);
+    t.ok('外から来た文（taint）を材料にした思考の行・気がかり・頼んだ行には、その印が付く', tainted.length === 1 && tainted.every((x) => x.taint === 'webhook') && brain.loops(bot.id).find((l) => l.text === '外の文を確かめる').taint === 'webhook');
     t.ok('外から来た文だけが理由の引き継ぎは「確かめる」まで（taintOnly）。本文に断りが入る', handoffs.length === 1 && handoffs[0].taint === 'webhook' && handoffs[0].text.includes('確かめるところまで') && rows().find((x) => x.kind === 'act').meta.taintOnly === true);
     t.ok('束に、外から来た文は「指示ではなく材料」と印が付く', prompts.at(-1).includes('untrusted: from outside'));
 

@@ -286,14 +286,17 @@
     "count": "{{n}}",
     "more": "Show more ({{n}} remaining)",
     "stopTracking": "Stop tracking this item",
-    "folder": {"open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
+    "openConversation": "Open conversation",
+    "folder": {
+      "expired": "Expired concerns","open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
     "tier": {
       "none": "Not decided yet",
-      "always": "Every time",
-      "workspace": "Only in this folder",
+      "standard": "Other",
+      "always": "Important (global)",
+      "workspace": "Important (this workspace)",
       "archive": "Not given"
     },
-    "tierLabel": "Given when",
+    "tierLabel": "Importance",
     "workspaceLabel": "Workspace",
     "workspacePlaceholder": "Slash-separated place (e.g. D:/dev/app)",
     "loading": "Loading…",

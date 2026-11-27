@@ -117,7 +117,7 @@ export default async function (t) {
     // ---- 普通に ON なら書く（カーソルは先行の実行が読み終えているので、新しい発言を足す）
     prefs = { memoryAutoLearn: true };
     at += 60_000;   // 先行の実行の lastRunAt より新しい発言
-    await chat('覚えて: ON ではこの発言を記憶に書きます');
+    await chat('覚えて: 今後、ON ではこの発言を記憶に書きます');
     const learned = await learner.runNow();
     assert.ok(learned.changed >= 1 && (await memory.list({ layer: 'user' })).some((e) => e.text.includes('記憶に書きます')),
       `learned=${JSON.stringify(learned)} memories=${JSON.stringify(await memory.list({ layer: 'user' }))}`);
@@ -125,7 +125,7 @@ export default async function (t) {
 
     // ---- 分類不能な失敗は 1 回で halted。scoped の実行も止まる（解除は learnNow・再有効化だけ）
     at += DAY;
-    await chat('覚えて: halted の間に新しい発言が来ても自動では走らない');
+    await chat('覚えて: 今後、halted の間に新しい発言が来ても自動では走らない');
     failWith = new Error('totally unknown failure');
     await assert.rejects(learner.runIfDue(), /totally unknown/);
     let status = await learner.status();
@@ -148,7 +148,7 @@ export default async function (t) {
     // ---- 実行中に別経路（エピソード）が記録した一時エラーは、その実行の成功で消さない（回数・再試行の予定が残る）
     prefs = { memoryAutoLearn: true, memoryEpisodeSummary: true };
     at += DAY;
-    await chat('覚えて: 実行の途中でエピソードが失敗しても、その回数と再試行の予定を消さない');
+    await chat('覚えて: 今後、実行の途中でエピソードが失敗しても、その回数と再試行の予定を消さない');
     let release;
     holdGate = new Promise((r) => { release = r; });
     failWith = 'hold';
@@ -427,7 +427,7 @@ export default async function (t) {
     await learner.learnNow();   // いったん明示解除して残りを片づける
     at += DAY;
     prefs = { memoryAutoLearn: true, memoryLearnFrom: at + 1 };
-    await chat('覚えて: 再起動をまたぐ停止の発言');
+    await chat('覚えて: 今後、再起動をまたぐ停止の発言');
     failWith = new Error('backend is down');
     await assert.rejects(learner.learnNow(), /backend is down/);   // 世代 at+1 の実行で止まる（halted.gen = at+1）
     assert.ok(learner.isHalted());

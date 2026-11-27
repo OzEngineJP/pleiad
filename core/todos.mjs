@@ -6,6 +6,7 @@
 // 並び = 先に終える順（order の小さい順）。after に循環は作らせない。「待ち」は保存しない（未着手で、after のどれかが完了していない）
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { openData } from './data-schema.mjs';
 import { todoTable } from './db.mjs';
 
@@ -16,6 +17,7 @@ export const TODO_LINKS_MAX = 20;
 export const TODO_PATH_MAX = 4096;
 export const TODO_URL_MAX = 2048;
 export const TODO_TITLE_MAX = 200;
+export const TODO_TEXT_MAX = 200;
 
 const RAND = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const rand = n => Array.from(crypto.randomBytes(n), b => RAND[b % RAND.length]).join('');
@@ -76,8 +78,14 @@ const cleanText = text => {
   if (!value) throw invalid('text is empty');
   return value;
 };
+const cleanItemText = text => {
+  const value = cleanText(text);
+  if ([...value].length > TODO_TEXT_MAX) throw invalid(`text must be at most ${TODO_TEXT_MAX} characters`);
+  return value;
+};
 function setDetails(item, input) {
   const details = { ...item.external };
+  if (input.followUp !== undefined) details.followUp = input.followUp;
   if (input.assignee !== undefined) details.assignee = input.assignee ? cleanText(input.assignee) : null;
   if (input.humanWaiting !== undefined) details.humanWaiting = input.humanWaiting === true;
   if (input.taskId !== undefined && input.taskId !== (details.taskId ?? null)) {
@@ -116,6 +124,7 @@ function view(items) {
   return items.map(t => ({ id: t.id, text: t.text, status: t.status, waiting: waitingOf(t, byId), after: t.after.filter(id => byId.has(id)),
     assignee: t.external?.assignee ?? null, humanWaiting: Boolean(t.external?.humanWaiting || t.external?.taskWaiting),
     taskId: t.external?.taskId ?? null, taskIssue: taskProblems.has(t.external?.taskStatus) ? t.external.taskStatus : null,
+    ...(t.external?.followUp ? { followUp: t.external.followUp } : {}),
     links: t.links, order: t.order, by: t.by ?? null, updatedBy: t.updatedBy ?? null, createdAt: t.createdAt ?? null, updatedAt: t.updatedAt ?? null }));
 }
 
@@ -168,8 +177,9 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
     for (const c of changes) {
       const item = next.find(t => t.id === c.id);
       if (!item) throw new TodoError('NOT_FOUND', `no item ${c.id}`, { id: c.id });
-      const before = { text: item.text, status: item.status };
-      if (c.text !== undefined) item.text = cleanText(c.text);
+      const before = { ...item };
+      const previousIndex = next.indexOf(item);
+      if (c.text !== undefined && c.text !== item.text) item.text = cleanItemText(c.text);
       if (c.status !== undefined) item.status = cleanStatus(c.status);
       setDetails(item, c);
       syncItem(scope, item);
@@ -183,6 +193,7 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
         if (c.before !== null && index < 0) throw new TodoError('NOT_FOUND', `no item ${c.before}`, { id: c.before });
         next.splice(index < 0 ? next.length : index, 0, item);
       }
+      if (previousIndex === next.indexOf(item) && isDeepStrictEqual(before, item)) continue;
       item.updatedAt = at;
       item.updatedBy = by;
       const action = before.status !== item.status ? (item.status === 'done' ? 'done' : item.status === 'doing' ? 'started' : 'reopened')
@@ -228,7 +239,7 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
         known.set(id, id);
         return { id, entry: e };
       });
-      const added = fresh.map(({ id, entry }) => ({ id, text: cleanText(entry.text), status: cleanStatus(entry.status ?? 'todo'),
+      const added = fresh.map(({ id, entry }) => ({ id, text: cleanItemText(entry.text), status: cleanStatus(entry.status ?? 'todo'),
         after: afterIds(entry.after ?? [], known, id), links: cleanLinks(entry.links ?? []), order: 0, by, updatedBy: by, createdAt: at, updatedAt: at }));
       for (let i = 0; i < added.length; i++) {
         setDetails(added[i], fresh[i].entry);
@@ -249,8 +260,9 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
     update(scope, { changes, ifRev, by }) {
       const s = scopeOf(scope);
       if (!Array.isArray(changes) || !changes.length) throw invalid('items is empty');
-      const { items } = guard(s, ifRev);
+      const { rev, items } = guard(s, ifRev);
       const { next, changed } = applyChanges(s, items.map(t => ({ ...t })), changes, by);
+      if (!changed.length) return { rev, items: view(items) };
       renumber(next);
       return commit(s, next, [], changed, by);
     },

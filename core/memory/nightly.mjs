@@ -62,7 +62,7 @@ export function selectNightlyCandidates(entries, { workspaces = [], layers = nul
     return { picked, used };
   };
   const always = take(live.filter((e) => inLayer(e) && e.tier === 'always'), Math.min(alwaysBudget, budget));
-  const related = take(live.filter((e) => inLayer(e) && (e.kind === 'promise' ? !e.workspace || here(e) : e.tier === 'workspace' ? here(e) : !e.tier && (!e.workspace || here(e)))), Math.max(0, budget - always.used));
+  const related = take(live.filter((e) => inLayer(e) && (e.kind === 'promise' ? !e.workspace || here(e) : e.tier === 'workspace' ? here(e) : (!e.tier || e.tier === 'standard') && (!e.workspace || here(e)))), Math.max(0, budget - always.used));
   const picked = [...always.picked, ...related.picked];
   return { entries: picked, tokens: always.used + related.used, omitted: live.length - picked.length, total: live.length };
 }

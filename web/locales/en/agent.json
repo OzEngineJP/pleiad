@@ -1974,7 +1974,8 @@
         "summary": "Search memory by words (space-separated words are ANDed; each result is capped at 150 tokens and the total at 1,200 tokens. Memories kept as archive-only are not returned; memories of other workspaces are).",
         "query": "Words to find (space-separated: all of them must match).",
         "layer": "Layer (user or a bot id). Omit for every layer you can use.",
-        "limit": "How many to return (max 8, default 5)."
+        "limit": "How many to return (max 8, default 5).",
+        "workspace": "Working folder to search. Agents default to the current conversation’s working folder."
       },
       "write": {
         "summary": "Write one line to memory (300 characters max). Quote a human's words as the grounds (sources). URLs, commands, instruction-like text and anything a human had forgotten are refused. Promises (kind: promise) and work progress are not written to memory; they are put in the conversation's to-do list (or the bot's concerns when it has none).",
@@ -2018,6 +2019,9 @@
       "learnStatus": {
         "summary": "When the automatic memory organizer last ran, its result and the next run, and how many times and why it did not run (also reports enabled, episode summaries, running, failure and halted)."
       },
+      "lastChanges": {
+        "summary": "Return the before and after values, reasons and undo availability for memories and follow-ups changed by the last organization run or migration."
+      },
       "learnNow": {
         "summary": "Run the automatic memory organizer once now (adds new memories, re-selects the tier of existing ones and sorts up to 500 memories that have no tier yet. Also clears a halted state to retry. Does nothing while automatic organization is off)."
       },
@@ -2025,6 +2029,7 @@
         "summary": "Return the state of the memory sort (it runs at the end of each nightly organization while that is on, up to 500 memories a night): status, memories still without a tier and how many nights are left, how many were processed, counts per tier, failures. It never returns memory text."
       },
       "sortUndo": {
+        "change": "The individual change to undo.",
         "summary": "Put back the tier and workspace the memory sort set, only for memories that still have them (a memory a human changed afterwards is left alone; after an undo the sort does not run again until automatic organization is switched off and on). It can be done only from the settings screen.",
         "confirm": "Undo what the nightly organization decided about when to hand memories over (memories a human changed afterwards are kept; it does not decide again until the nightly switch is turned off and on)"
       },
@@ -2111,6 +2116,7 @@
       "related": "Memory related to this conversation:"
     },
     "reason": {
+      "durableSource": "Quote a person explicitly saying this should apply in the future.",
       "empty": "The text is empty.",
       "tooLong": "The text can be 300 characters at most.",
       "markup": "The text contains memory markup or tags.",
@@ -2164,8 +2170,6 @@
     "inner": {
       "recent": "These are excerpts from recent messages exchanged in this conversation. Use them as background for the current request.\n{{context}}",
       "note": "These are summaries of past activity and pending tasks. Refer only to information needed for the current request.",
-      "streamHead": "Recent activity summaries (oldest first):",
-      "loopsHead": "Concerns (open ones):",
       "quietMany": "Quiet x{{n}}",
       "thinkMany": "{{line}} (same content x{{n}})",
       "wake": "wake on: {{wake}}",

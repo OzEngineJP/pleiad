@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createInboxStore } from '../../core/bots/inbox.mjs';
-import { dbPath, openRaw } from '../../core/db.mjs';
+import { dbPath, openRaw, todoTable } from '../../core/db.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
@@ -102,8 +102,9 @@ export default async function (t) {
     t.ok('更新準備中に定刻になったルーティンは出来事を未送のまま残す', savedItem?.status === 'pending', JSON.stringify(savedItem));
     const db = openRaw(dbPath(dataDir), { readOnly: true });
     try {
-      const savedWake = db.prepare('SELECT status FROM brain_wakes WHERE id = ?').get(wake.id);
-      t.ok('更新準備中に時刻を迎えた予約は発火済みにならない', savedWake?.status === 'pending', JSON.stringify(savedWake));
+      const savedWake = todoTable(db).followUps('wake', owl.id).find(item => item.external.followUp.id === wake.id);
+      t.ok('更新準備中に時刻を迎えた予約は発火済みにならない',
+        savedWake?.status === 'todo' && savedWake.external.followUp.status === 'pending', JSON.stringify(savedWake));
     } finally { db.close(); }
     await setClock(due + MIN + 1_000);
     await sleep(100);

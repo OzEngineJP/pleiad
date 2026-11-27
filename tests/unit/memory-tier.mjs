@@ -19,12 +19,12 @@ export const title = '記憶の段と作業場所: tier / ws の読み書き・c
 const BOT = 'b_owl12345';
 const HUMAN = { kind: 'human' };
 const BOT_AUTHOR = { kind: 'bot', botId: BOT };
-const Q_FRI = '金曜に出さないでほしい';
+const Q_FRI = '今後、デプロイは金曜に出さないでほしい';
 const code = async (fn) => { try { await fn(); return null; } catch (e) { return e instanceof MemoryError ? `${e.code}:${e.reason}` : `ERR:${e.message}`; } };
 
 const channels = {
   list: async () => [{ id: 'c_dev0001', name: 'dev' }],
-  read: async () => ({ posts: [{ id: 'p_human01', channelId: 'c_dev0001', text: 'デプロイは金曜に出さないでほしい。週末に直せないから', at: 100, author: { kind: 'human' } }], nextBefore: null }),
+  read: async () => ({ posts: [{ id: 'p_human01', channelId: 'c_dev0001', text: '今後、デプロイは金曜に出さないでほしい。週末に直せないから', at: 100, author: { kind: 'human' } }], nextBefore: null }),
 };
 const sessions = { read: async () => null, get: async () => null };
 const botOfSession = async (id) => (id === 'sbot' ? { botId: BOT, kind: 'thread' } : null);
@@ -108,22 +108,22 @@ export default async function (t) {
     const svc = createMemoryService({ dataDir: path.join(root, 'svc'), channels, now: (() => { let c = 5_000; return () => ++c; })() });
     await svc.start();
     const botCtx = (cwd, n) => ({ sessions, botOfSession, sessionId: `sbot-${n}`, sessionCwd: cwd });
-    const h = await svc.write({ layer: 'user', text: '人が書く行は always' }, HUMAN, {});
-    t.ok('人の新規は always（場所なし）', h.tier === 'always' && !('workspace' in h));
+    const h = await svc.write({ layer: 'user', text: '人が書く行は standard' }, HUMAN, {});
+    t.ok('人の新規は always（場所なし）', h.tier === 'standard' && !('workspace' in h));
     const hCwd = await svc.write({ layer: 'user', text: '人が書く行は cwd があっても always' }, HUMAN, { sessionCwd: sub });
-    t.ok('人の新規は会話の cwd があっても always', hCwd.tier === 'always' && !('workspace' in hCwd));
+    t.ok('人の新規は standard', hCwd.tier === 'standard' && !('workspace' in hCwd));
     const b1 = await svc.write({ layer: BOT, text: 'bot が書く行はリポジトリなら workspace', sources: grounds }, BOT_AUTHOR, botCtx(sub, 1));
-    t.ok('bot の新規は、会話の cwd に git の本体があれば workspace + その場所', b1.tier === 'workspace' && b1.workspace === mainSlash, JSON.stringify(b1));
+    t.ok('bot の新規は、会話の cwd に git の本体があれば standard + その場所', b1.tier === 'standard' && b1.workspace === mainSlash, JSON.stringify(b1));
     const b2 = await svc.write({ layer: BOT, text: 'worktree の会話で書く行は本体の場所', sources: grounds }, BOT_AUTHOR, botCtx(wt, 2));
-    t.ok('worktree の会話は本体の場所になる', b2.tier === 'workspace' && b2.workspace === mainSlash);
+    t.ok('worktree の会話は本体の場所になる', b2.tier === 'standard' && b2.workspace === mainSlash);
     const b3 = await svc.write({ layer: BOT, text: 'git の外の会話で書く行は always', sources: grounds }, BOT_AUTHOR, botCtx(plain, 3));
     const b4 = await svc.write({ layer: BOT, text: 'cwd の無い会話で書く行も always', sources: grounds }, BOT_AUTHOR, botCtx(null, 4));
-    t.ok('git の外・cwd なしの bot の新規は always（場所なし）', b3.tier === 'always' && !('workspace' in b3) && b4.tier === 'always' && !('workspace' in b4));
+    t.ok('git の外・cwd なしの bot の新規は standard（場所なし）', b3.tier === 'standard' && !('workspace' in b3) && b4.tier === 'standard' && !('workspace' in b4));
     const ag = await svc.write({ layer: 'user', text: '別の会話の AI も cwd で決まる', sources: grounds }, { kind: 'agent', sessionId: 'sx' }, { sessions, botOfSession, sessionId: 'sx', sessionCwd: sub });
-    t.ok('bot でない AI の新規も同じ規則', ag.tier === 'workspace' && ag.workspace === mainSlash);
-    t.ok('明示 tier=workspace で場所が決まらなければ MEMORY_REJECTED（workspaceUnknown）', await code(() => svc.write({ layer: BOT, text: '場所が決まらない行', sources: grounds, tier: 'workspace' }, BOT_AUTHOR, botCtx(plain, 5))) === 'MEMORY_REJECTED:workspaceUnknown'
+    t.ok('bot でない AI の新規も同じ規則', ag.tier === 'standard' && ag.workspace === mainSlash);
+    t.ok('AI の指定は standard、人が選んだ作業場所が不明ならエラー', (await svc.write({ layer: BOT, text: '場所が決まらない行', sources: grounds, tier: 'workspace' }, BOT_AUTHOR, botCtx(plain, 5))).tier === 'standard'
       && await code(() => svc.write({ layer: 'user', text: '人が場所なしで workspace を選ぶ' , tier: 'workspace' }, HUMAN, {})) === 'MEMORY_REJECTED:workspaceUnknown');
-    t.ok('断られた書き込みは何も書かない', !svc.store.entries().some((e) => ['場所が決まらない行', '人が場所なしで workspace を選ぶ'].includes(e.text)));
+    t.ok('断られた書き込みは何も書かない', !svc.store.entries().some((e) => e.text === '人が場所なしで workspace を選ぶ'));
     const explicit = await svc.write({ layer: 'user', text: '場所を渡した行です', tier: 'workspace', workspace: 'D:\\dev\\other\\' }, HUMAN, {});
     t.ok('明示の workspace は \\ を / へ・末尾の / を落として入る', explicit.tier === 'workspace' && explicit.workspace === 'D:/dev/other');
     const onlyWs = await svc.write({ layer: 'user', text: '場所だけ渡した行です', workspace: '/home/u/app' }, HUMAN, {});
@@ -176,7 +176,7 @@ export default async function (t) {
 
     const pending = await edit(agentP('sbot'), { id: humanLine, tier: 'archive' });
     t.ok('AI が人の行の段を変えるのは承認（カードに tier の行）。許可前は変わらない', pending.pending === true && asked.length === 1
-      && asked[0].change.rows.some((r) => r.path === 'tier' && r.after === 'archive' && r.before === 'always') && svc2.store.get(humanLine).tier === 'always');
+      && asked[0].change.rows.some((r) => r.path === 'tier' && r.after === 'archive' && r.before === 'standard') && svc2.store.get(humanLine).tier === 'standard');
     await asked[0].proceed();
     t.ok('許可されたら段が変わる（updatedAt は進まない）', svc2.store.get(humanLine).tier === 'archive');
     const pendingWs = await edit(agentP('sbot'), { id: humanLine, workspace: 'D:/dev/app' });
@@ -188,15 +188,15 @@ export default async function (t) {
       && (await edit(UI, { id: humanLine, workspace: 'a'.repeat(WORKSPACE_MAX + 1) })).ok !== true);
 
     const written = await registry.invoke(agentP('sbot'), 'memory.write', { layer: 'self', text: 'ops 経由で bot が書く行です', sources: grounds }, deps);
-    t.ok('memory.write: bot の会話の cwd（ctx.sessionCwd）から workspace + 本体の場所が既定になる', written.ok === true && written.result.tier === 'workspace' && written.result.workspace === mainSlash, JSON.stringify(written));
+    t.ok('memory.write: bot の会話の cwd（ctx.sessionCwd）から standard + 本体の場所が既定になる', written.ok === true && written.result.tier === 'standard' && written.result.workspace === mainSlash, JSON.stringify(written));
     const humanWrite = await registry.invoke(UI, 'memory.write', { layer: 'user', text: '画面から人が書く行です' }, deps);
-    t.ok('memory.write: 人（画面）の既定は always', humanWrite.ok === true && humanWrite.result.tier === 'always');
+    t.ok('memory.write: 人（画面）の既定は standard', humanWrite.ok === true && humanWrite.result.tier === 'standard');
     const rejected = await registry.invoke(agentP('sbot'), 'memory.write', { layer: 'self', text: '場所が決まらない ops の行です', sources: grounds, tier: 'workspace' }, { ...deps, sessionCwd: async () => plain });
-    t.ok('memory.write: 明示 tier=workspace で場所不明は MEMORY_REJECTED', rejected.code === 'MEMORY_REJECTED');
+    t.ok('memory.write: AI が作業場所を指定しても重要にはならない', rejected.ok && rejected.result.tier === 'standard');
     const listedOps = await registry.invoke(UI, 'memory.list', { layer: 'user' }, deps);
-    t.ok('memory.list の行に tier / workspace が出る（出力の形に入っている）', listedOps.ok === true && listedOps.result.some((e) => e.tier === 'always') && listedOps.result.every((e) => e.tier === undefined || ['always', 'workspace', 'archive'].includes(e.tier)));
+    t.ok('memory.list の行に tier / workspace が出る（出力の形に入っている）', listedOps.ok === true && listedOps.result.some((e) => e.tier === 'always') && listedOps.result.every((e) => e.tier === undefined || ['standard', 'always', 'workspace', 'archive'].includes(e.tier)));
     const searchedOps = await registry.invoke(UI, 'memory.search', { query: '画面から人が書く', layer: 'user' }, deps);
-    t.ok('memory.search の行にも tier が出る', searchedOps.ok === true && searchedOps.result[0]?.tier === 'always');
+    t.ok('memory.search の行にも tier が出る', searchedOps.ok === true && searchedOps.result[0]?.tier === 'standard');
     svc2.stop();
 
     // ---- 段 2 単位 3: 段と作業場所で配送する（service.turnContext の cwd・差分・関係する記憶・search・coreFit）
@@ -212,7 +212,7 @@ export default async function (t) {
     const svc3 = createMemoryService({ dataDir: path.join(root, 'deliver'), channels, now: tick() });
     await svc3.start();
     const ask3 = (session, text = '', cwd = null) => svc3.turnContext({ bot: ownerBot, session, incomingText: text, cwd, now: 100_000, locale: 'ja' });
-    const wA = await svc3.write({ layer: 'user', text: 'ALWAYSRULE alpha-service の返事は丁寧語で書く' }, HUMAN, {});
+    const wA = await svc3.write({ layer: 'user', text: 'ALWAYSRULE alpha-service の返事は丁寧語で書く', tier: 'always' }, HUMAN, {});
     const wW = await svc3.write({ layer: 'user', text: 'MAINRULE beta-service は main ブランチへ直接 push しない', tier: 'workspace', workspace: mainSlash }, HUMAN, {});
     const wO = await svc3.write({ layer: 'user', text: 'OTHERRULE gamma-service のテストは e2e を先に回す', tier: 'workspace', workspace: otherSlash }, HUMAN, {});
     const wX = await svc3.write({ layer: 'user', text: 'ARCHIVERULE delta-service の古い手順は使わない', tier: 'archive' }, HUMAN, {});
@@ -226,33 +226,33 @@ export default async function (t) {
     const inPlain = await ask3(START, '', plain);
     const has = (text, ...words) => words.every((w) => text.includes(w));
     const lacks = (text, ...words) => words.every((w) => !text.includes(w));
-    t.ok('核の写し: 会話の cwd が本体のリポジトリなら always・その場所の workspace・段なしが入り、別の場所の workspace・archive は入らない',
-      has(coreOf(inMain), 'ALWAYSRULE', 'MAINRULE', 'LEGACYRULE') && lacks(coreOf(inMain), 'OTHERRULE', 'ARCHIVERULE'), coreOf(inMain));
-    t.ok('核の写し: worktree の会話も本体の作業場所として受ける', has(coreOf(inWt), 'ALWAYSRULE', 'MAINRULE', 'LEGACYRULE') && lacks(coreOf(inWt), 'OTHERRULE', 'ARCHIVERULE'));
-    t.ok('核の写し: 別のリポジトリの会話はそのリポジトリの workspace だけ受ける', has(coreOf(inOther), 'ALWAYSRULE', 'OTHERRULE', 'LEGACYRULE') && lacks(coreOf(inOther), 'MAINRULE', 'ARCHIVERULE'));
-    t.ok('核の写し: cwd の無い会話・git の外の会話は workspace を 1 件も受けない（always と段なしは受ける）',
-      has(coreOf(inNone), 'ALWAYSRULE', 'LEGACYRULE') && lacks(coreOf(inNone), 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE')
-      && has(coreOf(inPlain), 'ALWAYSRULE', 'LEGACYRULE') && lacks(coreOf(inPlain), 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE'));
-    t.ok('渡した記憶の id（delivered）に、渡さなかった別の場所・archive は入らない', inMain.delivered.includes(wW.id) && !inMain.delivered.includes(wO.id) && !inMain.delivered.includes(wX.id) && inNone.delivered.length === 2);
+    t.ok('核の写し: 会話の cwd が本体のリポジトリなら always・その場所の workspaceが入り、別の場所の workspace・archive は入らない',
+      has(coreOf(inMain), 'ALWAYSRULE', 'MAINRULE') && lacks(coreOf(inMain), 'OTHERRULE', 'ARCHIVERULE'), coreOf(inMain));
+    t.ok('核の写し: worktree の会話も本体の作業場所として受ける', has(coreOf(inWt), 'ALWAYSRULE', 'MAINRULE') && lacks(coreOf(inWt), 'OTHERRULE', 'ARCHIVERULE'));
+    t.ok('核の写し: 別のリポジトリの会話はそのリポジトリの workspace だけ受ける', has(coreOf(inOther), 'ALWAYSRULE', 'OTHERRULE') && lacks(coreOf(inOther), 'MAINRULE', 'ARCHIVERULE'));
+    t.ok('核の写し: cwd の無い会話・git の外の会話は workspace を 1 件も受けない（always は受ける）',
+      has(coreOf(inNone), 'ALWAYSRULE') && lacks(coreOf(inNone), 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE')
+      && has(coreOf(inPlain), 'ALWAYSRULE') && lacks(coreOf(inPlain), 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE'));
+    t.ok('渡した記憶の id（delivered）に、渡さなかった別の場所・archive は入らない', inMain.delivered.includes(wW.id) && !inMain.delivered.includes(wO.id) && !inMain.delivered.includes(wX.id) && inNone.delivered.length === 1);
     t.ok('全部入ったときの omitted は 0・0・0', JSON.stringify(inMain.omitted) === JSON.stringify({ untiered: 0, always: 0, workspace: 0 }));
 
     // 関係する記憶: 保存だけ・別の作業場所は出さない。段の付いたものを先に
     const query = 'MAINRULE OTHERRULE ARCHIVERULE LEGACYRULE ALWAYSRULE beta-service gamma-service delta-service epsilon-service alpha-service';
     const relMain = turnOf(await ask3(FRESH(svc3.rev()), query, sub));
-    t.ok('関係する記憶: 今の作業場所の workspace・always・段なしは出て、別の場所の workspace と archive は出ない',
-      has(relMain, 'MAINRULE', 'ALWAYSRULE', 'LEGACYRULE') && lacks(relMain, 'OTHERRULE', 'ARCHIVERULE'), relMain);
+    t.ok('関係する記憶: 作業場所や重要度によらず自動配送しない',
+      lacks(relMain, 'MAINRULE', 'ALWAYSRULE', 'LEGACYRULE') && lacks(relMain, 'OTHERRULE', 'ARCHIVERULE'), relMain);
     const relNone = turnOf(await ask3(FRESH(svc3.rev()), query, null));
-    t.ok('関係する記憶: cwd の無い会話には workspace の記憶を出さない', has(relNone, 'ALWAYSRULE') && lacks(relNone, 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE'), relNone);
+    t.ok('関係する記憶: cwd の無い会話には workspace の記憶を出さない', lacks(relNone, 'ALWAYSRULE') && lacks(relNone, 'MAINRULE', 'OTHERRULE', 'ARCHIVERULE'), relNone);
     const relDelivered = turnOf(await ask3(FRESH(svc3.rev(), [wA.id, wW.id]), query, sub));
-    t.ok('関係する記憶: 核の写しで渡し済みの記憶は繰り返さない', lacks(relDelivered, 'ALWAYSRULE', 'MAINRULE') && has(relDelivered, 'LEGACYRULE'));
+    t.ok('関係する記憶: 核の写しで渡し済みの記憶は繰り返さない', lacks(relDelivered, 'ALWAYSRULE', 'MAINRULE') && lacks(relDelivered, 'LEGACYRULE'));
 
     // 段の付いた記憶を先に（5 件の枠が段なしで埋まらない）・1 件 150 トークンまで・5 件まで
     for (let i = 0; i < 6; i++) await svc3.store.add({ layer: 'user', text: `prefertok1 prefertok2 prefertok3 legacy-${i} ${String.fromCharCode(0x3042 + 2 * i)}${'あ'.repeat(280)}`, by: HUMAN });
     await svc3.write({ layer: 'user', text: 'PREFERTIERED prefertok1 だけに触れる always の記憶' }, HUMAN, {});
     const prefer = turnOf(await ask3(FRESH(svc3.rev()), 'prefertok1 prefertok2 prefertok3', sub));
     const preferLines = prefer.split('\n').filter((l) => l.startsWith('- ') && /PREFERTIERED|legacy-/.test(l));
-    t.ok('関係する記憶: 段の付いた記憶を先に入れる（強く合う段なしの記憶 6 件で 5 件の枠が埋まらない）', prefer.includes('PREFERTIERED') && preferLines.length === 5, prefer);
-    t.ok('関係する記憶: 1 件は 150 トークンまで（長い本文は … で切る）', preferLines.filter((l) => /legacy-/.test(l)).every((l) => estimateTokens(l.slice(2)) <= 150 && l.endsWith('…')), preferLines.join('\n'));
+    t.ok('関係する記憶: 強く一致する候補も自動配送しない', !prefer.includes('PREFERTIERED') && preferLines.length === 0, prefer);
+    t.ok('検索: 1 件は 150 トークンまで（長い本文は … で切る）', (await svc3.search({ query: 'prefertok1 prefertok2' })).filter((row) => row.text.includes('legacy-')).every((row) => estimateTokens(row.text) <= 150), preferLines.join('\n'));
 
     // memory.search: ほかの作業場所の記憶は引ける・保存だけは出さない
     const hitTexts = async (q, args = {}) => (await svc3.search({ query: q, ...args })).map((e) => e.text);
@@ -265,7 +265,7 @@ export default async function (t) {
     await svc3.write({ layer: 'user', text: 'MAINDELTA 本体の作業場所に足した記憶', tier: 'workspace', workspace: mainSlash }, HUMAN, {});
     await svc3.write({ layer: 'user', text: 'OTHERDELTA 別の作業場所に足した記憶', tier: 'workspace', workspace: otherSlash }, HUMAN, {});
     await svc3.write({ layer: 'user', text: 'ARCHDELTA 保存だけに足した記憶', tier: 'archive' }, HUMAN, {});
-    await svc3.write({ layer: 'user', text: 'ALWAYSDELTA いつもの記憶に足した記憶' }, HUMAN, {});
+    await svc3.write({ layer: 'user', text: 'ALWAYSDELTA いつもの記憶に足した記憶', tier: 'always' }, HUMAN, {});
     await svc3.edit({ id: wO.id, text: 'OTHERRULE gamma-service のテストは unit を先に回す OTHEREDIT' }, HUMAN, {});
     const since = FRESH(base.memRev, base.delivered);
     const dMain = turnOf(await ask3(since, '', sub));
@@ -280,30 +280,30 @@ export default async function (t) {
     t.ok('差分: 別の作業場所の記憶を忘れても、その場所の外の会話には出さない（中の会話には「忘れた」が届く）', lacks(fMain, 'OTHERRULE', 'OTHEREDIT', '忘れた') && has(fOther, '忘れた'), `${fMain}\n---\n${fOther}`);
     svc3.stop();
 
-    // 入りきらない記憶: always は 6000・workspace は 3000 トークンまで。段ごとの件数を返す
+    // 入りきらない記憶: always は 400・workspace は 800 トークンまで。段ごとの件数を返す
     const svc4 = createMemoryService({ dataDir: path.join(root, 'overflow'), channels, now: tick() });
     await svc4.start();
-    const big = (i) => `${String.fromCharCode(0x3042 + 2 * i)}${'い'.repeat(299)}`;   // 300 トークン（+3）= 303。always は 19 件・workspace は 9 件まで
-    for (let i = 0; i < 25; i++) await svc4.write({ layer: 'user', text: big(i) }, HUMAN, {});
+    const big = (i) => `${String.fromCharCode(0x3042 + 2 * i)}${'い'.repeat(299)}`;   // 300 トークン（+3）= 303。always は1件・workspace は2件まで
+    for (let i = 0; i < 25; i++) await svc4.write({ layer: 'user', text: big(i), tier: 'always' }, HUMAN, {});
     for (let i = 0; i < 12; i++) await svc4.write({ layer: 'user', text: big(30 + i), tier: 'workspace', workspace: mainSlash }, HUMAN, {});
     const ov = await svc4.turnContext({ bot: ownerBot, session: START, cwd: sub, now: 100_000, locale: 'ja' });
-    t.ok('入りきらない件数: always 25 件のうち 19 件・workspace 12 件のうち 9 件が入り、残りを段ごとに omitted で返す',
-      JSON.stringify(ov.omitted) === JSON.stringify({ untiered: 0, always: 6, workspace: 3 }) && ov.delivered.length === 19 + 9, JSON.stringify({ omitted: ov.omitted, n: ov.delivered.length }));
+    t.ok('入りきらない件数: always 25 件のうち1件・workspace 12 件のうち2件が入り、残りを段ごとに omitted で返す',
+      JSON.stringify(ov.omitted) === JSON.stringify({ untiered: 0, always: 24, workspace: 10 }) && ov.delivered.length === 1 + 2, JSON.stringify({ omitted: ov.omitted, n: ov.delivered.length }));
     const ovNone = await svc4.turnContext({ bot: ownerBot, session: START, cwd: null, now: 100_000, locale: 'ja' });
-    t.ok('cwd の無い会話は workspace を受けないので、入りきらない件数にも数えない', ovNone.omitted.workspace === 0 && ovNone.omitted.always === 6 && ovNone.delivered.length === 19);
+    t.ok('cwd の無い会話は workspace を受けないので、入りきらない件数にも数えない', ovNone.omitted.workspace === 0 && ovNone.omitted.always === 24 && ovNone.delivered.length === 1);
     t.ok('始まり以外のターンは omitted を返さない', !('omitted' in await svc4.turnContext({ bot: ownerBot, session: FRESH(svc4.rev()), cwd: sub, now: 100_000, locale: 'ja' })));
     const fitAll = await svc4.coreFit({ layer: 'user' });
-    t.ok('coreFit: 作業場所を省くと、作業場所ごとに見て入りきらなかった数の合計', fitAll.layer === 'user' && fitAll.workspace === null && JSON.stringify(fitAll.omitted) === JSON.stringify({ untiered: 0, always: 6, workspace: 3 }) && fitAll.total === 9 && fitAll.inactiveWorkspace === 0, JSON.stringify(fitAll));
+    t.ok('coreFit: 作業場所を省くと、作業場所ごとに見て入りきらなかった数の合計', fitAll.layer === 'user' && fitAll.workspace === null && JSON.stringify(fitAll.omitted) === JSON.stringify({ untiered: 0, always: 24, workspace: 10 }) && fitAll.total === 34 && fitAll.inactiveWorkspace === 0, JSON.stringify(fitAll));
     const fitHere = await svc4.coreFit({ layer: 'user', workspace: `${mainSlash}/` });
     const fitElsewhere = await svc4.coreFit({ layer: 'user', workspace: otherSlash });
     t.ok('coreFit: 作業場所を渡すとその場所で見る（場所は正規化。合わない場所の workspace は inactiveWorkspace に数える）',
-      fitHere.workspace === mainSlash && fitHere.omitted.workspace === 3 && fitHere.inactiveWorkspace === 0 && fitElsewhere.omitted.workspace === 0 && fitElsewhere.inactiveWorkspace === 12 && fitElsewhere.total === 6, JSON.stringify({ fitHere, fitElsewhere }));
+      fitHere.workspace === mainSlash && fitHere.omitted.workspace === 10 && fitHere.inactiveWorkspace === 0 && fitElsewhere.omitted.workspace === 0 && fitElsewhere.inactiveWorkspace === 12 && fitElsewhere.total === 24, JSON.stringify({ fitHere, fitElsewhere }));
     const fitBot = await svc4.coreFit({ layer: BOT });
-    t.ok('coreFit: bot の層は user 層と合わせて見る', fitBot.layer === BOT && fitBot.omitted.always === 6);
+    t.ok('coreFit: bot の層は user 層と合わせて見る', fitBot.layer === BOT && fitBot.omitted.always === 24);
     t.ok('coreFit: 正しくない層は MEMORY_REJECTED', (await code(() => svc4.coreFit({ layer: 'nope!' }))) !== null);
     const depsFit = { ...deps, memory: svc4 };
     const opsFit = await registry.invoke(UI, 'memory.coreFit', { layer: 'user' }, depsFit);
-    t.ok('memory.coreFit（画面）: 入りきらない件数が返る', opsFit.ok === true && opsFit.result.omitted.always === 6 && opsFit.result.total === 9, JSON.stringify(opsFit));
+    t.ok('memory.coreFit（画面）: 入りきらない件数が返る', opsFit.ok === true && opsFit.result.omitted.always === 24 && opsFit.result.total === 34, JSON.stringify(opsFit));
     const opsFitBot = await registry.invoke(agentP('sbot'), 'memory.coreFit', {}, depsFit);
     t.ok('memory.coreFit（bot の会話）: 層を省くと自分の層', opsFitBot.ok === true && opsFitBot.result.layer === BOT, JSON.stringify(opsFitBot));
     svc4.stop();

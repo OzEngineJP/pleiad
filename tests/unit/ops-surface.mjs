@@ -266,6 +266,7 @@ export default async function (t) {
     wakes: { list: () => [{ id: 'w1', botId: 'b_1', status: 'pending', at: 1, note: 'あとで確かめる', channelId: 'c_1', threadId: null, createdAt: 1, ...secret }], now: () => 1 },   // 予約（ADR 0140）
     pulse: { status: async () => ({ on: false, paused: false, running: false, nextAt: null, lastBeatAt: null, drives: null, home: null, ...secret }) },
     memoryLearner: {   // S3
+      lastChanges: async () => [],
       status: async () => ({ at: '02:00', paused: false, running: false, lastRunAt: null, nextAt: 2, lastResult: null, skip: null, failure: null, ...secret }),
       sortStatus: async () => ({ status: 'done', running: false, untiered: 1, nights: 1, perNight: 500, processed: 2, left: 0, failures: 0, changed: 0, unknown: 1, tiers: { always: 1, workspace: 0, archive: 1 }, startedAt: 1, updatedAt: 2, undone: null, ...secret }),   // 段 2 単位 4（振り分けの様子。数だけ）
     },

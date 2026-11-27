@@ -5,10 +5,11 @@ import { sourceView } from './bot-model.mjs';
 import { botIcon } from './bot-icon.mjs';
 // i18n-dynamic: channels:memory.tier.
 // i18n-dynamic: channels:memory.folder.
-const FOLDERS = ['open', 'decision', 'pref', 'share', 'note', 'done', 'stop'];
+const FOLDERS = ['open', 'decision', 'pref', 'share', 'note', 'done', 'expired', 'stop'];
 const PAGE_SIZE = 4;
 const folderOf = (entry) => {
   if (entry.kind === 'stop' || entry.status === 'dropped') return 'stop';
+  if (entry.status === 'expired') return 'expired';
   if (entry.status === 'done') return 'done';
   if (entry.status === 'open') return 'open';
   return FOLDERS.includes(entry.kind) ? entry.kind : 'note';
@@ -20,7 +21,7 @@ export const UNDO_MS = 12000;
 const FADE_MS = 240;
 const TEXT_MAX = 300;
 const WORKSPACE_MAX = 500;
-const TIERS = ['always', 'workspace', 'archive'];
+const importanceOf = (entry) => ['always', 'workspace'].includes(entry.tier) ? 'always' : 'standard';
 
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
@@ -130,8 +131,8 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
 
   /** 行の段の札（作業場所の段は場所の最後の名前を添え、全体は title に） */
   function tierNode(entry) {
-    const tier = TIERS.includes(entry.tier) ? entry.tier : 'none';
-    const place = tier === 'workspace' && entry.workspace ? entry.workspace : '';
+    const tier = importanceOf(entry);
+    const place = entry.workspace ?? '';
     const name = place.split('/').filter(Boolean).pop() ?? '';
     const node = el('span', 'mem-kind mem-tier', name ? `${t(`channels:memory.tier.${tier}`)} · ${name}` : t(`channels:memory.tier.${tier}`));
     node.dataset.tier = tier;
@@ -139,13 +140,13 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
     return node;
   }
 
-  /** 直すときの段と作業場所の欄。段は 'none'（未振り分け）を選べず、選ばなければ変えない */
-  function placeControls(entry, onKey) {
+  /** 重要度と作業場所は別々に選ぶ。 */
+  function placeControls(onKey) {
     const box = el('span', 'mem-place');
     const select = el('select', 'fin memtier');
     select.setAttribute('aria-label', t('channels:memory.tierLabel'));
-    for (const value of [...(entry.tier ? [] : ['']), ...TIERS]) {
-      const option = el('option', '', t(`channels:memory.tier.${value || 'none'}`));
+    for (const value of ['standard', 'always']) {
+      const option = el('option', '', t(`channels:memory.tier.${value}`));
       option.value = value;
       select.append(option);
     }
@@ -157,11 +158,9 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
     ws.placeholder = t('channels:memory.workspacePlaceholder');
     ws.setAttribute('aria-label', t('channels:memory.workspaceLabel'));
     ws.value = S.draftWs;
-    const show = () => { ws.hidden = select.value !== 'workspace'; };
-    select.addEventListener('change', () => { S.draftTier = select.value; show(); });
+    select.addEventListener('change', () => { S.draftTier = select.value; });
     ws.addEventListener('input', () => { S.draftWs = ws.value; });
     ws.addEventListener('keydown', onKey);
-    show();
     box.append(select, ws);
     return box;
   }
@@ -192,7 +191,7 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stopEditing(); }
       };
       input.addEventListener('keydown', onKey);
-      tx.append(input, placeControls(entry, onKey), sourceNode(entry));
+      tx.append(input, placeControls(onKey), sourceNode(entry));
       acts.append(cancel, save);
       if (S.focusEdit) {
         S.focusEdit = false;
@@ -216,6 +215,18 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
         return row;
       }
       tx.append(sourceNode(entry));
+      if (entry.todo) {
+        const { sessionId, scheduledAt } = entry.todo;
+        if (scheduledAt) tx.append(el('span', 'mem-origin', t('channels:bot.brain.loops.wake', { wake: new Date(scheduledAt).toLocaleString() })));
+        if (sessionId) {
+          const link = el('button', 'btn', t('channels:memory.openConversation'));
+          link.type = 'button';
+          link.onclick = () => openSource({ sessionId });
+          tx.append(link);
+        }
+        row.append(tx);
+        return row;
+      }
       if (entry.concern) {
         const { id, due, wakeOn } = entry.concern;
         const date = (at) => new Date(at).toLocaleString();
@@ -249,7 +260,7 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
       fix.type = 'button';
       fix.dataset.act = 'edit';
       fix.setAttribute('aria-label', t('channels:memory.editAria', { text: entry.text }));
-      fix.onclick = () => { S.editing = entry.id; S.draft = ''; S.draftTier = entry.tier ?? ''; S.draftWs = entry.workspace ?? ''; S.focusEdit = true; showError(''); paint(); };
+      fix.onclick = () => { S.editing = entry.id; S.draft = ''; S.draftTier = importanceOf(entry); S.draftWs = entry.workspace ?? ''; S.focusEdit = true; showError(''); paint(); };
       const gone = el('button', 'btn forget', t('channels:memory.forget'));
       gone.type = 'button';
       gone.dataset.act = 'forget';
@@ -375,10 +386,12 @@ export function createMemoryList(host, { lookup, openSource, userOnly = false })
     const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
     const args = {};
     if (text && text !== entry.text) args.text = text;
-    const tier = S.draftTier || entry.tier || '';
-    if (tier && tier !== entry.tier) args.tier = tier;
     const ws = S.draftWs.trim();
-    if (tier === 'workspace' && ws && ws !== entry.workspace) args.workspace = ws;
+    const placeChanged = ws !== (entry.workspace ?? '');
+    if (S.draftTier !== importanceOf(entry) || placeChanged) {
+      args.tier = S.draftTier === 'standard' ? 'standard' : ws ? 'workspace' : 'always';
+      if (placeChanged) args.workspace = ws;
+    }
     if (!Object.keys(args).length) { stopEditing(); return; }
     try {
       const done = await host.invoke('memory.edit', { id: entry.id, ...args });

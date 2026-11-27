@@ -769,7 +769,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "df46c8c15ea8"
+      "input": "2ca0d4dd4475"
     },
     {
       "id": "brain.wakeCancel",
@@ -3409,7 +3409,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "715548c2fdd6"
+      "input": "00a83b4af01c"
     },
     {
       "id": "memory.forget",
@@ -3433,6 +3433,21 @@
       },
       "legacyCommand": null,
       "input": "a2135a18629b"
+    },
+    {
+      "id": "memory.lastChanges",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
     },
     {
       "id": "memory.learnNow",
@@ -3518,7 +3533,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "730dd7ff714a"
+      "input": "34d5711614c0"
     },
     {
       "id": "memory.sortStatus",
@@ -3553,7 +3568,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "25c7d85c859a"
+      "input": "c35c2345ae11"
     },
     {
       "id": "memory.unforget",
@@ -3591,7 +3606,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "79bea192237a"
+      "input": "0e262f2c96ae"
     },
     {
       "id": "notifications.count",

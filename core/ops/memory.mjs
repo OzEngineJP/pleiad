@@ -1,4 +1,3 @@
-import { concernSources } from '../brain/store.mjs';
 import { threadTitle } from '../channels/threads.mjs';
 // bot の記憶（S3。ADR 0110）の操作（`memory.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
 // handler は `ctx.memory`（core/memory/service.mjs。core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
@@ -32,9 +31,10 @@ const sourceInput = z.object({
 const entryOut = z.object({
   id: z.string(), layer: z.string(), text: z.string(), why: z.string().optional(),
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
-  kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum([...MEMORY_STATUSES, 'expired']).optional(),
   tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
   concern: z.object({ id: z.string(), wakeOn: z.unknown(), due: z.number().nullable() }).optional(),
+  todo: z.object({ sessionId: z.string().nullable(), scheduledAt: z.number().optional() }).optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
 });
 const tagInputs = (id) => ({
@@ -79,7 +79,8 @@ const coreFitOut = z.object({
 const asOpError = (ctx, err) => {
   if (!(err instanceof MemoryError)) return err;
   const reason = agentT(ctx.locale, `memory.reason.${err.reason}`);
-  return new OpError(err.code, agentT(ctx.locale, `ops.errors.${err.code}`, { reason, id: err.detail }));
+  const message = agentT(ctx.locale, `ops.errors.${err.code}`, { reason, id: err.detail });
+  return new OpError(err.code, err.reason === 'promiseTodoAdded' ? `${message} (${err.detail})` : message);
 };
 const guarded = async (ctx, fn) => { try { return await fn(); } catch (err) { throw asOpError(ctx, err); } };
 
@@ -119,57 +120,27 @@ async function visibleEntry(ctx, who, id) {
   return entry;
 }
 
-/** この会話に ToDo があるか（1 件でもあれば真。読めなければ偽）。約束を記憶に書こうとしたとき、ToDo へ置くか気がかりへ置くかを分ける */
-const hasTodoList = async (ctx, sessionId) => {
-  if (!sessionId || !ctx.todos?.list) return false;
-  try { return ((await ctx.todos.list({ kind: 'session', id: sessionId }))?.items?.length ?? 0) > 0; } catch { return false; }
-};
-
-/** service へ渡す呼び出しの文脈。sessionCwd は書いた会話の cwd（無い・読めなければ null。記憶の作業場所の既定に使う）。
- *  hasTodos は会話に ToDo があるか（約束を断ったときの案内の分け先） */
 const callCtx = async (ctx, who) => ({
   sessions: ctx.sessions, botOfSession: ctx.botOfSession, sessionId: who.sessionId, locale: ctx.locale,
   sessionCwd: who.sessionId ? (await ctx.sessionCwd?.(who.sessionId).catch(() => null)) ?? null : null,
-  hasTodos: await hasTodoList(ctx, who.sessionId),
 });
 
-/**
- * AI が約束を記憶に書こうとして断られた（MEMORY_REJECTED の promiseTodo / promiseLoop）とき、その約束を実際に置く（ADR 0363）。
- * 会話に ToDo があれば ToDo へ、無ければ bot の気がかりへ（気がかりを持たない bot でない会話は、ToDo を作って足す）。
- * 同じ文が開いたまま既にあれば足さない（言い直しで増やさない）。置けたら理由を promiseTodoAdded / promiseLoopAdded に付け替えた MemoryError を返す。
- * 道具が無い・一覧が満杯・失敗のときは、元の断り（自分で置く案内）のまま返す。記憶には書かない。memory.edit と夜の整理は置かない（断るだけ）。
- * 置き先の仕組みは todos.add（core/todos.mjs）と brain.loopAdd（core/brain/store.mjs の applyLoops）のものをそのまま使う（上限・押し出しもそちらの決まり）
- */
-async function redirectPromise(ctx, who, err, text) {
-  if (!(err instanceof MemoryError) || err.code !== 'MEMORY_REJECTED' || !['promiseTodo', 'promiseLoop'].includes(err.reason) || !who.sessionId) return err;
-  const note = oneLine(String(text ?? '')).slice(0, LOOP_TEXT_MAX);
-  if (!note) return err;
-  const toTodo = async () => {
-    if (!ctx.todos?.add || !ctx.todos?.list) return null;
-    const scope = { kind: 'session', id: who.sessionId };
-    if (!ctx.todos.list(scope).items.some((item) => item.text === note && item.status !== 'done')) {
-      const backend = (await ctx.sessions?.get(who.sessionId).catch(() => null))?.row?.backend;
-      ctx.todos.add(scope, { entries: [{ text: note }], by: backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' } });
-    }
-    return 'promiseTodoAdded';
-  };
-  const toLoop = async () => {
-    if (!who.botId || !ctx.brain?.applyLoops) return null;
-    if (ctx.brain.loops(who.botId, 'open').some((loop) => loop.text === note)) return 'promiseLoopAdded';
-    const session = await ctx.botOfSession?.(who.sessionId);
-    const taint = session?.taint ?? null;
-    const { applied } = ctx.brain.applyLoops(who.botId, [{ op: 'add', text: note }], { taint, sources: concernSources(session, who.sessionId) });
-    if (!applied.length) return null;
-    for (const a of applied) ctx.brain.append(who.botId, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint });
-    return 'promiseLoopAdded';
-  };
-  for (const place of err.reason === 'promiseTodo' ? [toTodo, toLoop] : [toLoop, toTodo]) {
-    try {
-      const reason = await place();
-      if (reason) return new MemoryError('MEMORY_REJECTED', reason);
-    } catch { /* 置けなかった。次の置き先か、元の断り */ }
+async function redirectPromise(ctx, who, err, { text, sources }) {
+  if (!(err instanceof MemoryError) || err.reason !== 'promiseTodo' || !who.sessionId || !ctx.todos?.add) throw err;
+  const note = oneLine(text);
+  if (!note || [...note].length > LOOP_TEXT_MAX) throw err;
+  const backend = (await ctx.sessions?.get(who.sessionId).catch(() => null))?.row?.backend;
+  const session = await ctx.botOfSession?.(who.sessionId);
+  const scope = { kind: 'session', id: who.sessionId };
+  const by = backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' };
+  try {
+    const existing = ctx.todos.list(scope).items.find(item => item.text === note && item.status !== 'done');
+    if (existing) return { todoId: existing.id };
+    const { items } = ctx.todos.add(scope, { entries: [{ text: note, followUp: { sources, taint: session?.taint ?? null } }], by });
+    return { todoId: items.at(-1).id };
+  } catch {
+    throw err;
   }
-  return err;
 }
 
 export const memoryOps = [
@@ -184,13 +155,32 @@ export const memoryOps = [
       const who = await whoIs(ctx, { write: false });
       const name = layerOf(ctx, who, layer);
       const entries = await ctx.memory.list({ layer: name });
-      if (who.author?.kind !== 'human') return entries;
+      if (who.author?.kind !== 'human') return entries.filter(entry => entry.tier !== 'archive' && entry.kind !== 'promise');
       const concerns = name === USER_LAYER ? [] : (ctx.brain?.loops(name, null) ?? []).map((loop) => ({
-        id: 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
-        at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: { kind: 'bot', botId: name },
-        status: ({ open: 'open', resolved: 'done', dropped: 'dropped' })[loop.status],
+        id: loop.todoId ?? 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
+        at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: loop.author ?? { kind: 'bot', botId: name },
+        status: ({ open: 'open', resolved: 'done', dropped: 'dropped', expired: 'expired' })[loop.status],
         concern: { id: loop.id, wakeOn: loop.wakeOn ?? null, due: loop.due ?? null },
       }));
+      const work = [];
+      if (ctx.principal.local && ctx.memoryTodoSessions && ctx.todos) {
+        for (const sessionId of await ctx.memoryTodoSessions(name === USER_LAYER ? null : name)) {
+          for (const item of ctx.todos.list({ id: sessionId }).items) {
+            if (['concern', 'wake'].includes(item.followUp?.type)) continue;
+            work.push({ id: item.id, layer: name, text: item.text, sources: item.followUp?.sources ?? [],
+              at: item.createdAt ?? 0, updatedAt: item.updatedAt ?? 0, by: item.by?.kind === 'user' ? { kind: 'human' } : item.by,
+              status: item.status === 'done' ? 'done' : 'open', todo: { sessionId } });
+          }
+        }
+        if (name !== USER_LAYER) {
+          for (const wake of ctx.wakes?.list(name) ?? []) {
+            work.push({ id: wake.todoId, layer: name, text: wake.note || new Date(wake.at).toLocaleString(ctx.locale), sources: [],
+              at: wake.createdAt ?? wake.at, updatedAt: wake.updatedAt ?? wake.createdAt ?? wake.at,
+              by: { kind: 'bot', botId: name }, status: wake.status === 'pending' ? 'open' : wake.status === 'fired' ? 'done' : 'dropped',
+              todo: { sessionId: wake.sessionId ?? null, scheduledAt: wake.at } });
+          }
+        }
+      }
       const titles = new Map();
       async function withTitle(source) {
         if (!ctx.channels || !source?.channelId || !(source.threadId || source.postId)) return source;
@@ -208,7 +198,7 @@ export const memoryOps = [
         const title = await titles.get(key);
         return title ? { ...source, threadId, threadTitle: title } : source;
       }
-      return Promise.all([...entries, ...concerns].map(async (entry) => ({
+      return Promise.all([...entries, ...concerns, ...work].map(async (entry) => ({
         ...entry, sources: await Promise.all(entry.sources.map(withTitle)),
       })));
     },
@@ -222,12 +212,14 @@ export const memoryOps = [
       query: z.string().min(1).max(200).describe(D('search', 'query')),
       layer: z.string().min(1).max(80).optional().describe(D('search', 'layer')),
       limit: z.number().int().min(1).max(8).optional().describe(D('search', 'limit')),
+      workspace: z.string().min(1).max(WORKSPACE_MAX).optional().describe(D('search', 'workspace')),
     }),
     output: z.array(entryOut),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'search'], positional: ['query'] } },
-    handler: async (ctx, { query, layer, limit }) => {
+    handler: async (ctx, { query, layer, limit, workspace }) => {
       const who = await whoIs(ctx, { write: false });
-      return ctx.memory.search({ query, limit: limit ?? 5, ...scopeOf(ctx, who, layer) });
+      const sessionCwd = who.sessionId ? (await callCtx(ctx, who)).sessionCwd : undefined;
+      return guarded(ctx, () => ctx.memory.search({ query, limit: limit ?? 5, workspace, sessionCwd, ...scopeOf(ctx, who, layer) }));
     },
   }),
 
@@ -262,7 +254,7 @@ export const memoryOps = [
       sources: z.array(sourceInput).max(8).default([]).describe(D('write', 'sources')),
       ...tagInputs('write'),
     }),
-    output: entryOut,
+    output: z.union([entryOut, z.object({ todoId: z.string() })]),
     surfaces: { ui: true, mcp: 'catalog', cli: false },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
@@ -275,7 +267,7 @@ export const memoryOps = [
           return await ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
             tier: args.tier, workspace: args.workspace }, who.author, call);
         } catch (err) {
-          throw await redirectPromise(ctx, who, err, args.text);   // 約束は記憶に書かず、ToDo か気がかりへ置く
+          return redirectPromise(ctx, who, err, args);
         }
       });
     },
@@ -351,6 +343,16 @@ export const memoryOps = [
     handler: async (ctx) => ctx.memoryLearner.status(),
   }),
 
+  defineOp({
+    id: 'memory.lastChanges',
+    summary: 'agent:ops.memory.lastChanges.summary',
+    risk: 'read',
+    input: z.object({}),
+    output: z.array(z.unknown()),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx) => ctx.memoryLearner.lastChanges(),
+  }),
+
   // 「今すぐ整理」/「もう一度」。停止（halted）を明示操作で解除してから 1 回走る。毎晩の整理が OFF のままでは動かない（skipped: 'off'）
   defineOp({
     id: 'memory.learnNow',
@@ -380,11 +382,13 @@ export const memoryOps = [
     id: 'memory.sortUndo',
     summary: 'agent:ops.memory.sortUndo.summary',
     risk: 'guarded',
-    input: z.object({}),
+    input: z.object({
+      change: z.object({ runId: z.string().max(80), id: z.string().max(80), rev: z.number().int(), type: z.enum(['followUp']).optional() }).optional().describe(D('sortUndo', 'change')),
+    }),
     output: z.object({ restored: z.number().int().optional(), kept: z.number().int().optional(), skipped: z.string().optional() }),
     confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortUndo.confirm'), before: null, loosens: false }),
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: async (ctx) => ctx.memoryLearner.sortUndo(),
+    handler: async (ctx, { change }) => change ? ctx.memoryLearner.undoChange(change) : ctx.memoryLearner.sortUndo(),
   }),
 
   // 忘れた直後の「元に戻す」。画面の「元に戻す」の帯と、AI・CLI の両方に出す（全機能は AI も使える）。誰が戻したかは log.jsonl の by に残る

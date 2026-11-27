@@ -86,6 +86,35 @@
       "title": "Memory",
       "autoLearn": "Organize memories every night",
       "learnAt": "Organization time",
+      "changes": {
+        "title": "Last organization",
+        "absent": "No entry",
+        "before": "Before · {{text}}",
+        "after": "After · {{text}}",
+        "reasonLabel": "Reason · {{text}}",
+        "undo": "Undo this change",
+        "restored": "The change was undone.",
+        "stoppedOff": "Organization stopped when automatic organization was turned off.",
+        "unavailable": "The change could not be loaded or has already been updated.",
+        "more": "Show more",
+        "empty": "No changes to show.",
+        "reason": {
+          "legacyPromise": "Kept a previous promise for reference.",
+          "unconfirmedImportance": "Adjusted importance to match the available evidence.",
+          "organizer": "Organized using evidence from the conversation.",
+          "deadlineElapsed": "Seven days have passed since the deadline.",
+          "trackingElapsed": "Fourteen days have passed since tracking started.",
+          "resolvedByPerson": "A person indicated this was resolved.",
+          "cancelledByPerson": "A person indicated this was cancelled."
+        },
+        "status": {
+          "open": "Tracking",
+          "resolved": "Resolved",
+          "dropped": "Cancelled",
+          "expired": "Expired",
+          "done": "Done"
+        }
+      },
       "status": {
         "organizeFailed": "Could not organize memories."
       },
