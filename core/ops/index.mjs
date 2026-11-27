@@ -4,6 +4,7 @@ import { createRegistry } from './registry.mjs';
 import { isReviewMode, reviewRegistry } from '../review-mode.mjs';
 import { appOps } from './app.mjs';
 import { sessionOps } from './sessions.mjs';
+import { workspaceOps } from './workspace.mjs';
 import { conversationOps } from './conversations.mjs';
 import { agentOps } from './agents.mjs';
 import { accountOps } from './accounts.mjs';
@@ -44,7 +45,7 @@ import { plusOps } from './plus.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 const fullRegistry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...accountOps, ...statusOps, ...settingOps, ...delegationOps,
+  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...workspaceOps, ...agentOps, ...accountOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
     ...gitOps, ...gitPrsOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...todoOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...apiKeyOps, ...secretOps, ...plusOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],

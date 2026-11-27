@@ -257,6 +257,7 @@ const SUITES = [
   // 操作の一覧（core/ops/、ADR 0080・0081）: 権限の表（主体 × 危険度 × 会話の承認モード）・関所の順序と定義の検査・載せ忘れの lint（WS のコマンドと prefs のキーのラチェット）・
   // 一覧の中身（snapshot・文の量・主体ごとの見え方・伏せ字・辞書・JSON Schema）・WS の invoke をサーバー越しに
   './unit/ops-policy.mjs',
+  './unit/workspace-ops.mjs',
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・性質ごとの契約の試験・runArgs の絞り込み・配達物の証拠の照らし方・対応表（静的）

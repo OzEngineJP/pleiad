@@ -5548,6 +5548,81 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "workspace.createTask",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "cli": false,
+        "mcp": "catalog"
+      },
+      "legacyCommand": null,
+      "input": "eaded93fc838"
+    },
+    {
+      "id": "workspace.queryDatabase",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "cli": false,
+        "mcp": "catalog"
+      },
+      "legacyCommand": null,
+      "input": "84935b4b95a3"
+    },
+    {
+      "id": "workspace.readPage",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "cli": false,
+        "mcp": "catalog"
+      },
+      "legacyCommand": null,
+      "input": "c61eb4728eb6"
+    },
+    {
+      "id": "workspace.search",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "cli": false,
+        "mcp": "catalog"
+      },
+      "legacyCommand": null,
+      "input": "3f198751ba2e"
+    },
+    {
+      "id": "workspace.writePage",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "cli": false,
+        "mcp": "catalog"
+      },
+      "legacyCommand": null,
+      "input": "e78a4c6ff2a6"
+    },
+    {
       "id": "worktrees.archive",
       "risk": "write",
       "riskOf": false,

@@ -845,6 +845,14 @@
         "waitFlag": "Boolean flag describing the wait path or state."
       }
     },
+    "workspace": {
+      "fields": {"sessionId":"Conversation ID. Agents use their current conversation.","query":"Title text to match.","limit":"Maximum number of results.","pageId":"Page ID from workspace.search.","databaseId":"Database ID from workspace.search.","baseVersion":"Version returned by workspace.readPage.","blockId":"Block ID from workspace.readPage. Required for replaceText. Omit for appendParagraph.","change":"Change kind and literal text. Use appendParagraph or replaceText.","requestId":"Caller-generated UUID. Reuse only for an identical retry.","viewId":"Optional saved view ID.","filters":"Typed filters combined with AND. Property IDs and types come from workspace.queryDatabase.","sorts":"Sort keys in priority order.","offset":"Offset returned by the previous query.","title":"Task title.","values":"Values keyed by property ID. Use the types returned by workspace.queryDatabase."},
+      "search": { "summary": "Find pages by title in this conversation's workspace." },
+      "readPage": { "summary": "Read a page as Markdown with block IDs and a base version." },
+      "writePage": { "summary": "Append a paragraph or replace text in a page block using the base version and a request ID." },
+      "queryDatabase": { "summary": "Query a workspace database with typed filters, sorts, and paging." },
+      "createTask": { "summary": "Create one task in a workspace database with its task template and a request ID." }
+    },
     "sessions": {
       "scheduleSend": { "summary": "Schedule a message in a conversation. When the time comes it joins the send queue like a normal send. A person decides this, so it needs approval.", "sessionId": "ID of the conversation to send to.", "prompt": "The message text.", "at": "When to send (Unix milliseconds or an ISO 8601 date and time).", "messageId": "Send ID (8–80 letters, digits or hyphens). A new one is made when omitted.", "attachments": "Attachments (path, name, MIME type).", "cwd": "Working directory.", "mode": "Approval mode.", "confirm": "Schedule a message in conversation {{session}} for {{at}}: {{prompt}}" },
       "sendScheduledNow": { "summary": "Put a scheduled message into the send queue now without waiting for its time.", "id": "ID of the scheduled message.", "confirm": "Send scheduled message {{id}} now" },
