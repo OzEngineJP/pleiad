@@ -161,7 +161,9 @@ export default async function (t) {
     t.ok('読むだけの AI は書けない', !ro.ok);
     t.ok('checkLinks は画面だけ（AI の目録に載らない）', registry.get('todos.checkLinks').surfaces.mcp === false && registry.get('todos.add').surfaces.mcp === 'catalog');
     const taskId = 'ply-task-00000000-0000-4000-8000-000000000000';
-    const long = '検証項目'.repeat(160);
+    const long = '検証項目'.repeat(50);
+    const tooLong = await registry.invoke(agent('me'), 'todos.add', { items: [{ text: long + '超' }] }, deps);
+    t.ok('201字の新規項目は一覧を変えずに拒否する', !tooLong.ok && ops.list({ id: 'me' }).items.length === 2);
     task = { parentSessionId: 'me', status: 'queued', humanWaiting: false };
     const linkedTask = await registry.invoke(agent('me'), 'todos.add', {
       items: [{ text: long, taskId, assignee: 'Codex', humanWaiting: true }],

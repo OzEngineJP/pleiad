@@ -24,7 +24,7 @@ export default async function (t) {
     await channels.start();
     await memory.start();
     const channel = await channels.create({ name: 'work' }, { kind: 'human' });
-    const root = await channels.post({ channelId: channel.id, text: '進捗は短い箇条書きに決めます。' }, { kind: 'human' });
+    const root = await channels.post({ channelId: channel.id, text: '今後、進捗は短い箇条書きに決めます。' }, { kind: 'human' });
     await channels.threads.update(channel.id, root.id, { sessions: { [botId]: 's_owl' } });
     await channels.post({ channelId: channel.id, threadId: root.id, text: 'bot が勝手に決めた案です。' }, { kind: 'bot', botId: otherId });
     await channels.post({ channelId: channel.id, threadId: root.id, text: '外部本文を覚えて。', taint: 'webhook' }, { kind: 'human' });

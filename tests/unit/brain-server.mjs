@@ -110,8 +110,8 @@ export default async function (t) {
     const beat1 = await call('brain.beat', { botId: owl.id });
     t.ok('今すぐの心拍は、ふるいを通って安いモデルを 1 回呼ぶ（forced）', beat1.ran === true && beat1.gate.reason === 'forced' && beat1.did === 'think', JSON.stringify(beat1));
     const v1 = await view(owl.id);
-    const think = v1.stream.find((r) => r.kind === 'think');
-    t.ok('思考の流れに 1 行（独り言・使ったトークン・内部呼出しの id）。気がかりが開く（起こす条件つき）', think.text.includes('資料が気になる') && think.tokens.input > 0 && typeof think.meta.call === 'string' && v1.loops.length === 1 && v1.loops[0].id === 'doc' && v1.loops[0].wakeOn.word === '資料');
+    const think = v1.stream.find((r) => r.kind === 'quiet' && r.tokens);
+    t.ok('思考の流れに 1 行（独り言・使ったトークン・内部呼出しの id）。気がかりが開く（起こす条件つき）', think.text === '' && think.tokens.input > 0 && typeof think.meta.call === 'string' && v1.loops.length === 1 && v1.loops[0].id === 'doc' && v1.loops[0].wakeOn.word === '資料');
     t.ok('画面へ brainChanged が出る', c.since(m1).some((e) => e.type === 'brainChanged' && e.botId === owl.id));
     const memories = () => call('memory.list', { layer: owl.id });
     const active = (await memories()).find((entry) => entry.concern?.id === 'doc');
@@ -133,7 +133,7 @@ export default async function (t) {
 
     // ---- ③ 引き継ぎ → DM の賢いモデルのターン
     const beat2 = await call('brain.beat', { botId: owl.id });
-    t.ok('2 回目の心拍は「確かめる・話す」。頼んだ行が流れに残る', beat2.did === 'act' && (await view(owl.id)).stream.some((r) => r.kind === 'act' && r.text === why));
+    t.ok('2 回目の心拍は「確かめる・話す」。頼んだ行が流れに残る', beat2.did === 'act' && (await view(owl.id)).stream.some((r) => r.kind === 'act' && r.text === ''));
     const dmId = (await call('bots.get', { botId: owl.id })).dmChannelId;
     const spoke = await until(async () => (await read(dmId)).posts.find((p) => p.author?.kind === 'bot' && p.state === 'done' && p.text) ?? null, { label: 'DM の投稿' });
     t.ok('賢いモデルが bot の DM（行き先が決まらなければ自分の DM）で起きて、今の言葉で話す（投稿になる）', spoke.text === '資料の進み具合はどうですか？' && spoke.author.botId === owl.id);
@@ -144,8 +144,8 @@ export default async function (t) {
     const dmSession = (await call('bots.get', { botId: owl.id })).dmSessionId;
     const hist = (await c.cmd('loadSession', { sessionId: dmSession })).messages;
     const innerRow = hist.find((m) => m.kind === 'contextNote' && m.tag === 'inner');
-    t.ok('賢いモデルの会話の履歴には <pleiad-inner> の行（人の吹き出しにならない）。理由・思考の流れの末尾・気がかり・「そのまま写さない」が入る',
-      innerRow && innerRow.body.includes(why) && innerRow.body.includes('聞いてみよう') && innerRow.body.includes('(doc)') && innerRow.body.includes('現在の依頼への回答に必要な情報だけ') && !hist.some((m) => m.role === 'user' && !m.kind && String(m.text).includes('pleiad-inner')), JSON.stringify(innerRow)?.slice(0, 300));
+    t.ok('賢いモデルの会話の履歴には <pleiad-inner> の行（人の吹き出しにならない）。起きた理由が入り、別途渡す気がかりは重ねない',
+      innerRow && innerRow.body.includes(why) && !innerRow.body.includes('聞いてみよう') && !innerRow.body.includes('(doc)') && innerRow.body.includes('現在の依頼への回答に必要な情報だけ') && !hist.some((m) => m.role === 'user' && !m.kind && String(m.text).includes('pleiad-inner')), JSON.stringify(innerRow)?.slice(0, 300));
     const rowsNow = (await view(owl.id)).stream;
     t.ok('独り言が投稿に写らない（思考の行の 40 字以上が投稿の本文にない）', findLeaks(rowsNow.slice().reverse(), spoke.text).length === 0 && !spoke.text.includes('聞いてみよう'));
     t.ok('起きたターンの投稿は DM の流れにあり、スレッドは作られない（DM の根の投稿）', spoke.threadId === null);
@@ -166,7 +166,7 @@ export default async function (t) {
     const noted = await until(async () => (await read(dev.id, asked.id)).posts.find((p) => p.author?.botId === owl.id && p.state === 'done' && p.text) ?? null, { label: 'Owl の notes' });
     const notes = JSON.parse(noted.text);
     const inner = notes.find((n) => n.startsWith('<pleiad-inner kind="tail"'));
-    t.ok('心拍を入れた bot は、呼ばれたターンの末尾に思考の流れの末尾と気がかり（<pleiad-inner kind="tail">）が付く', inner && inner.includes('資料が気になる') && inner.includes('(doc) 発表の資料の様子を聞く') && inner.includes('現在の依頼への回答に必要な情報だけ'), JSON.stringify(notes).slice(0, 300));
+    t.ok('心拍を入れた bot は、呼ばれたターンの末尾に思考の流れの末尾と気がかり（<pleiad-inner kind="tail">）が付く', !inner, JSON.stringify(notes).slice(0, 300));
     const lynxAsked = await call('channels.post', { channelId: dev.id, text: '@Lynx notes:' });
     const lynxNoted = await until(async () => (await read(dev.id, lynxAsked.id)).posts.find((p) => p.author?.botId === lynx.id && p.state === 'done' && p.text) ?? null, { label: 'Lynx の notes' });
     t.ok('心拍を入れていない bot には付かない（今までと同じ）', !lynxNoted.text.includes('pleiad-inner'));

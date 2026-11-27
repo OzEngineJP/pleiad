@@ -34,6 +34,7 @@ const entryOut = z.object({
   kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum([...MEMORY_STATUSES, 'expired']).optional(),
   tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
   concern: z.object({ id: z.string(), wakeOn: z.unknown(), due: z.number().nullable() }).optional(),
+  todo: z.object({ sessionId: z.string().nullable(), scheduledAt: z.number().optional() }).optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
 });
 const tagInputs = (id) => ({
@@ -125,17 +126,21 @@ const callCtx = async (ctx, who) => ({
 });
 
 async function redirectPromise(ctx, who, err, { text, sources }) {
-  if (!(err instanceof MemoryError) || err.reason !== 'promiseTodo' || !who.sessionId || !ctx.todos) return err;
+  if (!(err instanceof MemoryError) || err.reason !== 'promiseTodo' || !who.sessionId || !ctx.todos?.add) throw err;
   const note = oneLine(text);
-  if (!note || [...note].length > LOOP_TEXT_MAX) return err;
+  if (!note || [...note].length > LOOP_TEXT_MAX) throw err;
   const backend = (await ctx.sessions?.get(who.sessionId).catch(() => null))?.row?.backend;
   const session = await ctx.botOfSession?.(who.sessionId);
   const scope = { kind: 'session', id: who.sessionId };
-  const existing = ctx.todos.list(scope).items.find(item => item.text === note && item.status !== 'done');
-  if (existing) return new MemoryError('MEMORY_REJECTED', 'promiseTodoAdded', existing.id);
   const by = backend ? { kind: 'agent', backend: String(backend) } : { kind: 'agent' };
-  const { items } = ctx.todos.add(scope, { entries: [{ text: note, followUp: { sources, taint: session?.taint ?? null } }], by });
-  return new MemoryError('MEMORY_REJECTED', 'promiseTodoAdded', items.at(-1).id);
+  try {
+    const existing = ctx.todos.list(scope).items.find(item => item.text === note && item.status !== 'done');
+    if (existing) return { todoId: existing.id };
+    const { items } = ctx.todos.add(scope, { entries: [{ text: note, followUp: { sources, taint: session?.taint ?? null } }], by });
+    return { todoId: items.at(-1).id };
+  } catch {
+    throw err;
+  }
 }
 
 export const memoryOps = [
@@ -150,13 +155,32 @@ export const memoryOps = [
       const who = await whoIs(ctx, { write: false });
       const name = layerOf(ctx, who, layer);
       const entries = await ctx.memory.list({ layer: name });
-      if (who.author?.kind !== 'human') return entries;
+      if (who.author?.kind !== 'human') return entries.filter(entry => entry.tier !== 'archive' && entry.kind !== 'promise');
       const concerns = name === USER_LAYER ? [] : (ctx.brain?.loops(name, null) ?? []).map((loop) => ({
-        id: 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
+        id: loop.todoId ?? 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
         at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: loop.author ?? { kind: 'bot', botId: name },
         status: ({ open: 'open', resolved: 'done', dropped: 'dropped', expired: 'expired' })[loop.status],
         concern: { id: loop.id, wakeOn: loop.wakeOn ?? null, due: loop.due ?? null },
       }));
+      const work = [];
+      if (ctx.principal.local && ctx.memoryTodoSessions && ctx.todos) {
+        for (const sessionId of await ctx.memoryTodoSessions(name === USER_LAYER ? null : name)) {
+          for (const item of ctx.todos.list({ id: sessionId }).items) {
+            if (['concern', 'wake'].includes(item.followUp?.type)) continue;
+            work.push({ id: item.id, layer: name, text: item.text, sources: item.followUp?.sources ?? [],
+              at: item.createdAt ?? 0, updatedAt: item.updatedAt ?? 0, by: item.by?.kind === 'user' ? { kind: 'human' } : item.by,
+              status: item.status === 'done' ? 'done' : 'open', todo: { sessionId } });
+          }
+        }
+        if (name !== USER_LAYER) {
+          for (const wake of ctx.wakes?.list(name) ?? []) {
+            work.push({ id: wake.todoId, layer: name, text: wake.note || new Date(wake.at).toLocaleString(ctx.locale), sources: [],
+              at: wake.createdAt ?? wake.at, updatedAt: wake.updatedAt ?? wake.createdAt ?? wake.at,
+              by: { kind: 'bot', botId: name }, status: wake.status === 'pending' ? 'open' : wake.status === 'fired' ? 'done' : 'dropped',
+              todo: { sessionId: wake.sessionId ?? null, scheduledAt: wake.at } });
+          }
+        }
+      }
       const titles = new Map();
       async function withTitle(source) {
         if (!ctx.channels || !source?.channelId || !(source.threadId || source.postId)) return source;
@@ -174,7 +198,7 @@ export const memoryOps = [
         const title = await titles.get(key);
         return title ? { ...source, threadId, threadTitle: title } : source;
       }
-      return Promise.all([...entries, ...concerns].map(async (entry) => ({
+      return Promise.all([...entries, ...concerns, ...work].map(async (entry) => ({
         ...entry, sources: await Promise.all(entry.sources.map(withTitle)),
       })));
     },
@@ -188,12 +212,14 @@ export const memoryOps = [
       query: z.string().min(1).max(200).describe(D('search', 'query')),
       layer: z.string().min(1).max(80).optional().describe(D('search', 'layer')),
       limit: z.number().int().min(1).max(8).optional().describe(D('search', 'limit')),
+      workspace: z.string().min(1).max(WORKSPACE_MAX).optional().describe(D('search', 'workspace')),
     }),
     output: z.array(entryOut),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'search'], positional: ['query'] } },
-    handler: async (ctx, { query, layer, limit }) => {
+    handler: async (ctx, { query, layer, limit, workspace }) => {
       const who = await whoIs(ctx, { write: false });
-      return ctx.memory.search({ query, limit: limit ?? 5, ...scopeOf(ctx, who, layer) });
+      const sessionCwd = who.sessionId ? (await callCtx(ctx, who)).sessionCwd : undefined;
+      return guarded(ctx, () => ctx.memory.search({ query, limit: limit ?? 5, workspace, sessionCwd, ...scopeOf(ctx, who, layer) }));
     },
   }),
 
@@ -228,7 +254,7 @@ export const memoryOps = [
       sources: z.array(sourceInput).max(8).default([]).describe(D('write', 'sources')),
       ...tagInputs('write'),
     }),
-    output: entryOut,
+    output: z.union([entryOut, z.object({ todoId: z.string() })]),
     surfaces: { ui: true, mcp: 'catalog', cli: false },
     handler: async (ctx, args) => {
       const who = await whoIs(ctx);
@@ -241,7 +267,7 @@ export const memoryOps = [
           return await ctx.memory.write({ layer, text: args.text, why: args.why, sources: args.sources, kind: args.kind, weight: args.weight, status: args.status,
             tier: args.tier, workspace: args.workspace }, who.author, call);
         } catch (err) {
-          throw await redirectPromise(ctx, who, err, args);
+          return redirectPromise(ctx, who, err, args);
         }
       });
     },
@@ -319,7 +345,7 @@ export const memoryOps = [
 
   defineOp({
     id: 'memory.lastChanges',
-    summary: 'agent:ops.memory.learnStatus.summary',
+    summary: 'agent:ops.memory.lastChanges.summary',
     risk: 'read',
     input: z.object({}),
     output: z.array(z.unknown()),
@@ -357,7 +383,7 @@ export const memoryOps = [
     summary: 'agent:ops.memory.sortUndo.summary',
     risk: 'guarded',
     input: z.object({
-      change: z.object({ runId: z.string().max(80), id: z.string().max(80), rev: z.number().int(), type: z.enum(['followUp']).optional() }).optional(),
+      change: z.object({ runId: z.string().max(80), id: z.string().max(80), rev: z.number().int(), type: z.enum(['followUp']).optional() }).optional().describe(D('sortUndo', 'change')),
     }),
     output: z.object({ restored: z.number().int().optional(), kept: z.number().int().optional(), skipped: z.string().optional() }),
     confirm: async (ctx) => ({ note: agentT(ctx.locale, 'ops.memory.sortUndo.confirm'), before: null, loosens: false }),

@@ -161,7 +161,8 @@ export function createBotHost(deps) {
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
   // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0140）
-  wakes = createWakes({ dataDir, channels, bots, dispatch, enablement, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  wakes = createWakes({ dataDir, channels, bots, dispatch, enablement, clock: routinesClock, emit,
+    localeOf: () => deps.currentLocale?.() ?? 'ja', expireConcerns: brain.expireConcerns });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
   host.botRoutines = () => routines.list();

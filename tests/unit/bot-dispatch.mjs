@@ -1355,7 +1355,7 @@ export default async function (t) {
     }
 
     // ---- G: 末尾（記憶の核の写しは始まりだけ・毎ターン時刻・差分）と圧縮の後の取り直し
-    await call('memory.write', { layer: 'user', text: 'PR は小さく、テストを先に書く', sources: [] });
+    await call('memory.write', { layer: 'user', text: 'PR は小さく、テストを先に書く', tier: 'always', sources: [] });
     const rootG = await call('channels.post', { channelId: dev.id, text: '@Lynx notes:' });
     const g1 = await until(async () => { const r = await read(dev.id, rootG.id); return botPost(r, lynx, 'done')[0] ?? null; }, { label: 'G 1 回目' });
     const notes1 = JSON.parse(g1.text);
@@ -1366,7 +1366,7 @@ export default async function (t) {
     const notes2 = JSON.parse(g2.text);
     t.ok('2 回目は核の写しを繰り返さず、末尾（時刻）だけ。キャッシュの並び（人格・核・履歴・末尾）を壊さない', notes2.length === 1 && notes2[0].startsWith('<pleiad-turn-context>') && !notes2[0].includes('PR は小さく'), g2.text);
     await settled(rootG);
-    await call('memory.write', { layer: 'user', text: '金曜に本番へ出さない', sources: [] });
+    await call('memory.write', { layer: 'user', text: '金曜に本番へ出さない', tier: 'always', sources: [] });
     await call('channels.post', { channelId: dev.id, threadId: rootG.id, text: '@Lynx notes:' });
     const g3 = await until(async () => { const r = await read(dev.id, rootG.id); return botPost(r, lynx, 'done')[2] ?? null; }, { label: 'G 3 回目' });
     t.ok('記憶の差分（前のターンの後に増えたもの）は末尾に出る', JSON.parse(g3.text).length === 1 && JSON.parse(g3.text)[0].includes('金曜に本番へ出さない'), g3.text);

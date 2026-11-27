@@ -294,7 +294,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
   async function handOff(bot, parsed, { taint, taintOnly, at, loops }) {
     const l = locale();
     const act = brain.append(bot.id, { kind: 'act', refs: parsed.refs, taint, meta: { workNotesVersion: WORK_NOTES_VERSION, where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
-    const text = handoffText({ locale: l, now: at, why: parsed.handoff.why, loops, taintOnly });
+    const triggering = loops.filter(loop => parsed.refs.includes(loop.id) || parsed.refs.includes(loop.todoId));
+    const text = handoffText({ locale: l, now: at, why: parsed.handoff.why, loops: triggering, taintOnly });
     const result = await dispatch.handoff({ botId: bot.id, why: parsed.handoff.why, where: parsed.handoff.where ?? null, text, actSeq: act.seq, taint })
       .catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) brain.append(bot.id, { kind: 'result', text: agentT(l, 'brain.line.handoffFailed', { reason: result?.reason ?? '' }), refs: [String(act.seq)], taint });

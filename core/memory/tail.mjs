@@ -83,7 +83,7 @@ export function pickCore(userEntries, botEntries, { layerTokens = CORE_LAYER_TOK
     const picked = [];
     let used = 0;
     for (const e of [...live].sort((a, b) => (strength.get(b.id) - strength.get(a.id)) || (humanFirst(a) - humanFirst(b)) || (b.updatedAt - a.updatedAt) || (b.at - a.at))) {
-      const cost = estimateTokens(coreLine(locale, e)) + 1;
+      const cost = estimateTokens(e.text) + 3;
       if (used + cost > layerTokens && picked.length) break;
       picked.push(e); used += cost;
     }
@@ -135,8 +135,7 @@ export const tieredOrder = (a, b) => {
 };
 
 /**
- * 段の付いた記憶を核の写しに入れる（記憶 段階2）。段の無い記憶は従来の強さの仕組み（pickCore）のまま残し、
- * 段の付いた記憶には重み・薄れを使わない。上限を超えたときは、人が書いた・直したもの → やめたこと → 新しく更新した順。
+ * 重要な記憶を核の写しに入れる。上限を超えたときは人が書いた・直したものを先に、新しい更新を優先する。
  * 「保存だけ」は返さない。「この作業場所で」は workspace が今の作業場所と同じものだけ。合わないものは入りきらなかった数に入れない。
  * 返りは pickCore と同じ形に、omittedByTier・inactiveWorkspace を足したもの。
  */
@@ -147,17 +146,17 @@ export function pickTieredCore(userEntries, botEntries, { workspace = null, loca
     const picked = [];
     let used = 0;
     for (const e of [...list].sort(tieredOrder)) {
-      const cost = estimateTokens(e.text) + 3;
+      const cost = estimateTokens(coreLine(locale, e)) + 1;
       if (used + cost > budget) continue;
       picked.push(e);
       used += cost;
     }
     return { picked, omitted: list.length - picked.length };
   };
-  const always = take(all.filter((e) => e.tier === 'always' && !e.workspace), Math.max(0, alwaysTokens - 70));
+  const always = take(all.filter((e) => e.tier === 'always' && !e.workspace), alwaysTokens);
   const matching = all.filter((e) => e.tier === 'workspace' && sameWorkspace(e.workspace, workspace));
   const inactiveWorkspace = all.filter((e) => e.tier === 'workspace' && !sameWorkspace(e.workspace, workspace)).length;
-  const local = take(matching, Math.max(0, workspaceTokens - 70));
+  const local = take(matching, workspaceTokens);
   const keep = new Set([...always.picked, ...local.picked].map((e) => e.id));
   const user = userEntries.filter((e) => keep.has(e.id));
   const bot = botEntries.filter((e) => keep.has(e.id));

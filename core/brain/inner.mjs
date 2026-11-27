@@ -10,6 +10,7 @@
 //   findLeaks(rows, text, min) → rows   … 思考の流れの行のうち、text（投稿）に min 字以上そのまま写っているもの。朝の突き合わせ
 import { createHash } from 'node:crypto';
 import { agentT } from '../i18n.mjs';
+import { innerEnvelope } from '../channels/types.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
 
 /** 呼ばれたターンの末尾に入れる思考の流れのトークンの目安（設計 §4.3: 末尾 ≈1.2k トークン） */
@@ -85,9 +86,10 @@ export function streamLines(stream, { locale, now, maxTokens = TAIL_TOKENS }) {
   return lines.reverse();
 }
 
-export function todoContext({ items, previous = {}, wrap = text => text }) {
-  const active = items.filter(item => item.followUp?.status !== 'expired' && (item.status !== 'done' || previous[item.id]));
-  const versions = Object.fromEntries(active.map(item => [item.id, previous[item.id]]).filter(([, version]) => version));
+export function todoContext({ items, previous, wrap = text => text }) {
+  const delivered = previous ?? {};
+  const active = items.filter(item => item.followUp?.status !== 'expired' && (item.status !== 'done' || delivered[item.id]));
+  const versions = Object.fromEntries(active.map(item => [item.id, delivered[item.id]]).filter(([, version]) => version));
   const lines = [];
   for (const item of active) {
     const version = createHash('sha256').update(JSON.stringify([item.updatedAt, item.status, item.waiting, item.humanWaiting, item.text, item.followUp])).digest('base64url');
@@ -106,16 +108,30 @@ export function todoContext({ items, previous = {}, wrap = text => text }) {
 }
 
 export function handoffText({ locale, now, why, loops = [], taintOnly = false }) {
-  const body = workNotesContext({ loops }).loops.map(loop => {
-    const line = loopLine(loop, { locale, now });
-    return estimateTokens(line) <= 200 ? line : `- (${loop.id})`;
-  });
-  return [
+  const head = [
     agentT(locale, 'brain.inner.note'), '',
-    agentT(locale, 'brain.inner.pulseIntro', { why: oneLine(why) }),
+    agentT(locale, 'brain.inner.pulseIntro', { why: clip(why, 160) }),
     ...(taintOnly ? [agentT(locale, 'brain.inner.taintOnly')] : []),
-    ...(body.length ? ['', ...body] : []),
-  ].join('\n');
+  ];
+  const rows = workNotesContext({ loops }).loops.map(loop => ({
+    id: loop.todoId ?? loop.id,
+    text: loopLine({ ...loop, id: loop.todoId ?? loop.id }, { locale, now }),
+  }));
+  return wakeContext({ head, rows, at: now, kind: 'pulse' });
+}
+
+/** One delivery for the triggering items. Keep their identifiers when the body cannot fit. */
+export function wakeContext({ head, rows, tail = [], at, kind }) {
+  const lines = [];
+  const text = () => [...head, ...lines, ...tail].join('\n');
+  const fits = () => estimateTokens(innerEnvelope({ kind, at: new Date(at).toISOString() }, text())) <= 300;
+  for (const row of rows) {
+    const id = `- (${row.id})`;
+    lines.push(lines.length < 3 ? row.text : id);
+    if (!fits()) lines[lines.length - 1] = id;
+    if (!fits()) { lines.pop(); break; }
+  }
+  return text();
 }
 
 const pct = (n) => String(Math.round(n * 100) / 100);

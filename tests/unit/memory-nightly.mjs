@@ -142,7 +142,7 @@ export default async function (t) {
     await a.memory.forget({ id: forgotten.id }, HUMAN, {});
     ids1 = { l1: l1.id, l2: l2.id, l3: l3.id, h: h.id, archived: archived.id, promise: promise.id };
     const countOf = async (needle) => (await a.memory.list({})).filter((x) => x.text.includes(needle)).length;
-    a.say('s_alpha', 'alpha の整理をお願いします');
+    a.say('s_alpha', '今後、alpha の整理をお願いします');
     const run1 = await a.learner.runNow();
     t.ok('AI は 1 回だけ呼ぶ', a.prompts.length === 1, JSON.stringify(a.prompts.length));
     const sent1 = a.sentOf(a.prompts[0]);
@@ -178,7 +178,7 @@ export default async function (t) {
     // ---- 人が選んだ段は付け直さない（人が後から直した記憶を AI が戻さない）
     // 人が l1 の段を「この作業場所で」に直した。次の回の AI は同じ答え（l1 を「いつも」へ・l3 を保存だけへ・人の行を保存だけへ）を返す
     await a.memory.place({ id: l1.id, tier: 'workspace', workspace: '/repo/alpha', by: HUMAN, reason: '人が選んだ' });
-    a.say('s_alpha', '次の発言です。もう一度整理をお願いします');
+    a.say('s_alpha', '今後、alpha の整理をもう一度お願いします');
     const run2 = await a.learner.runNow();
     t.ok('2 回目は l3 だけ付け直す（人が選んだ l1・人が書いた行・今と同じ段は付け直さない）', run2.retiered === 1 && (await a.byId(l3.id)).tier === 'archive', JSON.stringify(run2));
     t.ok('人が選んだ段は、その後の夜の整理が戻さない（変更記録にも learner の付け直しは残らない）',
@@ -193,9 +193,13 @@ export default async function (t) {
     const capRun = await cap.learner.runNow();
     const archivedNow = async () => (await cap.memory.list({})).filter((x) => x.text.startsWith('整理対象') && x.tier === 'archive').length;
     t.ok('2 回の呼び出し（束）にまたがっても付け直しは 20 件まで', cap.prompts.length === 2 && capRun.retiered === NIGHTLY_TIER_CHANGES && await archivedNow() === NIGHTLY_TIER_CHANGES, JSON.stringify({ calls: cap.prompts.length, capRun }));
-    t.ok('枠を使い切った後の呼び出しには tiers の指示を付けない（残りの枠が分かる）',
-      cap.prompts[0].includes(`at most ${NIGHTLY_TIER_CHANGES} tier changes`) && !cap.prompts[1].includes('tier changes') && !cap.prompts[1].includes('"tiers"'));
-    cap.say('s_alpha', '次の回の発言');
+    const firstBatch = cap.sentOf(cap.prompts[0]).filter((item) => item.text.startsWith('整理対象')).length;
+    const remaining = Math.max(0, NIGHTLY_TIER_CHANGES - firstBatch);
+    t.ok('次の呼び出しの tiers の指示には残りの枠を示し、使い切った場合は指示を外す',
+      cap.prompts[0].includes(`at most ${NIGHTLY_TIER_CHANGES} tier changes`) && (remaining > 0
+        ? cap.prompts[1].includes(`at most ${remaining} tier changes`)
+        : !cap.prompts[1].includes('You may also re-select')), JSON.stringify({ firstBatch, remaining }));
+    cap.say('s_alpha', '今後、次の回の発言');
     const capNext = await cap.learner.runNow();
     t.ok('次の実行は枠を数え直す（残りの 5 件）', capNext.retiered === targets.length - NIGHTLY_TIER_CHANGES && await archivedNow() === targets.length, JSON.stringify(capNext));
     t.ok('結果に付け直した数が残る', (await cap.learner.status()).lastResult.retiered === targets.length - NIGHTLY_TIER_CHANGES);

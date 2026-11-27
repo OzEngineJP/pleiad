@@ -1003,10 +1003,13 @@ export function createBotPage(host) {
         case 'memoryChanged':
           if (!root.hidden) memory.refresh(ev.layer);
           return;
+        case 'todosChanged':
+          if (!root.hidden) memory.refresh();
+          return;
         case 'brainChanged':
           if (!root.hidden && ev.botId === S.id) {
             loadActivity();
-            if (ev.loopsChanged) memory.refresh(ev.botId);
+            memory.refresh(ev.botId);
           }
           return;
         case 'channelsChanged':

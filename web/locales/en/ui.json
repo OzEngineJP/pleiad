@@ -94,6 +94,7 @@
         "reasonLabel": "Reason · {{text}}",
         "undo": "Undo this change",
         "restored": "The change was undone.",
+        "stoppedOff": "Organization stopped when automatic organization was turned off.",
         "unavailable": "The change could not be loaded or has already been updated.",
         "more": "Show more",
         "empty": "No changes to show.",

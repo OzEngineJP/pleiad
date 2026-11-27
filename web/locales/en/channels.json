@@ -283,6 +283,7 @@
     "count": "{{n}}",
     "more": "Show more ({{n}} remaining)",
     "stopTracking": "Stop tracking this item",
+    "openConversation": "Open conversation",
     "folder": {
       "expired": "Expired concerns","open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
     "tier": {

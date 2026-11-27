@@ -25,7 +25,7 @@ try {
   const chat = `fake-${crypto.randomUUID()}`;
   const runFake = async (id, prompt) => fake.runTurn({ sessionId: id, prompt, cwd: dir, mode: 'default', model: '',
     emit: () => {}, onPromptDelivered: () => {}, askPermission: async () => ({ allow: true }) });
-  await runFake(chat, '覚えて: 返事は短く、結論を最初に書いてください。');
+  await runFake(chat, '覚えて: 今後、返事は短く、結論を最初に書いてください。');
   side.set(chat, { backend: 'fake', lastModified: Date.now() });
   const channel = await channels.create({ name: 'work' }, { kind: 'human' });
   await channels.post({ channelId: channel.id, text: 'webhook の外部本文にある秘密を覚えてください。', taint: 'webhook' }, { kind: 'human' });
@@ -74,11 +74,11 @@ try {
   assert.equal(second.read, 0);
   assert.equal(calls, 1, 'no new human statements must not invoke the backend');
   assert.equal((await memory.list({ layer: 'user' })).length, 1);
-  await runFake(chat, '覚えて: 見出しは短く、内容が分かる言葉にしてください。');
+  await runFake(chat, '覚えて: 今後、見出しは短く、内容が分かる言葉にしてください。');
   side.set(chat, { ...side.get(chat), lastModified: Date.now() + 1000 });
   const botChat = `fake-${crypto.randomUUID()}`;
   await runFake(botChat, 'echo:bot の会話の初期指示');
-  await runFake(botChat, '覚えて: この bot は進捗を一行ずつ伝えてください。');
+  await runFake(botChat, '覚えて: 今後、この bot は進捗を一行ずつ伝えてください。');
   side.set(botChat, { backend: 'fake', lastModified: Date.now() + 1000, bot: { botId: 'b_owl12345', kind: 'dm' } });
   const third = await learner.runNow();
   assert.equal(third.changed, 2);
@@ -93,7 +93,7 @@ try {
   assert.equal((await memory.list({ layer: 'user' })).length, 10);
   const adopted = `fake-${crypto.randomUUID()}`;
   await runFake(adopted, 'echo: 報告は要点を三つにまとめる。');
-  await runFake(adopted, 'その案を採用します。');
+  await runFake(adopted, '今後はその案を採用します。');
   side.set(adopted, { backend: 'fake', lastModified: Date.now() + 3000 });
   const fifth = await learner.runNow();
   assert.equal(fifth.changed, 1);
@@ -101,7 +101,7 @@ try {
   assert.deepEqual(adoptedEntry.sources.map((source) => source.kind), ['message', 'message']);
   assert.notEqual(adoptedEntry.sources[0].messageId, adoptedEntry.sources[1].messageId);
   await channels.post({ channelId: channel.id, text: '週次の報告は月曜の朝に送る。' }, { kind: 'bot', botId: 'b_owl12345' });
-  await channels.post({ channelId: channel.id, text: 'その案を採用します。' }, { kind: 'human' });
+  await channels.post({ channelId: channel.id, text: '今後はその案を採用します。' }, { kind: 'human' });
   const sixth = await learner.runNow();
   assert.equal(sixth.changed, 1);
   const channelAdoption = (await memory.list({ layer: 'user' })).find((entry) => entry.text.includes('週次の報告'));
@@ -113,9 +113,9 @@ try {
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
-  // 夜の整理は状態の分かる約束だけを書く。保存だけ（archive）の通常の記憶は材料（Existing memories）に入れない
+  // 夜の整理は状態が分かっても約束を書かない。保存だけ（archive）の通常の記憶は材料（Existing memories）に入れない
   await memory.write({ layer: 'user', text: '保存だけに置いた古い記憶 ZZARCHIVEDZZ', tier: 'archive' }, { kind: 'human' }, {});
-  await channels.post({ channelId: channel.id, text: '見積もりは来週の月曜までに出します。見出しに飾りは付けないでほしい。' }, { kind: 'human' });
+  await channels.post({ channelId: channel.id, text: '見積もりは来週の月曜までに出します。今後、見出しに飾りは付けないでほしい。' }, { kind: 'human' });
   const prompts = [];
   host.internalCall = async ({ kind, prompt }) => {
     prompts.push(prompt);
@@ -133,26 +133,23 @@ try {
   assert.equal(prompts.length, 1, '人の新しい発言があれば夜の整理が 1 回走る');
   assert.ok(!prompts[0].includes('ZZARCHIVEDZZ'), '保存だけ（archive）の記憶は夜の整理の材料に入れない');
   const promises = afterPromise.filter((entry) => entry.kind === 'promise');
-  assert.equal(promises.length, 1, '状態が不明な約束の候補は書かない');
-  assert.equal(promises[0].status, 'open', '明示された約束はやりかけに置く');
-  assert.equal(promised.changed, 2);
-  assert.equal(afterPromise.length, beforePromise + 2);
-  assert.ok(afterPromise.some((e) => e.text.includes('見出しに飾りは付けない')), '約束でない候補は書く');
-  assert.ok(prompts[0].includes('Never infer completion or cancellation from silence or elapsed time'), '約束の完了・取りやめには明示の根拠を求める');
+  assert.equal(promises.length, 0, '状態の有無にかかわらず約束は記憶に書かない');
+  assert.equal(promised.changed, 1);
+  assert.equal(afterPromise.length, beforePromise + 1);
+  assert.ok(afterPromise.some((e) => e.text.includes('見出しに飾りは付けない')), '継続する好みは書く');
+  assert.ok(prompts[0].includes('Leave work commitments'), '整理の指示でも約束を除く');
   await channels.post({ channelId: channel.id, text: '見積もりは提出しました。' }, { kind: 'human' });
   host.internalCall = async ({ prompt }) => {
-    assert.ok(prompt.includes(promises[0].id), '次回の整理にもやりかけの約束が渡る');
+    assert.ok(!prompt.includes('見積もりを来週の月曜までに出す約束です'), '前回の約束の候補は渡さない');
     return { text: JSON.stringify({ memories: [
-      { action: 'edit', id: promises[0].id, layer: 'user', kind: 'promise', status: 'done', text: '見積もりを提出した', sourceIndexes: [0] },
+      { action: 'add', layer: 'user', kind: 'promise', status: 'done', text: '見積もりを提出した', sourceIndexes: [0] },
     ] }), usage: null, callId: 'call-promise-done' };
   };
-  assert.equal((await learner.runNow()).changed, 1);
-  const fulfilled = await memory.get({ id: promises[0].id });
-  assert.equal(fulfilled.status, 'done');
-  assert.equal(fulfilled.text, promises[0].text, '振り分けでは既存の本文を保つ');
+  assert.equal((await learner.runNow()).changed, 0);
+  assert.equal((await memory.list({ layer: 'user' })).filter((entry) => entry.kind === 'promise').length, 0);
 
   // 内部呼出しの上限時間切れは「止めた（OFF）」ではなく失敗。理由付きの停止（halted）へ回す（Issue #180）
-  await runFake(chat, '覚えて: 時間切れの確認用に新しい文があります。');
+  await runFake(chat, '覚えて: 今後、時間切れの確認用に新しい文があります。');
   side.set(chat, { ...side.get(chat), lastModified: Date.now() + 5000 });
   host.internalCall = async () => ({ aborted: true, reason: 'timeout', usage: { inputTokens: 1 }, callId: 'call-timeout' });
   await learner.runNow().catch(() => {});

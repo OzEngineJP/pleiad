@@ -187,7 +187,7 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
           const { id, rev, runId, type } = change;
           try {
             const result = await invoke('memory.sortUndo', { change: { id, rev, runId, type } });
-            await refreshChanges(t(result?.restored ? 'settings.memory.changes.restored' : 'settings.memory.changes.unavailable'));
+            await refreshChanges(result?.restored ? t('settings.memory.changes.restored') : t('settings.memory.changes.unavailable'));
           } catch {
             await refreshChanges(t('settings.memory.changes.unavailable'));
           }
@@ -198,7 +198,11 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
       const more = el('button', 'btn', t('settings.memory.changes.more'));
       more.type = 'button';
       more.onclick = () => { changesLimit += 20; void refreshChanges(); };
+      const interrupted = status?.failure || status?.halted || status?.lastResult?.stopped === 'halted'
+        ? t('settings.memory.status.organizeFailed')
+        : status?.lastResult?.stopped === 'off' ? t('settings.memory.changes.stoppedOff') : '';
       changesList.replaceChildren(...(feedback ? [el('p', null, feedback)] : []),
+        ...(interrupted ? [el('p', null, interrupted)] : []),
         ...(rows.length ? rows : [el('p', null, t('settings.memory.changes.empty'))]),
         ...(all.length > rows.length ? [more] : []));
     } catch {
@@ -213,7 +217,7 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
     const finished = status?.running && !current?.running;
     status = current;
     paintStatus(!current);
-    if (finished && changesPanel.open) void refreshChanges();
+    if (changesPanel.open && (finished || !current?.running)) void refreshChanges();
   }
 
   async function refresh() {
@@ -225,8 +229,7 @@ export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getA
       if (mine !== settingsSeq) return;
       enabled = on;
       paintEnablement();
-      if (enabled) void refreshState();
-      else { clearTimeout(timer); seq++; }
+      void refreshState();
       const directory = await invoke('bots.list', {});
       const all = (directory?.bots ?? []).filter((bot) => !bot.plain);
       const [hasCommon, displayed] = await Promise.all([

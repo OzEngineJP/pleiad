@@ -340,10 +340,10 @@
             <div class="rm-switch"><label class="rm-switch-label" for="memoryAutoLearn" data-i18n="settings.memory.autoLearn"></label><button type="button" class="cx-sw" id="memoryAutoLearn" role="switch" data-i18n-aria-label="settings.memory.autoLearn"></button></div>
             <div class="rm-switch learn-dep"><label class="rm-switch-label" for="memoryLearnAt" data-i18n="settings.memory.learnAt"></label><input type="time" class="mem-time" id="memoryLearnAt" data-i18n-aria-label="settings.memory.learnAt"></div>
             <div class="mem-status" id="memoryLearnStatus" role="status" aria-live="polite"></div><div class="mem-actions" id="memoryLearnActions"></div>
-            <details id="memoryLastChanges"><summary data-i18n="settings.memory.changes.title">前回の整理</summary><div id="memoryChangeList" aria-live="polite"></div></details>
             <p class="mp-note" id="memoryLearnSaved" role="status" aria-live="polite"></p>
             <!-- 記憶を持つ bot ごとの入口（押すと、その bot のページの記憶の欄へ）。bot が無ければ出さない -->
           </div>
+          <details id="memoryLastChanges"><summary data-i18n="settings.memory.changes.title"></summary><div id="memoryChangeList" aria-live="polite"></div></details>
           <div class="mem-bots" id="memoryBots" hidden><span data-i18n="settings.memory.bots"></span><span class="mem-bot-list" id="memoryBotsList"></span></div>
         </section>
         <section id="apiKeysPanel" data-i18n-aria-label="settings.nav.apiKeys" hidden></section>

@@ -31,7 +31,8 @@ export function followUpTable(db, now) {
   };
   if (states.get('todo.followUpMigration', 'v1') == null) transaction(db, () => {
     if (states.get('todo.followUpMigration', 'v1') != null) return;
-    for (const loop of brainTable(db).legacyLoops()) put('concern', loop, loop.updatedAt);
+    const migratedAt = now();
+    for (const loop of brainTable(db).legacyLoops()) put('concern', { ...loop, trackingSince: migratedAt }, loop.updatedAt);
     for (const wake of wakeTable(db).legacyWakes()) put('wake', wake, wake.updatedAt ?? wake.closedAt ?? wake.firedAt ?? wake.createdAt ?? wake.at);
     states.save([['todo.followUpMigration', 'v1', now()]]);
   });
@@ -62,13 +63,16 @@ export function followUpTable(db, now) {
       const changed = new Set();
       for (const row of read('concern', null)) {
         const { item, value } = row;
-        const due = (value.due ?? value.createdAt) + (value.due != null ? 7 : 14) * day;
-        if (value.status !== 'open' || item.by?.kind === 'human' || item.external?.humanWaiting || due > at) continue;
+        const due = (value.due ?? value.trackingSince ?? value.createdAt) + (value.due != null ? 7 : 14) * day;
+        if (value.status !== 'open' || ['human', 'user'].includes(item.by?.kind) || item.external?.humanWaiting
+          || item.external?.taskWaiting || value.expiryUndone || due > at) continue;
         applyChange(runId, 'concern', row, { ...value, status: 'expired' }, value.due != null ? 'deadlineElapsed' : 'trackingElapsed');
         changed.add(value.botId);
       }
+      if (changed.size) states.save([['memory.follow-up', 'lastExpiry', runId]]);
       return [...changed];
     },
+    lastExpiry: () => states.get('memory.follow-up', 'lastExpiry'),
     changes(runId) {
       return Object.values(states.ofKind(changeKind(runId))).map(change => ({
         id: change.after.id, layer: change.after.external.followUp.botId, rev: change.scopeRev,
@@ -82,7 +86,10 @@ export function followUpTable(db, now) {
         const change = states.get(changeKind(runId), id);
         if (!change || change.scopeRev !== rev || !undoable(change)) return null;
         const { before } = change;
-        todos.replace(before.scope.kind, before.scope.id, [{ ...before, updatedAt: now(), updatedBy: { kind: 'human' } }]);
+        const followUp = change.after.external.followUp.status === 'expired'
+          ? { ...before.external.followUp, expiryUndone: true } : before.external.followUp;
+        todos.replace(before.scope.kind, before.scope.id, [{ ...before, external: { ...before.external, followUp },
+          updatedAt: now(), updatedBy: { kind: 'human' } }]);
         states.save([[changeKind(runId), id, { ...change, undone: true }]]);
         return before.external.followUp.botId;
       });

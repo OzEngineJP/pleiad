@@ -578,7 +578,6 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
       // 予定の回の lastRunAt は始めた時刻（走っている間に更新された会話・後へ回した会話を、次の回で読み落とさない）
       const startedAt = now();
       const runId = crypto.randomUUID();
-      open().save([['memory.organize', 'lastRun', { runId, at: startedAt }]]);
       let read = 0, changed = 0, retiered = 0, sorted = 0, calls = 0, more = false, stopped = false;
       const deferred = new Set();
       const tierBudget = { left: NIGHTLY_TIER_CHANGES };   // 段の付け直しは 1 回の実行（束をまたいで）20 件まで
@@ -605,19 +604,21 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
         if (e?.stopped) stopped = true;   // OFF・世代替わりでの中止は失敗にしない
         else {
           // 世代の替わった実行が遅れて返した失敗は、新しい世代を止めない（古い世代の結果と失敗を両方無効にする。現在世代の別経路の停止は保持する）
-          if (gen !== null && genOf(await readPrefs()) === gen) await recordFailure(e, gen);
+          if (gen !== null && genOf(await readPrefs()) === gen) {
+            state.status = { ...state.status, runId };
+            await recordFailure(e, gen);
+          }
           throw e;
         }
       }
       // 最後に、渡す場面の振り分け（会話ごとの scoped の回は除く）。失敗は sortNight が握るので、夜の整理の失敗・停止にはならない
       if (!scope && !stopped && await mayWrite(gen)) {
-        brain?.expireConcerns(runId);
         sorted = await sortNight(gen, prefs, runId);
       }
       const result = { at: now(), read, changed, retiered, sorted, deferred: deferred.size, ...(more ? { more: true } : {}), ...(stopped ? { stopped: state.status.halted ? 'halted' : 'off' } : {}), ...(scope ? { scoped: true } : {}) };
       if (!scope) state.lastRunAt = startedAt;
       // halted はラッチ（明示解除まで戻さない）。実行中にエピソード側が記録した停止・失敗（一時エラーの回数・retryAt）を、この成功で消さない
-      state.status = { lastResult: result, skip: scope ? state.status.skip : null,
+      state.status = { lastResult: result, runId, skip: scope ? state.status.skip : null,
         failure: state.status.failure === failureAtStart ? null : state.status.failure,
         halted: state.status.halted ?? null };
       await save();
@@ -683,19 +684,22 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
 
   /** 画面・AI へ見せる今の様子（memory.learnStatus） */
   async function lastChanges() {
-    const run = open().get('memory.organize', 'lastRun');
+    const runId = state.status.runId;
     const migrationId = 'memory-migration-v1';
     const migration = await memory.runChanges(migrationId);
-    const current = run ? [...await memory.runChanges(run.runId), ...(brain?.runChanges(run.runId) ?? [])] : [];
+    const current = runId ? [...await memory.runChanges(runId), ...(brain?.runChanges(runId) ?? [])] : [];
+    const expiry = brain?.lastExpiry();
     return [
-      ...current.map(change => ({ ...change, runId: run.runId })),
+      ...current.map(change => ({ ...change, runId })),
+      ...(expiry ? brain.runChanges(expiry).map(change => ({ ...change, runId: expiry })) : []),
       ...migration.map(change => ({ ...change, runId: migrationId })),
     ];
   }
 
   async function undoChange({ runId, id, rev, type }) {
     if (running) return { skipped: 'running' };
-    if (runId !== 'memory-migration-v1' && runId !== open().get('memory.organize', 'lastRun')?.runId) return { skipped: 'none' };
+    if (runId !== 'memory-migration-v1' && runId !== state.status.runId
+      && !(type === 'followUp' && runId === brain?.lastExpiry())) return { skipped: 'none' };
     const done = type === 'followUp' ? brain?.undoRunChange(runId, id, rev) : await memory.undoRunChange(runId, id, rev);
     return done ? { restored: 1 } : { skipped: 'changed' };
   }
@@ -822,7 +826,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
           const decided = decideTier(answer, places.get(item.id));
           try {
             const done = await memory.place({ id: item.id, tier: decided.tier, workspace: decided.tier === 'workspace' ? decided.workspace : (entry.workspace ?? null),
-              reason: decided.reason, migration, runId, unlessHumanPlaced: true, expect: { tier: null, workspace: entry.workspace ?? null } });
+              reason: decided.reason, migration, runId, expect: { tier: null, workspace: entry.workspace ?? null } });
             if (done.placed) { tiers[decided.tier]++; placed++; if (decided.reason === 'workspace unknown') unknown++; }
             else if (done.reason === 'changed') changed++;
             else left++;

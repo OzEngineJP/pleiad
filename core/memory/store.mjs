@@ -431,7 +431,14 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
       return true;
     }),
 
-    migrated: (name) => new Set(records.filter((r) => r.op === 'edit' && r.migration === name).map((r) => r.id)),
+    migrated: (name) => {
+      const latest = new Map(records.map(record => [record.id, record.rev]));
+      const entries = new Map([...cache.values()].flat().map(entry => [entry.id, entry]));
+      return new Set(records.filter(record => record.op === 'edit' && record.migration === name
+        && (record.rev !== latest.get(record.id) || !entries.has(record.id)
+          || !isDeepStrictEqual(keptEntry(entries.get(record.id)), record.before)))
+        .map(record => record.id));
+    },
 
     /** 一括移行 name が段・作業場所を変えた記憶ごとの、最初の前（from）と最後の後（to）。振り分けを取り消すとき、今も to のままのものだけ戻すために使う */
     migrations: (name) => {

@@ -3,7 +3,7 @@
 // ここは Pleiad 本体（サーバー）が持つので、bot のターンが走っていなくても時刻になれば起きる。心拍の ON・OFF には依らない。
 //
 // 守っていること:
-//   - 予約は DB の行（brain_wakes。ADR 0115）。再起動しても残る。待っているものは 1 体 WAKE_PENDING_MAX 件まで、終わったものは WAKE_KEEP_MS で消す
+//   - 予約は ToDo として DB に置く。再起動しても残る。待っているものは 1 体 WAKE_PENDING_MAX 件まで、終わったものは WAKE_KEEP_MS で消す
 //   - 時刻は今から WAKE_MIN_LEAD_MS 以上・WAKE_MAX_AHEAD_MS 以内。1 回きり（繰り返しはルーティン）
 //   - 起こし方は心拍の引き継ぎと同じ道（dispatch.wakeReserved → inbox の inner → pump → startTurn）。承認・強い bot の確認・［止める］・休憩中がそのまま効く
 //   - Pleiad が止まっていた間に時刻を過ぎた予約は、起動後に遅れて 1 回だけ起きる。同じ会話の予約が重なっていたら 1 回にまとめる（何十回も重ねない）
@@ -26,7 +26,7 @@ import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
 import { openData } from '../data-schema.mjs';
 import { followUpTable } from './follow-ups.mjs';
-import { whenOf } from './inner.mjs';
+import { wakeContext, whenOf } from './inner.mjs';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -52,7 +52,7 @@ export class WakeError extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
-export function createWakes({ dataDir, channels, bots, dispatch, enablement, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS } = {}) {
+export function createWakes({ dataDir, channels, bots, dispatch, enablement, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS, expireConcerns = () => {} } = {}) {
   let handle = null, table = null;
   let timer = null;
   let closed = true;
@@ -96,12 +96,17 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
   function wakeText(list, at) {
     const l = localeOf();
     const first = Math.min(...list.map((w) => w.at));
-    const lines = [agentT(l, 'brain.wake.intro')];
-    for (const w of list) lines.push(agentT(l, 'brain.wake.item', { at: whenOf(w.at, at), note: w.note || '—' }));
-    if (at - first > WAKE_LATE_MS) lines.push(agentT(l, 'brain.wake.late', { at: whenOf(first, at) }));
-    if (list.some((w) => w.taint)) lines.push(agentT(l, 'brain.wake.taint'));
-    lines.push(agentT(l, 'brain.wake.after'));
-    return lines.join('\n');
+    const head = [agentT(l, 'brain.wake.intro')];
+    const rows = list.map(w => {
+      const id = w.todoId ?? w.id;
+      const item = agentT(l, 'brain.wake.item', { at: whenOf(w.at, at), note: w.note || '—' });
+      return { id, text: `- (${id})\n${item}` };
+    });
+    const tail = [];
+    if (at - first > WAKE_LATE_MS) tail.push(agentT(l, 'brain.wake.late', { at: whenOf(first, at) }));
+    if (list.some((w) => w.taint)) tail.push(agentT(l, 'brain.wake.taint'));
+    tail.push(agentT(l, 'brain.wake.after'));
+    return wakeContext({ head, rows, tail, at, kind: 'wake' });
   }
 
   /** 同じ会話へ起こす予約の組（時刻の順）を、1 回で起こす */
@@ -111,15 +116,18 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
   }
 
   async function fireGroupOwned(list, canFire) {
+    const current = item => open().get(item.id)?.status === 'pending';
     const head = list[0];
     const bot = await bots.get({ botId: head.botId }).catch(() => null);
-    if (!bot) { for (const w of list) drop(w, 'nobot'); return false; }
+    if (!bot) { for (const w of list.filter(current)) drop(w, 'nobot'); return false; }
     const channel = await channels.get({ channelId: head.channelId }).catch(() => null);
-    if (!channel || channel.archivedAt) { for (const w of list) drop(w, 'archived'); return false; }
+    if (!channel || channel.archivedAt) { for (const w of list.filter(current)) drop(w, 'archived'); return false; }
     if (head.threadId) {
       const th = await channels.threads.get(head.channelId, head.threadId).catch(() => null);
-      if (th?.stopped) { for (const w of list) drop(w, 'stopped'); return false; }
+      if (th?.stopped) { for (const w of list.filter(current)) drop(w, 'stopped'); return false; }
     }
+    list = list.filter(current);
+    if (!list.length) return false;
     if (dispatch.restingUntil?.(bot)) { for (const w of list) wait(w, 'resting'); return false; }
     if (!canFire()) return false;
     const at = now();
@@ -132,10 +140,10 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
       const reason = result?.reason ?? 'failed';
       // 更新のリースが解けるか、次の起動でこのまま発火できるようにする
       if (reason === 'updating') return false;
-      for (const w of list) (TRANSIENT.has(reason) ? wait(w, reason) : drop(w, reason));
+      for (const w of list.filter(current)) (TRANSIENT.has(reason) ? wait(w, reason) : drop(w, reason));
       return false;
     }
-    for (const w of list) {
+    for (const w of list.filter(current)) {
       const { waiting: _w, retryAt: _r, ...rest } = w;
       save({ ...rest, status: 'fired', firedAt: at, ...(at - w.at > WAKE_LATE_MS ? { late: true } : {}), ...(list.length > 1 ? { merged: list.length } : {}) });
     }
@@ -143,6 +151,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
   }
 
   async function runTick() {
+    expireConcerns();
     if (enablement) await enablement.load();
     const generation = enablement?.generation();
     const canFire = () => !enablement || enablement.enabled() && enablement.generation() === generation;

@@ -110,6 +110,7 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
             const next = { ...target, text: text ?? target.text, ...(op.wakeOn !== undefined ? { wakeOn: op.wakeOn } : {}), ...(op.due !== undefined ? { due: op.due } : {}),
               sources: target.sources?.length ? target.sources : op.sources ?? sources,
               taint: target.taint ?? taintOf(taint), workNotesVersion: op.text ? workNotesVersion : target.workNotesVersion ?? null };
+            if (op.due !== undefined && op.due !== target.due) delete next.expiryUndone;
             t.putLoop(botId, target.id, 'open', at, next);
             applied.push({ op: 'update', id: target.id, text: next.text });
           }
@@ -119,11 +120,13 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
       return { applied, rejected };
     },
 
-    expireConcerns(runId) {
+    expireConcerns() {
       open();
+      const runId = 'expiry-' + new Date(now()).toISOString().slice(0, 10);
       const bots = followUps.expire(runId);
       for (const botId of bots) changed(botId, true);
     },
+    lastExpiry() { open(); return followUps.lastExpiry(); },
     runChanges(runId) { open(); return followUps.changes(runId); },
     undoRunChange(runId, id, rev) {
       open();
