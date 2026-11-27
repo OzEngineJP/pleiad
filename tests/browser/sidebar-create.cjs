@@ -71,6 +71,29 @@ async page => {
     '空のチャンネルにも開閉とアーカイブがある');
   await shot('02-created');
 
+  const channelHead = heading.locator('xpath=..');
+  const channelKey = await channelHead.getAttribute('data-key');
+  const waitForChannelControls = visible => page.waitForFunction(({ key, visible }) => {
+    const head = [...document.querySelectorAll('.thread-channel .chsec-head')].find(n => n.dataset.key === key);
+    if (!head) return false;
+    return getComputedStyle(head.querySelector('.chsec-ic')).opacity === (visible ? '0' : '1')
+      && getComputedStyle(head.querySelector('.fam-chev')).opacity === (visible ? '1' : '0')
+      && getComputedStyle(head.querySelector('.row-more')).visibility === (visible ? 'visible' : 'hidden');
+  }, { key: channelKey, visible });
+  await channelHead.locator('.chsec-chev').click();
+  await channelHead.locator('.chsec-chev').click();
+  await waitForChannelControls(true);
+  await page.locator('#q').click();
+  check(await channelHead.evaluate(n => n.classList.contains('is-active')), '開閉したチャンネルは木の移動先として残る');
+  await waitForChannelControls(false);
+  await page.locator('#groups').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowLeft');
+  await waitForChannelControls(true);
+  await page.locator('#q').focus();
+  await waitForChannelControls(false);
+  results.push('チャンネルの矢印とメニューはホバー中とキーボード操作時だけ見え、離れると # に戻る');
+
   // ---- 同じ名前: 理由が欄の下に出て、打った字は残る。Esc で閉じて ＋ へ戻る
   await add.click();
   await input.waitFor();

@@ -167,14 +167,17 @@
 #groups .thread-channel .channel-thread-row:has(.one-mark:empty){--thread-mark:0px}
 #groups .thread-channel :is(.channel-thread-mark,.row.one .one-mark){display:flex;align-items:center;justify-content:center;width:100%;gap:2px}
 #groups .thread-channel .row-more{width:var(--thread-menu);height:var(--thread-height);min-width:0;margin:0;visibility:hidden}
-#groups .thread-channel :is(:hover,:focus-within,.sel,.is-active) > .row-more,
+#groups .thread-channel :is(:hover,:focus-within,.sel) > .row-more,
+#groups.kbd:focus .thread-channel .is-active > .row-more,
 #groups .thread-channel .row-more[aria-expanded="true"]{visibility:visible}
 .thread-channel .chsec-chev{display:inline-grid;place-items:center;justify-self:center;width:var(--side-channel-hit);height:100%;padding:0;background:transparent;cursor:pointer;color:var(--ink-weak)}
 .thread-channel .chsec-chev > *{grid-area:1/1;transition:opacity 120ms cubic-bezier(.2,.7,.2,1),transform 240ms cubic-bezier(.2,.7,.2,1)}
 .thread-channel .chsec-chev .fam-chev{margin:0;opacity:0;transform:rotate(90deg)}
 .thread-channel .chsec-head[aria-expanded="false"] .chsec-chev .fam-chev{transform:none}
-.thread-channel .chsec-head:is(:hover,:focus-within,.is-active) .fam-chev{opacity:1}
-.thread-channel .chsec-head:is(:hover,:focus-within,.is-active) .chsec-ic{opacity:0}
+.thread-channel .chsec-head:is(:hover,:focus-within) .fam-chev,
+#groups.kbd:focus .thread-channel .chsec-head.is-active .fam-chev{opacity:1}
+.thread-channel .chsec-head:is(:hover,:focus-within) .chsec-ic,
+#groups.kbd:focus .thread-channel .chsec-head.is-active .chsec-ic{opacity:0}
 .thread-channel .chsec-chev .fam-chev,.thread-channel .chsec-chev .chsec-ic{pointer-events:none}
 .channel-folder-icon{width:16px;height:16px;overflow:visible;fill:none;stroke:currentColor;color:var(--ink-weak)}
 .channel-folder-icon .paper-back{fill:var(--surface-3)}
