@@ -7,6 +7,7 @@
 // web/view-state.mjs（バックグラウンドの詳細の開閉の引き継ぎ）とは別物。
 export const HOME = 'home';
 export const VIEW_KEY = 'agent-host-view';
+const BOT_VIEW_KEY = 'agent-host-bot-view';
 const LEGACY_SESSION_KEY = 'agent-host-current';
 
 const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -73,9 +74,17 @@ export function readAddress(storage) {
  */
 export function createViewAddress({ storage, openSession, openChannels }) {
   let current = null;
+  const isBotView = (a) => Boolean(a?.botId && a.botId !== 'new' || a?.routineId || a?.channelId && a.channelId !== HOME);
+  let lastBot = readAddress(storage);
+  if (!isBotView(lastBot)) lastBot = null;
+  try {
+    const saved = toAddress(JSON.parse(storage.getItem(BOT_VIEW_KEY) ?? 'null'));
+    if (isBotView(saved)) lastBot = saved;
+  } catch { /* 保存先を読めなくても開ける */ }
   const save = () => { try { storage.setItem(VIEW_KEY, JSON.stringify(storedAddress(current))); } catch { /* 覚えられなくても開ける */ } };
   return {
     get current() { return current; },
+    get lastBot() { return toShowDetail(lastBot); },
     /** 行き先へ開く。開けないもの（形がわからない）は何もしない */
     go(input) {
       const a = toAddress(input);
@@ -90,6 +99,10 @@ export function createViewAddress({ storage, openSession, openChannels }) {
       if (!a || sameAddress(a, current)) return;
       current = storedAddress(a);
       save();
+      if (isBotView(current) && !sameAddress(lastBot, current)) {
+        lastBot = current;
+        try { storage.setItem(BOT_VIEW_KEY, JSON.stringify(lastBot)); } catch { /* 覚えられなくても開ける */ }
+      }
     },
   };
 }

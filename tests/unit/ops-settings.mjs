@@ -80,8 +80,8 @@ export default async function (t) {
       t.ok(`判定表 ${s.key}（${risk}）: 主体ごとの判定が ADR 0082 の表どおり`, JSON.stringify(got) === JSON.stringify(expected[risk]), JSON.stringify(got));
     }
   }
-  t.ok('危険度の内訳: human-only は承認モードの既定と既定のアカウントだけ（ADR 0094）。guarded は許可の一覧以外の「全体の構成」',
-    settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'account,claudeAccount,mode'
+  t.ok('危険度の内訳: human-only は承認モードの既定、既定のアカウント、bot の全体スイッチ。guarded は許可の一覧以外の「全体の構成」',
+    settings.filter((s) => s.risk === 'human-only').map((s) => s.key).sort().join() === 'account,botEnabled,claudeAccount,mode'
     && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,context.default,delegationRouting,launchAtLogin,plyInstructions'
     && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,chromeAutoAllow,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions,voice');
 
@@ -91,6 +91,7 @@ export default async function (t) {
     ['locale', true, '表示の言語。どの PC でも同じでよい'],
     ['instructionBudget', true, '指示の量の目安の表示'],
     ['backend', true, '新しい会話の既定のエージェント。受けた PC に無いエージェントは normalize で落ちる'],
+    ['botEnabled', false, 'このホストの bot・チャンネル・ルーティンの稼働を、そのホストで決める'],
     ['memoryLearnBackend', true, '記憶の学習に使うエージェント。無いエージェントは normalize で落ちる'],
     ['memoryLearnAt', true, '記憶の学習の時刻の好み'],
     ['memoryLearnPaused', true, '記憶の学習の一時停止の好み'],

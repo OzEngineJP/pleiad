@@ -46,6 +46,7 @@ export default async function (t) {
     await call(runner, 'secrets.save', { kind: 'secret', label: 'thread stream', value: SECRET, env: { name: 'THREAD_STREAM_TOKEN', scope: 'all' } });
     const m = (await runner.runTurn({ ...turn, prompt: 'echo:main の会話', sessionId: null }, { ms: 20_000 })).sessionId;
     for (const c of [sub, other, phone]) await c.cmd('loadSession', { sessionId: m, live: true, watch: true });
+    await call(runner, 'settings.set', { key: 'botEnabled', value: true });
     const owl = await call(runner, 'bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call(runner, 'channels.create', { name: 'dev', members: [owl.id] });
     const read = (threadId) => call(runner, 'channels.read', { channelId: dev.id, threadId });

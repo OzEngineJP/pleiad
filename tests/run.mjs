@@ -1209,6 +1209,7 @@ const SUITES = [
   './unit/memory-nightly.mjs',
   // --- dispatch (S4) ---
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
+  './unit/bot-enablement.mjs',
   './unit/bot-dispatch.mjs',
   // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は DM では起こさない・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
   './unit/bot-reactions-silence.mjs',

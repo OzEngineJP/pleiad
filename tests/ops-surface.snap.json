@@ -5688,6 +5688,15 @@
       ]
     },
     {
+      "key": "botEnabled",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "botEnablement"
+      ]
+    },
+    {
       "key": "childThreadRenderer",
       "risk": "write",
       "riskOf": false,
@@ -5977,6 +5986,13 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "botEnabled": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
     },
     "childThreadRenderer": {
       "human": "write=allow",

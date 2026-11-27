@@ -233,6 +233,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
 
     load() {
       return loading ??= store.load().then(() => true, (e) => {
+        loading = null;
         if (e instanceof BotStoreError) { log(String(e.message)); return false; }   // 読めない bots.json は上書きしない。画面へは problem で出す
         throw e;
       });
@@ -316,6 +317,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     },
 
     async create(input, _author) {
+      await host?.botEnablement?.requireEnabled();
       requireStore();
       const name = String(input?.name ?? '');
       const icon = input?.icon ?? DEFAULT_ICON, persona = input?.persona ?? '';
@@ -332,11 +334,13 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const id = newId('bot', t);
       const iconImage = input?.iconImage ? await makeIcon(input.iconImage, id) : '';
       let bot;
-      try { bot = await store.put({
-        id, name, icon, iconImage, persona, color, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '', endpoint: '',
-        mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
-        dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
-      });
+      try {
+        await host?.botEnablement?.requireEnabled();
+        bot = await store.put({
+          id, name, icon, iconImage, persona, color, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '', endpoint: '',
+          mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
+          dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
+        });
       } catch (e) { await removeIcon(iconImage); throw e; }
       send({ type: 'botsChanged', bot });
       return await ensureDm({ botId: bot.id }).catch(() => bot);

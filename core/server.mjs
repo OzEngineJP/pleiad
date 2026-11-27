@@ -8155,6 +8155,7 @@ function endpointHeld(backend, id) {
 }
 const outbox = createMessageQueue({
   store,
+  discard: discardQueuedBotMessage,
   // 作業中に送ったら、予約（nextSettings）を今のターンへ効かせる（止めずに切り替えるか、止めて新しい設定で続ける）
   applyReserved: (id, _turn, snapshot) => measureSendPhase('sendSettings', id,
     () => applyReservedNow(id, { via: 'send', snapshot })),
@@ -8178,6 +8179,7 @@ const outbox = createMessageQueue({
         // ACP は保持役の子へ要求を書いた直後に呼ぶ。送信済みの札を残し、再起動後の二重送信を防ぐ。
         turn.control.persistSteer = confirms && turn.control.holder ? () => writeTurnCard(turn) : null;
         try {
+          if (!item.args.sentBy && !item.args.scheduledFor) botHost?.enablement.promote(id);
           const accepted = await steer(item);
           if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
           return accepted;
@@ -8197,8 +8199,8 @@ const outbox = createMessageQueue({
       if (await onStarted() === false) return false;
       await hooks?.began?.();
       return true;
-    }, hooks ? { signal: hooks.signal, taskId: hooks.taskId } : {}))
-    : runTurn(args, onStarted),
+    }, { signal: hooks?.signal, taskId: hooks?.taskId, queued: true }))
+    : runTurn(args, onStarted, { queued: true }),
   changed: (sessionId, messages) => {
     emitGlobal({ type: 'outbox', sessionId, messages });
     for (const watch of [...(outboxWatchers.get(sessionId) ?? [])]) watch(messages);
@@ -9266,7 +9268,22 @@ async function runTurn(args, onStarted = () => {}, hooks = {}) {
   if (hooks.internal && updateGate.locked) return 'requeue';
   const releaseUpdateGate = updateGate.enter({ turn: true });
   try {
-    return await withWritableSession(args.sessionId, () => runTurnInternal(args, onStarted, hooks));
+    return await withWritableSession(args.sessionId, async () => {
+      const gate = botHost?.enablement;
+      if (!gate || !(hooks.botWork || await botSession(args.sessionId))) return runTurnInternal(args, onStarted, hooks);
+      if (hooks.queued && await discardQueuedBotMessage(args.sessionId, args, true)) return 'discarded';
+      if (!await gate.allowed()) return hooks.queued ? 'discarded' : 'cancelled';
+      const generation = gate.generation();
+      const allowed = () => gate.enabled() && gate.generation() === generation;
+      const manual = hooks.manualBot ?? (!hooks.internal && !hooks.compact && !args.sentBy && !args.scheduledFor);
+      const outcome = await gate.run(args.sessionId, manual, (background) =>
+        runTurnInternal(args, onStarted, { ...hooks,
+          signal: manual ? hooks.signal : hooks.signal ? AbortSignal.any([hooks.signal, background]) : background,
+          canStart: () => allowed() && (hooks.canStart?.() ?? true),
+          canInvoke: () => allowed() && (hooks.canInvoke?.() ?? true),
+        }));
+      return hooks.queued && !allowed() && (outcome === 'cancelled' || outcome === 'requeue') ? 'discarded' : outcome;
+    });
   } finally { releaseUpdateGate(); }
 }
 
@@ -10151,6 +10168,7 @@ function heldTurnCard(ctx) {
     backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
     stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null,
     botLiveSteers: botHost?.liveSteersFor?.(turn.info.sessionId) ?? [],
+    botManual: botHost?.enablement.finishing(turn.info.sessionId) ?? false,
     botItemIds: botHost?.itemIdsFor?.(turn.info.sessionId) ?? [],
     botCallers: botHost?.callersFor?.(turn.info.sessionId) ?? [] });
 }
@@ -10207,6 +10225,7 @@ async function restoreTurn(card, source) {
   if (!fields) throw new Error('unknown card version');
   const { sessionId, startedAtMs } = fields;
   if (!sessionId || fields.key !== sessionId) throw new Error('no session id');
+  if (await discardQueuedBotMessage(sessionId, { at: startedAtMs })) throw botHost.enablement.error();
   if (runtime.turns.has(sessionId)) throw new Error('already running');
   if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
   let backend = getBackend(fields.backendId);
@@ -10407,7 +10426,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   const releaseContext = contextToken ? contextBridge.reserve(contextToken) : () => {};
   try {
     turn.compactionRevision = compactionScheduler.revision(sessionId);
-    return await driveTurn(ctx, async () => {
+    const drive = () => driveTurn(ctx, async () => {
       // 再生の終わりに 1 回ずつ（makeEmit が再生では走らせない分。§4.4）
       let replayed = false, settled = false;
       const settle = () => {
@@ -10421,6 +10440,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
       try {
         // 待ち受けのポートが取れず付け直しをあきらめた（起動の待ち受け。MCP の口の URL が変わるので付け直せない。§3 の 9）
         if (abandon) throw new Error(abandon);
+        if (await discardQueuedBotMessage(sessionId, { at: ctx.card.startedAtMs })) throw botHost.enablement.error();
         restoreConnection({ key: turn.key, sessionId, locale: agentLocale, tokens: ctx.card.connectionTokens, computerBackend: backend.id });
         broadcastRunning();
         syncRunningPoll();
@@ -10489,6 +10509,14 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         emit({ type: 'turnResult', outcome: 'aborted' });
         return { sessionId };
       }
+    });
+    if (!await botSession(sessionId)) return await drive();
+    return await botHost.enablement.track(sessionId, ctx.card.botManual, async (signal) => {
+      const stop = () => turn.ac.abort();
+      if (signal?.aborted) stop();
+      signal?.addEventListener('abort', stop, { once: true });
+      try { return await drive(); }
+      finally { signal?.removeEventListener('abort', stop); }
     });
   } finally {
     releaseUpdateGate();
@@ -10733,7 +10761,10 @@ async function endTurn(turn, emit, { record = true } = {}) {
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   // ログイン切れ（auth）は bot・ルーティンには今までどおりの失敗として渡す（止めた・中断ではない）
-  if (!requeued) void botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted: interrupted?.reason === 'auth' ? null : interrupted, requeued });
+  if (!requeued) {
+    const finishing = botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted: interrupted?.reason === 'auth' ? null : interrupted, requeued });
+    if (botHost?.enablement.finishing(turn.info.sessionId)) await finishing;
+  }
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
   if (record && turn.outcome === 'ok' && !turn.compactTrigger && !turn.compaction
       && !delegated && turn.info.sessionId) {
@@ -11199,8 +11230,20 @@ async function withWritableSession(sessionId, fn) {
 
 async function acceptSend(sessionId, messageId, args) { return withWritableSession(sessionId, () => acceptWritableSend(sessionId, messageId, args)); }
 async function acceptWritableSend(sessionId, messageId, args) {
+  if (await botSession(sessionId)) await botHost.enablement.requireEnabled();
   const resumePaused = !sessionBusy(sessionId);
   return outbox.accept(sessionId, messageId, args, { resumePaused });
+}
+
+async function botSession(sessionId) {
+  return Boolean(sessionId && botHost && await botHost.opsDeps().botOfSession(sessionId));
+}
+
+async function discardQueuedBotMessage(sessionId, { at }, knownBot = false) {
+  if (!knownBot && !await botSession(sessionId)) return false;
+  const gate = botHost.enablement;
+  await gate.load();
+  return !gate.enabled() || (typeof at === 'number' ? at : Date.parse(at)) < gate.workSince();
 }
 
 function recordSendPhase(command, sessionId, start, outcome) {
@@ -11267,6 +11310,8 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
  * 遅れが 1 時間以内なら送り、それより遅れていたら送らずに行を残して確かめさせる（ADR 0103）
  */
 async function fireScheduledSend(row) {
+  const bot = await botSession(row.sessionId);
+  if (bot && await holdBotSchedule(row)) return { hold: 'botDisabled' };
   if (!(await resolveBackendForSession(row.sessionId).catch(() => null))) {
     console.error(`  送信予定を捨てた（会話が無い）: ${row.sessionId}`);
     return undefined;
@@ -11275,7 +11320,8 @@ async function fireScheduledSend(row) {
     notifyScheduleMissed(row);
     return { hold: 'missed' };
   }
-  await sendScheduledNow(row);
+  try { await sendScheduledNow(row); }
+  catch (error) { if (error.code === 'BOT_DISABLED') return { hold: 'botDisabled' }; throw error; }
   return undefined;
 }
 
@@ -11311,6 +11357,7 @@ async function schedulePost(input) {
   return botHost.withPost(input, { kind: 'human' }, () => scheduleWritablePost(input));
 }
 async function scheduleWritablePost(input) {
+  await botHost?.enablement.requireEnabled();
   const channels = botHost?.opsDeps().channels;
   if (!channels) throw new Error(t('schedule.notFound'));
   const root = await channels.getPost({ channelId: input.channelId, postId: input.threadId });
@@ -11321,15 +11368,24 @@ async function scheduleWritablePost(input) {
   if (existing) return { id: existing.id, at: existing.at };
   if (rows.filter((r) => r.kind === 'post' && r.threadId === input.threadId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
     throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await botHost.enablement.requireEnabled();
   await schedule.put(row);
   return { id: row.id, at: row.at };
 }
 /** 予定の時刻が来た投稿。遅れすぎていれば送らずに確かめさせる（送信予定と同じ決まり） */
 async function fireScheduledPost(row) {
+  if (await holdBotSchedule(row)) return { hold: 'botDisabled' };
   const decision = decideFire(row);
   if (decision.action === 'hold') return { hold: 'late' };
-  await postScheduled(row);
+  try { await postScheduled(row); }
+  catch (error) { if (error.code === 'BOT_DISABLED') return { hold: 'botDisabled' }; throw error; }
   return undefined;
+}
+async function holdBotSchedule(row) {
+  const gate = botHost?.enablement;
+  if (!gate) return false;
+  await gate.load();
+  return !gate.enabled() || row.at < gate.workSince();
 }
 const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.channelId, threadId: row.threadId, text: row.args.prompt,
   ...(row.args.attachments?.length ? { attachments: row.args.attachments } : {}), ...(row.args.to ? { to: row.args.to } : {}), clientId: row.clientId }, { kind: 'human' });
@@ -11337,6 +11393,8 @@ const postScheduled = (row) => botHost.opsDeps().channels.post({ channelId: row.
 async function scheduleSendMessage(input, by = 'human') { return withWritableSession(input.sessionId, () => scheduleWritableSendMessage(input, by)); }
 async function scheduleWritableSendMessage(input, by = 'human') {
   const { sessionId } = input ?? {};
+  const gate = await botSession(sessionId) ? botHost.enablement : null;
+  await gate?.requireEnabled();
   if (!sessionId || !refuseRetired(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
   const row = buildSendRow({ ...input, sessionId, by });
   const rows = schedule.list().filter(r => r.kind === 'send');
@@ -11348,6 +11406,7 @@ async function scheduleWritableSendMessage(input, by = 'human') {
   }
   if (rows.filter(r => r.sessionId === sessionId).length >= MAX_PER_SESSION || rows.length >= MAX_TOTAL)
     throw new Error(t('schedule.full', { max: MAX_PER_SESSION }));
+  await gate?.requireEnabled();
   await schedule.put(row);
   return { id: row.id, at: row.at, messageId: row.messageId };
 }

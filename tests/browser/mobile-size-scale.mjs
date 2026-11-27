@@ -43,6 +43,7 @@ try {
   const scriptFile = path.join(scratch, 'steps.json');
   fs.writeFileSync(scriptFile, JSON.stringify({ steps }));
   const { sessionId } = await ws.runTurn({ backend: 'fake', cwd: work, prompt: `steps:@${scriptFile}` });
+  await invoke('settings.set', { key: 'botEnabled', value: true });
   const channel = await invoke('channels.create', { name: 'dev' });
   const root = await invoke('channels.post', { channelId: channel.id, text: 'スレッド', new: true });
   await invoke('channels.post', { channelId: channel.id, threadId: root.id, text: '返信' });

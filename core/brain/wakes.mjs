@@ -53,7 +53,7 @@ export class WakeError extends Error {
   constructor(code, detail = {}) { super(code); this.code = code; this.detail = detail; }
 }
 
-export function createWakes({ dataDir, channels, bots, dispatch, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS } = {}) {
+export function createWakes({ dataDir, channels, bots, dispatch, enablement, clock, now = () => clock.now(), emit = () => {}, localeOf = () => 'ja', tickMs = WAKE_TICK_MS } = {}) {
   let handle = null, table = null;
   let timer = null;
   let closed = true;
@@ -63,6 +63,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
   const save = (w) => { const { id, botId, status, at, ...data } = w; open().put(id, botId, status, at, data); return w; };
 
   function add({ botId, sessionId, channelId, threadId = null, at, note, taint = null }) {
+    if (enablement && !enablement.enabled()) throw enablement.error();
     const t = open();
     const current = now();
     if (!Number.isFinite(at) || at < current + WAKE_MIN_LEAD_MS - 1000 || at > current + WAKE_MAX_AHEAD_MS) {
@@ -103,12 +104,12 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
   }
 
   /** 同じ会話へ起こす予約の組（時刻の順）を、1 回で起こす */
-  async function fireGroup(list) {
-    if (bots.withActivity) return bots.withActivity(list[0].botId, () => fireGroupOwned(list));
-    return fireGroupOwned(list);
+  async function fireGroup(list, canFire) {
+    if (bots.withActivity) return bots.withActivity(list[0].botId, () => fireGroupOwned(list, canFire));
+    return fireGroupOwned(list, canFire);
   }
 
-  async function fireGroupOwned(list) {
+  async function fireGroupOwned(list, canFire) {
     const head = list[0];
     const bot = await bots.get({ botId: head.botId }).catch(() => null);
     if (!bot) { for (const w of list) drop(w, 'nobot'); return false; }
@@ -119,6 +120,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
       if (th?.stopped) { for (const w of list) drop(w, 'stopped'); return false; }
     }
     if (dispatch.restingUntil?.(bot)) { for (const w of list) wait(w, 'resting'); return false; }
+    if (!canFire()) return false;
     const at = now();
     const result = await dispatch.wakeReserved({
       botId: bot.id, sessionId: head.sessionId, channelId: head.channelId, threadId: head.threadId ?? null,
@@ -139,12 +141,18 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
   }
 
   async function runTick() {
+    if (enablement) await enablement.load();
+    const generation = enablement?.generation();
+    const canFire = () => !enablement || enablement.enabled() && enablement.generation() === generation;
     const t = open();
     const at = now();
     const due = t.due(at).filter((w) => !(w.retryAt > at));
     if (!due.length) return 0;
     const groups = new Map();
     for (const w of due) {
+      if (enablement && (!enablement.enabled() || w.at < enablement.since())) {
+        drop(w, 'botDisabled'); changed(w.botId); continue;
+      }
       const key = `${w.botId}\u0000${w.sessionId}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(w);
@@ -153,7 +161,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, clock, now = ()
     const touched = new Set();
     for (const list of groups.values()) {
       if (closed) break;
-      try { if (await fireGroup(list)) fired++; }
+      try { if (await fireGroup(list, canFire)) fired++; }
       catch (e) { log('could not wake a bot:', errText(e)); }
       touched.add(list[0].botId);
     }

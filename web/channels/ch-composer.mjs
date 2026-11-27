@@ -194,6 +194,8 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
     wakeButton.disabled = true;
     say('');
     try {
+      if (host.botEnablement && !await host.botEnablement.request(input)) return;
+      if ((draftKey ?? '') !== owner) return;
       await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}) });
       clearSent(owner, version);
     } catch (err) {

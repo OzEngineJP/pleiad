@@ -86,6 +86,7 @@ export default async function (t) {
     await sleep(100);
 
     // ---- bot とチャンネル
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev' });
     const read = (channelId, threadId) => call('channels.read', { channelId, ...(threadId ? { threadId } : {}) });

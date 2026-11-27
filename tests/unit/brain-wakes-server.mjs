@@ -40,6 +40,7 @@ export default async function (t) {
     };
     let { server, c, call } = await boot();
 
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev', members: [owl.id] });
     const thread = async (rootId) => (await call('channels.read', { channelId: dev.id, threadId: rootId, limit: 100 })).posts;
@@ -95,6 +96,20 @@ export default async function (t) {
     t.ok('待っている予約は取り消せる', cancelled.status === 'cancelled' && (await call('brain.wakeList', { botId: owl.id })).wakes.length === 0);
     const again = await call('brain.wakeCancel', { botId: owl.id, id: ids[3] }).then(() => null, (e) => e.code);
     t.ok('取り消した・起きた予約はもう取り消せない（WAKE_NOT_FOUND）', again === 'WAKE_NOT_FOUND');
+
+    const disabledRoot = await call('channels.post', { channelId: dev.id, text: `@Owl control:${JSON.stringify(op('brain.wakeAdd', { inMin: 10, note: 'echo:停止中に期限を迎えた予約' }))}` });
+    const booked = await until(async () => (await botPosts(disabledRoot.id))[0], { label: '停止前の予約' });
+    const disabledId = JSON.parse(booked.text).id;
+    await call('settings.set', { key: 'botEnabled', value: false });
+    c.close?.();
+    await server.stop();
+    await setClock(t1 + 195 * MIN);
+    ({ server, c, call } = await boot());
+    await call('settings.set', { key: 'botEnabled', value: true });
+    const dropped = await until(async () => (await call('brain.wakeList', { botId: owl.id, all: true })).wakes
+      .find((w) => w.id === disabledId && w.status !== 'pending'), { label: '再開時の期限切れの予約' });
+    t.ok('全体がオフの間に期限を迎えた予約を再起動とオンの後にも実行しない',
+      dropped.status === 'dropped' && dropped.reason === 'botDisabled' && (await botPosts(disabledRoot.id)).length === 1);
   } finally {
     for (const c of clients) c.close?.();
     for (const s of servers) await s.stop().catch(() => {});

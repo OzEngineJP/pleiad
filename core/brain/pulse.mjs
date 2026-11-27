@@ -53,6 +53,7 @@ export function pickHome(bot, list) {
 }
 
 export function createPulse({ dataDir, brain, channels, bots, host, dispatch, memory = null, clock, now = () => clock.now(), ask = null, floorMs = PULSE_FLOOR_MS, tickMs = TICK_MS, everyMs = null } = {}) {
+  const enablement = host.botEnablement;
   let timer = null;
   let closed = true;
   let chain = Promise.resolve();
@@ -180,6 +181,10 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
   }
 
   async function runBeat(botId, { force }) {
+    const skipped = { botId, ran: false, skipped: 'botDisabled' };
+    if (enablement && !await enablement.allowed()) return skipped;
+    const generation = enablement?.generation();
+    const current = () => !enablement || (enablement.enabled() && enablement.generation() === generation);
     const bot = await bots.get({ botId });
     if (!bot) return { botId, ran: false, skipped: 'nobot' };
     if (!bot.pulse?.on && !force) return { botId, ran: false, skipped: 'off' };
@@ -187,6 +192,7 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     const state = brain.state(bot.id);
     const every = everyOf(bot);
     const home = await homeOf(bot);
+    if (!current()) return skipped;
     const stamp = { lastBeatAt: at };
     // 家のチャンネルが無い（入っているチャンネルが無い）: 自発はしない
     if (!home) {
@@ -194,13 +200,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
       brain.setState(bot.id, { ...stamp, nextAt: at + every });
       return { botId, ran: true, gate: { pass: false, reason: 'noHome' } };
     }
-    const since = state.cursorAt ?? at - every;
+    const since = Math.max(state.cursorAt ?? at - every, enablement?.since() ?? 0);
     const { events: seen, cursorTo, lastHumanAt } = await collect(bot, since);
     // ふるい・欲求・外から来た文の判定は、自分以外の出来事だけ（自分の投稿は束で「答え済みか」を見るための材料）
     const events = seen.filter((e) => e.authorKind !== 'self');
     const recent = brain.tail(bot.id, 12);
     const loops = workNotesContext({ loops: brain.loops(bot.id, 'open') }).loops;
     const prefs = await host.store.getPrefs().catch(() => ({}));
+    if (!current()) return skipped;
     const drives = computeDrives({
       now: at, unread: { human: events.filter((e) => e.authorKind === 'human').length, bot: events.filter((e) => e.authorKind === 'bot').length, toMe: events.filter((e) => e.toMe).length },
       loops, recent, lastHumanAt: Math.max(lastHumanAt ?? 0, state.lastHumanAt ?? 0) || null, failures: state.failures ?? 0,
@@ -226,15 +233,18 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, stream: brain.tail(bot.id, 40), loops,
       related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
     let answered;
+    if (!current()) return skipped;
     try {
       const response = ask ? await ask(prompt, { bot, prefs }) : await askBackend(bot, prompt, prefs);
       answered = typeof response === 'string' ? { text: response } : response;
     } catch (e) {
+      if (!current()) return skipped;
       // 恒常的な理由（内部呼出しに対応できない backend 等）は、指数再試行しても同じなので理由を残して心拍を止める。
       if (e?.code === INTERNAL_UNAVAILABLE) return stopped(bot, { state, at, common, meta, cursor: state.cursorAt ?? since, message: errText(e) });
       return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: errText(e) });
     }
     // 中止は失敗として間隔を伸ばす。結果は採用しない
+    if (!current()) return skipped;
     if (answered.aborted) return failed(bot, { state, at, every, cursor: state.cursorAt ?? since, common, meta, message: `pulse: ${answered.reason ?? 'aborted'}` });
     const usage = answered.usage ?? null;
     const tokens = usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, cached: usage.cachedTokens ?? 0 } : null;
@@ -304,10 +314,10 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
   const enqueue = (fn) => { chain = chain.then(fn, fn).catch((e) => log('failed:', errText(e))); return chain; };
 
   async function tick() {
-    if (closed) return;
+    if (closed || (enablement && !await enablement.allowed())) return;
     const at = now();
     for (const bot of await bots.list()) {
-      if (closed) return;
+      if (closed || (enablement && !enablement.enabled())) return;
       if (!bot.pulse?.on || bot.deletionPending) continue;
       let release;
       try { release = bots.acquire?.(bot.id); } catch { continue; }
@@ -332,9 +342,11 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
   }
 
   function onPosted(post, channel) {
-    if (closed || !post || post.deletedAt || channel?.kind !== 'channel' || post.author?.kind === 'system') return;
+    if (closed || (enablement && !enablement.enabled()) || !post || post.deletedAt || channel?.kind !== 'channel' || post.author?.kind === 'system') return;
+    const generation = enablement?.generation();
     (async () => {
       for (const bot of await bots.list()) {
+        if (enablement && (!enablement.enabled() || enablement.generation() !== generation)) return;
         if (!bot.pulse?.on || bot.deletionPending || !channel.members?.includes(bot.id) || (post.author?.kind === 'bot' && post.author.botId === bot.id)) continue;
         let release;
         try { release = bots.acquire?.(bot.id); } catch { continue; }

@@ -7,6 +7,8 @@ Bots hold memories — short factual notes grounded in things you said — and r
 
 Memory settings live under "Memory" in Settings › "Bots".
 
+Use "Turn on bots" in Settings › "Bots" to turn bot replies, proactive activity, and nightly memory organizing on or off together. Bots are off on a new installation. You can still open saved memories with "See memories" when bots are off.
+
 ## When a memory is given
 
 Each line carries a badge showing when it is given to the AI: "Every time", "Only in this folder", or "Not given" ("Not decided yet" for lines that haven't been decided).

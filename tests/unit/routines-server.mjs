@@ -42,6 +42,7 @@ export default async function (t) {
     };
     let { server, c, call } = await boot();
 
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const ops = await call('channels.create', { name: 'ops' });
     const read = (threadId) => call('channels.read', { channelId: ops.id, ...(threadId ? { threadId } : {}) });

@@ -79,6 +79,10 @@
       "refresh": "更新"
     },
     "memory": {
+      "botEnabled": "bot をオンにする",
+      "enableTitle": "bot をオンにしますか？",
+      "enable": "オンにする",
+      "cancel": "キャンセル",
       "title": "記憶",
       "autoLearn": "毎晩、記憶を整理する",
       "learnAt": "整理する時刻",

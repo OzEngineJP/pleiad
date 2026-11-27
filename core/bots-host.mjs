@@ -39,6 +39,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
+import { createBotEnablement } from './bots/enablement.mjs';
 import { createMemoryService } from './memory/service.mjs';
 import { createMemoryLearner } from './memory/learn.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
@@ -67,6 +68,28 @@ export function createBotHost(deps) {
   }
   const host = { ...deps, emit, emitSession, recordStartFailure };
   const lazy = (get) => (...args) => get()(...args);
+  const enablement = createBotEnablement({
+    read: () => store.getPrefs({ strict: true }),
+    now: routinesClock.now,
+    existing: async () => {
+      if (!await bots.load()) throw new Error('Could not read bot definitions');
+      const all = await bots.list();
+      return all.some(bot => !bot.plain) || await channels.hasBotHistory(all.filter(bot => bot.plain).map(bot => bot.id));
+    },
+    locale: () => deps.currentLocale?.() ?? 'ja',
+    changed: async (value, before) => {
+      if (value === before) return;
+      routines.rearm();
+      emit({ type: 'botEnablementChanged' });
+    },
+  });
+  host.botEnablement = enablement;
+  host.runTurn = (args, onStarted, hooks) => deps.runTurn(args, onStarted, { ...hooks, botWork: true });
+  if (deps.internalCall) host.internalCall = async (args) => {
+    await enablement.requireEnabled();
+    const background = enablement.backgroundSignal();
+    return deps.internalCall({ ...args, signal: args.signal ? AbortSignal.any([args.signal, background]) : background });
+  };
 
   /** sidecar の `bot`（SessionBot）。bot の会話でなければ null */
   const botOfSession = async (sessionId) => {
@@ -97,11 +120,18 @@ export function createBotHost(deps) {
       return await fn();
     } finally { for (const release of releases) release(); }
   };
+  const requirePost = (args, author) => {
+    if (author?.kind === 'system' || enablement.finishing(args.turn?.sessionId)) return;
+    return enablement.requireEnabled();
+  };
   const channels = createChannelService({
     // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 0157）
     dir: path.join(dataDir, 'channels'), emit, listBots: async () => (await bots.list()).filter((b) => !b.plain),
-    hooks: { withPost,
-      posted: async (...args) => withPost(args[0], args[0].author, async () => { noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); }),
+    hooks: { withPost, requireEnabled: enablement.requireEnabled, requirePost,
+      posted: async (...args) => withPost(args[0], args[0].author, async () => {
+        if (!await enablement.allowed()) return;
+        noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args);
+      }),
       edited: (...args) => bots.noteShown(...args),
       reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
@@ -115,7 +145,7 @@ export function createBotHost(deps) {
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, channels, emit, withLayer: (layer, fn) => layer === 'user' ? fn() : bots.withActivity(layer, fn), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
-  const dispatch = createDispatcher({ channels, bots, memory, brain, host, emit });
+  const dispatch = createDispatcher({ channels, bots, memory, brain, host, emit, now: routinesClock.now });
   host.refuseBotRemoval = async botId => {
     if (await dispatch.deletionBlocked(botId)) throw new OpError('CANNOT_DELETE', agentT(deps.currentLocale?.() ?? 'ja', 'server:session.deleteQueued'));
   };
@@ -131,7 +161,7 @@ export function createBotHost(deps) {
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_EVERY_MS) > 0 ? { everyMs: Number(process.env.AGENT_HOST_PULSE_EVERY_MS) } : {}) });
   // ---- 予約（bot が自分で決めた時刻に、その会話で起きる。心拍の ON・OFF に依らない。ADR 0140）
-  wakes = createWakes({ dataDir, channels, bots, dispatch, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
+  wakes = createWakes({ dataDir, channels, bots, dispatch, enablement, clock: routinesClock, emit, localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- webhook（H1）
   const webhook = createWebhookReceiver({ dataDir, routines, host });
   host.botRoutines = () => routines.list();
@@ -160,13 +190,22 @@ export function createBotHost(deps) {
   };
 
   return {
-    withPost,
+    enablement,
+    async withPost(args, author, fn) {
+      await requirePost(args, author);
+      return withPost(args, author, async () => { await requirePost(args, author); return fn(); });
+    },
     acquireBot: (botId) => bots.acquire(botId),
-    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }),
+    opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, botEnablement: enablement,
+      wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }),
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
-      branchThread: (args) => withPost(args, { kind: 'human' }, () => dispatch.branchThread(args)),
+      branchThread: async (args) => {
+        await enablement.requireEnabled();
+        return withPost(args, { kind: 'human' }, () => dispatch.branchThread(args));
+      },
       // スレッドの投稿を送り直す（channels.resend）
       resendThread: async (args) => {
+        await enablement.requireEnabled();
         const post = await channels.getPost({ channelId: args.channelId, postId: args.postId });
         return withPost({ ...args, threadId: post?.threadId ?? post?.id }, { kind: 'human' }, () => dispatch.resendThread(args));
       },
@@ -205,7 +244,10 @@ export function createBotHost(deps) {
     onSessionDone: guard('onSessionDone', (sessionId, outcome) => routines.onSessionDone(sessionId, outcome)),
     onCompacted: guard('onCompacted', (sessionId) => dispatch.onCompacted(sessionId)),
     handleHttp: guard('handleHttp', (req, res) => webhook.handle(req, res), false),
-    async start() { for (const s of services) await guard('start', () => s.start())(); },
+    async start() {
+      await guard('enablement', () => enablement.load())();
+      for (const s of services) await guard('start', () => s.start())();
+    },
     stop() { for (const s of [...services].reverse()) guard('stop', () => s.stop())(); },
     /** stop に加えて、DB の接続を離す（スレッドの状態・夜の整理の進み。データ置き場を消す前。テストの後片付け用） */
     async close() { this.stop(); await guard('close', () => channels.close())(); learner.close(); brain.close(); wakes.close(); },

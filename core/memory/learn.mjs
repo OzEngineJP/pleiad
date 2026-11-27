@@ -139,7 +139,7 @@ function parseAnswer(raw) {
 /** 付け直しの変更記録に残す名前（その日の夜の整理。記録から前後を辿って戻せる） */
 const nightlyMigration = (at) => `nightly:${new Date(at).toISOString().slice(0, 10)}`;
 
-export function createMemoryLearner({ dataDir, channels, bots, memory, brain = null, host, clock, readPrefs = () => host.store.getPrefs(),
+export function createMemoryLearner({ dataDir, channels, bots, memory, brain = null, host, clock, readPrefs: storedPrefs = () => host.store.getPrefs(),
   listSessions = null, readMessages = null, ask = null, now = () => clock.now(), cwdOf = null, workspaceOf = canonicalWorkspace } = {}) {
   let state = emptyState();
   let timer = null;
@@ -160,6 +160,14 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
     ['meta', 'lastRunAt', s.lastRunAt],
     ['meta', 'status', s.status],
   ];
+  async function readPrefs() {
+    const prefs = await storedPrefs();
+    const gate = host.botEnablement;
+    if (!gate) return prefs;
+    if (!await gate.allowed()) return { ...prefs, memoryAutoLearn: false };
+    return { ...prefs, memoryLearnFrom: Math.max(timeOf(prefs.memoryLearnFrom), gate.since()) };
+  }
+
   async function save() {
     const rows = open();
     const next = new Map(rowsOf(state).map(([kind, id, value]) => [`${kind}\u0000${id}`, { kind, id, value, json: JSON.stringify(value) }]));
@@ -649,6 +657,7 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
 
   // ほかの会話のターンが走っていても待たない（上の冒頭の説明）。待つのは learner 自身・止めている間・失敗の後の間隔だけ
   async function runIfDue() {
+    if (host.botEnablement && !await host.botEnablement.allowed()) return { skipped: 'off' };
     const prefs = await readPrefs();
     // 再有効化（OFF→ON）で stopped を解除する（今の世代が止まった実行の世代と違う＝止まった後に ON にし直した）。
     // 時刻ではなく世代で見るので、同じ瞬間の ON→失敗を再有効化と誤認しない。halted.gen の無い古い保存は、

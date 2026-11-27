@@ -75,9 +75,30 @@ export function setupChannels(host) {
   const each = (name, ...args) => { for (const part of parts) part[name]?.(...args); };
   // 面を切り替えたら、メインはその面で最後に開いたものへ戻る（ADR 0362）。bot の面で何も開いていなければ最初の bot の DM か初めての bot の段
   let showing = false;   // show() の中の切り替え（開く先はその show が決める）
-  const tabs = createSideTabs({ onChange: (tab) => {
+  const tabs = createSideTabs({ beforeSelect: async (button) => {
+    if (!host.botEnablement) return true;
+    const answer = await host.botEnablement.request(button);
+    if (answer === 'enabled') {
+      const remembered = host.lastBotView?.() ?? lastView;
+      if (await sidebar.validView(remembered)) {
+        document.dispatchEvent(new CustomEvent('channels:show', { detail: remembered }));
+      } else {
+        lastView = null;
+        await sidebar.openDefault({ refresh: true });
+      }
+    }
+    return Boolean(answer);
+  }, onChange: (tab) => {
     each('sideTabChanged', tab);
-    if (tab === 'channels') { if (lastView) host.noteView(lastView); else if (!showing) sidebar.openDefault?.(); }
+    if (tab === 'channels') {
+      if (lastView) host.noteView(lastView);
+      else if (!showing) {
+        if (host.botEnablement) host.botEnablement.read().then(on => {
+          if (on && tabs.tab === 'channels' && !lastView) sidebar.openDefault();
+        }).catch(() => {});
+        else sidebar.openDefault();
+      }
+    }
     else host.noteChats?.();
   } });
   // 狭い画面で脇を閉じている間の入口（#openSidebar と同じ働き。メインの頭が Channels の見出しに替わっている間だけ見える）

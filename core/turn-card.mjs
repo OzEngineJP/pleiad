@@ -270,6 +270,7 @@ export function cardOf(ctx, options = {}) {
     botItemIds,
     botCallers,
     botLiveSteers,
+    ...(ctx.botManual ? { botManual: true } : {}),
   };
 
   // 秘密の欄 (secrets) - 札本体には入れず、別に返す（保持役の預かり物に置く想定）
@@ -333,6 +334,7 @@ export function restoreFields(card) {
     compactTrigger: typeof card.input?.compactTrigger === 'string' ? card.input.compactTrigger : null,
     internal: Boolean(card.input?.internal),
     taskId: typeof card.input?.taskId === 'string' ? card.input.taskId : null,
+    botManual: card.botManual === true,
     botItemIds: Array.isArray(card.botItemIds) ? card.botItemIds.filter(id => typeof id === 'string' && id).slice(0, 64) : [],
     botCallers: Array.isArray(card.botCallers) ? card.botCallers.filter(c => typeof c?.botId === 'string').slice(0, 32)
       .map(c => ({ botId: c.botId, ...(typeof c.postId === 'string' ? { postId: c.postId } : {}) })) : [],

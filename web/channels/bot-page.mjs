@@ -797,6 +797,7 @@ export function createBotPage(host) {
     createBusy = true;
     paintOb();
     try {
+      if (host.botEnablement && !await host.botEnablement.request()) return;
       // エージェント・モデル・承認モードは既定（エージェントは今の入力欄のもの。後から bot のページで変える）
       const backend = backends().find((b) => b.id === host.state?.backendId)?.id ?? backends()[0]?.id;
       const bot = await host.invoke('bots.create', { name, color: d.color, ...(backend ? { backend } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}) });

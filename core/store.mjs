@@ -60,20 +60,24 @@ function jsonFile(file) {
       if (cache) return cache;
       try {
         const v = JSON.parse(await fs.readFile(file, "utf8"));
-        if (strict && !(v && typeof v === "object" && !Array.isArray(v))) throw new Error(`${path.basename(file)} is not an object`);
-        cache = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+        if (!(v && typeof v === "object" && !Array.isArray(v))) throw new Error(`${path.basename(file)} is not an object`);
+        cache = v;
       } catch (e) {
-        if (strict && e?.code !== "ENOENT") throw e;
+        if (e?.code !== "ENOENT") {
+          if (strict) throw e;
+          return {};
+        }
         cache = {};
       }
       return cache;
     },
-    async write() {
+    async write(next) {
       assertNotGuarded(DIR, 'write settings in');
       await fs.mkdir(DIR, { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+      await fs.writeFile(tmp, JSON.stringify(next, null, 2), "utf8");
       await fs.rename(tmp, file);
+      cache = next;
     },
   };
 }
@@ -196,8 +200,8 @@ function exclusive(work) {
 const RETIRED_PREFS = ["linkOpen"];
 
 /** 既定値。ユーザーが一度も選んでいなければこれが使われる。 */
-export async function getPrefs() {
-  const all = { ...(await prefs.read()) };
+export async function getPrefs({ strict = false } = {}) {
+  const all = { ...(await prefs.read({ strict })) };
   for (const key of RETIRED_PREFS) delete all[key];
   return all;
 }
@@ -205,17 +209,16 @@ export async function getPrefs() {
 /** 既定を上書きする。人間が明示的に選んだときだけ呼ぶ。 */
 export async function setPref(key, value, backendId) {
   return exclusive(async () => {
-    const all = await prefs.read();
+    const all = { ...(await prefs.read({ strict: key === 'botEnablement' })) };
     for (const retired of RETIRED_PREFS) delete all[retired];
     if (value === null || value === undefined) delete all[key];
     else all[key] = value;
     // account はエージェントごとの新しい会話の既定のアカウント（ADR 0222）
     if (backendId && (key === "mode" || key === "model" || key === "effort" || key === "account")) {
       const previous = all.backends ? all.backends[backendId] : { mode: all.mode, model: all.model };
-      all.backends ??= {};
-      all.backends[backendId] = { ...previous, [key]: value };
+      all.backends = { ...all.backends, [backendId]: { ...previous, [key]: value } };
     }
-    await prefs.write();
+    await prefs.write(all);
     return { ...all };
   });
 }
@@ -231,10 +234,7 @@ export async function migratePrefs(migrate) {
     const all = await prefs.read({ strict: true });
     const result = migrate({ ...all });
     if (!result) return null;
-    const before = { ...all };
-    const replace = next => { for (const key of Object.keys(all)) delete all[key]; Object.assign(all, next); };
-    replace(result.prefs);
-    try { await prefs.write(); } catch (e) { replace(before); throw e; }
+    await prefs.write(result.prefs);
     return result;
   });
 }
@@ -250,7 +250,7 @@ export async function rememberRepoDefault(repoDir, choice) {
     const keys = Object.keys(rows).sort((a, b) => (rows[a]?.at ?? 0) - (rows[b]?.at ?? 0));
     for (const key of keys.slice(0, Math.max(0, keys.length - REPO_DEFAULT_LIMIT))) delete rows[key];
     all.repoDefaults = rows;
-    await prefs.write();
+    await prefs.write(all);
     return rows[repoDir];
   });
 }
@@ -260,7 +260,7 @@ export async function rememberBrowserSite(site) {
     const all = await prefs.read();
     // 同じエージェント・プロフィール・origin の行を置き換える（プロフィールの無い行と、ある行は別の行）
     all.agentSitePermissions = [...(all.agentSitePermissions ?? []).filter(row => row.agent !== site.agent || row.origin !== site.origin || (row.profile ?? '') !== (site.profile ?? '')), site];
-    await prefs.write();
+    await prefs.write(all);
     return { ...all };
   });
 }
@@ -274,7 +274,7 @@ export async function rememberComputerApp(app) {
     const current = computerUsePrefs(all);
     const rows = [...current.alwaysAllowed.filter(r => r.id !== row.id), row];
     all.computerUse = { ...current, alwaysAllowed: rows.slice(-COMPUTER_APP_LIMIT) };
-    await prefs.write();
+    await prefs.write(all);
     return { ...all };
   });
 }
@@ -286,7 +286,7 @@ export async function forgetComputerApp(id) {
     const current = computerUsePrefs(all);
     if (!current.alwaysAllowed.some(r => r.id === id)) return { ...all };
     all.computerUse = { ...current, alwaysAllowed: current.alwaysAllowed.filter(r => r.id !== id) };
-    await prefs.write();
+    await prefs.write(all);
     return { ...all };
   });
 }
@@ -317,7 +317,7 @@ export async function createStatus(status) {
   return exclusive(async () => {
     const all = await statuses.read();
     if (!all[status]) all[status] = { createdAt: new Date().toISOString() };
-    await statuses.write();
+    await statuses.write(all);
     return cleanEntry(all[status]);
   });
 }
@@ -330,7 +330,7 @@ export async function setStatusIcon(status, icon) {
     const entry = cleanEntry(all[status]);
     if (v) entry.icon = v; else delete entry.icon;
     all[status] = entry;
-    await statuses.write();
+    await statuses.write(all);
     return v || null;
   });
 }
@@ -351,7 +351,7 @@ export async function moveStatus(from, to) {
       if (entry.createdAt && (!dst.createdAt || entry.createdAt < dst.createdAt)) merged.createdAt = entry.createdAt;
       all[to] = merged;
     }
-    await statuses.write();
+    await statuses.write(all);
   });
 }
 

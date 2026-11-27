@@ -189,6 +189,7 @@ export default async function (t) {
       const child = (await c.cmd('listSessions')).find(r => r.id === made.sessionId);
       t.ok('段4: 委譲の子はオンのアカウントを保ち、ログイン中へ戻らない', task.status === 'completed' && child?.claudeAccount === s.id && onlyOwnDirSince(start), JSON.stringify({ status: task.status, launches: launches().slice(start) }));
       const op = (op, args) => c.cmd('invoke', { op, args });
+      await op('settings.set', { key: 'botEnabled', value: true });
       const bot = await op('bots.create', { name: 'ConnectorCheck', backend: 'claude' });
       await op('bots.setAccount', { botId: bot.id, account: s.id });
       start = launches().length;

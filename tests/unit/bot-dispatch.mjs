@@ -1105,6 +1105,7 @@ export default async function (t) {
     const dataDir = path.join(tmp, 'data');
     const { c, call, server } = await boot(dataDir);
 
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake', persona: '調べ物が得意' });
     const lynx = await call('bots.create', { name: 'Lynx', icon: '🐺', backend: 'fake' });
     await call('bots.update', { botId: lynx.id, pulse: { on: false } });

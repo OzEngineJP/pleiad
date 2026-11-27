@@ -69,6 +69,7 @@ export default async function(t) {
     second = await open({ port: server.port, token: server.token });
     const op = (id, args = {}, c = client) => c.cmd('invoke', { op: id, args });
     const until = async fn => { for (let i = 0; i < 100; i++) { const result = await fn(); if (result) return result; await sleep(100); } throw new Error('condition timed out'); };
+    await op('settings.set', { key: 'botEnabled', value: true });
     const live = await op('bots.create', { name: 'Archive', backend: 'fake' });
     const dm = live.dmChannelId;
     await op('channels.post', { channelId: dm, text: 'echo:preserved' });

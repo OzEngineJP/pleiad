@@ -72,9 +72,15 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
   }
 
   async function run(routine, { source = 'manual', missed = false, note = '' } = {}) {
+    const gate = host?.botEnablement;
+    const disabled = { runId: null, postId: null, state: 'skipped', reason: 'botDisabled' };
+    if (!await (gate?.allowed() ?? true)) return disabled;
+    const generation = gate?.generation();
+    const enabled = () => !gate || gate.enabled() && gate.generation() === generation;
     if (closed) throw new RunnerError('CLOSED', 'the routine runner is stopped');
     const runId = newRunId(clock.now());
     const channel = await channels.get({ channelId: routine.channelId }).catch(() => null);
+    if (!enabled()) return disabled;
     const prev = running.get(routine.id);
     if (prev) {
       // 走っている間の発火は、1 つの走っている間に 1 回だけ「スキップ」を残す（毎分のルーティンが遅い実行を待つたびに並べない）
@@ -86,6 +92,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     running.set(routine.id, entry);     // 確保。以降の await の間に同じルーティンが重ならない
     try {
       const bot = await bots.get({ botId: routine.botId }).catch(() => null);
+      if (!enabled()) { running.delete(routine.id); return disabled; }
       if (!bot) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: 'botMissing', missed, note: source === 'webhook' ? '' : note }, { recordLast: true }); }
       if (!channel || channel.archivedAt) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: channel ? 'channelArchived' : 'channelMissing', missed, note }, { recordLast: true }); }
 
@@ -97,6 +104,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       entry.postId = root.id;
       await record(routine.id, { at: clock.now(), runId, state: 'working', postId: root.id });
       try {
+        if (!enabled()) { await finish(entry, 'stopped'); return { runId, postId: root.id, state: 'stopped' }; }
         const made = await bots.createSession({ botId: bot.id, channel, threadId: root.id, kind: 'routine', routineId: routine.id, rootText: routine.name });
         entry.sessionId = made.sessionId;
         if (source === 'webhook') {
@@ -108,9 +116,11 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
         bySession.set(made.sessionId, entry);
         // dispatch の sessionFor は、ThreadState.sessions に登録済みの会話をそのまま使う（kind: 'routine' のまま）
         await channels.threads.update(channel.id, root.id, { sessions: { [bot.id]: made.sessionId } });
+        if (!enabled()) { await finish(entry, 'stopped'); return { runId, postId: root.id, state: 'stopped' }; }
         await dispatch.wake({ botId: bot.id, channel, threadId: root.id, post: root });
         if (!entry.ended) armStartCheck(entry);
       } catch (e) {
+        if (!enabled()) { await finish(entry, 'stopped'); return { runId, postId: root.id, state: 'stopped' }; }
         const reason = errText(e);
         log(`could not start ${routine.name}:`, reason);
         if (entry.sessionId) await host.recordStartFailure?.(entry.sessionId, reason, { notify: true });
@@ -120,13 +130,15 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       return { runId, postId: root.id, state: 'working' };
     } catch (e) {
       if (running.get(routine.id) === entry) running.delete(routine.id);
+      if (e.code === 'BOT_DISABLED') return disabled;
       throw e;
     }
   }
 
   function newEntry(routine, runId) {
     return { routineId: routine.id, runId, postId: null, channelId: routine.channelId, sessionId: null,
-      timeoutMin: routine.approvalTimeoutMin, timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null };
+      timeoutMin: routine.approvalTimeoutMin, timedOut: false, ended: false, skipNoted: false, timers: new Map(), startTimer: null,
+      generation: host.botEnablement?.generation() };
   }
 
   function armStartCheck(entry) {
@@ -140,6 +152,8 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
   async function started(entry) {
     if (entry.ended || closed) return;
     if (host.runtime?.turns?.has?.(entry.sessionId)) return;
+    const gate = host.botEnablement;
+    if (gate && (!gate.enabled() || entry.generation !== gate.generation())) { await finish(entry, 'stopped'); return; }
     if (dispatch.isUpdateDeferred?.(entry.sessionId)) { armStartCheck(entry); return; }
     log(`the turn of ${entry.routineId} did not start`);
     await finish(entry, 'failed');
@@ -179,6 +193,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     let state;
     // 承認の期限で止めたものは、バックエンドが拒否を受けて ok で終えても「終了」と見せない
     if (entry.timedOut || interrupted?.reason === 'timeout') state = 'failed';
+    else if (host.botEnablement && entry.generation !== host.botEnablement.generation() && !host.botEnablement.finishing(sessionId)) state = 'stopped';
     else if (outcome === 'ok') state = 'done';
     else if (interrupted && interrupted.reason !== 'limit') state = 'stopped';
     else state = 'failed';
@@ -209,6 +224,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
   }
 
   async function dryRun(routine) {
+    await host.botEnablement?.requireEnabled();
     if (closed) throw new RunnerError('CLOSED', 'the routine runner is stopped');
     const bot = await bots.get({ botId: routine.botId }).catch(() => null);
     if (!bot) throw new RunnerError('BOT_NOT_FOUND', routine.botId);
@@ -241,7 +257,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     if (entry.timedOut) { state = 'failed'; summary = agentT(locale(), 'routine.approvalTimeout'); }
     else if (result.error) { state = 'failed'; summary = errText(result.error); }
     else if (result.outcome === 'ok') { state = 'done'; summary = await firstLine(made.sessionId); }
-    else if (result.outcome === 'aborted') state = 'stopped';
+    else if (result.outcome === 'aborted' || result.outcome === 'cancelled') state = 'stopped';
     else state = 'failed';
     if (state === 'failed' && !summary && result.outcome && result.outcome !== 'error') summary = String(result.outcome);
     return { runId, sessionId: made.sessionId, mode: plan, state, ...(summary ? { summary } : {}) };
