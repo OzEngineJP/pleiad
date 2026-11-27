@@ -245,7 +245,7 @@
       "activity": "自発的な活動",
       "activityInterval": "活動の確認間隔",
       "intervalMin": "{{n}} 分",
-      "loops": { "wake": "起こす", "due": "期限 {{due}}" }
+      "loops": { "wake": "再確認条件 {{wake}}", "due": "期限 {{due}}" }
     },
     "state": {
       "working": "作業中",

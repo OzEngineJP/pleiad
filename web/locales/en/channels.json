@@ -248,7 +248,7 @@
       "activity": "Proactive activity",
       "activityInterval": "Activity check interval",
       "intervalMin": "{{n}} min",
-      "loops": { "wake": "Wake", "due": "due {{due}}" }
+      "loops": { "wake": "Check again when {{wake}}", "due": "Due {{due}}" }
     },
     "state": {
       "working": "Working",
