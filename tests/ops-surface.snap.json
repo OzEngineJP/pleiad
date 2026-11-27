@@ -1247,6 +1247,21 @@
       "input": "f25fa1c1b8ce"
     },
     {
+      "id": "channels.organizeThreads",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "a225829717cb"
+    },
+    {
       "id": "channels.pending",
       "risk": "read",
       "riskOf": false,

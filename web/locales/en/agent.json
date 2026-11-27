@@ -1819,6 +1819,7 @@
       }
     },
     "channels": {
+      "organizeThreads": {"summary":"Change a channel's thread folders and order.","channelId":"Channel id.","action":"Change to make to the thread layout.","folderId":"Folder id, or root for the channel root.","name":"New folder name.","threadId":"Thread (root post) id.","beforeId":"Put the item before this id, or omit to place it last."},
       "list": {"summary": "List channels and DMs (with unread count, mentions of you and working threads; archived ones included)."},
       "get": {"summary": "Get one channel's definition (name, purpose, default folder, members, house rules).", "channelId": "Channel id."},
       "read": {"summary": "Read the posts of a channel flow or one thread, newest first. Pass the previous nextBefore as before to read further back.", "channelId": "Channel id.", "threadId": "Id of the thread's root post. Omit for the channel flow.", "before": "Read the posts before this one (nextBefore of the previous result).", "limit": "Number of posts to return (default 50, max 100)."},

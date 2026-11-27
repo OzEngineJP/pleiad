@@ -23,6 +23,7 @@ import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 import { runMark, satMark } from "./arc.mjs";
 import { el, icon, moreButton, relTime, svgEl } from "./dom.mjs";
 import { botIcon } from './channels/bot-icon.mjs';
+import { ARCHIVE_FOLDER, ROOT_FOLDER, threadGroups } from './channels/thread-folders.mjs';
 import { fmt, t } from "./i18n.mjs";
 import { familiesOf } from "./family.mjs";
 import { timeText } from "./schedule-times.mjs";
@@ -152,7 +153,7 @@ function loadRecentSearches() {
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
                              onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true,
-                             onOpenChannel, onNewInChannel, channelExtras = () => [] }) {
+                             onOpenChannel, onNewInChannel, onOrganizeThreads, onThreadFolderMenu, channelExtras = () => [] }) {
   const $ = (id) => document.getElementById(id);
   const root = $("groups");
   const prefs = loadPrefs();
@@ -448,9 +449,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : last.answerWaitIds.has(id) ? t("sidebar.waitingAnswer") : t("sidebar.waiting");
 
   /** チャンネルのスレッドの 1 行: 印（弧・◆・青い丸）・題・時刻 */
-  function oneRow(s, level, { noBot = false } = {}) {
+  function oneRow(s, level, { noBot = false, placement } = {}) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, noBot, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.status, s.stopped, iconOf(statusKey(s)), s.lastModified, level, noBot, placement?.signature, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -460,11 +461,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return keep;
     }
     const open = s.id != null && s.id === last.currentId;
-    const r = keyed(el("div", "row one" + (open ? " sel" : "")), key);
+    const r = keyed(el("div", "row one" + (placement ? " channel-thread-row" : "") + (open ? " sel" : "")), key);
+    const menu = (x, y) => onContext?.(s, x, y, placement);
     nextRows.set(key, { signature, node: r });
     treeItem(r, `s:${s.id ?? ""}`, level, {
       open: () => { if (!open) onOpen?.(s.id); },
-      menu: onContext && s.id != null && ((x, y) => onContext(s, x, y)),
+      menu: onContext && s.id != null && menu,
     });
     r.setAttribute("aria-selected", String(open));
     if (open) r.setAttribute("aria-current", "page");
@@ -474,10 +476,18 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const behind = last.bgWaiting.get(s.id);
     if (last.waitingIds.has(s.id)) { const m = el("span", "wait only", ""); m.setAttribute("role", "img"); m.setAttribute("aria-label", waitingLabel(s.id)); glyph.append(m); }
     if (behind || last.runningIds.has(s.id)) glyph.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    if (!glyph.childNodes.length && s.stopped && placement) glyph.append(warnMark(interruptLabel(null)));
     if (!glyph.childNodes.length && last.unreadIds.has(s.id)) glyph.append(unreadMark());
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
-    r.append(glyph, title, when);
+    if (placement) {
+      r.dataset.folderDepth = level - 2;
+      r.append(title, glyph, when);
+      dragSource(r, placement.channelId, 'thread', s.thread.threadId, placement.folderId);
+      dropTarget(r, placement.channelId, drag => drag.kind === 'thread', (after) => ({
+        action: 'moveThread', folderId: placement.folderId, beforeId: after ? placement.nextId : s.thread.threadId,
+      }), { insert: true, self: s.thread.threadId });
+    } else r.append(glyph, title, when);
     if (s.thread && s.bot?.botId && !noBot) {
       const av = botIcon(directory.bots.get(s.bot.botId), 'av xs');
       av.setAttribute("aria-hidden", "true");
@@ -489,66 +499,260 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     status.title = statusLabel;
     status.setAttribute("role", "img");
     status.setAttribute("aria-label", statusLabel);
-    r.insertBefore(status, when);
-    if (onContext) r.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y)));
-    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([glyph, status, when])].filter(Boolean).join(", "));
+    if (!placement) r.insertBefore(status, when);
+    else if (statusKey(s) && !glyph.childNodes.length) glyph.append(status);
+    if (onContext) r.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), menu));
+    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...glyph.children].filter(child => child !== status).concat(status, when))].filter(Boolean).join(", "));
     r.onclick = () => { if (!open) onOpen?.(s.id); };
-    r.oncontextmenu = (e) => { if (!onContext || s.id == null) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
+    r.oncontextmenu = (e) => { if (!onContext || s.id == null) return; e.preventDefault(); menu(e.clientX, e.clientY); };
     return r;
   }
 
-  /** チャンネルの節: chevron・#・名前・畳んだ間の印・＋ */
-  function channelSection(key, { name, unread = false, mentions = 0, rows, onName, onAdd, addLabel }) {
-    const sec = keyed(el("section", "grp chsec"), `chsec:${key}`, true);
-    sec.setAttribute("role", "none");
-    // スレッドの無いチャンネルは開くものが無い（chevron を隠し、「スレッドはまだありません」も出さない）
-    const empty = !rows.length;
-    const isCollapsed = chCollapsed.has(key) || empty;
-    if (isCollapsed) sec.classList.add("collapsed");
-    if (empty) sec.classList.add("no-threads");
-    const head = el("div", "grp-head chsec-head");
-    const setOpen = (open) => { if (open) chCollapsed.delete(key); else chCollapsed.add(key); save(); render(); };
-    treeItem(head, `c:${key}`, 1, { expanded: empty ? null : !isCollapsed, open: () => (onName ? onName() : setOpen(isCollapsed)), expand: empty ? undefined : setOpen });
-    const chev = el("button", "chsec-chev");
-    chev.type = "button";
-    chev.tabIndex = -1;
-    chev.setAttribute("aria-hidden", "true");
-    chev.append(chevron());
-    chev.onclick = (e) => { e.stopPropagation(); setOpen(isCollapsed); };
-    const ic = el("span", "chsec-ic", "#");
-    ic.setAttribute("aria-hidden", "true");
-    const label = el("span", "grp-name chsec-name" + (unread ? " unread" : ""), name);
-    label.setAttribute("role", "button");
-    label.onclick = () => (onName ? onName() : setOpen(isCollapsed));
-    head.append(chev, ic, label);
-    if (mentions) head.append(el("span", "mc", String(mentions)));
-    // 畳んだ中の様子（あなた待ち → 弧 → 未読の順に強い）
-    if (isCollapsed) {
-      if (rows.some((s) => last.waitingIds.has(s.id))) head.append(approvalMark(1));
-      else if (rows.some((s) => last.runningIds.has(s.id))) head.append(runMark(t("sidebar.somethingRunning")));
-      else if (rows.some((s) => last.bgWaiting.has(s.id))) {
-        const count = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
-        head.append(satMark(count, t("activity.behindCount", { count })));
+  let threadDrag = null;
+
+  function dragSource(node, channelId, kind, id, folderId) {
+    if (!onOrganizeThreads) return;
+    node.draggable = true;
+    node.ondragstart = (e) => {
+      if (e.target.closest('button')) { e.preventDefault(); return; }
+      threadDrag = { channelId, kind, id, folderId };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+      node.classList.add('dragging');
+    };
+    node.ondragend = () => {
+      threadDrag = null;
+      node.classList.remove('dragging');
+      for (const target of root.querySelectorAll('[data-thread-drop]')) delete target.dataset.threadDrop;
+    };
+  }
+
+  function threadBusy(channelId, id) {
+    const key = `thread:${channelId}:${id}`;
+    return last.runningIds.has(key) || last.waitingIds.has(key) || last.bgWaiting.has(key);
+  }
+
+  function dropTarget(node, channelId, accept, actionOf, { insert = false, self } = {}) {
+    function target(e) {
+      if (threadDrag?.channelId !== channelId || threadDrag.id === self || !accept(threadDrag)) return null;
+      const rect = node.getBoundingClientRect();
+      const after = e.clientY >= rect.top + rect.height / 2;
+      const action = actionOf(after, threadDrag);
+      const rejected = action.folderId === ARCHIVE_FOLDER && threadDrag.folderId !== ARCHIVE_FOLDER && threadBusy(channelId, threadDrag.id);
+      const surface = typeof insert === 'function' ? insert(threadDrag) : insert;
+      return { action, rejected, style: surface === 'after' ? 'after' : surface ? (after ? 'after' : 'before') : 'inside' };
+    }
+    node.ondragover = (e) => {
+      const drop = target(e);
+      if (!drop) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = drop.rejected ? 'none' : 'move';
+      node.dataset.threadDrop = drop.rejected ? 'rejected' : drop.style;
+    };
+    node.ondragleave = (e) => { if (!node.contains(e.relatedTarget)) delete node.dataset.threadDrop; };
+    node.ondrop = (e) => {
+      const drop = target(e);
+      delete node.dataset.threadDrop;
+      if (!drop || drop.rejected) return;
+      e.preventDefault();
+      const id = threadDrag.id;
+      const action = drop.action;
+      onOrganizeThreads?.({ channelId, ...action, ...(action.action === 'moveThread' ? { threadId: id } : { folderId: id }) });
+    };
+  }
+
+  function threadGroupMark(rows) {
+    if (rows.some(s => last.waitingIds.has(s.id))) return approvalMark(1);
+    if (rows.some(s => last.runningIds.has(s.id))) return runMark(t("sidebar.somethingRunning"));
+    const count = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
+    if (count) return satMark(count, t("activity.behindCount", { count }));
+    if (rows.some(s => s.stopped)) return warnMark(interruptLabel(null));
+    if (rows.some(s => last.unreadIds.has(s.id))) return unreadMark();
+    return null;
+  }
+
+  function threadFolderIcon(archive) {
+    const svg = svgEl('svg', { viewBox: '0 0 20 18', class: 'channel-folder-icon', 'aria-hidden': 'true' });
+    const paths = archive
+      ? [['archive-lid', 'M3 4h14v3H3z'], ['', 'M4 7v7.5h12V7M8 10h4']]
+      : [
+        ['paper-back', 'M1.5 5.3a2 2 0 0 1 2-2h4.8l1.8 1.8h6.3a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H3.5a2 2 0 0 1-2-2z'],
+        ['paper-slip', 'M5 6a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v6H5z'],
+        ['paper-front', 'M2 8h15a1 1 0 0 1 1 1v4.4a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 13.4z'],
+      ];
+    for (const [cls, d] of paths) svg.append(svgEl('path', { class: cls, d }));
+    return svg;
+  }
+
+  const threadMotion = { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' };
+  const animateThreads = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sidebarNode = key => root.querySelector(`[data-side-key="${CSS.escape(key)}"]`);
+
+  function threadPositions() {
+    const positions = new Map();
+    for (const row of root.querySelectorAll('.thread-channel :is(.channel-thread-row,.channel-thread-face):not([data-thread-copy])')) {
+      const group = row.closest('.channel-thread-folder') ?? row.closest('.thread-channel');
+      const head = group.firstElementChild;
+      const rect = row.getClientRects().length ? row.getBoundingClientRect() : null;
+      positions.set(row.dataset.key, { row, rect, head, headTop: head.getBoundingClientRect().top, count: row.querySelector('.row-when')?.textContent });
+    }
+    return positions;
+  }
+
+  function animateThreadPositions(before) {
+    const after = threadPositions();
+    for (const [id, { row, rect, head, count }] of after) {
+      const old = before.get(id);
+      if (!old || (!rect && !old.rect)) continue;
+      if (row.matches('.channel-thread-row') && old.head.dataset.key !== head.dataset.key) {
+        if (rect && !old.rect) {
+          row.animate([{ opacity: 0, transform: `translateY(${old.headTop - rect.top}px) scale(.8)` }, { opacity: 1, transform: 'none' }], threadMotion);
+          continue;
+        }
+        if (!rect && head.getClientRects().length) {
+          const copy = old.row.cloneNode(true);
+          copy.dataset.threadCopy = '';
+          copy.inert = true;
+          copy.setAttribute('aria-hidden', 'true');
+          copy.removeAttribute('role');
+          const { top, left, width } = old.rect;
+          Object.assign(copy.style, { position: 'fixed', top: `${top}px`, left: `${left}px`, width: `${width}px` });
+          head.closest('.thread-channel').append(copy);
+          const to = head.getBoundingClientRect();
+          const animation = copy.animate([{ opacity: 1 }, { opacity: 0, transform: `translateY(${to.top - top}px) scale(.65)` }], threadMotion);
+          animation.finished.then(() => copy.remove(), () => copy.remove());
+          continue;
+        }
       }
-      else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
+      if (!rect || !old.rect) {
+        continue;
+      }
+      const x = old.rect.left - rect.left;
+      const y = old.rect.top - rect.top;
+      if (x || y) row.animate([{ transform: `translate(${x}px,${y}px)` }, { transform: 'none' }], threadMotion);
+      if (row.matches('.channel-thread-face') && count && old.count !== count) {
+        row.querySelector('.row-when').animate([{ scale: '.85' }, { scale: '1.16', offset: .52 }, { scale: '1' }], threadMotion);
+      }
     }
-    if (onAdd) {
-      const add = el("button", "btn btn-icon grp-add");
-      add.type = "button";
-      add.tabIndex = -1;
-      add.title = addLabel;
-      add.setAttribute("aria-label", addLabel);
-      add.append(icon(PLUS));
-      add.onclick = (e) => { e.stopPropagation(); onAdd(); };
-      head.append(add);
+  }
+
+  function channelSection(channel, rows) {
+    const { id: key, name, threadFolders: layout } = channel;
+    const folders = layout?.folders ?? [];
+    const groups = threadGroups(layout, rows, row => row.thread.threadId);
+
+    function section(sectionKey, cls, closed) {
+      const wrapper = keyed(el('section', `grp ${cls}${closed ? ' collapsed' : ''}`), sectionKey, true);
+      wrapper.setAttribute('role', 'none');
+      const panel = keyed(el('div', 'rows channel-thread-rows'), `${sectionKey}:rows`, true);
+      panel.setAttribute('role', 'group');
+      return { wrapper, panel };
     }
-    head.setAttribute("aria-label", spoken([label, ...[...head.children].filter((c) => c.tagName !== "BUTTON" && c !== label)]));
-    sec.append(head);
-    const rowsEl = keyed(el("div", "rows"), `chrows:${key}`, true);
-    rowsEl.setAttribute("role", "group");
-    for (const s of rows) rowsEl.append(oneRow(s, 2));
-    sec.append(rowsEl);
-    return sec;
+
+    function header({ cls, id, level, closed, toggle, open, menu, glyph, label, members }) {
+      const node = el('div', `grp-head channel-thread-face ${cls}`);
+      treeItem(node, id, level, { expanded: !closed, open, expand: toggle, menu });
+      const title = el('span', level === 1 ? 'grp-name chsec-name' : 'grp-name', label);
+      title.onclick = open;
+      const mark = el('span', 'channel-thread-mark');
+      const count = el('span', 'row-when');
+      if (closed || level === 2) {
+        count.textContent = String(members.length);
+        count.setAttribute('aria-label', t('channels:side.threadCount', { count: members.length }));
+      }
+      if (closed) {
+        const status = threadGroupMark(members);
+        if (status) mark.append(status);
+        node.classList.toggle('sel', members.some(s => s.id === last.currentId));
+      }
+      node.append(glyph, title, mark, count);
+      node.setAttribute('aria-label', spoken([title, ...mark.children, count]));
+      if (menu) {
+        node.append(menuButton('row-more', t('session.rowMore', { title: label }), menu));
+        node.oncontextmenu = (e) => { e.preventDefault(); menu(e.clientX, e.clientY); };
+      }
+      return node;
+    }
+
+    function setOpen(id, open, archive = false) {
+      const sectionKey = id === key ? `chsec:${key}` : id;
+      const panel = sidebarNode(`${sectionKey}:rows`);
+      const before = panel?.getBoundingClientRect().height ?? 0;
+      const parts = '.fam-chev,.paper-front,.paper-slip,.archive-lid';
+      const snapshot = [...(panel?.previousElementSibling?.querySelectorAll(parts) ?? [])]
+        .map(part => ({ transform: getComputedStyle(part).transform, opacity: getComputedStyle(part).opacity }));
+      if (open === archive) chCollapsed.add(id); else chCollapsed.delete(id);
+      save(); render();
+      if (!panel || !animateThreads()) return;
+      const after = panel.getBoundingClientRect().height;
+      panel.getAnimations().forEach(animation => animation.cancel());
+      panel.style.display = 'flex';
+      panel.inert = !open;
+      const animation = panel.animate([
+        { height: `${before}px`, opacity: open ? 0 : 1, overflow: 'clip' },
+        { height: `${open ? after || panel.scrollHeight : 0}px`, opacity: open ? 1 : 0, overflow: 'clip' },
+      ], threadMotion);
+      animation.onfinish = () => {
+        panel.style.removeProperty('display');
+        panel.inert = false;
+      };
+      for (const [index, part] of [...panel.previousElementSibling.querySelectorAll(parts)].entries()) {
+        if (!snapshot[index]) continue;
+        const { transform, opacity } = getComputedStyle(part);
+        part.animate([snapshot[index], { transform, opacity }], { ...threadMotion, duration: id === key ? 240 : 160 });
+      }
+    }
+
+    function appendThreads(container, folderId, level) {
+      const members = groups.get(folderId);
+      for (const [index, s] of members.entries()) {
+        const previousId = members[index - 1]?.thread.threadId;
+        const nextId = members[index + 1]?.thread.threadId;
+        const afterNextId = members[index + 2]?.thread.threadId;
+        const signature = [folderId, folders, previousId, nextId, afterNextId];
+        container.append(oneRow(s, level, { noBot: true, placement: { channelId: key, folderId, folders, previousId, nextId, afterNextId, signature } }));
+      }
+    }
+
+    const closed = chCollapsed.has(key);
+    const { wrapper, panel } = section(`chsec:${key}`, 'chsec thread-channel', closed);
+    const toggle = (open) => setOpen(key, open);
+    const glyph = el('button', 'chsec-chev');
+    glyph.type = 'button';
+    glyph.tabIndex = -1;
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.append(el('span', 'chsec-ic', '#'), chevron());
+    glyph.onclick = () => toggle(closed);
+    const heading = header({ cls: 'chsec-head', id: `c:${key}`, level: 1, closed, toggle,
+      open: () => onOpenChannel ? onOpenChannel(key) : toggle(closed),
+      menu: onThreadFolderMenu && ((x, y) => onThreadFolderMenu({ channel, onOpenChannel, onNewInChannel }, x, y)),
+      glyph, label: name, members: rows });
+    dropTarget(heading, key, drag => drag.kind === 'thread', () => ({
+      action: 'moveThread', folderId: ROOT_FOLDER, beforeId: groups.get(ROOT_FOLDER)[0]?.thread.threadId,
+    }), { insert: 'after' });
+    wrapper.append(heading, panel);
+    appendThreads(panel, ROOT_FOLDER, 2);
+
+    for (const [index, folder] of [...folders, { id: ARCHIVE_FOLDER, name: t('channels:side.threadArchive') }].entries()) {
+      const archive = folder.id === ARCHIVE_FOLDER;
+      const id = `thread-folder:${key}:${folder.id}`;
+      const closed = chCollapsed.has(id) !== archive;
+      const group = section(id, 'channel-thread-folder', closed);
+      const toggle = (open) => setOpen(id, open, archive);
+      const head = header({ cls: 'channel-folder-head' + (archive ? ' channel-archive-head' : ''), id, level: 2, closed, toggle,
+        open: () => toggle(closed), glyph: threadFolderIcon(archive), label: folder.name, members: groups.get(folder.id),
+        menu: !archive && onThreadFolderMenu && ((x, y) => onThreadFolderMenu({ channel, folder, index }, x, y)) });
+      head.addEventListener('click', (e) => { if (e.target === head || e.target.closest('.channel-folder-icon')) toggle(closed); });
+      if (!archive) dragSource(head, key, 'folder', folder.id);
+      dropTarget(head, key, drag => drag.kind === 'thread' || !archive, (after, drag) => drag.kind === 'thread'
+        ? { action: 'moveThread', folderId: folder.id }
+        : { action: 'moveFolder', beforeId: after ? folders[index + 1]?.id : folder.id },
+      { self: folder.id, insert: drag => drag.kind === 'folder' });
+      appendThreads(group.panel, folder.id, 3);
+      group.wrapper.append(head, group.panel);
+      panel.append(group.wrapper);
+    }
+    return wrapper;
   }
 
   /** bot の面の「Bots ＋」の見出し（「チャンネル ＋」と同じ形。＋ と見出しは初めての bot の段へ）。bot が 0 なら下に「bot はまだありません」 */
@@ -671,8 +875,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     for (const c of channels) {
       const rows = (byChannel.get(c.id) ?? []).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
       if (filtering() && !rows.length) continue;
-      wanted.append(channelSection(c.id, { name: c.name, unread: (c.unread ?? 0) > 0, mentions: c.mentions ?? 0, rows,
-        onName: () => onOpenChannel?.(c.id), onAdd: onNewInChannel && (() => onNewInChannel(c.id)), addLabel: t("channels:side.newInChannel", { name: c.name }) }));
+      wanted.append(channelSection(c, rows));
     }
   }
 
@@ -1806,11 +2009,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
     setDirectory({ channels = [], bots = [], stateOf = directory.stateOf, botMenu = directory.botMenu, selected = directory.selected } = {}) {
+      const animate = isVisible() && face === 'channels' && animateThreads() && channels.some(c =>
+        JSON.stringify(c.threadFolders) !== JSON.stringify(directory.channels.get(c.id)?.threadFolders));
+      const before = animate ? threadPositions() : null;
       // 一時チャット（home: true）の保存の名前は home。脇・行の出どころでは画面の名前で書く
       directory = { channels: new Map(channels.map((c) => [c.id, c.home ? { ...c, name: t("channels:side.home") } : c])), bots: new Map(bots.map((b) => [b.id, b])),
         stateOf, botMenu, selected: selected ?? null };
       if (remote) remote.sig = null;   // 検索中ならチャンネルの当たりも取り直す
       render();
+      if (before?.size) animateThreadPositions(before);
     },
     /** 脇の面（'chats' = チャット、'channels' = bot。web/channels/side-tabs.mjs が切り替えのたびに渡す） */
     setFace(next) {
