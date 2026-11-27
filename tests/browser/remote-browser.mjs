@@ -320,17 +320,18 @@ try {
       const requestId = randomUUID();
       const link = { hostId: desk.hostId, token: randomUUID(), updates: [] };
       taskLinks.set(requestId, link);
-      const [created, duplicate] = await page.evaluate(requestId => Promise.all([
+      const [task, duplicate] = await page.evaluate(requestId => Promise.all([
         window.mounts.desk.taskLink({ action: 'start', requestId }),
         window.mounts.desk.taskLink({ action: 'start', requestId }),
       ]), requestId);
-      assert.deepEqual(created, duplicate);
-      assert.deepEqual(link.updates, [{ hostId: desk.hostId, openRef: created.sessionId, state: 'not_started', version: 1 }]);
-      assert.deepEqual(await page.evaluate(openRef => window.mounts.desk.taskLink({ action: 'open', openRef }), created.sessionId), created);
-      await assert.rejects(page.evaluate(openRef => window.mounts.cloud.taskLink({ action: 'open', openRef }), created.sessionId));
-      await desk.pc.runTurn({ sessionId: created.sessionId, prompt: 'echo:private-test' }, { ms: 20_000 });
+      assert.deepEqual(task, duplicate);
+      assert.deepEqual(link.updates, [{ hostId: desk.hostId, openRef: task.sessionId, state: 'not_started', version: 1 }]);
+      assert.deepEqual(await page.evaluate(openRef => window.mounts.desk.taskLink({ action: 'open', openRef }), task.sessionId), task);
+      assert.deepEqual(await page.evaluate(requestId => window.mounts.desk.taskLink({ action: 'start', requestId }), requestId), task);
+      await assert.rejects(page.evaluate(openRef => window.mounts.cloud.taskLink({ action: 'open', openRef }), task.sessionId));
+      await desk.pc.runTurn({ sessionId: task.sessionId, prompt: 'echo:private-test' }, { ms: 20_000 });
       await until(() => link.updates.at(-1)?.state === 'completed', 'task link completion');
-      assert.equal(link.updates.at(-1).openRef, created.sessionId);
+      assert.equal(link.updates.at(-1).openRef, task.sessionId);
       assert.ok(link.updates.at(-1).version > 1);
       assert.ok(link.updates.every(update => Object.keys(update).sort().join(',') === 'hostId,openRef,state,version'));
       scenarios.push('task link request replay, host authorization and status from the fake backend');
@@ -410,6 +411,7 @@ try {
         window.mount(value);
       }, { ...options(desk), name: 'desk-org', tenantId: organizationTenant });
       await state('desk-org', 'ready');
+      await assert.rejects(page.evaluate(openRef => window.mounts['desk-org'].taskLink({ action: 'open', openRef }), task.sessionId));
       const organization = page.frameLocator('#desk-org').frameLocator('#view');
       await organization.locator('html[data-remote-embedded]').waitFor({ timeout: 30_000 }).catch(async error => {
         const loader = page.frameLocator('#desk-org');
