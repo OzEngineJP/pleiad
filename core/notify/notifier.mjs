@@ -116,13 +116,17 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
     },
 
     /** ターンが終わって落ち着いた（子の作業も終わった）。outcome は ok か error。中断は呼ばない。 */
-    finished({ sessionId, outcome, completedAt, startedAt, title }) {
+    finished({ sessionId, target = sessionId, outcome, completedAt, startedAt, title }) {
       if (!sessionId || (outcome !== 'ok' && outcome !== 'error')) return [];
       const kind = outcome === 'ok' ? 'done' : 'failed';
       const durationMs = Number.isFinite(startedAt) && Number.isFinite(completedAt) ? completedAt - startedAt : undefined;
       return toEach(kind, { sessionId, completedAt, durationMs }, device => {
-        const ok = deliver(device, { kind, session: sessionId, title });
-        if (ok) slot(device.id, sessionId).seen = true;
+        const ok = deliver(device, { kind, session: target, title });
+        if (ok) {
+          const entry = slot(device.id, sessionId);
+          entry.seen = true;
+          if (target !== sessionId) (entry.targets ??= new Set()).add(target);
+        }
         return ok;
       });
     },
@@ -146,7 +150,11 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
         if (!entry?.seen) continue;
         entry.seen = false;
         if (!entry.approvals.size) outstanding.get(device.id).delete(sessionId);
-        if (cancelTo(device, { session: sessionId, cancel: 'seen' })) sent.push(device.id);
+        const targets = entry.targets ?? [sessionId];
+        entry.targets = null;
+        let cancelled = false;
+        for (const target of targets) cancelled = cancelTo(device, { session: target, cancel: 'seen' }) || cancelled;
+        if (cancelled) sent.push(device.id);
       }
       return sent;
     },

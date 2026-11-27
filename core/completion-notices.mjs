@@ -11,17 +11,37 @@ export const hasPendingChild = tasks => tasks.some(r =>
  * ready は離れた端末への通知用で、画面が居るかによらず、落ち着いた時点で 1 回だけ呼ぶ（ADR 0086）。
  * info.startedAt は 30 秒未満のターンを通知から外すために ready へ渡す。info.uuid はターンの最後の発言の id で、通知の一覧の飛び先（ADR 0149）として ready へ渡す。info.bot は bot の会話の種類（sidecar の bot.kind）で、画面への completionReady に `bot` として載せる。
  */
-export function createCompletionNotices({ busy, send, ready = () => {} }) {
+export function createCompletionNotices({ busy, send, ready = () => {}, prepareChannelPost }) {
   const pending = new Map();
   const flush = (sessionId) => {
     const entry = pending.get(sessionId);
-    if (!entry || busy(sessionId)) return false;
+    if (!entry || (!entry.prepared && busy(sessionId))) return false;
+    if (entry.channelPost && !entry.prepared) {
+      if (entry.preparing) return false;
+      entry.preparing = true;
+      void prepareChannelPost(sessionId, entry.channelPost).then(post => {
+        if (pending.get(sessionId) !== entry) return;
+        if (!post) { pending.delete(sessionId); return; }
+        entry.channelPost = post;
+        entry.completedAt = post.completedAt;
+        entry.prepared = true;
+        deliver(sessionId, entry);
+      }).catch(() => { if (pending.get(sessionId) === entry) pending.delete(sessionId); });
+      return false;
+    }
+    return deliver(sessionId, entry);
+  };
+  const deliver = (sessionId, entry) => {
+    const { startedAt, uuid, bot } = entry;
+    const event = {
+      completedAt: entry.completedAt, outcome: entry.outcome,
+      ...(entry.channelPost ? { channelPost: entry.channelPost } : {}),
+    };
     if (!entry.pushed) {
       entry.pushed = true;
-      try { ready({ sessionId, outcome: entry.outcome, completedAt: entry.completedAt, startedAt: entry.startedAt, uuid: entry.uuid }); } catch { /* 離れた端末への通知の失敗で画面の通知を止めない */ }
+      try { ready({ sessionId, ...event, startedAt, uuid }); } catch { /* 離れた端末への通知の失敗で画面の通知を止めない */ }
     }
-    // bot の会話なら種類を添える（画面の通知は、スレッド・DM・ルーティンの会話の完了を出さず、失敗だけ出す。ADR 0109・0127）
-    if (!send({ type: 'completionReady', sessionId, completedAt: entry.completedAt, outcome: entry.outcome, ...(entry.bot ? { bot: entry.bot } : {}) })) return false;
+    if (!send({ type: 'completionReady', sessionId, ...event, ...(bot ? { bot } : {}) })) return false;
     pending.delete(sessionId);
     return true;
   };
@@ -29,7 +49,9 @@ export function createCompletionNotices({ busy, send, ready = () => {} }) {
     finished(sessionId, outcome, completedAt, info = {}) {
       if (!sessionId) return;
       if ((outcome === 'ok' || outcome === 'error') && Number.isFinite(completedAt)) {
-        pending.set(sessionId, { completedAt, outcome, startedAt: info.startedAt, bot: info.bot ?? null, uuid: info.uuid ?? null, pushed: false });
+        const previous = pending.get(sessionId);
+        pending.set(sessionId, { completedAt, outcome, startedAt: previous?.channelPost && !previous.pushed && info.channelPost
+          ? previous.startedAt ?? info.startedAt : info.startedAt, bot: info.bot, uuid: info.uuid ?? null, channelPost: info.channelPost, pushed: false });
       }
       flush(sessionId);
     },

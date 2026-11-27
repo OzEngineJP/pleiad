@@ -14,6 +14,7 @@
 //     observe(event)                                           … channelPost（人以外の @あなた）・channelRead・channelsChanged（アーカイブ）
 //     sessionRemoved(sessionId)
 import { completionKind, permissionOutcome } from './notifications.mjs';
+import { channelNoticeId } from '../web/view-address.mjs';
 
 const firstLine = (s) => String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '';
 
@@ -55,17 +56,23 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
   }
 
   return {
-    completion: guard('completion', async ({ sessionId, outcome, completedAt, uuid = null }) => {
+    completion: guard('completion', async ({ sessionId, outcome, completedAt, uuid = null, channelPost = null }) => {
       const meta = await store.get(sessionId).catch(() => null);
-      const kind = completionKind({ outcome, bot: meta?.bot ?? null, delegation: meta?.delegation ?? null, hiddenKinds });
+      const kind = completionKind({ outcome, bot: meta?.bot ?? null, delegation: meta?.delegation ?? null, hiddenKinds, channelPost });
       if (!kind || !Number.isFinite(completedAt)) return null;
       const place = await sessionPlace(sessionId);
       // 失敗は、bot の会話（中の会話は人に見せない）でなく、失敗した返事のあるスレッド・DM を開く（postId で返事の位置へ）
-      const postId = kind === 'failed' && place.channelId ? await failedPostOf(place.channelId, place.threadId, sessionId).catch(() => null) : null;
+      const channelId = channelPost?.channelId ?? place.channelId;
+      const threadId = channelPost?.threadId ?? place.threadId;
+      const scope = channelPost ? channelNoticeId({ channelId, threadId }) : sessionId;
+      const postId = channelPost?.postId ?? (kind === 'failed' && place.channelId ? await failedPostOf(place.channelId, place.threadId, sessionId).catch(() => null) : null);
+      const readAt = channelPost ? await getChannels()?.readPosition({ channelId, threadId }) : null;
       // 会話の通知は at = completedAt（会話の既読 readAt と同じ時刻で突き合わせる）
       return inbox.add({
-        kind, dedupeKey: `${kind === 'failed' ? 'failed' : 'done'}:${sessionId}:${completedAt}`, at: completedAt, sessionId, channelId: place.channelId, viewing: viewing(sessionId),
-        data: { uuid: place.channelId ? null : uuid, threadId: place.threadId, ...(postId ? { postId } : {}), actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
+        kind, dedupeKey: `${kind === 'failed' ? 'failed' : 'done'}:${scope}:${completedAt}`, at: completedAt, sessionId, channelId,
+        viewing: viewing(scope) || (readAt != null && readAt >= completedAt),
+        data: { uuid: channelId ? null : uuid, threadId, ...(postId ? { postId } : {}), actor: place.actor,
+          title: channelPost?.title ?? place.title, channelName: place.channelName, home: place.home, threadTitle: channelPost?.title ?? place.threadTitle },
       });
     }),
 

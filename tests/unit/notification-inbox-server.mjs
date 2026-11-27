@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
+import { createFakeGates } from '../lib/fake-gate.mjs';
+import { channelNoticeId } from '../../web/view-address.mjs';
 
 export const name = 'notification-inbox-server';
 export const title = '通知の一覧をサーバー越しに: 完了・失敗・あなた待ち・@あなた が行になる・既読の整合・再起動で残る・会話を消すと消える・ops';
@@ -22,8 +24,9 @@ export default async function (t) {
   const servers = [], clients = [];
   try {
     const dataDir = path.join(tmp, 'data');
+    const gates = await createFakeGates(tmp);
     const boot = async () => {
-      const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_NOTIFY_MIN_TURN_MS: '0' }, dataDir, timeoutMs: 60_000 });
+      const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_NOTIFY_MIN_TURN_MS: '0', ...gates.env }, dataDir, timeoutMs: 60_000 });
       const host = await open({ port: server.port, token: server.token });
       servers.push(server); clients.push(host);
       return { server, host, call: (op, args) => host.cmd('invoke', { op, args }) };
@@ -129,6 +132,28 @@ export default async function (t) {
     t.ok('bot の返事の失敗の通知は、元のスレッドと失敗した返事の投稿を指す（書いた bot つき・未読）',
       botFail.target.threadId === rootFail.id && failedPosts.length === 1 && botFail.target.postId === failedPosts[0].id && botFail.actor?.name === 'Owl' && botFail.unread === true,
       JSON.stringify([botFail, failedPosts.map((p) => p.id)]));
+
+    // ---- 作業中に見たスレッドは、離れていれば完了時に未読に戻る
+    for (const visible of [false, true]) {
+      const gate = visible ? 'stay' : 'leave';
+      const started = host.mark();
+      const thread = await call('channels.post', { channelId: dev.id, text: `@Owl bg 1 gate:${gate}` });
+      const address = { channelId: dev.id, threadId: thread.id };
+      const progress = await until(async () => (await call('channels.read', address)).posts
+        .find(p => p.turn && p.state === 'working'), { label: '途中の返信' });
+      await call('channels.markRead', { ...address, at: progress.at });
+      if (visible) await host.cmd('presence', { slot: 'channel', sessionId: channelNoticeId(address), visible, shownAt: progress.at });
+      await gates.open(gate);
+      const event = await until(() => host.since(started).find(e => e.type === 'completionReady'
+        && e.channelPost?.threadId === thread.id), { label: 'bot の完了' });
+      const row = await until(async () => (await list()).items.find(x => x.kind === 'done'
+        && x.target.threadId === thread.id), { label: 'bot の通知一覧' });
+      const completed = (await call('channels.read', address)).posts.find(p => p.id === row.target.postId);
+      t.ok(visible ? '返信を表示中の完了通知は最初から既読' : '離れた後の完了通知は未読で返信を指す',
+        row.unread === !visible && row.threadTitle.includes(gate) && row.at === completed?.completedAt
+        && row.at === event.completedAt && completed.completedAt > progress.at, JSON.stringify(row));
+    }
+    await host.cmd('presence', { slot: 'channel', sessionId: null, visible: false });
 
     // ---- 再起動
     const ids = (await list({ limit: 100 })).items.map((x) => x.id).join();

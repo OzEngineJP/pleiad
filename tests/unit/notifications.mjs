@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { createCompletionNotices, hasPendingChild } from '../../core/completion-notices.mjs';
+import { channelNoticeAddress, channelNoticeId } from '../../web/view-address.mjs';
 const { createDesktopNotifications, windowInFront } = createRequire(import.meta.url)('../../desktop/notifications.cjs');
 export const name = 'notifications';
 export const title = '完了と返事待ちの通知・保留・重複抑止';
@@ -58,6 +59,29 @@ export default async function(t) {
   completions.finished('bot-thread', 'ok', 60, { bot: 'thread' });
   t.ok('bot の会話の完了は、種類を bot に載せて画面へ渡す（画面が出し分ける。ADR 0127）', events.length === 6 && events[5].bot === 'thread' && !('bot' in events[4]));
 
+  const channelPost = { channelId: 'c_dev', threadId: 'p_thread', postId: 'p_reply', title: '依存の更新' };
+  const botEvents = [], botReady = [];
+  const botCompletions = createCompletionNotices({
+    busy: () => busy.child || busy.delivery,
+    prepareChannelPost: async (_id, post) => ({ ...post, completedAt: 90 }),
+    ready: event => botReady.push(event),
+    send: event => busy.connected && Boolean(botEvents.push(event)),
+  });
+  busy.child = true;
+  botCompletions.finished('bot-thread', 'ok', 70, { bot: 'thread', channelPost, startedAt: 20 });
+  botCompletions.changed();
+  busy.child = false; busy.delivery = true;
+  botCompletions.changed();
+  t.ok('bot の親は最後の子とその結果の配送を待つ', botReady.length === 0 && botEvents.length === 0);
+  busy.connected = false; busy.delivery = false;
+  botCompletions.changed(); botCompletions.changed();
+  await Promise.resolve();
+  busy.connected = true;
+  botCompletions.changed(); botCompletions.changed();
+  t.ok('最後の子の後、保存した完了時刻と行き先で各通知を一度だけ出す',
+    botReady.length === 1 && botEvents.length === 1 && botReady[0].startedAt === 20
+    && botEvents[0].completedAt === 90 && botEvents[0].channelPost.postId === channelPost.postId);
+
   const sent = [], opened = [];
   let requests = 0, click;
   class BrowserNotice {
@@ -103,6 +127,21 @@ export default async function(t) {
   } }, openSession: id => opened.push(id) });
   desktop.requestPermission(); desktop.completed(end); desktop.waiting(wait); click('native');
   t.ok('デスクトップ版はブラウザー許可を要求せず両通知をネイティブへ渡す', native.length === 2 && sent.length === 5 && requests === 1 && opened.at(-1) === 'native');
+  let viewing = true;
+  const channelAlerts = createCompletionNotifications({
+    host, openSession: target => opened.push(channelNoticeAddress(target)),
+    isViewing: address => viewing && address === channelNoticeId({ channelId: channelPost.channelId, threadId: channelPost.threadId }),
+  });
+  const previousNoticeCount = sent.length;
+  channelAlerts.completed(botEvents[0]);
+  viewing = false;
+  channelAlerts.completed(botEvents[0]);
+  t.ok('表示したままのスレッドでは PC 通知を抑え、離れても出し直さない', sent.length === previousNoticeCount);
+  channelAlerts.completed({ ...botEvents[0], completedAt: 100 });
+  sent.at(-1).onclick();
+  t.ok('離れていればチャットと同じ題とスレッドの名前で通知し、押すと返信を開く',
+    sent.length === previousNoticeCount + 1 && sent.at(-1).title === sent[0].title
+    && sent.at(-1).options.body === channelPost.title && opened.at(-1)?.postId === channelPost.postId);
   let unsupported = false, fail = false;
   const notices = [], calls = [];
   class NativeNotice extends EventEmitter {

@@ -16,7 +16,7 @@ export function createPresence({ now = Date.now } = {}) {
     set(conn, { deviceId = null, platform = null, visible, sessionId, slot = 'main', shownAt = null }) {
       const entry = { deviceId, platform, visible: visible === true, sessionId: typeof sessionId === 'string' && sessionId ? sessionId : null, at: now(),
         shownAt: visible === true && Number.isFinite(shownAt) ? shownAt : null };
-      const key = slot === 'modal' ? 'modal' : 'main';
+      const key = slot === 'modal' || slot === 'channel' ? slot : 'main';
       const slots = byConn.get(conn) ?? new Map();
       slots.set(key, entry);
       byConn.set(conn, slots);

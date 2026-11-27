@@ -1452,6 +1452,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     }
     // 呼んだ bot へ返す返事は最後の投稿。最後の投稿に返事が無ければ、この投稿のもの（onTurnEnd）。返事の @ で起きる bot は、返事を返す先から外す
     if (done.reply) rec.priorReply = done.reply;
+    if (done.post) rec.priorPost = done.post;
     for (const m of done.woke?.mentions ?? []) rec.explicitMentions.add(m);
     // 承認待ちのまま分けたなら、待ちの印は新しい投稿に付ける（見せるものが何も無く作業中のままなら、投稿は作らない）
     progress(rec, { immediate: true });
@@ -1473,7 +1474,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     await updateSidecar(sessionId, (sb) => ({ ...sb, snapshotDue: true, delivered: [] }));
   }
 
-  async function onTurnEnd(turn, { outcome, interrupted } = {}) {
+  async function onTurnEnd(turn, { outcome, interrupted, onPostSaved } = {}) {
     const sessionId = turn?.info?.sessionId;
     const rec = sessionId ? active.get(sessionId) : null;
     if (!rec) {
@@ -1486,7 +1487,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       if (sessionId && turn.compactTrigger) await pump(sessionId);
       return;
     }
-    let woke = null, reply = null, nextSession = null, retry = false;
+    let woke = null, reply = null, post = null, nextSession = null, retry = false;
     const limited = outcome === 'limited';
     try {
       rec.ended = true;
@@ -1531,7 +1532,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
           turn: { botId: rec.botId, sessionId: rec.sessionId }, new: true }, botAuthor(rec.botId)).catch((e) => { log('could not create the turn post:', errText(e)); return null; });
         rec.postId = post?.id ?? null;
       }
-      if (rec.postId && !retry) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
+      if (rec.postId && !retry) ({ woke, reply, post } = await finalizePost(rec, state, ok, { limited }));
       else if (state === 'failed' && rec.channelId && POST_KINDS.has(rec.kind)) {
         await systemPost(rec.channelId, rec.threadId, agentT(locale(), 'channel.turn.failed', { error: rec.error ?? '' }), undefined, rec.taint);
       }
@@ -1547,6 +1548,10 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       for (const [id, live] of [...liveSteers]) if (live.sessionId === sessionId) { liveSteers.delete(id); inbox.mark(live.ids, 'pending').catch(() => {}); }
     }
     await refreshThread(rec.channelId, rec.threadId);
+    const completionPost = post ?? rec.priorPost;
+    if (!rec.stopped && !retry) onPostSaved?.(completionPost ? {
+      channelId: rec.channelId, threadId: rec.threadId, postId: completionPost.id,
+    } : null);
     if (rec.pulseBot && (rec.kind === 'thread' || rec.kind === 'dm')) await noteResult(rec, { outcome, interrupted, reply }).catch((e) => log('could not write the stream line:', errText(e)));
     // 使用量の上限に当たった: 休憩中にして、Pleiad のお知らせを出す（bot の発言には上限の文を書かない）
     if (limited && !nextSession && await allowed()) await limitReached(rec, Number(interrupted?.resetsAt)).catch((e) => log('could not record a usage limit:', errText(e)));
@@ -1695,7 +1700,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     let text = postText(speakingParts([...rec.parts, rec.cur]).join('\n\n'));
     // 黙ったことを表すだけの文（印・「（なし）」のような括弧だけの一言）は、文章を書かずに終えたのと同じ（ADR 0119 の追記）
     if (isSilentReply(text)) text = '';
-    const none = { woke: null, reply: null };
+    const none = { woke: null, reply: null, post: null };
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
     if (!mayFinish(rec)) {
@@ -1724,7 +1729,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const deliver = (ok || state === 'failed') && !rec.stopped && !limited && hasBody;
     // 返事を何件かに分けて書いたなら、呼んだ bot へ返すのは最後の 1 件（その前の投稿は文脈として一緒に渡る）
     // bot が channels.post で入れた返事の @ は、書いたときに解いてある（onPosted の extra.filled）。ここで重ねて起こさない
-    return { woke: deliver && !rec.filled && saved?.mentions?.some((m) => m !== 'you') ? saved : null, reply: deliver && saved ? (rec.explicit ?? saved) : null };
+    return { woke: deliver && !rec.filled && saved?.mentions?.some((m) => m !== 'you') ? saved : null, reply: deliver && saved ? (rec.explicit ?? saved) : null, post: saved };
   }
 
   // ------------------------------------------------------------ 止める

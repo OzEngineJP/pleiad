@@ -3,6 +3,7 @@ import { t } from './i18n.mjs';
 import { savedTitle } from './saved-text.mjs';
 import { approvalApps, approvalNotice } from './computer-use.mjs';
 import { approvalChange, changeNotice } from './setting-change.mjs';
+import { channelNoticeId } from './view-address.mjs';
 
 /** 人に見せない bot の会話（夜の整理・心拍。core/channels/types.mjs の HIDDEN_BOT_KINDS と同じ） */
 const HIDDEN_BOT_KINDS = new Set(['learner', 'pulse']);
@@ -48,16 +49,18 @@ export function createCompletionNotifications({ host = window, openSession, open
           || !event.sessionId || !Number.isFinite(event.completedAt)) return;
       if (session?.delegation) return;
       // bot の会話（server が completionReady の bot に種類を載せる。一覧にまだ無い会話もあるので、event を先に見る）。
-      // 隠れた会話（夜の整理・心拍）は何も出さない。スレッド・DM・ルーティンの会話はスマホと同じく、完了は出さず失敗だけ出す（ADR 0109・0127）
+      // スレッド・DM の正常完了には、サーバーが投稿の行き先を添える。
       const bot = event.bot ?? session?.bot?.kind ?? null;
       const failed = event.outcome === 'error';
-      if (HIDDEN_BOT_KINDS.has(bot) || (bot && !failed)) return;
-      if (event.completedAt <= (seen.get(event.sessionId) ?? 0)) return;
-      seen.set(event.sessionId, event.completedAt);
+      const { channelId, threadId, title } = event.channelPost ?? {};
+      const scope = channelNoticeId({ channelId, threadId }) ?? event.sessionId;
+      if (HIDDEN_BOT_KINDS.has(bot) || (bot && !failed && !channelId)) return;
+      if (event.completedAt <= (seen.get(scope) ?? 0)) return;
+      seen.set(scope, event.completedAt);
       // 失敗（outcome: error）は完了と別の種類。見ている間・切った種類は出さない（出さなかった分も、後から出し直さない）
-      if (!(failed ? settings().failed : settings().done) || isViewing(event.sessionId)) return;
-      const notice = { sessionId: event.sessionId, completedAt: event.completedAt, ...(failed ? { kind: 'failed' } : {}),
-        title: failed ? t('notify.failed') : t('notify.completed'), body: body(session?.title) };
+      if (!(failed ? settings().failed : settings().done) || isViewing(scope)) return;
+      const notice = { sessionId: channelNoticeId(event.channelPost) ?? event.sessionId, completedAt: event.completedAt, ...(failed ? { kind: 'failed' } : {}),
+        title: failed ? t('notify.failed') : t('notify.completed'), body: body(title || session?.title) };
       show(notice);
     },
     waiting(event, session, replay = false) {

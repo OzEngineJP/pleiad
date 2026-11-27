@@ -16,6 +16,8 @@ import { removeDevinCandidatesOnce } from './prefs-migrations.mjs';
 import { createAgentTasks, delegateReply, finalReply, workspaceLine } from './agent-tasks.mjs';
 import { historyGaveUp, readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
+import { channelNoticeId } from '../web/view-address.mjs';
+import { threadTitle } from './channels/threads.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
 import { createWaitingCards } from './waiting-cards.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList, kindDescription } from './agent-bridge.mjs';
@@ -3810,13 +3812,33 @@ const completionNotices = createCompletionNotices({
   // 裏の作業は委譲の完了と同じく awaitedBackground で見る。開きっぱなしの端末（開発サーバーなど）で通知が出なくならないように
   busy: sessionId => sessionBusy(sessionId) || awaitedBackground(sessionId) || hasPendingChild(agentTasks?.list(sessionId) ?? []),
   send: event => sendTo({ kind: P.EVENT, event }),
+  prepareChannelPost: async (sessionId, address) => {
+    const channels = botHost?.opsDeps().channels;
+    if (!channels) return null;
+    const { channelId, threadId } = address;
+    const channel = await channels.get({ channelId });
+    if (!channel || channel.archivedAt) return null;
+    const root = threadId ? await channels.getPost({ channelId, postId: threadId }) : null;
+    if (threadId && (!root || root.deletedAt)) return null;
+    const thread = threadId ? await channels.threads.get(channelId, threadId) : null;
+    const title = thread?.title || (root ? threadTitle(root.text) : channel.name);
+    const completedAt = Date.now();
+    const post = await channels.completePost({ ...address, sessionId, completedAt });
+    return post ? { ...address, title, completedAt: post.completedAt } : null;
+  },
   // 落ち着いた時点で、画面が居なくてもスマホへ 1 回（委譲の子の完了は endTurn が渡さない。依頼元の完了に含む）
-  ready: ({ sessionId, outcome, completedAt, startedAt, uuid }) => {
-    void inboxSources.completion({ sessionId, outcome, completedAt, uuid });
+  ready: ({ sessionId, outcome, completedAt, startedAt, uuid, channelPost }) => {
+    void inboxSources.completion({ sessionId, outcome, completedAt, uuid, channelPost });
+    if (channelPost) {
+      const { channelId, threadId, title } = channelPost;
+      pushNotifier.finished({ sessionId: channelNoticeId({ channelId, threadId }), target: channelNoticeId(channelPost),
+        outcome, completedAt, startedAt, title });
+      return;
+    }
     store.get(sessionId).then(async meta => {
       if (meta?.delegation) return;
       botHost?.onSessionDone(sessionId, outcome);
-      // bot の会話の完了はスレッドで見える。スマホへは送らない（承認・質問・失敗は送る。ADR 0109）。
+      // スレッド・DM の完了は投稿の行き先を付けた上の経路で送る。
       // 隠れた会話（夜の整理・心拍）は失敗も送らない（endTurn が finished を呼ばないのでここへは来ないが、念のため。ADR 0127）
       if (HIDDEN_BOT_KINDS.has(meta?.bot?.kind)) return;
       if (meta?.bot && outcome !== 'error') return;
@@ -10756,13 +10778,19 @@ async function endTurn(turn, emit, { record = true } = {}) {
   worktreeSweepSoon();
   // 空いている間の自動圧縮（idle）は利用者の作業ではないので、完了として知らせない
   // 夜の整理・心拍の隠れた会話（learner・pulse）は、完了も失敗も知らせない（失敗は memory.learnStatus・bot のページで見える。ADR 0127）
-  if (!delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle') completionNotices.finished(turn.info.sessionId,
-    turn.outcome, completedAt, { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid });
+  const notifyCompletion = !delegated && !HIDDEN_BOT_KINDS.has(botKind) && turn.compactTrigger !== 'idle';
+  const notifyChannelPost = turn.outcome === 'ok' && (botKind === 'thread' || botKind === 'dm');
+  const finishNotice = channelPost => completionNotices.finished(turn.info.sessionId, turn.outcome, completedAt,
+    { startedAt: turn.startedAtMs, bot: botKind, uuid: turn.lastUuid, channelPost });
+  if (notifyCompletion && !notifyChannelPost) finishNotice();
   settingApprovals?.changed();
   // bot の会話なら、ターンの投稿を確定し、たまった出来事を渡す（ターンを手放した後。待たない）
   // ログイン切れ（auth）は bot・ルーティンには今までどおりの失敗として渡す（止めた・中断ではない）
   if (!requeued) {
-    const finishing = botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted: interrupted?.reason === 'auth' ? null : interrupted, requeued });
+    const finishing = botHost?.onTurnEnd(turn, { outcome: turn.outcome, interrupted: interrupted?.reason === 'auth' ? null : interrupted, requeued,
+      onPostSaved: notifyCompletion && notifyChannelPost && !turn.compactTrigger && !turn.compaction
+        ? post => post ? finishNotice(post) : completionNotices.changed(turn.info.sessionId)
+        : undefined });
     if (botHost?.enablement.finishing(turn.info.sessionId)) await finishing;
   }
   // 利用者の送信でも、委譲の完了通知などで始まったターンでも予約する（ADR 0068）。圧縮のターンの後は予約し直さない
@@ -12064,7 +12092,7 @@ wss.on("connection", (ws, req) => {
             // スマホへの通知を送らない・消すのは、見ている報告だけで決める（今までどおり）
             pushNotifier.viewed(a.sessionId);
             // 通知の一覧の既読は、実際に表示した位置（shownAt）まで（ADR 0149・ADR 0347 第 3 段）。読み込み中・読み込みに失敗した画面の報告では進めない
-            if (shownAt != null) {
+            if (shownAt != null && a.slot !== 'channel') {
               try { inbox.viewSession(a.sessionId, shownAt); } catch (e) { console.error('  通知の一覧: 既読にできなかった:', String(e?.message ?? e)); }
             }
           }

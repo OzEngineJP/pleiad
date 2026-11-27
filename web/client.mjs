@@ -82,7 +82,7 @@ import { setupSlashSkills } from "./slash-skills.mjs";
 import { createMarkdownEditor } from "./md-editor.mjs";
 import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
-import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
+import { channelNoticeAddress, channelNoticeId, createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
 import { childRoute, restoredSession, createOpenGate } from "./child-route.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
@@ -478,9 +478,14 @@ let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
 let shellStopped = false;
 const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
-const completionNotifications = createCompletionNotifications({ openSession: id => openConversation(id), openSettings: page => openSettingsPage(page),
+function openNotificationTarget(id, options) {
+  const address = channelNoticeAddress(id);
+  return address ? viewAddress.go(address) : openConversation(id, options);
+}
+const completionNotifications = createCompletionNotifications({ openSession: openNotificationTarget, openSettings: page => openSettingsPage(page),
   // 子の会話は、モーダルで開いている間も「見ている」（ホストへ伝える在席の 2 つ目の置き場 modalPresence と同じ会話。ADR 0315・0318）
-  settings: () => notifyPc, isViewing: id => watchingNow() && (state.current === id || modalWatchId() === id), isFocused: () => watchingNow() && document.hasFocus() });
+  settings: () => notifyPc, isViewing: id => watchingNow() && (state.current === id || modalWatchId() === id
+    || channelNoticeId(channelsUi.completionScope() ?? undefined) === id), isFocused: () => watchingNow() && document.hasFocus() });
 
 let ws = null;
 let seq = 0;
@@ -8880,9 +8885,11 @@ const channelsUi = setupChannels({
   openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
   openSession: (id) => viewAddress.go({ sessionId: id }),
+  completionPresenceChanged: () => queueMicrotask(() => channelPresence.report()),
   // 見ている場所が替わった（Channels の面・スレッドの開閉）・Chats の側へ戻った
   noteView: (view) => {
     viewAddress.note(view);
+    queueMicrotask(() => channelPresence.report());
     renderSessions();
   },
   quota: (backend) => usageSource.load(backend),
@@ -8904,7 +8911,7 @@ const channelsUi = setupChannels({
   openRoutingAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
     : capsOf(backend).accounts ? agentAccounts.open(backend, { focus: account }) : null,
   openRoutingConnections: (backend) => openAgentConns(backend),
-  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
+  noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); queueMicrotask(() => channelPresence.report()); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {
     watch: (ids) => watchSessions(ids),
@@ -11241,6 +11248,8 @@ function connect() {
       channelsUi.reconnected();   // スレッド・DM の ToDo も同じ
       presenceReporter.reset();
       presenceReporter.report(true);
+      channelPresence.reset();
+      channelPresence.report(true);
       modalPresence.reset();
       syncModalWatch({ force: true });
       // 切れていた間の出来事は届いていない。見ている子の詳細を 1 回読み直す
@@ -11255,7 +11264,7 @@ function connect() {
       return refresh({ sharePending: true }).then(async () => {
         // スマホの通知を押して開いた会話（殻が ?open= で渡す）。起動・つなぎ直しで自動に開くので、利用者が開いた脇のパネルは閉じない
         const wanted = mobileNotify.takeOpenRequest();
-        if (wanted) return openConversation(wanted, { keepDrawer: true });
+        if (wanted) return openNotificationTarget(wanted, { keepDrawer: true });
         // 子の会話はメインに出さない（ADR 0318）。覚えていた id が子なら、その根の会話を開く（開いていたモーダルは戻さない。ダイアログは開き直しで閉じる他のダイアログと同じ）
         if (state.current) return select(restoredSession(state.current, state.sessions), { reload: true, keepDrawer: true });
         // 一覧は件数で切れるので、前の会話がそこに無くても、読めた（先読みが返った）なら開く。読めないなら無い会話
@@ -11898,18 +11907,29 @@ const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage:
 const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) openAgentConns(agent); else $('setupTab').click(); },
   recentFolders: () => cwdOptions().map((o) => o.value) });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
-const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => openConversation(id) });
+const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: openNotificationTarget });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）
-window.plyRemote?.onOpenSession?.(id => { if (id) openConversation(id); });
+window.plyRemote?.onOpenSession?.(id => { if (id) openNotificationTarget(id); });
 // 見ている会話をホストへ知らせる。スマホへの通知を送らない・消すのに使う
 // shownAt（描き終えた履歴の時点）があるときだけ、ホストは通知の一覧を既読にする（ADR 0347 第 3 段）
 const presenceReporter = createPresenceReporter({ send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, ...(shownAt ? { shownAt } : {}) }),
   current: () => state.current, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
-document.addEventListener('visibilitychange', () => { presenceReporter.report(); modalPresence.report(); });
-addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); modalPresence.report(); });
-addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); modalPresence.report(true); });
+const channelPresence = createPresenceReporter({
+  send: (visible, sessionId, shownAt) => cmd('presence', { slot: 'channel', visible, sessionId, shownAt }),
+  current: () => channelNoticeId(channelsUi.completionScope() ?? undefined), visible: watchingNow,
+  shown: () => channelsUi.completionScope()?.shownAt ?? null,
+});
+const reportPresence = (force = false) => {
+  presenceReporter.report(force);
+  modalPresence.report(force);
+  channelPresence.report(force);
+};
+document.addEventListener('visibilitychange', () => reportPresence());
+addEventListener('plyremote:stop', () => { shellStopped = true; reportPresence(); });
+addEventListener('plyremote:start', () => { shellStopped = false; reportPresence(true); });
 presenceReporter.start();
 modalPresence.start();
+channelPresence.start();
 // 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend,
   modelsOf: async (id, account = '') => (state.backends.some((b) => b.id === id) ? (await loadVocab(id, account, state.cwd || '')).models : null),

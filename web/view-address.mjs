@@ -12,6 +12,19 @@ const LEGACY_SESSION_KEY = 'agent-host-current';
 
 const str = (v) => (typeof v === 'string' && v ? v : null);
 
+// Native notifications carry a single destination string. The same address
+// without the post identifies the viewport for presence and deduplication.
+export function channelNoticeId({ channelId, threadId, postId } = {}) {
+  return channelId ? `channel:${channelId}:${threadId ?? ''}:${postId ?? ''}` : null;
+}
+
+export function channelNoticeAddress(id) {
+  const match = /^channel:([^:]+):([^:]*):([^:]*)$/.exec(id);
+  if (!match) return null;
+  const [, channelId, threadId, postId] = match;
+  return toAddress({ channelId, threadId, postId });
+}
+
 /**
  * いろいろな形の行き先を 1 つの形にする。受けるもの: アドレスそのもの・通知の一覧の target（{ sessionId, uuid } / { channelId, threadId, postId }）・
  * channels:show の detail（{ kind: 'channel'|'bot'|'routine', id, threadId?, postId? }）。わからなければ null

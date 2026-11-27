@@ -179,11 +179,11 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
  * ターンの終わりを会話の状態から作る材料。bot の会話は完了を載せず（失敗だけ）、隠れた会話・委譲の子は載せない（今の通知の規則。ADR 0109・0127）。
  * 載せるなら 'done' | 'failed'、載せないなら null
  */
-export function completionKind({ outcome, bot = null, delegation = null, hiddenKinds = new Set() }) {
+export function completionKind({ outcome, bot = null, delegation = null, hiddenKinds = new Set(), channelPost = null }) {
   if (delegation) return null;
   if (bot && hiddenKinds.has(bot.kind)) return null;
   if (outcome === 'error') return 'failed';
-  if (outcome === 'ok') return bot ? null : 'done';
+  if (outcome === 'ok') return !bot || (channelPost && ['thread', 'dm'].includes(bot.kind)) ? 'done' : null;
   return null;
 }
 
