@@ -1,6 +1,10 @@
 import { markdownContent, parseTable } from '../file-preview-content.mjs';
 import { node, text, button, query, api, metadata, pageUrl, request, errorView } from './bridge.mjs';
 import { htmlFrame } from './html-once.mjs';
+import { installHostDownloads } from '../remote/browser-view.mjs';
+import { notify } from '../file-actions.mjs';
+
+installHostDownloads(notify);
 
 let controller;
 export function sourceContent(value, line = null) {

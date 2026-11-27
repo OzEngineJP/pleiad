@@ -14,6 +14,7 @@ import { configurePreviewConfirmation, refreshPreviewConfirmation } from './prev
 import { configureIsolatedOrigin } from './visualize-frame.mjs';
 import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify, copyPathText } from './file-actions.mjs';
+import { browserEmbedded, createHostSocket, installHostDownloads } from './remote/browser-view.mjs';
 import { paintUserBody, userTools, attachmentImageSrc } from './user-message.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
@@ -313,6 +314,10 @@ let updatesUi = null;
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
+if (browserEmbedded) {
+  document.documentElement.dataset.remoteEmbedded = '';
+  installHostDownloads(notify);
+}
 const log = $("log");
 const thread = $("thread");
 setupMessagePeek(thread);   // タッチ: 発言を押すと時刻を 4 秒出す
@@ -11168,7 +11173,7 @@ async function checkToken() {
 }
 
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws = createHostSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
   ws.onopen = () => { thread.classList.remove("activity-offline"); runningTools.cards.forEach(c => c.querySelector(".tc-res")?.paint?.(Date.now())); connStatus.opened(); };
 
   ws.onmessage = (e) => {

@@ -58,7 +58,7 @@ export function qrPath(text) {
 export function platformName(platform) {
   const key = String(platform ?? '').toLowerCase();
   // i18n-dynamic: settings.remote.platform.
-  return ['desktop', 'ios', 'android'].includes(key) ? t(`settings.remote.platform.${key}`) : String(platform ?? '');
+  return ['desktop', 'ios', 'android', 'browser'].includes(key) ? t(`settings.remote.platform.${key}`) : String(platform ?? '');
 }
 
 /** 中継の設定（URL と秘密）がそろっていて、つながらない（「サーバーへの接続に失敗しました」） */

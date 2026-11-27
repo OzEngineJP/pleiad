@@ -107,7 +107,7 @@ function publicRevoked(k, nameOf) {
 const agentAllowed = d => Boolean(d) && d.platform === 'desktop';
 
 /** デスクトップ版の端末以外（スマホ）。通知を受ける相手。 */
-const isMobile = d => d.platform !== 'desktop';
+const isMobile = d => d.platform !== 'desktop' && d.platform !== 'browser';
 const NOTIFY_PERSIST_MS = 60_000;
 
 /** 拒否した鍵が同じ PC へもう一度申し込めるまで（Plus からの申し込み）。 */
@@ -274,7 +274,7 @@ export function createRemoteHost({
 
   /** その link が引き受ける（owns）端末だけを sync する。ペアリングの入場券と審査の招待は、受ける link（own）にだけ置く。 */
   function syncDevices(link) {
-    sendControl(link, { type: 'sync', devices: [...deviceCache.values()].filter(d => link.provider.owns(d)).map(d => ({ id: d.id, tokenHash: d.tokenHash })) });
+    sendControl(link, { type: 'sync', devices: [...deviceCache.values()].filter(d => d.platform !== 'browser' && link.provider.owns(d)).map(d => ({ id: d.id, tokenHash: d.tokenHash })) });
     if (!link.provider.allowPairing) return;
     if (offer && offer.expiresAt > Date.now()) {
       sendControl(link, { type: 'pairing', ticketHash: offer.ticketHash.toString('hex'), ttlMs: offer.expiresAt - Date.now() });
@@ -451,6 +451,19 @@ export function createRemoteHost({
       deniedRecently: publicKey => (deniedUntil.get(keyText(publicKey)) ?? 0) > now(),
       /** このアカウントからの申し込みを止めているか（続けて断ったとき。PC の画面の「再開する」で解く）。 */
       plusPaused: uid => plusPausedUntil(uid) > 0,
+      browserDevice(publicKey, uid) {
+        const key = keyText(publicKey);
+        if (revokedKeys.has(key)) return null;
+        return [...deviceCache.values()].find(d => d.publicKey === key && d.platform === 'browser'
+          && d.plusUid === uid && link.provider.owns(d) && !needsReapproval(d)) ?? null;
+      },
+      startBrowser(device, transport, scope) {
+        if (ws.readyState !== WebSocket.OPEN || deviceCache.get(device.id) !== device ||
+          revokedKeys.has(device.publicKey) || !link.provider.owns(device) || link.provider.ready() !== true) {
+          return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'revoked');
+        }
+        startChannel(link, ws, device, transport, scope);
+      },
       /**
        * 審査用ホスト（AGENT_HOST_REVIEW=1）で、審査用アカウントの端末なら承認の窓を出さずに許可してよいか。
        * 普段のホストは常に false（初めての端末は今までどおり承認待ち）
@@ -470,7 +483,7 @@ export function createRemoteHost({
       async admitKnown({ name, platform, app, publicKey, plusUid }) {
         const key = keyText(publicKey);
         if (revokedKeys.has(key)) return null;
-        const all = [...deviceCache.values()].filter(d => d.publicKey === key && !d.invite);
+        const all = [...deviceCache.values()].filter(d => d.publicKey === key && !d.invite && d.platform !== 'browser');
         const approved = all.filter(d => !needsReapproval(d));
         if (!approved.length) return null;
         const mine = all.find(d => (d.via ?? 'own') === link.name);
@@ -497,11 +510,18 @@ export function createRemoteHost({
        * 同じ鍵の申し込みは 1 つまで（前のものを切って置き換える）。5 分で切れる。
        * again は、もう一度の許可が要る端末の記録（同じ id のまま許可し直す）
        */
-      request({ name, platform, app, publicKey, plusUid, code, send, onApproved }) {
+      request({ name, platform, app, publicKey, plusUid, code, send, onApproved, browser = false }) {
         const key = keyText(publicKey);
-        for (const r of [...requests.values()]) if (keyText(r.publicKey) === key) finishRequest(r, 'cancelled');
-        const again = [...deviceCache.values()].find(d => d.publicKey === key && needsReapproval(d)) ?? null;
-        return openRequest({ name, platform, app }, { publicKey: Buffer.from(publicKey), code, ws, send, link, timer: null, plusUid, again, onApproved });
+        for (const r of requests.values()) {
+          if (keyText(r.publicKey) !== key) continue;
+          if (r.approving) {
+            send({ type: 'denied', reason: 'rate' });
+            return closeWs(ws, 1000);
+          }
+          finishRequest(r, 'cancelled');
+        }
+        const again = !browser && [...deviceCache.values()].find(d => d.publicKey === key && needsReapproval(d)) || null;
+        return openRequest({ name, platform, app }, { publicKey: Buffer.from(publicKey), code, ws, send, link, timer: null, plusUid, again, onApproved, browser });
       },
       /** 端末をこの link のものとして登録し、中継へ allow を送る（試験の provider 用。approvedBy を渡さなければ、もう一度の許可が要る端末になる）。 */
       async admit({ name, platform, app, publicKey, plusUid, approvedBy }) {
@@ -529,7 +549,7 @@ export function createRemoteHost({
   function handleDevice(link, ws, deviceId, timer) {
     const device = deviceCache.get(deviceId);
     // 届いた link が引き受けない端末は受けない（own で登録した端末が plus から来ても、その逆でも）
-    if (!device || !link.provider.owns(device)) {
+    if (!device || device.platform === 'browser' || !link.provider.owns(device)) {
       clearTimeout(timer);
       ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, device ? 'revoked' : 'unknown device'));
       return;
@@ -552,34 +572,39 @@ export function createRemoteHost({
       }
       ws.send(hs.writeMessage());
       clearTimeout(timer);
-      const ch = new Channel({
-        role: 'host', transport: hs.split(), send: b => ws.send(b),
-        hello: { app: appVersion, hostName: cfg.hostName }, bufferedAmount: () => ws.bufferedAmount,
-      });
-      const entry = { ch, ws, link };
-      if (!channels.has(deviceId)) channels.set(deviceId, new Set());
-      channels.get(deviceId).add(entry);
-      ws.on('message', b => ch.receive(b));
-      ch.on('stream', s => {
-        // 端末の AI 用の口は接続口が自分で受ける（ローカルのサーバーへは転送しない。docs/remote.md §4.5）
-        if (s.kind === 'ws' && checkPath(s.request?.path)?.pathname === AGENT_PATH) {
-          const current = deviceCache.get(deviceId);
-          if (!agent || !current) return s.reset(RESET_CODE.FORBIDDEN);
-          return agent.attach(s, { id: deviceId, name: current.name, platform: current.platform });
-        }
-        forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform }, pagePorts });
-      });
-      ch.on('close', err => closeWs(ws, err?.code === 'revoked' ? HOST_CLOSE.UNAUTHORIZED : err?.code === 'shutdown' ? HOST_CLOSE.SHUTDOWN : 1000));
-      ws.on('close', () => {
-        ch.close();
-        const set = channels.get(deviceId);
-        set?.delete(entry);
-        if (set && !set.size) channels.delete(deviceId);
-        touch(deviceId);
-      });
-      ch.start();
+      startChannel(link, ws, device, hs.split());
+    });
+  }
+
+  function startChannel(link, ws, device, transport, scope = null) {
+    const deviceId = device.id;
+    const ch = new Channel({
+      role: 'host', transport, send: b => ws.send(b),
+      hello: { app: appVersion, hostName: cfg.hostName }, bufferedAmount: () => ws.bufferedAmount,
+    });
+    const entry = { ch, ws, link };
+    if (!channels.has(deviceId)) channels.set(deviceId, new Set());
+    channels.get(deviceId).add(entry);
+    ws.on('message', b => ch.receive(b));
+    ch.on('stream', s => {
+      // 端末の AI 用の口は接続口が自分で受ける（ローカルのサーバーへは転送しない。docs/remote.md §4.5）
+      if (s.kind === 'ws' && checkPath(s.request?.path)?.pathname === AGENT_PATH) {
+        const current = deviceCache.get(deviceId);
+        if (scope || !agent || !current) return s.reset(RESET_CODE.FORBIDDEN);
+        return agent.attach(s, { id: deviceId, name: current.name, platform: current.platform });
+      }
+      forwardStream(s, { target, token, device: { id: deviceId, platform: device.platform }, pagePorts, scope });
+    });
+    ch.on('close', err => closeWs(ws, err?.code === 'revoked' ? HOST_CLOSE.UNAUTHORIZED : err?.code === 'shutdown' ? HOST_CLOSE.SHUTDOWN : 1000));
+    ws.on('close', () => {
+      ch.close();
+      const set = channels.get(deviceId);
+      set?.delete(entry);
+      if (set && !set.size) channels.delete(deviceId);
       touch(deviceId);
     });
+    ch.start();
+    touch(deviceId);
   }
 
   function touch(deviceId) {
@@ -625,6 +650,7 @@ export function createRemoteHost({
         try { msg = parseJson(transport.decrypt(Buffer.from(data))); } catch { msg = null; }
         clearTimeout(timer);
         if (msg?.type !== 'pair') return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'pairing');
+        if (cleanLabel(hello.platform, 32) === 'browser') return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'pairing');
         const label = {
           name: cleanLabel(hello.name) || t('remote.unnamedDevice'),
           platform: cleanLabel(hello.platform, 32) || 'unknown',
@@ -713,7 +739,7 @@ export function createRemoteHost({
     clearTimeout(r.timer);
     if (phaseName === 'denied') r.send({ type: 'denied', reason: 'rejected' });
     if (phaseName === 'expired') r.send({ type: 'expired' });
-    closeWs(r.ws, 1000);
+    if (!(r.browser && phaseName === 'approved')) closeWs(r.ws, 1000);
     emit({ type: 'remotePairing', phase: phaseName, request: publicRequest(r), ...extra });
     queueStatus();
   }
@@ -1067,7 +1093,7 @@ export function createRemoteHost({
     /** 承認。deviceId と中継用トークンを発行し、端末一覧・中継へ登録して端末へ渡す。 */
     async approve(id) {
       const r = requests.get(String(id ?? ''));
-      if (!r) throw new Error(t('remote.pairing.requestGone'));
+      if (!r || r.approving) throw new Error(t('remote.pairing.requestGone'));
       // 窓を開いている間に取り消された鍵は通さない
       if (revokedKeys.has(keyText(r.publicKey))) { finishRequest(r, 'denied'); throw new Error(t('remote.pairing.requestGone')); }
       const link = r.link ?? links.own;
@@ -1087,11 +1113,14 @@ export function createRemoteHost({
         device = Object.assign(again, patch);
       } else {
         ({ device, raw } = issueDevice(r, { via: link.name, plusUid: r.plusUid, approvedBy: 'host' }));
-        await store.addDevice(device);
+        if (r.browser) r.approving = true;
+        try { await store.addDevice(device); }
+        catch (error) { delete r.approving; throw error; }
         deviceCache.set(device.id, device);
       }
-      sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
-      r.send({ type: 'approved', deviceId: device.id, token: raw.toString('base64url'), hostName: cfg.hostName });
+      if (!r.browser) sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
+      r.send({ type: 'approved', deviceId: device.id,
+        ...(r.browser ? {} : { token: raw.toString('base64url') }), hostName: cfg.hostName });
       const shown = publicDevice(device, 0, notifyKeys.has(device.id), null, deviceName);
       finishRequest(r, 'approved', { device: shown });
       r.onApproved?.(device);
@@ -1099,7 +1128,7 @@ export function createRemoteHost({
     },
     async deny(id) {
       const r = requests.get(String(id ?? ''));
-      if (!r) throw new Error(t('remote.pairing.requestGone'));
+      if (!r || r.approving) throw new Error(t('remote.pairing.requestGone'));
       // Pleiad Plus から来た鍵は、断ってから 1 時間は同じ鍵で頼み直せない（QR は PC の画面で始めるので要らない）
       if (r.link?.name === 'plus') deniedUntil.set(keyText(r.publicKey), now() + DENY_COOLDOWN_MS);
       finishRequest(r, 'denied');

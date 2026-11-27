@@ -84,8 +84,13 @@ export class AdmissionError extends Error {
  * @param {number} [o.admitLimit]      1 時間の申し込みの上限（既定 20）
  * @param {number} [o.admitWindowMs]   上限を数える窓（既定 1 時間）
  */
-export function createPlusLink({ session, verifier, issuer = null, ticketVerifier = null, remote, verifyAdmission = null, onAdmitted = () => {}, onHostLost = () => {}, log = () => {},
+export function createPlusLink({ session, verifier, issuer = null, ticketVerifier = null, remote, verifyAdmission = null, browserOrigin = 'https://app.pleiad.dev', onAdmitted = () => {}, onHostLost = () => {}, log = () => {},
   now = Date.now, admitLimit = 20, admitWindowMs = 60 * 60_000 } = {}) {
+  const origin = URL.canParse(browserOrigin) ? new URL(browserOrigin) : null;
+  const allowedBrowserOrigin = origin?.origin === browserOrigin && (
+    origin.protocol === 'https:' || (origin.protocol === 'http:' &&
+      (['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) || origin.hostname.endsWith('.localhost')))
+  ) ? browserOrigin : null;
   // 張る条件と判定の材料。update() で外（server の同期の手）から写す
   const st = {
     enabled: false, signedIn: false, uid: null, accountStatus: null, accountReadAt: 0,
@@ -136,11 +141,21 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       if (p.hostId !== hostId || p.devicePub !== Buffer.from(remoteStatic).toString('base64url') || !st.uid || p.uid !== st.uid) {
         throw new AdmissionError('account');
       }
+      const browser = p.deviceKind === 'browser';
+      if ((p.deviceKind !== undefined && !browser) || browser !== (cleanLabel(hello.platform, 32) === 'browser') || (browser &&
+        (hello.platform !== 'browser' || !allowedBrowserOrigin || p.origin !== allowedBrowserOrigin || hello.plus.origin !== p.origin ||
+          !Number.isInteger(p.iat) || !Number.isInteger(p.exp) || p.exp <= p.iat || p.exp - p.iat > 60 ||
+          p.exp <= Math.floor(now() / 1000)))) {
+        throw new AdmissionError('account');
+      }
       let fresh;
       try { fresh = jtis.consume(p.jti, p.exp); } catch { throw new AdmissionError('unavailable'); }
       if (!fresh) throw new AdmissionError('account');
-      return { uid: p.uid };
+      return { uid: p.uid, scope: browser ? Object.freeze({
+        deviceKind: 'browser', origin: p.origin, hostId, uid: p.uid, devicePub: p.devicePub,
+      }) : null };
     }
+    if (cleanLabel(hello.platform, 32) === 'browser') throw new AdmissionError('account');
     if (st.admission != null) throw new AdmissionError('update_required');
     let v;
     try { v = await verifier.verify(hello.plus?.idToken); } catch { throw new AdmissionError('account'); }
@@ -192,12 +207,22 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
     // 端末はメッセージ 2 のあとすぐ { type: 'admit' | 'pair' } を送る。確かめの await の間に届いても取りこぼさないよう先に受けておく
     let nextResolve;
     const next = new Promise(res => { nextResolve = res; });
-    ws.once('message', data2 => nextResolve(data2));
+    const receiveNext = (data2, binary) => {
+      ws.off('close', endNext);
+      nextResolve(binary ? data2 : null);
+    };
+    const endNext = () => {
+      ws.off('message', receiveNext);
+      nextResolve(null);
+    };
+    ws.once('message', receiveNext);
+    ws.once('close', endNext);
 
     // 2. メッセージ 1 の plus を確かめる（別のアカウントのものは窓を出さずに断る）
-    let uid;
+    let uid, scope;
     try {
-      ({ uid } = await (verifyAdmission ?? verifyHello)({ hello, remoteStatic: publicKey, hostId: identity.hostId, uid: st.uid }));
+      const verify = cleanLabel(hello.platform, 32) === 'browser' ? verifyHello : (verifyAdmission ?? verifyHello);
+      ({ uid, scope } = await verify({ hello, remoteStatic: publicKey, hostId: identity.hostId, uid: st.uid }));
     } catch (e) {
       if (!(e instanceof AdmissionError)) log(`plus admit: ${e.message}`);
       return refuse(e instanceof AdmissionError ? e.reason : 'account');
@@ -214,6 +239,26 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
     let msg;
     try { msg = parseJson(transport.decrypt(Buffer.from(await next))); } catch { msg = null; }
     if (msg?.type !== 'admit' && msg?.type !== 'pair') { clearTimeout(timer); return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'admit'); }
+    if (scope) {
+      if (ws.readyState !== WebSocket.OPEN || uid !== st.uid) return refuse('account');
+      const known = ctx.browserDevice(publicKey, uid);
+      const start = device => ctx.startBrowser(device, transport, scope);
+      if (known) {
+        clearTimeout(timer);
+        send({ type: 'approved', deviceId: known.id, hostName });
+        return start(known);
+      }
+      if (msg.type === 'admit') return refuse('approval');
+      if (ctx.plusPaused?.(uid)) return refuse('rejected');
+      const denied = await checkRequest({ publicKey });
+      if (denied) return refuse(denied);
+      if (ws.readyState !== WebSocket.OPEN || uid !== st.uid || ctx.isRevoked(publicKey)) return refuse('account');
+      requestTimes.push(now());
+      clearTimeout(timer);
+      send({ type: 'waiting' });
+      return ctx.request({ ...label, publicKey, plusUid: uid, code, send, browser: true,
+        onApproved(device) { start(device); onAdmitted(device); } });
+    }
 
     // 4. 許可済みの鍵なら、窓を出さずに中継用トークンを出し直す
     const known = await ctx.admitKnown({ ...label, publicKey, plusUid: uid });

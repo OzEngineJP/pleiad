@@ -112,12 +112,13 @@ function sendableCode(code) {
  * device は { id, platform }（この線の端末。ハンドシェイクで確かめた端末）。/ws には x-pleiad-device で渡し、
  * サーバーが「どの端末の画面か」（スマホへの通知の見ている印・通知鍵の登録）を知る。端末が自分で名乗ったヘッダーは通さない（requestHeaders）。
  */
-export function forwardStream(stream, { target, token, device = null, pagePorts = null }) {
+export function forwardStream(stream, { target, token, device = null, pagePorts = null, scope = null }) {
   const head = stream.request ?? {};
   const checked = checkPath(head.path);
   const isolated = head.destination === 'isolated';
+  if (scope && (isolated || isIsolatedPagePath(head.path))) return stream.reset(RESET_CODE.FORBIDDEN);
   if (head.destination != null && head.destination !== 'main' && !isolated) return stream.reset(RESET_CODE.FORBIDDEN);
-  const ports = devicePagePorts(head.pagePorts);
+  const ports = scope ? null : devicePagePorts(head.pagePorts);
   // /agent は接続口が自分で受ける（connector.mjs → agent-port.mjs）。ローカルのサーバーへは通さない（docs/remote.md §4.5）
   if (checked?.pathname === AGENT_PATH) return stream.reset(RESET_CODE.FORBIDDEN);
   if (stream.kind === 'http') {
@@ -127,6 +128,7 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
     if ((isolated || limit) && !validPort(pagePorts?.isolated)) return stream.reset(RESET_CODE.FORBIDDEN);
     if (isolated && !isIsolatedPagePath(checked.path)) return stream.reset(RESET_CODE.FORBIDDEN);
     const headers = requestHeaders(head.headers);
+    if (scope) delete headers['accept-encoding'];
     if (limit) headers['accept-encoding'] = 'identity';
     // このヘッダーは端末の HTTP 要求からは通さず、認証済みチャネルの頭からだけ作る。
     // ファイルページの api/env と CSP を端末の origin にするための情報（ADR 0295 §5）。
@@ -134,13 +136,13 @@ export function forwardStream(stream, { target, token, device = null, pagePorts 
     // ファイルのページの出どころ（Sec-Fetch-Site）は、ページの道だけ通す。ホストの入口が same-origin・none のほかを断る（core/page-auth.mjs）
     if (!isolated && limit) { const site = fetchSiteOf(head.headers); if (site) headers['sec-fetch-site'] = site; }
     const dest = isolated ? { host: '127.0.0.1', port: pagePorts.isolated } : target();
-    return forwardHttp(stream, method, checked.path, headers, dest, isolated ? null : token, limit, pagePorts, ports);
+    return forwardHttp(stream, method, checked.path, headers, dest, isolated ? null : token, limit, pagePorts, ports, scope);
   }
   if (isolated || !checked || checked.pathname !== '/ws') return stream.reset(RESET_CODE.FORBIDDEN);
-  return forwardWs(stream, checked.path, head.protocols, target(), token, device, ports, pagePorts);
+  return forwardWs(stream, checked.path, head.protocols, target(), token, device, ports, pagePorts, scope);
 }
 
-function forwardHttp(stream, method, path, headers, { host, port }, token, limit, pagePorts, ports) {
+function forwardHttp(stream, method, path, headers, { host, port }, token, limit, pagePorts, ports, scope) {
   let responded = false;
   const req = http.request({
     host, port, method, path, agent: false,
@@ -162,6 +164,17 @@ function forwardHttp(stream, method, path, headers, { host, port }, token, limit
       (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity'))) return tooLarge();
     responded = true;
     const out = responseHeaders(res.headers);
+    if (scope) {
+      out['cache-control'] = 'no-store';
+      out['referrer-policy'] = 'no-referrer';
+      if (path === '/' || path === '/index.html' || /^\/(?:index\.html)?\?/.test(path)) {
+        const policy = String(out['content-security-policy'] ?? '').split(';').map(part => part.trim()).filter(Boolean);
+        out['content-security-policy'] = [
+          ...policy.filter(part => !/^frame-ancestors(?:\s|$)/i.test(part)),
+          `frame-ancestors 'self' ${scope.origin}`,
+        ].join('; ');
+      }
+    }
     if (limit && ports && typeof out['content-security-policy'] === 'string') {
       out['content-security-policy'] = out['content-security-policy'].split(/(\s+|;)/).map(source =>
         source === `http://localhost:${pagePorts.isolated}` ? `http://localhost:${ports.isolated}`
@@ -181,7 +194,7 @@ function forwardHttp(stream, method, path, headers, { host, port }, token, limit
   req.end();
 }
 
-function forwardWs(stream, path, protocols, { host, port }, token, device, ports, hostPagePorts) {
+function forwardWs(stream, path, protocols, { host, port }, token, device, ports, hostPagePorts, scope) {
   const pagesEnabled = validPort(hostPagePorts?.isolated);
   const pageRequests = new Set();
   const sep = path.includes('?') ? '&' : '?';
@@ -246,11 +259,18 @@ function forwardWs(stream, path, protocols, { host, port }, token, device, ports
   // 端末 → ホスト。ローカルへの送りが溜まっていないときに窓を返す（§4.3）
   stream.on('message', (data, text, release) => {
     if (local.readyState !== WebSocket.OPEN) { release(); return; }
-    if (pagesEnabled && text) {
+    if (scope || (pagesEnabled && text)) {
       try {
         const msg = JSON.parse(data.toString('utf8'));
         if (msg.kind === 'command' && msg.command === 'pageOpen' &&
           (typeof msg.id === 'string' && msg.id.length <= 200 || Number.isSafeInteger(msg.id))) {
+          if (scope && ['html', 'viz'].includes(msg.args?.kind)) {
+            release();
+            stream.send(JSON.stringify({ kind: 'response', id: msg.id, ok: false,
+              code: 'BROWSER_PREVIEW_UNAVAILABLE', error: 'Executable HTML previews are unavailable over browser remote connections.' }),
+              { text: true }).catch(() => {});
+            return;
+          }
           if (pageRequests.size >= MAX_PAGE_REQUESTS) pageRequests.delete(pageRequests.values().next().value);
           pageRequests.add(msg.id);
         }
