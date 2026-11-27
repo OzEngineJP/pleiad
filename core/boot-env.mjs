@@ -26,6 +26,7 @@
  * - AGENT_HOST_OPENCODE_HOLDER: OpenCode の共有のサーバーを保持役に載せるか（無停止の更新。core/backends/opencode-held.mjs）。同上
  */
 export const BOOT_ENV_NAMES = Object.freeze([
+  'AGENT_HOST_KIND',
   'AGENT_HOST_HANDOVER',
   'AGENT_HOST_PORT', 'AGENT_HOST_BIND', 'AGENT_HOST_TOKEN',
   'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG', 'AGENT_HOST_QUEUED_RESUME_VERSION',

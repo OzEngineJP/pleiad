@@ -1,0 +1,12 @@
+/* Generated from packages/design-tokens/tokens.css. Run node scripts/generate-design-tokens.mjs. */
+:root {
+  --surface-paper: #ffffff;
+  --surface-0: #eceef4;
+  --ink: #1c2247;
+  --ink-strong: #0f1330;
+  --ink-weak: #596089;
+  --ink-blue: #3a499e;
+  --line-blue: #5665cd;
+  --ink-mark: #aa2678;
+  --line: #c9cee0;
+}

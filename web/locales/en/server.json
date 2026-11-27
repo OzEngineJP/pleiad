@@ -113,6 +113,7 @@
     "switchViaCommand": "Use the switch action to change the agent.",
     "unknownForSession": "Unknown agent for session {{sessionId}}.",
     "unknownId": "Unknown agent: {{id}}",
+    "managedBackendDenied": "This managed host only runs Pleiad Agent. It cannot run {{id}}. Use a PC that supports that agent.",
     "required": "Specify an agent.",
     "notFound": "Agent not found.",
     "unknown": "Unknown agent.",

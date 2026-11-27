@@ -113,6 +113,7 @@
     "switchViaCommand": "エージェントは切り替え操作で変更してください",
     "unknownForSession": "セッション {{sessionId}} のエージェントが分からない",
     "unknownId": "知らないエージェント: {{id}}",
+    "managedBackendDenied": "この管理下のホストで実行できるのは Pleiad Agent だけです。{{id}} を使える PC を選んでください。",
     "required": "エージェントの指定が要る",
     "notFound": "エージェントが見つかりません",
     "unknown": "知らないエージェント",

@@ -352,7 +352,7 @@ Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `ex
 
 作成 2026-08-27。Step 2 成果物。確定した判断と、その理由を残す。
 判断の元になった生の pain は `temporary/pain-log.md`（追跡外）。
-見た目（配色・形・部品・動き）の正本は `docs/design-system.md`。
+見た目（配色・形・部品・動き）の規則は [デザインシステム](design-system.md)。デザイントークンの値は `packages/design-tokens/tokens.css` に定める。
 
 ---
 

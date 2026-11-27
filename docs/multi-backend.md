@@ -8,6 +8,12 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 2026-09 に **Antigravity CLI**（`agy`）を足した（§2.8）。2026-11 に口を stream-json から ACP（`agy acp`）へ替えた（[ADR 0365](adr/0365-antigravity-on-acp.md)）。
 同時期に入れた Gemini CLI（ACP）は、個人向けログインの終了により廃止した。
 
+## 管理下のクラウドホスト
+
+[ADR 0370](adr/0370-managed-host-agent-restriction.md) の管理下ホストでは、起動を管理するランナーがサーバーの子プロセスに `AGENT_HOST_KIND=cloud` を渡す。サーバーは起動時にこの値を固定し、`pleiad-agent` だけを登録対象にする。画面のエージェント選択にはサーバーが登録した候補が並ぶ。通常のホストではこの変数を外し、従来どおり `AGENT_HOST_BACKENDS` または既定の登録一覧を使う。
+
+管理下ホストは、会話の作成・再開・バックエンドの引き継ぎ、委譲の受け入れ、ルーティングや設定の更新で、他社バックエンドを理由つきで拒む。エラーコードは `MANAGED_BACKEND_DENIED`。画面・操作 API・MCP は同じ制限を受ける。他社バックエンドが必要な作業は、対応する利用者の PC に委譲できる。[リモート委譲の起動と接続](remote.md#45-端末の-ai-からの委譲の口agent)
+
 ## 外部エージェントと操作ツールの版
 
 利用者が CLI を管理する。下表は確認した範囲であり、上限は設けない（[ADR 0037](adr/0037-manage-external-agent-versions.md)）。

@@ -255,6 +255,10 @@ WS は 1 本のストリームなので、大きいメッセージの後ろに�
 ホストの子の会話（ホストの AI が、ホストの PC で作業する）
 ```
 
+管理下のクラウドホストから利用者の PC へ任せるときも、既存の `ply_delegate { host, backend }` と `/agent` を使う。実行先の PC がバックエンドの登録、委譲の受け入れ、承認モードを判定する。ペアリング済みの PC が見つからない、同名の候補が複数ある、オフライン、委譲を受けられない、指定のバックエンドが無効、の各場合は理由を依頼元へ返す。
+
+クラウド側では、ランナーが利用者に対応するペアリング情報を持つリモート端末を用意し、`AGENT_HOST_KIND=cloud` と Node.js のプロセス間通信を付けて `core/server.mjs` を起動する。ランナーは `core/remote/agent-service.mjs` の `createRemoteAgentService({ getDevice, post })` に端末を渡し、子からの `remote-agent` メッセージを `handle` へ、`post` の応答と通知を子へ送る。接続先の一覧が変わったら `refresh()` を呼び、再接続時は `resync()` で一覧と接続状態を送り直せる。
+
 - **口**: ストリームの WS_OPEN の path が `/agent`（`checkPath` で読み直した結果）のものを、接続口が自分で受ける。`forwardStream`（ローカルのサーバーへの組み立て直し）は通さない。口の上は JSON の文字のメッセージ 1 通 = 1 つの便りで、1 通は 256 KiB まで。形の違う便り・知らない種類は捨てる（ストリームは閉じない）。端末が自分で名乗った `deviceId` は信じず、ハンドシェイクで確かめた端末（`device.id`）を使う。
 - **主体**: agent・`via: 'remote'`・`deviceId`。会話には束縛されない。依頼元は `requester = { sessionId, title, mode }`（端末の会話の ID・題・承認モードの位置）で、ホストのタスクの親は `remote:<deviceId>:<sessionId>` の仮の ID。画面の human の権限は渡さない。
 - **端末 → ホストの便り**（`t` で見分ける）:
@@ -680,7 +684,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - **脇のスワイプ（承認済み（2026-10-23））**: 700px 以下では本文のどこからでも右へ引いて開き、開いた脇は左へ引いて閉じる。判定・追従・除外は [design-system.md「狭い画面・タッチ」](design-system.md#狭い画面タッチ2026-09-23) と [ADR 0262](adr/0262-open-sidebar-with-right-swipe.md)。Android は `systemGestures` から WebView の外側の余白を引いた領域を通知し、ページの `plyRemote.gestureInsets()` が現在の CSS px で `{ left, right, bottom }` を返す。回転などの領域変更も通知する。左右 24px・下端 28px と通知値の大きい方を開始対象から外し、通知のない殻・ブラウザーは既定の幅を使う。システムの「戻る」の除外領域は設定せず、`plyremote:back` も維持する。
 - **脇の折りたたみ**: 700px 以下（`web/style.css:733`）で脇を会話の上に重ねる引き出しにし、会話・チャンネル・スレッドへ移ると閉じる（開閉・フィルター・「…」では閉じない）。開閉は今の `#openSidebar` / `#closeSidebar`
 - **「…」ボタン**: 右クリック（`web/side.mjs:224,363,445,705`）とドラッグ（状態・グループへの移動）でしか届かない操作に、行・状態の見出し・グループの見出しの「…」を足し、同じメニューを開く。iOS は長押しで `contextmenu` が出ないため。`hover:none` では常に見せる。子メニューはタップで開く（`web/context-menu.mjs:76` はタッチでホバーを無視するので、`openSub` をタップで呼ぶ）。ホバーでしか見えないグループの ＋（`web/style.css:190`）も `hover:none` で常に見せる
-- **入力欄の文字 16px 以上**: `pointer:coarse` のときだけ入力欄・検索・combo を 16px（`--fs` は 14px、`web/tokens.css:78`）。iOS の自動拡大を防ぐ
+- **入力欄の文字 16px 以上**: `pointer:coarse` のときだけ入力欄・検索・combo を 16px（`--fs` は 14px、`packages/design-tokens/tokens.css:78`）。iOS の自動拡大を防ぐ
 - **画面下端**: `viewport-fit=cover` と `env(safe-area-inset-*)` を入力欄の下・上端の帯・引き出しに、高さは `100dvh`
 - 会話の左の 72px の溝（`web/style.css:385-390`）を狭い画面で縮めるのは任意（筋と節の位置に効くので、見た目の確認をしてから）
 
