@@ -2070,6 +2070,7 @@
     "approval": {
       "heading": "{{mark}}",
       "headingMark": "Waiting for approval",
+      "editInput": "Edit proposed changes",
       "blocking": "This turn stays paused until you allow it",
       "always": "Always allow",
       "deny": "Deny",

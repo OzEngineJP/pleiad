@@ -32,7 +32,7 @@
     "i18next": "26.4.2",
     "koffi": "3.3.2",
     "pdfjs-dist": "5.5.207",
-    "pleiad-agent": "github:OzEngineJP/pleiad-agent#4c0713fe089520e6bee3534ccf9e0274b440df8e",
+    "pleiad-agent": "github:OzEngineJP/pleiad-agent#388abd761f57d81abcdc34d1a76f0e2cba1c1f52",
     "smol-toml": "1.9.1",
     "ws": "^8.21.3",
     "yaml": "2.9.1",

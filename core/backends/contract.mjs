@@ -244,7 +244,7 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   'connectors',
   // onContextRebuild: 記録からの組み立て直し（ADR 0287）の区切りを会話へ記録する受け口。conversations.mjs の引き継ぎの包みが呼ぶ
   'onContextRebuild',
-  'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',
+  'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger', 'pendingDecision',
   'authorize', 'backend', 'isActive', 'origin', 'progress',
 ]));
 

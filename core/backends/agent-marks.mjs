@@ -18,15 +18,27 @@ import { definePerAgentMap } from './agents.mjs';
  */
 export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
   'pleiad-agent': {
-    ...Object.fromEntries(CAPABILITY_KEYS.map(key => [key, impossible('Outside the initial read-only integration', 'design')])),
+    ...Object.fromEntries(CAPABILITY_KEYS.map(key => [key, impossible('Outside the current Pleiad Agent integration', 'design')])),
     title: covered,
     tag: covered,
     fork: covered,
     forkMessage: covered,
     rewind: covered,
-    approvals: 'none',
-    mcpApproval: 'host',
+    approvals: 'interactive',
+    mcpApproval: 'agent',
     steer: true,
+    liveMode: true,
+    alwaysAllow: true,
+    hostTools: covered,
+    plyAgents: true,
+    plyInstructions: true,
+    plyControl: true,
+    plyShell: true,
+    nativeShellOff: true,
+    nativeMcpOff: true,
+    plyContext: 'turn',
+    browser: true,
+    computerUse: { images: 'inline', waitSliceMs: null },
   },
   claude: {
     // server の compactConversation が /compact を発言として送る（compact() は持たない）

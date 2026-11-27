@@ -4,7 +4,9 @@ import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { dataDir } from '../store.mjs';
+import { dataDir, get, setSessionData } from '../store.mjs';
+import { t } from '../i18n.mjs';
+import { editableField, hostTools, interactionQuestions } from './pleiad-agent-tools.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
 
 const ID = 'pleiad-agent';
@@ -162,7 +164,9 @@ async function relayModel(frame, config, key, write, signal) {
   await write({ type: 'model.end', id: frame.id });
 }
 
-async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, emit, onPromptDelivered, signal: controller, control }) {
+async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, mode, emit, onPromptDelivered,
+  signal: controller, control, askPermission, agentRuntime, contextRuntime, controlRuntime, shellRuntime,
+  computerRuntime, browserRuntime, pendingDecision, addedInstructions }) {
   const signal = controller?.signal;
   const cli = cliPath();
   const config = modelSettings();
@@ -171,9 +175,22 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
   const conversation = hostSessionId ?? sessionId ?? messageId;
   if (active.has(conversation)) throw new Error('A Pleiad Agent turn is already active for this conversation');
   active.add(conversation);
-  const id = messageId ?? randomUUID();
+  const id = pendingDecision?.turnId ?? messageId ?? randomUUID();
   const pendingSteers = new Map();
   const requests = new Map();
+  const decisions = new Map();
+  const modes = new Map();
+  const handle = { setMode(next) {
+    if (!turnSent || signal?.aborted || !supportsTools) return false;
+    const request = randomUUID();
+    return new Promise(resolve => {
+      const timer = setTimeout(() => settle(false), 3000);
+      const settle = value => { clearTimeout(timer); modes.delete(request); resolve(value); };
+      modes.set(request, settle);
+      void send({ type: 'mode.set', id: request, turnId: id, mode: next });
+    });
+  } };
+  let send, supportsTools = false;
   let child, closed, exit, timer, stopTimer, abort, protocolError;
   let outcome = 'error';
   let turnSent = false;
@@ -193,7 +210,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
     child.stdin.on('error', () => { child.kill(); });
     closed = new Promise(resolve => child.once('close', (code) => { exit = code; resolve(); }));
     const write = frame => writeFrame(child.stdin, frame);
-    const send = frame => write(frame).catch(() => { child.kill(); });
+    send = frame => write(frame).catch(() => { child.kill(); });
     const openId = randomUUID();
     const interruptId = randomUUID();
     abort = () => {
@@ -209,18 +226,25 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       if (!greeted) {
         if (frame.type !== 'hello' || frame.version !== VERSION) throw new Error('Unsupported Pleiad Agent protocol');
         greeted = true;
+        supportsTools = frame.capabilities?.includes('host-tools');
+        if (pendingDecision && !frame.capabilities?.includes('resume-decision')) throw new Error('Decision recovery is unavailable');
+        const tools = supportsTools ? { mode: mode ?? 'default', ...hostTools({ ply_agents: agentRuntime, ply_context: contextRuntime,
+          ply_control: controlRuntime, ply_shell: shellRuntime, ply_computer: computerRuntime,
+          ply_browser: browserRuntime && { ...browserRuntime, instructions: 'Use ply_browser for browser handoff and downloads.' } }) } : {};
+        if (supportsTools && addedInstructions) tools.instructions = [tools.instructions, addedInstructions].filter(Boolean).join('\n\n');
         await write({ type: 'open', id: openId, version: VERSION, ...(sessionId ? { sessionId, resume: true } : {}),
-          protocol: config.protocol, model: config.model, vision: config.vision });
+          protocol: config.protocol, model: config.model, vision: config.vision, ...tools });
       } else if (frame.type === 'opened' && frame.id === openId && !turnSent) {
         clearTimeout(timer);
         nativeId = frame.sessionId;
         await emit({ type: 'session', sessionId: nativeId, first: !sessionId, model: config.model });
         if (signal?.aborted) break;
-        await write({ type: 'turn', id, prompt });
+        await write(pendingDecision ? { type: 'turn.resume', id, requestId: pendingDecision.id } : { type: 'turn', id, prompt });
         turnSent = true;
         emit({ type: 'activity', state: 'thinking' });
       } else if (frame.type === 'accepted' && frame.id === id) {
         if (control) {
+          control.handle = handle;
           control.steerConfirms = true;
           control.steer = item => {
             if (!item.id || !item.args?.prompt || item.args.attachments?.length || signal?.aborted) return false;
@@ -236,6 +260,21 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
         else if (pendingSteers.delete(frame.id)) emit({ type: 'userMessage.delivered', messageId: frame.id, nativeId: frame.messageId });
       } else if (frame.type === 'event' && frame.turnId === id) {
         normalize(frame.event);
+      } else if ((frame.type === 'accepted' || frame.type === 'error') && modes.has(frame.id)) {
+        modes.get(frame.id)(frame.type === 'accepted');
+      } else if (frame.type === 'decision.cancel' && frame.turnId === id) {
+        decisions.get(frame.id)?.abort();
+      } else if ((frame.type === 'approval.request' || frame.type === 'interaction.request') && frame.turnId === id && !decisions.has(frame.id)) {
+        const decision = new AbortController();
+        decisions.set(frame.id, decision);
+        const decisionSignal = signal ? AbortSignal.any([signal, decision.signal]) : decision.signal;
+        void resolveDecision(frame, { sessionId: hostSessionId ?? nativeId, askPermission, signal: decisionSignal,
+          restoring: pendingDecision?.id === frame.id })
+          .catch(() => ({ allow: false }))
+          .then(answer => {
+            if (!decisionSignal.aborted) return send({ type: frame.type.replace('.request', '.resolve'), id: randomUUID(),
+              requestId: frame.id, turnId: id, ...answer });
+          }).finally(() => decisions.delete(frame.id));
       } else if (frame.type === 'model.request' && frame.turnId === id && !requests.has(frame.id)) {
         const request = new AbortController();
         requests.set(frame.id, request);
@@ -262,7 +301,9 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
     clearTimeout(stopTimer);
     signal?.removeEventListener('abort', abort);
     for (const request of requests.values()) request.abort();
-    if (control) { control.steer = null; control.steerConfirms = false; }
+    for (const decision of decisions.values()) decision.abort();
+    for (const settle of modes.values()) settle(false);
+    if (control) { control.steer = null; control.steerConfirms = false; if (control.handle === handle) control.handle = null; }
     if (child) {
       child.stdin.end();
       const reap = setTimeout(() => child.kill(), 3000);
@@ -278,12 +319,41 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
   }
 }
 
+async function resolveDecision(frame, { sessionId, askPermission, signal, restoring }) {
+  if (!sessionId || signal.aborted || typeof askPermission !== 'function') return { allow: false };
+  const question = frame.type === 'interaction.request';
+  const questions = question ? interactionQuestions(frame, [['approved', t('ui:chat.approval.allow')], ['denied', t('ui:chat.approval.deny')]]) : null;
+  if (question && !questions.length) return { allow: false };
+  const field = editableField(frame.toolName);
+  const canAlways = !question && (field !== null || frame.toolName === 'Edit');
+  const granted = canAlways ? (await get(sessionId)).pleiadAgentAlwaysAllow ?? [] : [];
+  if (!restoring && granted.includes(frame.toolName)) return { allow: !signal.aborted };
+  const answer = await askPermission({ sessionId, signal, toolName: frame.toolName, title: frame.summary,
+    toolUseID: frame.id, input: question ? { questions } : frame.input, canAlways,
+    kind: question ? 'question' : 'tool', questions, editableField: field });
+  if (signal.aborted || !answer?.allow) return { allow: false };
+  if (answer.always && canAlways) await setSessionData(sessionId, 'pleiadAgentAlwaysAllow', [...new Set([...granted, frame.toolName])], { durable: true });
+  if (question) {
+    return { allow: true, answers: Object.fromEntries(questions.filter(q => Object.hasOwn(answer.answers ?? {}, q.question))
+      .map(q => [q.id, answer.answers[q.question]])) };
+  }
+  return { allow: true, ...(field && typeof answer.editedInput === 'string' ? { [field]: answer.editedInput } : {}) };
+}
+
 export const backend = {
   id: 'pleiad-agent',
   label: 'Pleiad Agent',
   capabilities: CAPABILITY_STATES[ID],
   traits: AGENT_TRAITS[ID],
-  modes: () => ({ default: { label: 'Read-only', scope: 'readonly', autonomy: 'never', enforced: true } }),
+  modes: () => ({
+    default: { label: t('modes.ask'), scope: 'workspace', autonomy: 'ask', enforced: false },
+    auto: { label: 'auto', scope: 'workspace', autonomy: 'ask', enforced: false },
+    acceptEdits: { label: t('modes.acceptEdits'), scope: 'workspace', autonomy: 'judge', enforced: false },
+    plan: { label: t('modes.plan'), scope: 'readonly', autonomy: 'ask', enforced: true },
+    readonly: { label: 'Read-only', scope: 'readonly', autonomy: 'never', enforced: true },
+    bypass: { label: 'Bypass', scope: 'full', autonomy: 'never', enforced: false },
+  }),
+  async setModeLive(handle, mode) { return await handle?.setMode?.(mode) === true; },
   models: async () => {
     const config = modelSettings();
     return config ? { [config.model]: { label: config.model } } : {};
@@ -300,6 +370,12 @@ export const backend = {
   },
   async getMessages(sessionId) {
     return historyMessages((await saved(sessionId))?.messages ?? []);
+  },
+  async getPendingDecision(sessionId) {
+    const cli = cliPath();
+    if (!cli) return null;
+    const { readPendingDecision } = await adapter(cli, 'history');
+    return readPendingDecision?.({ homeDir, sessionId }) ?? null;
   },
   attachHost(host) { resolveKey = host.pleiadAgentModelKey; },
   runTurn,

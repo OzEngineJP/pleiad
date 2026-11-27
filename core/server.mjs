@@ -7925,7 +7925,7 @@ function chromeHandoffProfile(sessionId) {
   const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
   return dir ? { browser: 'chrome', dir } : null;
 }
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff, replayable = false }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, editableField, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff, replayable = false }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -7969,6 +7969,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(secretRequest ? { secretRequest } : {}),
       ...(browserHandoff ? { browserHandoff } : {}),
       ...(questions ? { questions } : {}),
+      ...(editableField ? { editableField } : {}),
       // 端末の AI に任された子の承認。画面は「依頼元の会話（⇄ 端末）でも答えられます」を添える（docs/remote.md §4.5）
       ...(remoteRoot ? { remoteOrigin: { deviceName: remoteRoot.deviceName || '' } } : {}),
     };
@@ -8336,6 +8337,7 @@ let startupHolder = null, startupHolderUnreadable = false;
 botHost = makeBotHost();
 await botHost.loadBots();
 const adopting = await restoreAdoptedTurns();
+const restoringAgentDecisions = await readRestorableAgentDecisions();
 await botHost.recoverRoutines();
 
 async function taskStopUnconfirmed(task) {
@@ -8367,7 +8369,7 @@ async function taskStopUnconfirmed(task) {
   if (stoppedAgy.length) console.log(`  前のサーバーが残した待機中の agy ${stoppedAgy.length} 件を止めた`);
 }
 // 付け直さない会話のカードは、ここで取り下げを会話へ届ける（黙って消さない）。付け直すターンの分は、記録の再生が終わってから
-await withdrawRestoredCards(adopting);
+await withdrawRestoredCards(adopting, restoringAgentDecisions);
 // 前のサーバーが保持役に残した外部の stdio MCP も拾う（ADR 0270 段 2c。core/context-mcp-held.mjs）。規則 ③: 起動の処理が復元の処理。
 // 子は保持役に居るので、次にその MCP を使うターンの acquire が付く（initialize は送り直さない。札の initialize の結果を読み直す）
 {
@@ -8393,14 +8395,15 @@ sweepOpencodeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: ad
 await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])) });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
-  const recovered = await store.recoverInterruptedTurns(Date.now(), { except: new Set(adopting.map(a => a.ctx.sessionId)) })
+  const recovered = await store.recoverInterruptedTurns(Date.now(), { except: new Set([...adopting.map(a => a.ctx.sessionId), ...restoringAgentDecisions.keys()]) })
     .catch(err => { console.error("  中断の記録に失敗:", String(err?.message ?? err)); return []; });
   if (recovered.length) console.log(`  前の起動で終わらなかったターン ${recovered.length} 件を中断として残した`);
 }
 // 前の起動で待っていた承認・質問はメモリにしか無く、再起動で消えた。通知の一覧のあなた待ちも決着させる（ADR 0149）
 // 付け直すターンの出している承認（札の waits。止め始めていたターンは承認を出し直さないので外さない）の行は残す。承認の id が決まった値（core/approval-id.mjs）なので、
 // 付け直しで出し直す承認が同じ行になる（決着の行が dedupeKey で居座って新しい行が載らない、を防ぐ）
-try { inbox.settleAllWaiting('cancelled', { except: adopting.flatMap(a => a.ctx.card.stopping ? [] : a.ctx.card.waits) }); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
+try { inbox.settleAllWaiting('cancelled', { except: [...adopting.flatMap(a => a.ctx.card.stopping ? [] : a.ctx.card.waits),
+    ...[...restoringAgentDecisions.values()].map(item => item.cardId)] }); } catch (e) { console.error('  通知の一覧: あなた待ちを決着させられなかった:', String(e?.message ?? e)); }
 // 親が走っている・裏の作業が残っている・送信待ちがあるときは完了通知を送らない（docs/agent-delegation.md「完了通知」）
 const noticeBlocked = async owner => sessionBusy(owner) || awaitedBackground(owner) || (await outbox.list(owner)).some(m => !['sent', 'cancelled'].includes(m.status));
 
@@ -9489,7 +9492,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   if (!args?.settings) await settingsWrites.get(sessionId);
   let backend = await pickBackend(sessionId, args?.backend);
   if (!args?.settings) backend = refuseRetired(backend);
-  const reserved = args?.settings ?? (sessionId ? (await store.get(sessionId)).nextSettings : null);
+  if (hooks.pendingDecision && !backend.getPendingDecision) throw new Error('Agent decision recovery is unavailable');
+  const reserved = args?.settings ?? (sessionId && !hooks.pendingDecision ? (await store.get(sessionId)).nextSettings : null);
   assertBackendAllowed(reserved?.backend);
   if (args?.settings && !getBackend(reserved.backend)) throw new Error(t('turn.reservedInvalid'));
   const delegated = Boolean(sessionId && (await store.get(sessionId)).delegation);
@@ -9983,6 +9987,7 @@ async function beginTurn(ctx) {
   const runArgs = {
     prompt,
     messageId: args.messageId ?? null,
+    ...(hooks.pendingDecision ? { pendingDecision: hooks.pendingDecision } : {}),
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
     ...(notes.length ? { notes } : {}),
     ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),
@@ -10768,9 +10773,25 @@ async function withdrawCards(rows) {
 /**
  * 起動で、付け直さない会話のカードを取り下げる。付け直すターンの分は、記録の再生が終わってから（finalizeAdoptedCards）
  */
-async function withdrawRestoredCards(adopting) {
+async function readRestorableAgentDecisions() {
+  const pending = new Map();
+  for (const row of restoredCards.values()) {
+    if (!row.origin || !row.payload?.toolUseID || pending.has(row.origin)) continue;
+    try {
+      const record = await conversation(row.origin);
+      if (!record?.nativeId) continue;
+      const decision = await getBackend(record.backend)?.getPendingDecision?.(record.nativeId);
+      if (decision?.id === row.payload.toolUseID) pending.set(row.origin, { decision, cardId: row.id });
+    } catch (error) {
+      console.error('Could not read Pleiad Agent decision:', String(error?.message ?? error));
+    }
+  }
+  return pending;
+}
+
+async function withdrawRestoredCards(adopting, restoring) {
   const adopted = new Set(adopting.map(item => item.ctx?.sessionId).filter(Boolean));
-  const rows = waitingCards.unclaimed().filter(row => !adopted.has(row.origin) && !adopted.has(row.sessionId));
+  const rows = waitingCards.unclaimed().filter(row => !adopted.has(row.origin) && !adopted.has(row.sessionId) && restoring.get(row.origin)?.cardId !== row.id);
   if (!rows.length) return;
   await withdrawCards(rows);
 }
@@ -12170,7 +12191,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, { ...(await voiceHost.status()), ...(key ? { check: await voiceHost.checkKey() } : {}) });
         }
         case "resolvePermission": {
-          const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt } = msg.args ?? {};
+          const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt, editedInput } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           // 片付いた承認への答え。画面は失敗にせず、そのカードを「別の場所で処理されました」に畳む（code で見分ける）
           if (!w) return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
@@ -12202,6 +12223,7 @@ wss.on("connection", (ws, req) => {
             ...(!allow && !message && messageKey === 'userDenied' ? { messageKey } : {}),
             answers: answers ?? null,
             annotations: annotations ?? null,
+            ...(w.payload.editableField && typeof editedInput === 'string' && editedInput.length <= 1_000_000 ? { editedInput } : {}),
             response: response ?? null,
           });
           return reply(true, "ok");
@@ -13127,6 +13149,14 @@ portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
 slowLog.startLoopMonitor({ getInFlight: () => wsInFlight });
+await Promise.all([...restoringAgentDecisions].map(([sessionId, { decision }]) => new Promise(started => {
+  void runTurn({ sessionId, prompt: '' }, started, { internal: true, quiet: true, pendingDecision: decision })
+    .catch(error => console.error('Could not resume Pleiad Agent decision:', String(error?.message ?? error)))
+    .finally(() => {
+      finalizeAdoptedCards(sessionId);
+      started();
+    });
+})));
 await kickQueued();
 // 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0295 の 4）
 chromeRelay?.setPagePorts({ main: server.address().port });

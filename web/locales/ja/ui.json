@@ -2024,6 +2024,7 @@
     "approval": {
       "heading": "{{mark}}",
       "headingMark": "承認を待っている",
+      "editInput": "変更内容を編集",
       "blocking": "許可しないと、このターンは止まったまま",
       "always": "常に許可",
       "deny": "拒否",
