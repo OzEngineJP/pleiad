@@ -2212,7 +2212,6 @@
     "memoryLearnAt": "Local time for automatic memory organization (HH:MM).",
     "memoryLearnPaused": "Pause automatic memory organization (the older stop flag; memoryAutoLearn takes precedence when set).",
     "memoryAutoLearn": "Whether automatic memory organization runs (reading conversations at a set time and writing memories) (true / false, default false). Toggling does not change the memories themselves.",
-    "memoryEpisodeSummary": "Whether quiet bot conversations are summarized and handed off (true / false, default false). Only applies while automatic organization is on.",
     "composer": {
       "historyRecall": "Whether pressing Up at the start of the message box recalls sent messages (true / false).",
       "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Only honored by agents that can produce it (capability promptSuggestions); where Pleiad generates it after the turn, making it spends a little usage."

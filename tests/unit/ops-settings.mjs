@@ -95,7 +95,6 @@ export default async function (t) {
     ['memoryLearnAt', true, '記憶の学習の時刻の好み'],
     ['memoryLearnPaused', true, '記憶の学習の一時停止の好み'],
     ['memoryAutoLearn', true, '記憶の自動整理と会話の要約の主スイッチの好み'],
-    ['memoryEpisodeSummary', true, '会話の要約のスイッチの好み（自動整理が ON のときだけ効く）'],
     ['model', true, '新しい会話の既定のモデル。知らないモデルは normalize で落ちる'],
     ['effort', true, '新しい会話の既定の考える深さ'],
     ['shellTool', true, 'エージェントごとのシェルのツールの好み（どちらも承認モードで聞く）'],

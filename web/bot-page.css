@@ -123,7 +123,7 @@ textarea.bp-ob-in{height:96px;padding:9px 12px;resize:none;line-height:1.55}
 /* ---- 記憶の一覧（memory-list.mjs） */
 .mem-wrap,.memcore{display:flex;flex-direction:column;gap:7px;min-width:0}
 .mem-controls{display:flex;gap:8px;margin-bottom:4px}
-.mem-control{min-width:0;min-height:36px;padding:5px 8px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface-paper);color:var(--ink);font:inherit}
+.mem-control{min-width:0;min-height:36px;padding:5px 8px;border:0;border-radius:var(--r-s);background:var(--surface-paper);color:var(--ink);font:inherit}
 .mem-controls select{max-width:61%}
 .mem-controls input{flex:1;width:0}
 @media (pointer:coarse){.mem-control{min-height:44px}}
@@ -137,8 +137,8 @@ textarea.bp-ob-in{height:96px;padding:9px 12px;resize:none;line-height:1.55}
 .mem-pocket{position:relative;height:30px;flex:0 0 32px}
 .mem-pocket::before,.mem-pocket::after,.mem-sheet{position:absolute;content:"";display:block}
 .mem-pocket::before{inset:7px 1px 3px;background:var(--surface-3);border-radius:4px 5px 4px 4px}
-.mem-pocket::after{inset:12px 0 2px;background:color-mix(in srgb,var(--ink-blue) 15%,var(--surface-3));border-radius:3px 5px 4px 4px;transform-origin:bottom}
-.mem-sheet{width:17px;height:15px;top:8px;left:8px;border-radius:3px;background:color-mix(in srgb,var(--surface-paper) 50%,var(--ink-weak))}
+.mem-pocket::after{inset:12px 0 2px;background:var(--surface-thumb);border-radius:3px 5px 4px 4px;transform-origin:bottom}
+.mem-sheet{width:17px;height:15px;top:8px;left:8px;border-radius:3px;background:var(--surface-thumb-hover)}
 .mem-sheet,.mem-pocket::after{transition:transform var(--dur) var(--ease-out)}
 .mem-folder-toggle:hover .mem-sheet{transform:translateY(-3px)}
 .mem-folder-toggle[aria-expanded="true"] .mem-sheet{transform:translateY(-6px)}
