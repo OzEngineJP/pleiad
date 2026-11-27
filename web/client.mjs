@@ -8838,6 +8838,9 @@ const channelsUi = setupChannels({
   },
   // bot のページの接続先の行（入力欄と同じ部品。登録が変わったら connChanged で知らせる）
   conn: connChoices,
+  openRoutingAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
+    : capsOf(backend).accounts ? agentAccounts.open(backend, { focus: account }) : null,
+  openRoutingConnections: (backend) => openAgentConns(backend),
   noteChats: () => { if (state.current) viewAddress.note({ sessionId: state.current }); renderSessions(); },
   // 委譲の子の様子（スレッドの入口・作業ログの委譲カード）。Chats と同じ部品を使う（docs/design-system.md「バックグラウンド」「委譲カード」）
   background: {

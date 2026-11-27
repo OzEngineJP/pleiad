@@ -758,7 +758,7 @@ function officialModelView(ctx) {
   const { main, other, quiet } = splitModelRows(models, ids);
   const tagOf = (id) => (holdsDefault(models, id) ? DEFAULT_TAG() : "");
   // 既定が一覧のどれにも当たらない（分からない）ときは「既定に従う」の行を残す
-  const follow = !ctx.explicitModels && (!def || !ids.some((id) => holdsDefault(models, id)));
+  const follow = ctx.allowDefault || (!ctx.explicitModels && (!def || !ids.some((id) => holdsDefault(models, id))));
   const words = () => String(ctx.st.q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const hits = (id) => { const m = models[id] ?? {}; const s = `${m.label ?? ""} ${m.note ?? ""} ${id}`.toLowerCase(); return words().every((w) => s.includes(w)); };
   const blocked = id => id === selected ? null : ctx.blocked?.("model", id);

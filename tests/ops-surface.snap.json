@@ -528,6 +528,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "bots.routing",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "e1618c20eeac"
+    },
+    {
       "id": "bots.setAccount",
       "risk": "human-only",
       "riskOf": false,
@@ -556,6 +571,21 @@
       },
       "legacyCommand": null,
       "input": "9e0192ce82cc"
+    },
+    {
+      "id": "bots.setRouting",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "9cd5f45013bb"
     },
     {
       "id": "bots.update",

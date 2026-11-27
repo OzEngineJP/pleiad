@@ -448,9 +448,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : last.answerWaitIds.has(id) ? t("sidebar.waitingAnswer") : t("sidebar.waiting");
 
   /** チャンネルのスレッドの 1 行: 印（弧・◆・青い丸）・題・時刻 */
-  function oneRow(s, level, { noBot = false } = {}) {
+  function oneRow(s, level) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, noBot, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -478,7 +478,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
     r.append(glyph, title, when);
-    if (s.thread && s.bot?.botId && !noBot) {
+    if (s.thread && s.bot?.botId) {
       const av = botIcon(directory.bots.get(s.bot.botId), 'av xs');
       av.setAttribute("aria-hidden", "true");
       r.insertBefore(av, when);
@@ -569,91 +569,68 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return sec;
   }
 
-  /** bot の 1 行（20px の顔・名前・状態）と、下に畳む DM のスレッド。押すと DM、右クリックで bot のメニュー */
+  /** bot の 1 行。DM のスレッドは元の投稿から開く */
   function botSection(b, rows) {
     const key = `bot:${b.id}`;
     const sec = keyed(el("section", "grp chsec botsec"), `chsec:${key}`, true);
     sec.setAttribute("role", "none");
-    const isCollapsed = chCollapsed.has(key) || !rows.length;
-    if (isCollapsed) sec.classList.add("collapsed");
-    if (!rows.length) sec.classList.add("no-threads");
-    const setOpen = (open) => { if (open) chCollapsed.delete(key); else chCollapsed.add(key); save(); render(); };
     const go = () => document.dispatchEvent(new CustomEvent("channels:show", { detail: b.dmChannelId ? { kind: "channel", id: b.dmChannelId } : { kind: "bot", id: b.id } }));
     const head = el("div", "grp-head chsec-head botsec-head");
     const sel = face === "channels" && directory.selected?.kind === "bot" && directory.selected.id === b.id;
     if (sel) { head.classList.add("sel"); head.setAttribute("aria-current", "page"); }
-    treeItem(head, `b:${b.id}`, 1, { expanded: rows.length ? !isCollapsed : null, open: go, expand: rows.length ? setOpen : undefined,
-      menu: directory.botMenu && ((x, y) => directory.botMenu(b, x, y, head)) });
-    const chev = el("button", "chsec-chev");
-    chev.type = "button";
-    chev.tabIndex = -1;
-    chev.setAttribute("aria-hidden", "true");
-    chev.append(chevron());
-    chev.onclick = (e) => { e.stopPropagation(); setOpen(isCollapsed); };
+    const openMenu = (x, y, options) => directory.botMenu(b, x, y, head, { opener: root, ...options });
+    treeItem(head, `b:${b.id}`, 1, { open: go, menu: directory.botMenu && openMenu });
     const av = botIcon(b, "bot-face-av bot-row-icon");
     av.setAttribute("aria-hidden", "true");
     const label = el("span", "grp-name chsec-name", b.name);
-    head.append(chev, av, label);
+    head.append(av, label);
     const state = directory.stateOf(b);
-    // 状態の印（あなた待ち ◆ → 作業中の弧）。畳んだ間は DM のスレッドの印もここに寄せる
-    const waiting = state === "waiting" || (isCollapsed && rows.some((s) => last.waitingIds.has(s.id)));
-    const working = state === "working" || (isCollapsed && rows.some((s) => last.runningIds.has(s.id)));
+    const waiting = state === "waiting" || rows.some((s) => last.waitingIds.has(s.id));
+    const working = state === "working" || rows.some((s) => last.runningIds.has(s.id));
     // i18n-dynamic: channels:side.botState.
     if (waiting) head.append(approvalMark(1));
     else if (working) head.append(runMark(t("channels:side.botState.working")));
     else if (state === "resting") head.append(el("span", "row-when", t("channels:side.botState.resting")));
-    else if (isCollapsed && rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
+    else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
     head.setAttribute("aria-label", spoken([label, ...[...head.children].filter((c) => c.tagName !== "BUTTON" && c !== label && c !== av)]));
     head.onclick = go;
-    head.oncontextmenu = (e) => { if (!directory.botMenu) return; e.preventDefault(); directory.botMenu(b, e.clientX, e.clientY, head); };
+    if (directory.botMenu) {
+      const more = menuButton("row-more", t("session.rowMore", { title: b.name }), (x, y) => {
+        more.setAttribute("aria-expanded", "true");
+        openMenu(x, y, { onClose: () => more.setAttribute("aria-expanded", "false") });
+      });
+      more.setAttribute("aria-haspopup", "menu");
+      head.append(more);
+      head.oncontextmenu = (e) => { e.preventDefault(); openMenu(e.clientX, e.clientY); };
+    }
     sec.append(head);
-    const rowsEl = keyed(el("div", "rows"), `chrows:${key}`, true);
-    rowsEl.setAttribute("role", "group");
-    for (const s of rows) rowsEl.append(oneRow(s, 2, { noBot: true }));
-    sec.append(rowsEl);
     return sec;
   }
 
-  // 脇の 2 面（ADR 0362）: チャットの面は会話だけ（bot は出さない）。bot の面はルーティン → Bots（bot ごとに DM と、前の一時チャットで
-  // 話しかけたスレッドを下に畳む）→ チャンネル。bot の分からない一時チャットのスレッドだけは、行き場が無いのでチャットの面に残す
+  // 一時チャットのスレッドはチャットの面、DM のスレッドの状態は bot の行に置く
   const newest = (a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0);
-  /** 一時チャットの行の持ち主の bot（DM のスレッド・前の一時チャットで話しかけたスレッド）。分からなければ null */
-  function homeOwners() {
-    const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
-    const bots = [...directory.bots.values()].filter((b) => !b.plain);
-    const known = new Set(bots.map((b) => b.id));
-    const ownerOf = (s) => {
-      if (!s.thread) return null;
-      const dm = bots.find((b) => b.dmChannelId && b.dmChannelId === s.thread.channelId);
-      if (dm) return dm.id;
-      return homeIds.has(s.thread.channelId) && known.has(s.bot?.botId) ? s.bot.botId : null;
-    };
-    return { homeIds, bots, ownerOf };
-  }
+  const isHomeThread = s => Boolean(directory.channels.get(s.thread?.channelId)?.home);
 
   /**
-   * チャットの面の行（状態の見出しを作る行）。会話のスレッド（bot の会話・委譲の子は除く）と、bot の分からない一時チャットのスレッドを新しい順。
+   * チャットの面の行（状態の見出しを作る行）。会話と一時チャットのスレッドを新しい順。
    * 作成中の新しい会話は先頭。match は表示の絞り込み（状態の候補 statusChoices は絞り込まずに同じ行を見る）
    */
   function homeRowsOf(match = () => true) {
-    const { homeIds, ownerOf } = homeOwners();
     return [...(last.pendingNew ? [last.pendingNew] : []),
-      ...[...last.sessions.filter((s) => !s.bot && match(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && !ownerOf(s) && match(s))].sort(newest)];
+      ...[...last.sessions.filter((s) => !s.bot && match(s)), ...last.threads.filter((s) => isHomeThread(s) && match(s))].sort(newest)];
   }
 
   function buildPlaces(wanted) {
-    const { bots, ownerOf } = homeOwners();
     if (face !== "channels") {
       buildHomeStatuses(wanted, homeRowsOf(matchesFilter));
       return;
     }
     if (!filtering()) putExtra(wanted, "routines");
-    const kids = new Map(bots.map((b) => [b.id, []]));
-    for (const s of last.threads) { const id = ownerOf(s); if (id && matchesFilter(s)) kids.get(id).push(s); }
+    const bots = [...directory.bots.values()].filter(b => !b.plain);
     wanted.append(botsHead(bots.length));
     for (const b of bots) {
-      const rows = kids.get(b.id).sort(newest);
-      if (filtering() && !rows.length) continue;
+      const rows = last.threads.filter(s => s.thread.channelId === b.dmChannelId);
+      if (filtering() && !rows.some(matchesFilter)) continue;
       wanted.append(botSection(b, rows));
     }
     if (!filtering()) putExtra(wanted, "channels");
@@ -1237,7 +1214,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function resultRows(q) {
     const base = sessionResultRows(q);
     const withChannels = Boolean(channelsLink) && !filtering() && scope.speaker === "any";
-    const names = withChannels ? channelsLink.matchNames(parseTerms(q)) : [];
+    const terms = parseTerms(q);
+    const names = withChannels ? channelsLink.matchNames(terms) : [];
+    const dmThreads = withChannels ? last.threads.flatMap(s => {
+      const c = directory.channels.get(s.thread.channelId);
+      const bot = c?.kind === "dm" && [...directory.bots.values()].find(b => b.dmChannelId === c.id);
+      return bot && matchLocal(s, terms) ? [{ id: `dm-thread:${s.id}`, channelId: c.id,
+        threadId: s.thread.threadId, channelName: bot.name, title: titleOf(s), lastModified: s.lastModified, dmThread: true }] : [];
+    }) : [];
+    names.push(...dmThreads);
     const posts = withChannels && remote?.key === searchKey(q) ? remote.posts ?? [] : [];
     const merged = sortMode === "recent"
       ? [...base.rows, ...posts].sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))
@@ -1248,32 +1233,33 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   function sessionResultRows(q) {
     const byId = new Map(last.sessions.map((s) => [s.id, s]));
-    const key = searchKey(q);
-    if (remote?.key === key && remote.result) {
-      const r = remote.result;
-      return {
-        server: true,
-        total: r.total,
-        partial: Boolean(r.partial),
-        rows: r.sessions.map((x) => ({
-          id: x.sessionId, session: byId.get(x.sessionId) ?? null, title: x.title === "(no title)" ? "" : x.title, status: x.status,
-          cwd: x.cwd, backend: x.backend, lastModified: x.lastModified,
-          parent: x.parentSessionId ? { id: x.parentSessionId, title: byId.get(x.parentSessionId)?.title ?? "" } : null,
-          count: x.hitCount, hit: x.hits?.[0] ?? null,
-        })),
-      };
-    }
     const terms = parseTerms(q);
-    const local = [];
-    for (const s of last.sessions) {
-      if (!matchesFilter(s)) continue;
-      const m = matchLocal(s, terms);
-      if (m) local.push({ session: s, ...m });
-    }
+    const local = [...last.sessions, ...last.threads.filter(isHomeThread)].flatMap(s => {
+      if (!matchesFilter(s)) return [];
+      const hit = matchLocal(s, terms);
+      return hit ? [{ session: s, ...hit }] : [];
+    });
     const rows = localOrder(local, sortMode).map(({ session: s }) => ({
       id: s.id, session: s, title: titleOf(s), status: s.status ?? null, cwd: s.cwd ?? "", backend: s.backend, lastModified: s.lastModified,
       parent: null, count: 0, hit: null,
     }));
+    const key = searchKey(q);
+    if (remote?.key === key && remote.result) {
+      const r = remote.result;
+      const known = new Set(r.sessions.map(x => x.sessionId));
+      const homeMatches = rows.filter(x => isHomeThread(x.session) && !known.has(x.id));
+      return {
+        server: true,
+        total: r.total + homeMatches.length,
+        partial: Boolean(r.partial),
+        rows: [...r.sessions.map((x) => ({
+          id: x.sessionId, session: byId.get(x.sessionId) ?? null, title: x.title === "(no title)" ? "" : x.title, status: x.status,
+          cwd: x.cwd, backend: x.backend, lastModified: x.lastModified,
+          parent: x.parentSessionId ? { id: x.parentSessionId, title: byId.get(x.parentSessionId)?.title ?? "" } : null,
+          count: x.hitCount, hit: x.hits?.[0] ?? null,
+        })), ...homeMatches],
+      };
+    }
     // 本文まで探す口が無い・探すのに失敗したときは、手元の結果が最終
     return { server: !onSearch || remote?.key === key, total: rows.length, partial: false, rows };
   }
@@ -1364,7 +1350,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (r.postId) row.dataset.post = r.postId;
     if (!r.postId) {
       const head = el("div", "row-title");
-      head.append(el("span", "hash", "#"), fillMarked(el("span", "row-t", ""), r.title, findRanges(r.title, terms)));
+      if (!r.dmThread) head.append(el("span", "hash", "#"));
+      head.append(fillMarked(el("span", "row-t", ""), r.title, findRanges(r.title, terms)));
       row.append(head);
     } else {
       const snip = el("div", "snip");
@@ -1376,10 +1363,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     }
     const meta = el("div", "row-meta");
     // 出どころ。投稿は「#チャンネル」、名前の一致はチャンネルそのものなので種類（「チャンネル」）
-    meta.append(el("span", "row-src", r.postId ? `#${r.channelName}` : t("channels:side.sections.channels")));
+    meta.append(el("span", "row-src", r.dmThread ? r.channelName : r.postId ? `#${r.channelName}` : t("channels:side.sections.channels")));
     if (r.lastModified) meta.append(el("span", "row-when", relTime(r.lastModified)));
     row.append(meta);
-    row.setAttribute("aria-label", [r.postId ? `${r.who ? `${r.who}: ` : ""}${r.snippet}` : `#${r.title}`, `#${r.channelName}`,
+    row.setAttribute("aria-label", [r.postId ? `${r.who ? `${r.who}: ` : ""}${r.snippet}` : r.dmThread ? r.title : `#${r.title}`, r.dmThread ? r.channelName : `#${r.channelName}`,
       r.lastModified ? relTime(r.lastModified) : ""].filter(Boolean).join(", "));
     row.onclick = () => openResult(r);
     row._result = r;
@@ -1789,14 +1776,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     attention() {
       // bot の会話（DM・ルーティンの待ち）は bot の面の印（web/channels/sidebar.mjs の botState）が受け持つ
       const mine = homeRowsOf();
-      const { homeIds, ownerOf } = homeOwners();
       const unread = (s) => last.unreadIds.has(s.id);
       return {
         waiting: mine.some((s) => last.waitingIds.has(s.id)),
         unread: mine.some(unread),
         channelThreadsUnread: last.threads.some((s) => {
           const channel = directory.channels.get(s.thread.channelId);
-          return channel && !channel.archivedAt && (!homeIds.has(channel.id) || ownerOf(s)) && unread(s);
+          return channel && !channel.archivedAt && !channel.home && unread(s);
         }),
       };
     },

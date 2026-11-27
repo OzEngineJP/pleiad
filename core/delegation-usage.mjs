@@ -60,11 +60,11 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
   const recheckIds = new Set();
 
   /** 候補は `backend:model`・`backend@<account>:model`（ADR 0264。delegation-routing.mjs の parseCandidate と同じ形） */
-  const parseWanted = () => candidates().map(c => {
+  const parseWanted = async () => (await candidates()).map(c => {
     const at = c.indexOf(':');
     const [backend, account] = c.slice(0, at).split('@');
     return { backend, account: account ?? '', model: c.slice(at + 1) };
-  });
+  }).filter(c => !c.account.startsWith('ep-'));
   /** アカウントごとに一覧を持つエージェントか（能力の印。id は見ない） */
   const perAccountList = b => b.capabilities?.accounts === 'token';
   const anyMissing = k => Object.values(k.accountModels).some(map => Object.values(map).some(v => !v));
@@ -76,7 +76,7 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
       if (c.backend !== b.id) continue;
       const acct = c.account ?? '';
       if (!byAccount.has(acct)) byAccount.set(acct, new Set());
-      byAccount.get(acct).add(c.model);
+      if (c.model) byAccount.get(acct).add(c.model);
     }
     // modelKnown が一覧を引くとき、候補のたびに取り直さないよう、1 回の確認では一覧の取りかけを分け合う（最初の呼び出しの 1 本。引数は問わない）。
     // アカウントの範囲に絞ったバックエンドは、そのアカウントの一覧を別に持つ。範囲に絞らないもの（対象がバックエンドのまま）は 1 本を全員で分け合う
@@ -147,7 +147,7 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
   }
 
   async function refreshAll() {
-    const wanted = parseWanted();
+    const wanted = await parseWanted();
     const list = backends();
     const next = {};
     const deferred = new Set();
@@ -163,7 +163,7 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     const b = backends().find(x => x.id === id);
     if (!b || !installed(b.id)) return;
     await warm(b).catch(() => {});
-    const k = await knownFor(b, parseWanted());
+    const k = await knownFor(b, await parseWanted());
     const current = state[id];
     if (!current) return;
     if (JSON.stringify([current.models, current.accountModels]) === JSON.stringify([k.models, k.accountModels])) return;

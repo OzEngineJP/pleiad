@@ -63,6 +63,7 @@ import { innerTail, WORK_NOTES_VERSION } from '../brain/inner.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createResting } from './resting.mjs';
+import { botCandidates, botRoutingSettings } from './routing.mjs';
 import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 import { isSilentReply, speakingParts, stripSilentMark } from './silence.mjs';
 import { answerOf, asksQuestion, excerpt } from './reactions.mjs';
@@ -716,17 +717,34 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /** この bot の、このスレッド（DM なら DM）の会話。無ければ作る */
-  async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null }) {
-    if (channel.kind === 'dm' && !threadId) return (await bots.ensureDmSession({ botId: bot.id })).sessionId;
+  async function sessionFor({ bot, channel, threadId, post, backend = null, cwd = null, limitedSession = null }) {
+    const choose = async sessionId => {
+      if (!limitedSession && sessionId && (active.has(sessionId) || starting.has(sessionId) || rt()?.turns?.has(sessionId))) {
+        return botCandidates(botRoutingSettings(bot)).length > 1 ? { keep: true } : undefined;
+      }
+      return bots.routeSession?.({ bot, sessionId, limited: Boolean(limitedSession && sessionId === limitedSession), channel, cwd });
+    };
+    if (channel.kind === 'dm' && !threadId) {
+      const selection = await choose(bot.dmSessionId);
+      if (selection === null) return null;
+      return (await bots.ensureDmSession({ botId: bot.id, selection })).sessionId;
+    }
     const key = `${threadKeyOf(channel.id, threadId)}/${bot.id}`;
     const running = creating.get(key);
     if (running) return running;
     const work = (async () => {
       const th = await channels.threads.get(channel.id, threadId);
       const known = th?.sessions?.[bot.id];
-      if (known && (await sidecarOf(known))?.botId === bot.id) return known;
-      const rootText = threadId === post.id ? post.text : (await channels.getPost({ channelId: channel.id, postId: threadId }).catch(() => null))?.text ?? '';
-      const made = await bots.createSession({ botId: bot.id, channel, threadId, kind: 'thread', rootText, ...(backend ? { backend } : {}), ...(cwd ? { cwd } : {}) });
+      const existing = known && (await sidecarOf(known))?.botId === bot.id ? known : null;
+      const selection = await choose(existing);
+      if (selection === null) return null;
+      if (existing && selection?.retarget) {
+        await bots.retargetSession(existing, selection);
+        return existing;
+      }
+      if (existing && (!selection || selection.keep)) return existing;
+      const rootText = threadId === post?.id ? post.text : (await channels.getPost({ channelId: channel.id, postId: threadId }).catch(() => null))?.text ?? '';
+      const made = await bots.createSession({ botId: bot.id, channel, threadId, kind: 'thread', rootText, selection, ...(backend ? { backend } : {}), ...(cwd ? { cwd } : {}) });
       await channels.threads.update(channel.id, threadId, { sessions: { [bot.id]: made.sessionId } });
       return made.sessionId;
     })().finally(() => creating.delete(key));
@@ -750,6 +768,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
     if (heard ? resting.until(bot) : await restingWake(bot, channel, threadId)) return null;
     const sessionId = await sessionFor({ bot, channel, threadId, post });
+    if (!sessionId) {
+      if (!heard) await limitReached({ botId, channelId: channel.id, threadId });
+      return null;
+    }
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）
     const caller = post.author?.kind === 'bot' && post.author.botId !== botId ? post.author.botId : null;
     const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}), ...(heard && talkingTo && talkingTo !== botId ? { heardTo: talkingTo } : {}) });
@@ -781,7 +803,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   async function pumpOnce(sessionId) {
-    if (closed) return;
+    if (closed || active.get(sessionId)?.ended) return;
     const pending = await inbox.list({ sessionId, status: 'pending' });
     if (!pending.length) { updateDeferred.delete(sessionId); return; }
     // 止めたスレッドの出来事は捨てる
@@ -1007,7 +1029,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       // 聞こえた投稿だけ（ADR 0128）・リアクションだけ・心拍の引き継ぎや予約した起こし（inner）で起きたターンと、
       // Pleiad が内部で始めたターン（pre の無い userInitiated: false。子の完了の知らせ・上限でモデルを切り替えた続き・設定の切り替えの続き）。
       // 人が会話の画面から書いたターン（userInitiated）と、呼び出しの印の無い古い呼び方は、これまでどおり始まりに作る
-      deferPost: Boolean(channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || sb.threadId)) && (pre ? !pre.addressed : turn.userInitiated === false),
+      deferPost: Boolean(channelId && POST_KINDS.has(sb.kind) && (sb.kind === 'dm' || sb.threadId))
+        && (sb.routingCandidate || (pre ? !pre.addressed : turn.userInitiated === false)),
       cur: '', last: '', parts: [], sawText: false, presents: [],
       // bot が channels.post で自分のスレッドへ書いた（spoke）・そのうち最初の 1 件がターンの投稿に入った（filled）・2 件目からの新しい投稿の最後（explicit）
       spoke: false, filled: false, explicit: null, explicitMentions: new Set(), waiting: new Set(),
@@ -1186,6 +1209,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       ...(rec.memoKey !== undefined ? { memoKey: rec.memoKey } : {}),
     }));
     const marked = rec.itemIds.length ? inbox.mark(rec.itemIds, 'sent').catch((e) => log('could not record a delivered event:', errText(e))) : Promise.resolve();
+    rec.marked = marked;
     // 渡る前にたまっていた出来事は、ここから途中送信で渡せる
     if (!replay) marked.then(() => pump(rec.sessionId));
   }
@@ -1198,6 +1222,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (pre) pre.error = event.error;
     }
     if (!rec || rec.ended || !event?.type) return;
+    if (event.type === 'tool.start') rec.possibleEffect = true;
     if (replay) {
       if (ANSWER_EVENTS.has(event.type)) commit(rec, { replay: true });
       switch (event.type) {
@@ -1376,7 +1401,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (rec.state !== rec.postedState) patch.state = rec.state;
     if (patch.text === undefined && patch.state === undefined) return;
     await channels.edit(patch, botAuthor(rec.botId));
-    if (patch.text !== undefined) rec.lastWritten = patch.text;
+    if (patch.text !== undefined) {
+      rec.lastWritten = patch.text;
+      rec.published ||= patch.text !== PLACEHOLDER;
+    }
     if (patch.state !== undefined) rec.postedState = patch.state;
   }
 
@@ -1445,28 +1473,47 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (sessionId && turn.compactTrigger) await pump(sessionId);
       return;
     }
-    let woke = null, reply = null;
+    let woke = null, reply = null, nextSession = null, retry = false;
     const limited = outcome === 'limited';
     try {
       rec.ended = true;
       clearTimeout(rec.timer);
       rec.timer = null;
       await rec.chain.catch(() => {});
+      await rec.marked;
+      if (limited && POST_KINDS.has(rec.kind) && rec.channelId && !rec.stopped) {
+        await sidecarChains.get(sessionId);
+        const bot = await getBot(rec.botId);
+        const channel = bot && botCandidates(botRoutingSettings(bot)).length > 1
+          ? await channels.get({ channelId: rec.channelId }).catch(() => null) : null;
+        if (channel && !channel.archivedAt) {
+          const next = await sessionFor({ bot, channel, threadId: rec.threadId, limitedSession: sessionId })
+            .catch(e => { log('could not switch the bot candidate:', errText(e)); return null; });
+          if (next) nextSession = next;
+        }
+      }
+      const visible = rec.botControlled || rec.published || rec.lastWritten !== PLACEHOLDER;
+      retry = Boolean(nextSession && rec.itemIds.length && !visible && !rec.spoke && !rec.possibleEffect && !rec.receivedSteer && !rec.priorReply);
+      if (retry && rec.postId) {
+        try { await channels.withdraw({ channelId: rec.channelId, postIds: [rec.postId] }); }
+        catch (e) { retry = false; log('could not withdraw the pending bot post:', errText(e)); }
+      }
+      if (retry) await inbox.mark(rec.itemIds, 'pending', { sessionId: nextSession });
       const ok = outcome === 'ok';
       const state = ok ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
       if (state === 'failed' && !rec.committed && rec.error && POST_KINDS.has(rec.kind)) {
         await host.recordStartFailure?.(sessionId, rec.error);
       }
       if (ok && !rec.committed) commit(rec);
-      if (!rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'unknown', { error: rec.error ?? String(outcome) });
+      if (!retry && !rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'unknown', { error: rec.error ?? String(outcome) });
       // 聞こえた投稿だけのターンでも、assistant の文章があれば道具の前後を問わず残す（ADR 0128）。
-      if (rec.deferPost && !rec.postId && ((!rec.spoke && !isSilentReply(speakingParts([...rec.parts, rec.cur]).join('\n\n'))) || rec.presents.length || state === 'failed')) {
+      if (!retry && rec.deferPost && !rec.postId && ((!rec.spoke && !isSilentReply(speakingParts([...rec.parts, rec.cur]).join('\n\n'))) || rec.presents.length || state === 'failed')) {
         rec.deferPost = false;
         const post = await channels.post({ channelId: rec.channelId, threadId: rec.threadId, text: PLACEHOLDER, state: 'working', taint: rec.taint,
           turn: { botId: rec.botId, sessionId: rec.sessionId }, new: true }, botAuthor(rec.botId)).catch((e) => { log('could not create the turn post:', errText(e)); return null; });
         rec.postId = post?.id ?? null;
       }
-      if (rec.postId) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
+      if (rec.postId && !retry) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
       else if (state === 'failed' && rec.channelId && POST_KINDS.has(rec.kind)) {
         await systemPost(rec.channelId, rec.threadId, agentT(locale(), 'channel.turn.failed', { error: rec.error ?? '' }), undefined, rec.taint);
       }
@@ -1484,7 +1531,13 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     await refreshThread(rec.channelId, rec.threadId);
     if (rec.pulseBot && (rec.kind === 'thread' || rec.kind === 'dm')) await noteResult(rec, { outcome, interrupted, reply }).catch((e) => log('could not write the stream line:', errText(e)));
     // 使用量の上限に当たった: 休憩中にして、Pleiad のお知らせを出す（bot の発言には上限の文を書かない）
-    if (limited) await limitReached(rec, Number(interrupted?.resetsAt)).catch((e) => log('could not record a usage limit:', errText(e)));
+    if (limited && !nextSession) await limitReached(rec, Number(interrupted?.resetsAt)).catch((e) => log('could not record a usage limit:', errText(e)));
+    if (nextSession) {
+      if (!retry)
+        await systemPost(rec.channelId, rec.threadId, agentT(locale(), 'channel.resting.switched', { bot: botLabel(await getBot(rec.botId)) }));
+      const queued = await inbox.list({ sessionId, status: 'pending' });
+      await inbox.mark(queued.map(i => i.id), 'pending', { sessionId: nextSession });
+    }
     if (outcome === 'ok') {
       const bot = await getBot(rec.botId).catch(() => null);
       if (bot) resting.clear(bot);
@@ -1505,7 +1558,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     // このターンの返事を待っていた、ほかの bot への聞こえた投稿を届ける（ADR 0128）
     await releaseFollowers(sessionId).catch((e) => log('could not deliver a heard post:', errText(e)));
     // 終わるまでにたまった出来事をまとめて渡す
-    await pump(sessionId);
+    await pump(nextSession ?? sessionId);
   }
 
   // ------------------------------------------------------------ 頭の中（ADR 0126）

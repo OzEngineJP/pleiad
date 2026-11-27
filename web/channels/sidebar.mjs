@@ -171,7 +171,8 @@ export function createSidebar(host, getTabs) {
   }
 
   // ---------------------------------------------------------------- 描画
-  const live = () => ({ sessions: host.state?.sessions ?? [], runningIds: host.state?.runningIds ?? new Set(), waitingIds: host.state?.waitingIds ?? new Set() });
+  const live = () => ({ sessions: host.state?.sessions ?? [], runningIds: host.state?.runningIds ?? new Set(),
+    waitingIds: host.state?.waitingIds ?? new Set(), homeChannels: new Set(S.channels.filter(c => c.home).map(c => c.id)) });
 
   function paint() {
     paintCreate();
@@ -186,12 +187,12 @@ export function createSidebar(host, getTabs) {
     side?.setDirectory?.({ channels: S.channels, bots: S.bots, stateOf: (b) => botState(b, live()), botMenu, selected: selectedRow(S.view, S.bots) });
   }
 
-  function botMenu(b, x, y, opener) {
+  function botMenu(b, x, y, opener, options) {
     host.showMenu?.(x, y, [
       ...(b.dmChannelId ? [{ label: t('channels:side.openDm'), onClick: () => navigate({ kind: 'channel', id: b.dmChannelId }) }] : []),
       { label: t('channels:side.openBot'), onClick: () => navigate({ kind: 'bot', id: b.id }) },
       ...(!b.plain ? [{ sep: true }, { label: t('channels:botDelete.menu'), danger: true, onClick: () => host.deleteBot(b, opener) }] : []),
-    ], b.name);
+    ], b.name, options);
   }
 
   // ---- ルーティン

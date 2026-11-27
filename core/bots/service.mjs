@@ -44,6 +44,8 @@ import crypto from 'node:crypto';
 import { inspectFile } from '../file-preview.mjs';
 import { newId } from '../channels/types.mjs';
 import { modePosition, scopeRank, autonomyRank } from '../modes.mjs';
+import { parseCandidate } from '../delegation-routing.mjs';
+import { botCandidates, botRoutingSettings, resolveBotRoutingMode, updateBotRouting, validateBotRouting } from './routing.mjs';
 import { createBotStore, BotStoreError, nameProblem, iconProblem, colorProblem, colorValue, personaProblem, normalizeFolders, folderKey, normalizePulse, FOLDERS_MAX, SEND_TARGETS_MAX, PULSE_MIN_MINUTES, PULSE_MAX_MINUTES, BOT_COLOR_COUNT } from './store.mjs';
 import { createBotSessions, defaultMode, botTurnSetup, botInstructions } from './sessions.mjs';
 import { referencedSessions, shownTo } from './send-targets.mjs';
@@ -460,13 +462,39 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
           for (const id of b.sendTargets) sendTargetSources[id] ??= 'manual';
           for (const id of input.sendTargets) if (!b.sendTargets.includes(id)) sendTargetSources[id] = 'manual';
         }
-        return { ...b, ...patch, sendTargetSources, updatedAt: now() };
+        return updateBotRouting(b, { ...patch, sendTargetSources, updatedAt: now() });
       }); } catch (e) { if (patch.iconImage && patch.iconImage !== oldIcon) await removeIcon(patch.iconImage); throw e; }
       if (bot.iconImage !== oldIcon) await removeIcon(oldIcon);
       send({ type: 'botsChanged', bot });
       if (nameChanged) await renameDm(bot);
       await syncSessions(bot);
       return bot;
+    },
+
+    async setRouting({ botId, settings }) {
+      requireStore();
+      const bot = getBot(botId);
+      if (bot.plain) throw invalid('the built-in agent uses the settings of each thread');
+      const routing = validateBotRouting(settings);
+      if (!routing) throw invalid('invalid candidate levels');
+      const [candidate] = botCandidates(routing);
+      const firstLevel = routing.levels.find(({ id }) => routing.tiers[id].length).id;
+      const first = parseCandidate(candidate, { allowDefault: true });
+      const next = await store.update(botId, b => {
+        let mode = b.mode;
+        if (first.backend !== b.backend) {
+          mode = resolveBotRoutingMode(mode, backendOf(b.backend), backendOf(first.backend));
+          if (!mode) throw invalid('the first candidate must support the bot approval mode');
+        }
+        return {
+          ...b, routing, mode, backend: first.backend, model: first.model ?? '', account: first.account ?? '', endpoint: first.endpoint ?? '',
+          effort: routing.efforts[firstLevel]?.[candidate] ?? routing.efforts[firstLevel]?.['*'] ?? '', updatedAt: now(),
+        };
+      });
+      send({ type: 'botsChanged', bot: next });
+      await syncSessions(next);
+      host?.refreshBotRouting?.();
+      return next;
     },
 
     async setMode({ botId, mode }, _author) {
@@ -507,7 +535,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       }
       if (id === bot.account && !endpointChanged) return bot;
       // 接続先が変わると、モデルとエフォートは前の接続先の語彙なので既定に戻す（アカウントだけの変更は今までどおり保つ。ADR 0329）
-      const next = await store.update(botId, (b) => ({ ...b, account: id, endpoint: wanted, ...(endpointChanged ? { model: '', effort: '' } : {}), updatedAt: now() }));
+      const next = await store.update(botId, (b) => updateBotRouting(b, { account: id, endpoint: wanted, ...(endpointChanged ? { model: '', effort: '' } : {}), updatedAt: now() }));
       send({ type: 'botsChanged', bot: next });
       await syncSessions(next);
       return next;
@@ -570,27 +598,43 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     withActivity,
     ensureDm: (args) => withActivity(args.botId, () => ensureDm(args)),
 
-    async ensureDmSession({ botId }) {
+    async routingView({ botId }) {
+      return host.botRoutingView(getBot(botId));
+    },
+
+    async routeSession({ bot, sessionId, ...options }) {
+      if (botCandidates(botRoutingSettings(bot)).length < 2) return undefined;
+      const meta = sessionId ? await host.store.get(sessionId) : null;
+      return host.routeBotSession?.(bot, meta, { ...options, sessionId });
+    },
+
+    retargetSession: (sessionId, selection) => sessions.retarget(sessionId, selection),
+
+    async ensureDmSession({ botId, selection = undefined }) {
       if (!sessions) throw new Error('bots: ensureDmSession needs the host');
       return withActivity(botId, () => once(`dmsession:${botId}`, async () => {
         let bot = await ensureDm({ botId });
         if (bot.dmSessionId) {
           const meta = await host.store.get(bot.dmSessionId).catch(() => null);
-          if (meta?.backend === bot.backend && meta?.bot?.botId === bot.id) return { sessionId: bot.dmSessionId, created: false };
+          if (selection?.retarget && meta?.bot?.botId === bot.id) {
+            await sessions.retarget(bot.dmSessionId, selection);
+            return { sessionId: bot.dmSessionId, created: false };
+          }
+          if ((selection?.keep || (!selection && meta?.backend === bot.backend)) && meta?.bot?.botId === bot.id) return { sessionId: bot.dmSessionId, created: false };
         }
         let channel = null;
         if (bot.dmChannelId && typeof channels?.get === 'function') channel = await channels.get({ channelId: bot.dmChannelId }).catch(() => null);
         channel ??= { id: bot.dmChannelId || null, kind: 'dm', name: bot.name, cwd: null };
-        const made = await sessions.create({ bot, channel, threadId: null, kind: 'dm' });
+        const made = await sessions.create({ bot, channel, threadId: null, kind: 'dm', selection });
         bot = await store.update(botId, (b) => ({ ...b, dmSessionId: made.sessionId, updatedAt: now() }));
         send({ type: 'botsChanged', bot });
         return { sessionId: made.sessionId, created: true };
       }));
     },
 
-    async createSession({ botId, channel = null, threadId = null, kind, routineId, rootText = '', backend = null, cwd = null }) {
+    async createSession({ botId, channel = null, threadId = null, kind, routineId, rootText = '', backend = null, cwd = null, selection }) {
       if (!sessions) throw new Error('bots: createSession needs the host');
-      return withActivity(botId, () => sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText, backend, cwd }));
+      return withActivity(botId, () => sessions.create({ bot: getBot(botId), channel, threadId, kind, routineId, rootText, backend, cwd, selection }));
     },
 
     async turnSetup(turn) {
@@ -599,7 +643,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
     },
     instructions: botInstructions,
   };
-  for (const name of ['update', 'setMode', 'setAccount', 'addSendTargets']) {
+  for (const name of ['update', 'setMode', 'setAccount', 'setRouting', 'addSendTargets']) {
     if (!service[name]) continue;
     const fn = service[name];
     service[name] = (args, ...rest) => withActivity(args.botId, () => fn(args, ...rest));

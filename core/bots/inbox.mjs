@@ -80,7 +80,7 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
       const wanted = new Set(ids);
       const changed = [];
       for (const item of data.items) {
-        if (!wanted.has(item.id) || item.status === status) continue;
+        if (!wanted.has(item.id) || (item.status === status && (!extra.sessionId || extra.sessionId === item.sessionId))) continue;
         Object.assign(item, extra, { status, updatedAt: now() });
         changed.push(clone(item));
       }

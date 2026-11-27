@@ -157,7 +157,36 @@ export const botOps = [
     }),
   }),
 
-  // 承認モードは人だけが決める（ADR 0082）。agent の一覧・list_ops・呼び出しのどれにも無い
+  // 候補と接続先の設定は人だけが扱う（ADR 0224）
+  defineOp({
+    id: 'bots.routing',
+    summary: 'agent:ops.bots.routing.summary',
+    risk: 'human-only',
+    input: z.object({ botId: z.string().min(1).max(100).describe(D('routing', 'botId')) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: guarded(async (ctx, args) => ctx.bots.routingView(args)),
+  }),
+
+  defineOp({
+    id: 'bots.setRouting',
+    summary: 'agent:ops.bots.setRouting.summary',
+    risk: 'human-only',
+    input: z.object({
+      botId: z.string().min(1).max(100).describe(D('setRouting', 'botId')),
+      settings: z.object({
+        levels: z.array(z.object({ id: z.string(), name: z.string() })).max(10),
+        tiers: z.record(z.string(), z.array(z.string()).max(20)),
+        efforts: z.record(z.string(), z.record(z.string(), z.string())),
+      }).describe(D('setRouting', 'settings')),
+    }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: guarded(async (ctx, args) => {
+      const bot = await ctx.bots.setRouting(args);
+      return (await ctx.bots.overview({ botId: bot.id }))[0];
+    }),
+  }),
+
+  // 承認モードは人だけが決める（ADR 0082）
   defineOp({
     id: 'bots.setMode',
     summary: 'agent:ops.bots.setMode.summary',

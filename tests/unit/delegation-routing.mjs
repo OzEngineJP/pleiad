@@ -3,7 +3,7 @@
 import { buildAgyModels } from '../../core/backends/antigravity-models.mjs';
 import { effortCapability } from '../../core/effort.mjs';
 import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder, kindOrder, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, pickAccount, sameIdentity, tierAccounts, tierEndpoints, targetCandidate, endpointSlot, candidateId,
-  route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
+  route, routeFromLevel, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm, REFRESH_MS, STALE_MS, WARM_MS } from '../../core/delegation-usage.mjs';
 import { claudeQuota, codexQuota } from '../../core/usage.mjs';
@@ -318,6 +318,12 @@ export default async function (t) {
     && checkCandidate('claude@acct-oz:opus', { usage: loginOnly, settings: softSettings, now: NOW }).detail === 'no_account');
   t.ok('判定が無い（signals が null）なら難しさは mid', route({ kind: 'implement', judged: { judge: 'none', signals: null, fallback: 'no_key' }, settings, usage: S1, now: NOW }).routing.difficulty === 'mid');
   t.ok('ux_change は判定に関係なく t4', routeAt('ux_change', 'low', S1).routing.tier === 't4');
+
+  const botSettings = { levels: [{ id: 'level_1', name: '' }], tiers: { level_1: ['codex:', 'claude:sonnet'] } };
+  const chooseBot = (percent, checkedAt = NOW) => routeFromLevel({ base: 'level_1', settings: botSettings, limitsOnly: true, now: NOW,
+    usage: { codex: { available: true, checkedAt, windows: [h5(percent)] } } }).routing.target;
+  t.ok('bot: 99% では先頭にとどまり、モデル未指定を実行時まで保つ', chooseBot(99)?.backend === 'codex' && chooseBot(99)?.model === null);
+  t.ok('bot: 100% でだけ次へ進み、古い 100% なら先頭を保つ', chooseBot(100)?.backend === 'claude' && chooseBot(100, NOW - HOUR)?.backend === 'codex');
 
   // ---- Claude のアカウント
   const acc = (account, windows, identity = null, runnable = true) => ({ account, label: account || 'login', windows, identity, runnable });

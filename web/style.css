@@ -2304,6 +2304,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .row-more{width:22px;height:22px;margin:-3px -4px -3px auto;visibility:hidden}
 .row-more svg.i,.grp-more svg.i,.fam-more svg.i{width:14px;height:14px}
 .row:hover .row-more,.row:focus-within .row-more,.row.sel .row-more,.row-more[aria-expanded=true]{visibility:inherit}
+.botsec-head:hover .row-more,.botsec-head.sel .row-more,.kbd:focus-within .botsec-head.is-active .row-more{visibility:inherit}
+@media (max-width:700px){.botsec-head .row-more{visibility:inherit}}
 .grp-more{width:26px;height:26px;visibility:hidden}
 .grp-head:hover .grp-more,.grp-head:focus-within .grp-more{visibility:inherit}
 .fam{position:relative}

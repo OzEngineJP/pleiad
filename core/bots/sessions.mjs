@@ -30,6 +30,7 @@ import { agentT } from '../i18n.mjs';
 import { modePosition, scopeRank } from '../modes.mjs';
 import { workPlace } from '../../web/work-place.mjs';
 import { folderKey } from './store.mjs';
+import { botCandidates, botRoutingSettings, resolveBotRoutingMode } from './routing.mjs';
 import { WORK_NOTES_VERSION } from '../brain/inner.mjs';
 
 /** bot の名前・本人の人格・操作の要点。区切りは空行 1 つ、末尾の改行なし */
@@ -143,13 +144,16 @@ export function createBotSessions({ host, now = Date.now } = {}) {
   }
 
   return {
-    async create({ bot, channel = null, threadId = null, kind, routineId, rootText = '', cwd: cwdHint = null, backend: backendHint = null }) {
-      const { backend, mode, cwd, model, effort, endpoint } = await resolve(bot, channel, cwdHint, backendHint);
+    async create({ bot, channel = null, threadId = null, kind, routineId, rootText = '', cwd: cwdHint = null, backend: backendHint = null, selection }) {
+      const target = selection?.target;
+      const { backend, mode, cwd, model, effort, endpoint } = target
+        ? { ...target, cwd: cwdHint ?? pickCwd(bot, channel, target.backend.modes()[target.mode]) }
+        : await resolve(bot, channel, cwdHint, backendHint);
       const info = { title: sessionTitle(bot, channel, rootText), cwd, createdAt: now(), lastModified: now() };
       const sessionId = await host.createConversation(backend, info);
       const sidecar = {
         botId: bot.id, kind, channelId: channel?.id ?? null, threadId: threadId ?? null,
-        ...(routineId ? { routineId } : {}),
+        ...(routineId ? { routineId } : {}), ...(selection?.candidate ? { routingCandidate: selection.candidate } : {}),
         memRev: 0, snapshotDue: true, delivered: [], postCursor: null, workNotesVersion: WORK_NOTES_VERSION,
       };
       try {
@@ -158,7 +162,8 @@ export function createBotSessions({ host, now = Date.now } = {}) {
         await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
         await store.setSessionData(sessionId, 'effort', effort);
         await store.setSessionData(sessionId, 'agentLocale', lang());
-        if (takesAccount(backend) && bot.account) await store.setSessionData(sessionId, 'claudeAccount', bot.account);
+        const account = target ? target.account : bot.account;
+        if (takesAccount(backend) && account) await store.setSessionData(sessionId, 'claudeAccount', account);
         if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
         await store.setSessionData(sessionId, 'bot', sidecar, { durable: true });
       } catch (e) {
@@ -171,10 +176,23 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       return { sessionId, backend: backend.id, model, effort, cwd, mode };
     },
 
+    async retarget(sessionId, { candidate, target }) {
+      const meta = await host.store.get(sessionId);
+      await host.store.setMode(sessionId, target.mode);
+      await host.store.setModel(sessionId, target.model);
+      await host.store.setSessionData(sessionId, 'effort', target.effort);
+      await host.store.setSessionData(sessionId, 'bot', { ...meta.bot, routingCandidate: candidate }, { durable: true });
+    },
+
     async sync(sessionId, bot) {
       if (bot.plain) return false;   // 組み込みの bot の会話の設定は、スレッドごとに人が選んだもの（bot の既定を持たない）
       const base = host.getBackend(bot.backend);
       const meta = await host.store.get(sessionId);
+      if (botCandidates(botRoutingSettings(bot)).slice(1).includes(meta.bot?.routingCandidate)) {
+        const mode = resolveBotRoutingMode(bot.mode, base, host.getBackend(meta.backend));
+        if (mode && meta.mode !== mode) await host.store.setMode(sessionId, mode);
+        return Boolean(mode);
+      }
       if (!base || meta.backend !== base.id) return false;   // backend を変えた bot の古い会話は、次の新しい会話から（そのままにする）
       // 互換の接続先を選んでいれば、モデル・エフォートは接続先の語彙で決める（アカウントの一覧は引かない）
       const endpoint = takesEndpoint(base) ? bot.endpoint ?? '' : '';

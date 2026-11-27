@@ -12,6 +12,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { writeAtomic } from '../atomic-file.mjs';
 import { EMOJI_RE } from '../../web/emoji.mjs';
+import { validateBotRouting } from './routing.mjs';
 
 export const BOTS_VERSION = 1;
 export const BOT_COLOR_COUNT = 8;
@@ -91,6 +92,7 @@ export function folderKey(p) {
 /** 読んだ 1 件を Bot の形に整える（足りない欄は既定、知らない欄は捨てる）。id と name が無ければ null */
 export function normalizeBot(raw, now = Date.now()) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id || typeof raw.name !== 'string' || !raw.name) return null;
+  const routing = raw.routing ? validateBotRouting(raw.routing) : null;
   return {
     id: raw.id, name: raw.name, icon: str(raw.icon), iconImage: str(raw.iconImage), persona: str(raw.persona),
     // 顔の色（1〜8。無い行は load が作った順に補う。色だけを選べ、絵文字・画像は残っていても画面では読まない。ADR 0362）
@@ -101,6 +103,7 @@ export function normalizeBot(raw, now = Date.now()) {
     // bot のエージェントの互換の接続先の id（'' = 公式）。account と同じく人だけが bots.setAccount で変える。接続先を選べない backend では使わない。
     // 古い bots.json には無いので、足りなければ ''（ADR 0224 の account と同じく版は上げない。ADR 0359）
     endpoint: str(raw.endpoint),
+    ...(routing ? { routing } : {}),
     folders: normalizeFolders(raw.folders),
     sendToOthers: raw.sendToOthers !== false,
     sendTargets: [...new Set((Array.isArray(raw.sendTargets) ? raw.sendTargets : []).filter((s) => typeof s === 'string' && s))].slice(0, SEND_TARGETS_MAX),

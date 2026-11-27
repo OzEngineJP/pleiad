@@ -1885,6 +1885,15 @@
         "pulseChannelId": "The id of the home channel the heartbeat works in (empty = the first channel the bot is in).",
         "reason": "Why you are changing it (shown on the approval card)."
       },
+      "routing": {
+        "summary": "Read a bot's agent candidates",
+        "botId": "The bot ID."
+      },
+      "setRouting": {
+        "summary": "Save a bot's agent candidates",
+        "botId": "The bot ID.",
+        "settings": "The ordered levels, candidates and effort settings."
+      },
       "setMode": {
         "summary": "Change a bot's approval mode (screen only; AI cannot call it).",
         "botId": "The bot id.",
@@ -2134,6 +2143,7 @@
     "resting": {
       "limited": "{{bot}} hit its usage limit and is resting until about {{time}}. It cannot answer @-mentions until then.",
       "limitedNoTime": "{{bot}} hit its usage limit and cannot answer for a while.",
+      "switched": "{{bot}} stopped this response after hitting its usage limit. Its next response will use another candidate.",
       "wake": "{{bot}} is resting until about {{time}} because of its usage limit, so this request was not delivered. Call it again after that."
     },
     "memo": {

@@ -3393,7 +3393,6 @@
       "noList": "No list available. Enter an ID.",
       "chipTitle": "{{label}} (agent, model, effort; applies from the next turn)",
       "switchedTitle": "{{model}} is answering because of a safeguard",
-      "chipAria": "Model and effort: {{label}}",
       "loading": "Loading the model list",
       "loadingAria": "{{backend}} · loading models"
     },
