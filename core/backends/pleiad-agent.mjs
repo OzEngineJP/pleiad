@@ -7,13 +7,14 @@ import { pathToFileURL } from 'node:url';
 import { dataDir, get, setSessionData } from '../store.mjs';
 import { t } from '../i18n.mjs';
 import { editableField, hostTools, interactionQuestions } from './pleiad-agent-tools.mjs';
+import { managedBackendIds } from './host-policy.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
 
 const ID = 'pleiad-agent';
 const require = createRequire(import.meta.url);
 const active = new Set();
 const homeDir = path.join(dataDir, ID);
-let resolveKey;
+let resolveKey, plus;
 
 function cliPath() {
   try {
@@ -88,6 +89,7 @@ function historyMessages(messages) {
 function liveEvents(emit) {
   const textIds = new Set();
   const usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  let costKnown = true;
   return event => {
     switch (event.type) {
       case 'assistant.message.delta':
@@ -116,7 +118,8 @@ function liveEvents(emit) {
         usage.inputTokens += event.inputTokens ?? 0;
         usage.outputTokens += event.outputTokens ?? 0;
         usage.cachedTokens += event.cacheReadTokens ?? 0;
-        if (event.costUsd != null) usage.costUsd = (usage.costUsd ?? 0) + event.costUsd;
+        costKnown &&= Number.isFinite(event.costUsd);
+        usage.costUsd = costKnown ? (usage.costUsd ?? 0) + event.costUsd : null;
         emit({ type: 'usage', ...usage });
         break;
     }
@@ -124,15 +127,28 @@ function liveEvents(emit) {
 }
 
 // Keep authentication in the parent, including when a provider returns an error.
-async function relayModel(frame, config, key, write, signal) {
+async function relayModel(frame, config, getKey, write, signal) {
   if (frame.body?.model !== config.model) throw new Error('Unexpected model');
-  const headers = { 'content-type': 'application/json' };
+  if (config.managed && frame.body.stream !== true) throw new Error('Plus requires streaming');
+  const authorization = config.managed ? await getKey(signal) : { key: await getKey(signal) };
+  const { key } = authorization;
+  const headers = { 'content-type': 'application/json', ...authorization.headers };
+  const body = { ...frame.body };
+  // OpenRouter and the Plus proxy use the reasoning object.
+  if (config.openRouter && body.reasoning_effort) {
+    body.reasoning = { effort: body.reasoning_effort };
+    delete body.reasoning_effort;
+  }
   if (config.protocol === 'anthropic') {
     headers['anthropic-version'] = '2023-06-01';
-    if (key) headers['x-api-key'] = key;
-  } else if (key) headers.authorization = 'Bearer ' + key;
+  }
+  if (key) {
+    const auth = config.auth ?? (config.protocol === 'anthropic' ? 'x-api-key' : 'bearer');
+    if (auth === 'bearer') headers.authorization = 'Bearer ' + key;
+    else if (auth === 'x-api-key' || auth === 'api-key') headers[auth] = key;
+  }
   const response = await fetch(config.url, { method: 'POST', headers,
-    body: JSON.stringify(frame.body), signal, redirect: 'error' });
+    body: JSON.stringify(body), signal, redirect: 'error' });
   // The body of an upstream error can include credentials. Send only the status.
   await write({ type: 'model.headers', id: frame.id, status: response.status,
     headers: { 'content-type': response.headers.get('content-type') || 'application/json' } });
@@ -164,14 +180,20 @@ async function relayModel(frame, config, key, write, signal) {
   await write({ type: 'model.end', id: frame.id });
 }
 
-async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, mode, emit, onPromptDelivered,
+function endpointSettings(endpoint, model) {
+  const protocol = endpoint.kind === 'anthropic-messages' ? 'anthropic' : 'openai';
+  model ||= endpoint.roles.main || endpoint.models[0];
+  const url = new URL(endpoint.baseUrl + (protocol === 'anthropic' ? '/v1/messages' : '/chat/completions'));
+  return { model, protocol, url, auth: endpoint.auth, openRouter: endpoint.preset === 'openrouter' || url.hostname === 'openrouter.ai',
+    vision: endpoint.modelInfo?.[model]?.vision === true };
+}
+
+async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, mode, effort, endpoint, emit, onPromptDelivered,
   signal: controller, control, askPermission, agentRuntime, contextRuntime, controlRuntime, shellRuntime,
   computerRuntime, browserRuntime, pendingDecision, addedInstructions }) {
   const signal = controller?.signal;
   const cli = cliPath();
-  const config = modelSettings();
-  if (!cli || !config) throw new Error('Configure the Pleiad Agent executable and model first');
-  if (model && model !== config.model) throw new Error('The Pleiad Agent model configuration has changed');
+  if (!cli) throw new Error('Configure the Pleiad Agent executable first');
   const conversation = hostSessionId ?? sessionId ?? messageId;
   if (active.has(conversation)) throw new Error('A Pleiad Agent turn is already active for this conversation');
   active.add(conversation);
@@ -197,9 +219,26 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
   let nativeId = sessionId;
   const normalize = liveEvents(emit);
   try {
-    const key = config.keyId ? await resolveKey?.(config) : process.env.AGENT_HOST_PLEIAD_AGENT_API_KEY ||
-      (config.url.origin === config.official ? process.env[config.protocol === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'] : null);
-    if (!key && (!config.loopback || config.keyId)) throw new Error('Configure the Pleiad Agent model key');
+    let config, getKey;
+    const local = !managedBackendIds && !endpoint && modelSettings();
+    if (local) {
+      config = local;
+      if (model && model !== config.model) throw new Error('The Pleiad Agent model configuration has changed');
+      const key = config.keyId ? await resolveKey?.(config) : process.env.AGENT_HOST_PLEIAD_AGENT_API_KEY ||
+        (config.url.origin === config.official ? process.env[config.protocol === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'] : null);
+      if (!key && (!config.loopback || config.keyId)) throw new Error('Configure the Pleiad Agent model key');
+      getKey = () => key;
+    } else if (!managedBackendIds && endpoint) {
+      config = endpointSettings(endpoint, model);
+      getKey = () => endpoint.key;
+    } else {
+      const catalog = await plus?.models(signal);
+      model ||= Object.keys(catalog ?? {})[0];
+      if (!model || !catalog || !Object.hasOwn(catalog, model)) throw new Error('Select an available Pleiad Plus model');
+      config = { model, protocol: 'openai', url: plus.url, managed: true, openRouter: true, vision: catalog[model].vision === true };
+      getKey = requestSignal => plus.authorization(model, requestSignal);
+    }
+    if (!config.model) throw new Error('Select a Pleiad Agent model');
     await mkdir(homeDir, { recursive: true });
     const { VERSION, readFrames, writeFrame } = await adapter(cli, 'frames');
     if (signal?.aborted) { outcome = 'aborted'; return; }
@@ -233,7 +272,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
           ply_browser: browserRuntime && { ...browserRuntime, instructions: 'Use ply_browser for browser handoff and downloads.' } }) } : {};
         if (supportsTools && addedInstructions) tools.instructions = [tools.instructions, addedInstructions].filter(Boolean).join('\n\n');
         await write({ type: 'open', id: openId, version: VERSION, ...(sessionId ? { sessionId, resume: true } : {}),
-          protocol: config.protocol, model: config.model, vision: config.vision, ...tools });
+          protocol: config.protocol, model: config.model, vision: config.vision, reasoningEffort: effort, ...tools });
       } else if (frame.type === 'opened' && frame.id === openId && !turnSent) {
         clearTimeout(timer);
         nativeId = frame.sessionId;
@@ -278,7 +317,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       } else if (frame.type === 'model.request' && frame.turnId === id && !requests.has(frame.id)) {
         const request = new AbortController();
         requests.set(frame.id, request);
-        void relayModel(frame, config, key, write, request.signal).catch(() => {
+        void relayModel(frame, config, getKey, write, request.signal).catch(() => {
           if (!request.signal.aborted) return send({ type: 'model.error', id: frame.id });
         }).finally(() => requests.delete(frame.id));
       } else if (frame.type === 'model.cancel') {
@@ -343,6 +382,7 @@ async function resolveDecision(frame, { sessionId, askPermission, signal, restor
 export const backend = {
   id: 'pleiad-agent',
   label: 'Pleiad Agent',
+  defaultConnectionLabel: 'Pleiad Plus',
   capabilities: CAPABILITY_STATES[ID],
   traits: AGENT_TRAITS[ID],
   modes: () => ({
@@ -355,8 +395,9 @@ export const backend = {
   }),
   async setModeLive(handle, mode) { return await handle?.setMode?.(mode) === true; },
   models: async () => {
-    const config = modelSettings();
-    return config ? { [config.model]: { label: config.model } } : {};
+    const config = !managedBackendIds && modelSettings();
+    return config ? { [config.model]: { label: config.model, efforts: ['minimal', 'low', 'medium', 'high'] } }
+      : await plus?.models().catch(() => ({})) ?? {};
   },
   async listSessions({ limit = 100 } = {}) {
     const cli = cliPath();
@@ -377,6 +418,9 @@ export const backend = {
     const { readPendingDecision } = await adapter(cli, 'history');
     return readPendingDecision?.({ homeDir, sessionId }) ?? null;
   },
-  attachHost(host) { resolveKey = host.pleiadAgentModelKey; },
+  attachHost(host) {
+    resolveKey = host.pleiadAgentModelKey;
+    plus = host.pleiadAgentPlus;
+  },
   runTurn,
 };

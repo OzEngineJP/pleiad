@@ -13,7 +13,7 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
 import { modelCandidates, comboModelOptions, SHOW_LIMIT } from './compat-models.mjs';
-import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, COMPAT_AGENTS, KIND, KIND_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
+import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, COMPAT_AGENTS, KIND, KIND_LABEL, kindOf, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
 import { connCard, connConfirm } from './conn-card.mjs';
 import { keyFitsEndpoint, keyMatchesEndpoint } from './api-keys-model.mjs';
 import { apiKeyList, keySelect, notEncryptedNote, checkParts, manageLink } from './api-key-ui.mjs';
@@ -249,18 +249,18 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
     name.oninput = () => { form.name = name.value; };
     g.append(field(t('compat.form.name'), name));
     // URL の一文は間違い（/v1 の付けすぎ・<リソース名> の置き忘れ）のときだけ出す
-    const help = el('small', 'mp-warn', urlHelp(agent, form.baseUrl));
+    const help = el('small', 'mp-warn', urlHelp(agent, form.baseUrl, form.preset));
     const url = createCombo({ ariaLabel: 'URL', placeholder: claude ? t('compat.form.urlPlaceholder') : 'https://example.com/v1', cls: 'mono', value: form.baseUrl,
       options: () => urlCandidates(agent, form.preset),
-      onCommit: v => { if (form.baseUrl !== v) { form.baseUrl = v; help.textContent = urlHelp(agent, v); if (form.phase === 'edit') draw(); else invalidate(); } } });
+      onCommit: v => { if (form.baseUrl !== v) { form.baseUrl = v; help.textContent = urlHelp(agent, v, form.preset); if (form.phase === 'edit') draw(); else invalidate(); } } });
     url.root.querySelector('input').spellcheck = false;
-    url.root.querySelector('input').addEventListener('input', e => { help.textContent = urlHelp(agent, e.target.value); });
+    url.root.querySelector('input').addEventListener('input', e => { help.textContent = urlHelp(agent, e.target.value, form.preset); });
     g.append(field('URL', url.root, help));
     out.push(g);
     const authField = el('div', 'mp-field');
     authField.append(el('span', null, t('compat.form.auth')));
     const seg = el('div', 'seg mp-seg'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', t('compat.form.auth'));
-    for (const v of claude ? ['auto', 'bearer', 'x-api-key'] : ['bearer', 'api-key']) {
+    for (const v of kindOf(agent, form.preset) === 'anthropic-messages' ? ['auto', 'bearer', 'x-api-key'] : ['bearer', 'api-key']) {
       const b = el('button', v === form.authMode ? 'on' : '', AUTH_LABEL[v]); b.type = 'button'; b.setAttribute('aria-pressed', String(v === form.authMode));
       b.onclick = () => { if (form.authMode === v) return; form.authMode = v; invalidate(); draw(); };
       seg.append(b);

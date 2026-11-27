@@ -3537,7 +3537,11 @@ function onEvent(ev, replay = false) {
     remoteSettings.event(ev); residentSettings.event(ev); return;
   }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
-  if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); paintSideFoot(); return; }
+  if (ev.type === 'plusStatus') {
+    plusSettings.event(ev); remoteSettings.event(ev); paintSideFoot();
+    if (state.backends.some(b => b.id === openConnAgent && b.defaultConnectionLabel)) renderAuth();
+    return;
+  }
   if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); paintSideFoot(); return; }
   // worktree が増えた・消えた。開いている右パネルの「残っている worktree」を取り直す
   // 委譲の子の worktree が片付くと、カードの「未取り込み」の印が変わる（worktree.live）
@@ -4122,6 +4126,17 @@ function connCounts(b, st) {
 function cliLoginCard(b, st) {
   const remote = Boolean(window.plyRemote);
   const isDef = connIsDefault(b.id, 'cli');
+  if (b.defaultConnectionLabel) {
+    const signedIn = b.managedConnection || plusSettings.status?.signedIn;
+    return connCard({
+      name: b.defaultConnectionLabel, isDefault: isDef, dataset: { conn: 'cli' },
+      status: signedIn ? t('conn.official') : t('conn.signedOut'), warn: !signedIn,
+      actions: [
+        !signedIn && !remote && { label: t('conn.login'), act: 'login', quiet: true, onClick: openPlusPage },
+        !isDef && { label: t('conn.makeDefault'), act: 'default', onClick: () => setConnDefault(b.id, { endpoint: '' }) },
+      ],
+    });
+  }
   const status = !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
     : st.pending ? t('conn.pending')
     : st.expired ? t('conn.expired')
@@ -4229,10 +4244,16 @@ function connAddArea(b) {
     stage.append(el('div', 'conn-kind-h', label), g);
   };
   if (kind) group(t('conn.kindOfficial'), [preset(t('conn.officialPreset'), t('conn.officialHint', { agent: b.label }), official, 'official')]);
-  if (compat) group(t('conn.kindCompat', { kind: KIND_LABEL[KIND[b.id]] ?? '' }), (PRESETS[b.id] ?? []).map((p) => preset(p.name, p.hint ?? '', () => {
-    connAddOpen = '';
-    compatEndpoints.startAdd(b.id, p.id).then(() => renderAuth());
-  }, p.id)));
+  if (compat) {
+    const defaultKind = KIND[b.id];
+    const presets = PRESETS[b.id] ?? [];
+    const multipleKinds = presets.some(p => p.kind && p.kind !== defaultKind);
+    const label = multipleKinds ? t('compat.form.apiKey') : t('conn.kindCompat', { kind: KIND_LABEL[defaultKind] ?? '' });
+    group(label, presets.map((p) => preset(p.name, p.hint ?? '', () => {
+      connAddOpen = '';
+      compatEndpoints.startAdd(b.id, p.id).then(() => renderAuth());
+    }, p.id)));
+  }
   box.append(stage);
   return box;
 }
@@ -4245,7 +4266,7 @@ function connPanel(b, st, { accounts, endpoints }) {
   p.append(cliLoginCard(b, st));
   if (accounts) p.append(connSection('accounts'));
   if (endpoints) p.append(connSection('endpoints'));
-  p.append(connAddArea(b));
+  if (accounts || endpoints) p.append(connAddArea(b));
   return p;
 }
 /** 追加の欄を閉じた（足し終えた・やめた）: 一覧の［＋ 接続先を追加］を戻し、そこへフォーカスを置く */
@@ -4443,7 +4464,7 @@ function renderAuth() {
     // 接続先の一覧を持つエージェント（アカウント・互換）。持たない Devin の頭の行は今のまま（ADR 0359。Antigravity は 2 つ目以降のアカウントを持つので Claude・Codex と同じ）
     const accounts = b.capabilities?.accounts && st.installed !== false;
     const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
-    const conns = Boolean(accounts || endpoints);
+    const conns = st.installed !== false && Boolean(accounts || endpoints || b.defaultConnectionLabel);
     if (conns) {
       askConnLists(b);
       // 頭の行の状態は「● 接続先 N」か「⚠ 対応が要る接続先 N」。ログイン・ログアウトは CLI のログインのカードへ移す
@@ -5228,7 +5249,7 @@ function accountOptionsOf(backend, value, quota) {
   ];
 }
 function accountLabel(id, bid = null) {
-  if (!id) return t("conn.cliLogin");
+  if (!id) return defaultEndpointLabel(bid);
   const lists = bid ? [accountList(bid)] : state.backends.map((b) => accountList(b.id));
   return lists.flat().find((a) => a.id === id)?.name ?? t("chat.endpoint.deleted");
 }
@@ -5267,8 +5288,10 @@ const compatEndpoints = setupCompatEndpoints({ cmd,
 claudeAccounts.onOpen(() => mountPanel(claudeAccounts.agent, 'accounts', claudeAccounts.panel));
 agentAccounts.onOpen(id => mountPanel(id, 'accounts', agentAccounts.panel));
 compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', compatEndpoints.panel); });
+function defaultEndpointLabel(bid) {
+  return state.backends.find(b => b.id === bid)?.defaultConnectionLabel ?? t("conn.cliLogin");
+}
 function endpointLabel(id) {
-  if (!id) return t("conn.cliLogin");
   return compatEndpoints.get(id)?.name ?? t("chat.endpoint.deleted");
 }
 /** 会話の次のターンの接続先（予約があればそれ。エージェントを変える予約で接続先が書かれていなければ公式） */
@@ -5305,7 +5328,7 @@ function endpointViewOf(bid, selected) {
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],
     // 先頭は CLI のログイン（アカウントの節が無い面ではこれが公式の行。web/composer-controls.mjs の connOptions）
     options: [
-      { value: "", label: t("conn.cliLogin"), sub: cliLoginSub(bid), usage: weekUsage(usageSource.get(bid)?.quota, ""), isDefault: connIsDefault(bid, "cli") },
+      { value: "", label: defaultEndpointLabel(bid), sub: cliLoginSub(bid), usage: weekUsage(usageSource.get(bid)?.quota, ""), isDefault: connIsDefault(bid, "cli") },
       ...list.map((e) => ({ value: e.id, label: e.name, isDefault: connIsDefault(bid, "endpoint", e.id), warn: e.ready === false,
         sub: e.ready === false ? t("conn.subFailed", { kind: where(e) }) : where(e), title: `${e.name}（${e.baseUrl}）` })),
       ...(selected && !row ? [{ value: selected, label: t("chat.endpoint.deleted"), sub: t("chat.account.chooseAgain"), gone: true }] : []),
@@ -9964,7 +9987,7 @@ async function rowConnItems(s) {
   if (!list.length && !eps.length && !account && !endpoint) return [];
   const official = caps.compatEndpoints ? { endpoint: "" } : {};
   const choices = [
-    { key: "account:", label: t("conn.cliLogin"), note: "", patch: { ...official, account: "" } },
+    { key: "account:", label: defaultEndpointLabel(bid), note: "", patch: { ...official, account: "" } },
     ...list.map((a) => ({ key: `account:${a.id}`, label: a.name, note: a.ready ? "" : t("conn.subSignedOut"), patch: { ...official, account: a.id } })),
     ...eps.map((e) => ({ key: `endpoint:${e.id}`, label: e.name, note: e.ready === false ? t("chat.endpoint.failedNote") : "", patch: { endpoint: e.id } })),
   ];

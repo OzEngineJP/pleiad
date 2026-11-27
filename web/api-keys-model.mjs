@@ -2,7 +2,7 @@
 // プロバイダーの名前と、接続先（プリセットか URL のホスト）からプロバイダーを決める規則。core/api-keys.mjs も読む。
 
 /** 名前を持つプロバイダー。ここに無いもの（接続先のプリセット名・カスタム）は、キーの名前（label）で見せる */
-export const PROVIDER_NAMES = Object.freeze({ openrouter: 'OpenRouter', zai: 'Z.ai (GLM)', kimi: 'Kimi', deepseek: 'DeepSeek', azure: 'Azure OpenAI', litellm: 'LiteLLM', vllm: 'vLLM' });
+export const PROVIDER_NAMES = Object.freeze({ openai: 'OpenAI', anthropic: 'Anthropic', openrouter: 'OpenRouter', zai: 'Z.ai (GLM)', kimi: 'Kimi', deepseek: 'DeepSeek', azure: 'Azure OpenAI', litellm: 'LiteLLM', vllm: 'vLLM' });
 export const providerName = provider => PROVIDER_NAMES[provider] ?? '';
 
 /** 通話・自動選択・wait_until の問いに割り当てられるキーのプロバイダー（どれも OpenRouter。自動選択の判定モデルは judge:routing のキーを使う） */

@@ -14,12 +14,13 @@ import { providerName } from './api-keys-model.mjs';
 import { apiKeyList, keyName, statusLine, spinner, keyInput, keepFocus, CHEV } from './api-key-ui.mjs';
 import { parseDotenv, ENV_NAME, reservedName, looksSecret } from './dotenv.mjs';
 
-const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok Build' };
+// backend-allow: 秘密情報の使用先に表示するエージェント名
+const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok Build', 'pleiad-agent': 'Pleiad Agent' };
 /** 使っている所が多いカードは先頭 3 件と［ほか N か所］に畳む（4 件までは全部出す） */
 const FOLD_AT = 4;
 const FOLD_SHOWN = 3;
 const SETTLE_MS = 240;
-const PROVIDER_CHOICES = ['openrouter', 'custom'];
+const PROVIDER_CHOICES = ['openrouter', 'openai', 'anthropic', 'custom'];
 const KINDS = ['api', 'login', 'secret', 'var'];
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;

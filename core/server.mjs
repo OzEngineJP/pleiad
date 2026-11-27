@@ -120,6 +120,7 @@ import { secretsPrompt } from './secrets-prompt.mjs';
 import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
 import { sweepClaudeMcpFiles } from './claude-mcp-file.mjs';
 import { createSecretFill } from './secret-fill.mjs';
+import { createPlusModelConnection } from './plus/model-connection.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, newAccountId } from './claude-accounts.mjs';
 import { createAgentAccounts } from './agent-accounts.mjs';
@@ -774,7 +775,7 @@ const apiKeys = createApiKeys({
   log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
   onChange: change => apiKeysChanged(change),
 });
-const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys });
+const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys, managed: Boolean(managedBackendIds) });
 // 秘密情報と変数（設定 › 秘密情報と変数。core/secrets.mjs、ADR 0217）。登録しただけでは渡さず、使い道（環境変数・サイトでの入力）を選んだものだけを使う。
 // 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
 const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
@@ -3589,7 +3590,7 @@ async function sendModel(sessionId, given, backend, endpointId = '') {
 }
 
 /** 接続先を選べるエージェントか（Claude Code・Codex） */
-const endpointCapable = backend => Boolean(backend?.capabilities?.compatEndpoints);
+const endpointCapable = backend => !managedBackendIds && Boolean(backend?.capabilities?.compatEndpoints);
 /** 一覧の行（キー無し）。effortOptions に渡す。'' なら null */
 const endpointRow = async id => id ? await compatEndpoints.get(id) : null;
 
@@ -9427,8 +9428,18 @@ function makeBotHost() {
 }
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う
+const pleiadAgentPlus = createPlusModelConnection({
+  apiBase: plusConfig.apiBase, client: plusSession.client, cloud: Boolean(managedBackendIds),
+  runtime: {
+    tenantId: BOOT_ENV.PLEIAD_CLOUD_TENANT_ID,
+    cloudHostId: BOOT_ENV.PLEIAD_CLOUD_HOST_ID,
+    generation: Number(BOOT_ENV.PLEIAD_CLOUD_GENERATION),
+    token: BOOT_ENV.PLEIAD_CLOUD_RUNTIME_TOKEN,
+  },
+});
 for (const b of listBackends()) {
   b.attachHost?.({
+    pleiadAgentPlus,
     async pleiadAgentModelKey({ protocol, url, official, keyId }) {
       const { keys } = await apiKeys.list();
       const key = keys.find(entry => entry.id === keyId);

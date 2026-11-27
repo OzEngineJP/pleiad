@@ -178,12 +178,15 @@ export function describeBackends() {
     id: b.id,
     label: b.label ?? b.id,
     description: b.description ?? "",
+    defaultConnectionLabel: b.defaultConnectionLabel,
+    managedConnection: b.defaultConnectionLabel ? Boolean(managedBackendIds) : undefined,
     // 短い名前・ロゴ・自動の圧縮の設定の行・設定を読む時点（エージェントの記述）。画面は id の表を持たずにこれを使う
     ...agentPresentation(b.id),
     // 候補を出せない印のエージェント（候補は内部呼出しで作る。分離して呼べない impossible・未対応の todo。入力設定で理由を出す。Issue #180）
     suggestionsStopped: ['impossible', 'todo'].includes(rawCapabilityBackends.get(b)?.capabilities?.promptSuggestions?.state),
     capabilities: {
       ...b.capabilities,
+      ...(managedBackendIds ? { compatEndpoints: false } : {}),
       suggestTitle: typeof b.suggestTitle === "function",
       // ターンの外の裏の作業を止められるか（codex のバックグラウンド端末。§2.7）
       stopBackground: typeof b.stopBackground === "function",

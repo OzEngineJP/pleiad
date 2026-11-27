@@ -36,6 +36,7 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
     plyShell: true,
     nativeShellOff: true,
     nativeMcpOff: true,
+    compatEndpoints: true,
     plyContext: 'turn',
     browser: true,
     computerUse: { images: 'inline', waitSliceMs: null },

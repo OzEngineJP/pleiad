@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { addressKind, isLoopbackHost } from './mcp-url-guard.mjs';
-import { KIND, ROLE_KEYS, COMPAT_AGENTS } from '../web/compat-presets.mjs';
+import { kindOf, ROLE_KEYS, COMPAT_AGENTS } from '../web/compat-presets.mjs';
 import { providerOfEndpoint } from './api-keys.mjs';
 import { hostOf } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
@@ -56,7 +56,7 @@ export const isModelId = v => typeof v === 'string' && v.length > 0 && v.length 
 // ---- 入力の検査 -------------------------------------------------------------
 
 /** URL を検査して正規化する（末尾の / を落とす）。名前解決はしない（checkUrlTarget でする） */
-export function normalizeUrl(agent, value) {
+export function normalizeUrl(agent, value, preset) {
   const raw = String(value ?? '').trim();
   if (!raw) throw new CheckError(t('compat.url.empty'));
   if (/<[^>]+>/.test(raw)) throw new CheckError(t('compat.url.placeholder'));
@@ -65,12 +65,13 @@ export function normalizeUrl(agent, value) {
   if (!['http:', 'https:'].includes(u.protocol)) throw new CheckError(t('compat.url.scheme'));
   if (u.username || u.password) throw new CheckError(t('compat.url.credentials'));
   if (u.search || u.hash) throw new CheckError(t('compat.url.query'));
-  const href = u.href.replace(/\/+$/, '');
-  if (agent === 'claude' && /\/v1$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeV1'));
-  if (agent === 'claude' && /\/v1\/messages$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeMessages'));
-  if (agent === 'codex' && /\/(responses|chat\/completions)$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix'));
-  if (agent === 'grok' && /\/chat\/completions$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix')); // backend-allow: 接続先の URL の形はエージェントの API ごとに違う（Grok は Chat Completions の base URL）
-  return href;
+  const kind = kindOf(agent, preset);
+  const pathname = u.pathname.replace(/\/+$/, '');
+  if (kind === 'anthropic-messages' && /\/v1$/.test(pathname)) throw new CheckError(t('compat.url.claudeV1'));
+  if (kind === 'anthropic-messages' && /\/v1\/messages$/.test(pathname)) throw new CheckError(t('compat.url.claudeMessages'));
+  if (kind === 'openai-responses' && /\/(responses|chat\/completions)$/.test(pathname)) throw new CheckError(t('compat.url.codexSuffix'));
+  if (kind === 'openai-chat-completions' && /\/chat\/completions$/.test(pathname)) throw new CheckError(t('compat.url.codexSuffix'));
+  return u.href.replace(/\/+$/, '');
 }
 
 /**
@@ -107,9 +108,9 @@ function normalizeKey(value) {
   return key;
 }
 
-function normalizeAuthMode(agent, value) {
+function normalizeAuthMode(agent, value, preset) {
   const v = String(value ?? '');
-  if (agent === 'claude') return ['auto', 'bearer', 'x-api-key'].includes(v) ? v : 'auto';
+  if (kindOf(agent, preset) === 'anthropic-messages') return ['auto', 'bearer', 'x-api-key'].includes(v) ? v : 'auto';
   return v === 'api-key' ? 'api-key' : 'bearer';
 }
 
@@ -219,7 +220,7 @@ const CONTROL = /[\x00-\x1f\x7f]/g;
  */
 export function normalizeModels(list, prevInfo = {}) {
   const ids = [];
-  const info = {};
+  const info = Object.create(null);
   const seen = new Set();
   for (const m of Array.isArray(list) ? list : []) {
     if (ids.length >= MAX_MODELS) break;
@@ -234,7 +235,11 @@ export function normalizeModels(list, prevInfo = {}) {
     const one = {};
     if (name && name !== id) one.name = name; else if (typeof prev?.name === 'string' && prev.name) one.name = prev.name.slice(0, MAX_DISPLAY);
     if (context) one.context = context; else if (tokensOf(prev?.context)) one.context = tokensOf(prev.context);
-    if (one.name || one.context) info[id] = one;
+    const modalities = raw.architecture?.input_modalities ?? raw.input_modalities;
+    if (Array.isArray(modalities)) one.vision = modalities.includes('image');
+    else if (typeof raw.vision === 'boolean') one.vision = raw.vision;
+    else if (typeof prev?.vision === 'boolean') one.vision = prev.vision;
+    if (one.name || one.context || one.vision !== undefined) info[id] = one;
   }
   return { ids, info };
 }
@@ -251,10 +256,11 @@ const looksLikeModelError = text => /model/i.test(text);
  * 接続を確かめる。成功は { auth, latencyMs, models, lines }、失敗は CheckError。
  * probeModel は確認のリクエストに入れるモデル（無ければ仮の名前。モデルが無いというエラーでも URL とキーは確かめられる）
  */
-export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel }, { fetchImpl = fetch, lookup } = {}) {
+export async function checkEndpoint({ agent, preset, baseUrl, authMode, key, probeModel }, { fetchImpl = fetch, lookup } = {}) {
   await checkUrlTarget(baseUrl, { lookup });
   const lines = [];
-  if (agent === 'claude') {
+  const kind = kindOf(agent, preset);
+  if (kind === 'anthropic-messages') {
     const model = probeModel || 'claude-haiku-4-5';
     const body = { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
     const common = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' };
@@ -286,8 +292,9 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
       tried.length > 1 ? t('compat.check.authBoth', { statuses }) : t(key ? 'compat.check.authFailed' : 'compat.check.authFailedNoKey', { status: statuses }),
       t('compat.check.reached')] });
   }
-  if (agent === 'grok') { // backend-allow: 確かめの要求の形はエージェントの API ごとに違う（Grok は Chat Completions）
-    const model = probeModel || 'grok-probe';
+  if (kind === 'openai-chat-completions') {
+    const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(authMode, key), key);
+    const model = probeModel || models?.ids[0] || 'grok-probe';
     const auth = !key ? 'none' : authMode;
     const headers = { 'content-type': 'application/json', ...authHeaders(auth, key) };
     const r = await send(fetchImpl, `${baseUrl}/chat/completions`, { headers, body: { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }, key });
@@ -295,7 +302,6 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
     if (r.status === 404 || r.status === 405) throw new CheckError(t('compat.check.probeStatus', { status: r.status }), { code: 'not-found' });
     if (r.status >= 500) throw new CheckError(t('compat.check.serverError', { status: r.status }), { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
     if (!r.ok) { const why = errorText(r.text, key); lines.push(why ? t('compat.check.probeStatusWithReason', { status: r.status, reason: why }) : t('compat.check.probeStatus', { status: r.status })); }
-    const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
     if (!models?.ids.length) lines.push(t('compat.check.noModels'));
     return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
   }
@@ -341,7 +347,7 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
  * @param {Function} [o.lookup]  名前解決（テストで差し替える）
  * @param {ReturnType<import('./api-keys.mjs').createApiKeys>|null} [o.apiKeys]  API キーの置き場。無ければ（または移行が済むまで）、接続先ごとの古い置き場にキーを持つ
  */
-export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchImpl = fetch, lookup, now = Date.now } = {}) {
+export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchImpl = fetch, lookup, now = Date.now, managed = false } = {}) {
   const file = path.join(dataDir, 'compat-endpoints.json');
   const receipts = new Map();
   let queue = Promise.resolve();
@@ -388,7 +394,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
   /** 画面へ出す形（キーは返さない）。refs: キーを keyRef で持つ（移行済み） */
   function row(e, stored, defaults, refs = false) {
     return {
-      id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, preset: e.preset ?? 'custom', baseUrl: e.baseUrl,
+      id: e.id, agent: e.agent, kind: kindOf(e.agent, e.preset), name: e.name, preset: e.preset ?? 'custom', baseUrl: e.baseUrl,
       authMode: e.authMode ?? (e.agent === 'claude' ? 'auto' : 'bearer'), auth: e.auth ?? 'bearer',
       hasKey: refs ? Boolean(refOf(e)) : stored.has(secretKey(e.id)), keyRef: refs ? refOf(e) : null,
       roles: { ...e.roles }, ...storedModels(e), options: { ...(e.options ?? {}) },
@@ -399,6 +405,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
 
   /** 確認に使う値をそろえる（id があれば保存済みのキーを流用できる） */
   async function connectionOf(input, id) {
+    if (managed) throw new CheckError(t('compat.store.badAgent'));
     const agent = COMPAT_AGENTS.includes(input?.agent) ? input.agent : null;
     if (!agent) throw new CheckError(t('compat.store.agentRequired'));
     let existing = null;
@@ -407,8 +414,10 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       if (!existing) throw new CheckError(t('compat.store.notFound'));
       if (existing.agent !== agent) throw new CheckError(t('compat.store.agentFixed'));
     }
-    const baseUrl = normalizeUrl(agent, input?.baseUrl);
-    const authMode = normalizeAuthMode(agent, input?.authMode);
+    const suggestedPreset = String(input?.preset ?? existing?.preset ?? '');
+    const preset = /^[a-z0-9-]{1,32}$/.test(suggestedPreset) ? suggestedPreset : 'custom';
+    const baseUrl = normalizeUrl(agent, input?.baseUrl, preset);
+    const authMode = normalizeAuthMode(agent, input?.authMode, preset);
     let key = normalizeKey(input?.key);
     let keySource = key ? 'input' : 'none';
     const refs = await viaRefs();
@@ -416,7 +425,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     // 登録済みのキー（API キー）を選んだとき。値は API キーの置き場から読み、画面には出さない
     const picked = String(input?.keyRef ?? '');
     // 選んだキーは、この接続先のプロバイダー・ホスト用のものだけ（別のホスト用のキーを、URL を替えたまま送らない）
-    const endpoint = { preset: input?.preset ?? existing?.preset, baseUrl };
+    const endpoint = { preset, baseUrl };
     const fits = async ref => { if (!(await apiKeys.fits(ref, endpoint))) throw new CheckError(t('compat.key.hostMismatch')); };
     if (!key && picked) {
       if (!refs || !KEY_REF.test(picked)) throw new CheckError(t('compat.key.refMissing'));
@@ -437,12 +446,13 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
         if (saved?.key) { key = saved.key; keySource = 'saved'; }
       }
     }
-    return { agent, baseUrl, authMode, key, keySource, existing, refs };
+    return { agent, preset, baseUrl, authMode, key, keySource, existing, refs };
   }
 
   return {
     file,
     async list(agent) {
+      if (managed) return { endpoints: [], defaults: {}, storage: null };
       const [data, keys, storage, refs] = await Promise.all([read(), secrets.keys(SECRET_PREFIX).catch(() => []), secrets.status().catch(() => null), viaRefs()]);
       const stored = new Set(keys);
       return {
@@ -452,6 +462,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       };
     },
     async get(id) {
+      if (managed) return null;
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
       if (!e) return null;
@@ -503,6 +514,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       return detached;
     },
     async has(id, agent) {
+      if (managed) return false;
       return (await read()).endpoints.some(e => e.id === id && (!agent || e.agent === agent));
     },
     /**
@@ -543,11 +555,11 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       const c = await connectionOf(input, id);
       const probeModel = isModelId(String(input?.probeModel ?? '').trim()) ? String(input.probeModel).trim() : c.existing?.roles?.main || '';
       try {
-        const result = await checkEndpoint({ agent: c.agent, baseUrl: c.baseUrl, authMode: c.authMode, key: c.key, probeModel }, { fetchImpl, lookup });
+        const result = await checkEndpoint({ agent: c.agent, preset: c.preset, baseUrl: c.baseUrl, authMode: c.authMode, key: c.key, probeModel }, { fetchImpl, lookup });
         const receipt = crypto.randomUUID();
         for (const [k, v] of receipts) if (v.until < now()) receipts.delete(k);
         if (receipts.size > 100) receipts.delete(receipts.keys().next().value);
-        receipts.set(receipt, { hash: fingerprint({ agent: c.agent, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null }),
+        receipts.set(receipt, { hash: fingerprint({ agent: c.agent, preset: c.preset, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null }),
           until: now() + RECEIPT_MS, auth: result.auth, models: result.models, modelInfo: result.modelInfo ?? {}, latencyMs: result.latencyMs });
         return { ok: true, receipt, auth: result.auth, latencyMs: result.latencyMs, models: result.models, modelInfo: result.modelInfo ?? {}, lines: result.lines };
       } catch (e) {
@@ -562,13 +574,13 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     async save(input, receipt, { id = null } = {}) {
       const c = await connectionOf(input, id);
       const proof = receipts.get(String(receipt ?? ''));
-      if (!proof || proof.until < now() || proof.hash !== fingerprint({ agent: c.agent, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null })) {
+      if (!proof || proof.until < now() || proof.hash !== fingerprint({ agent: c.agent, preset: c.preset, baseUrl: c.baseUrl, authMode: c.authMode, key: keyHash(c.key), keySource: c.keySource, id: id ?? null })) {
         throw new CheckError(t('compat.store.receiptStale'));
       }
       const name = normalizeName(input?.name);
       const roles = normalizeRoles(c.agent, input?.roles);
       const options = normalizeOptions(c.agent, input?.options);
-      const preset = /^[a-z0-9-]{1,32}$/.test(String(input?.preset ?? '')) ? String(input.preset) : 'custom';
+      const { preset } = c;
       const at = new Date(now()).toISOString();
       const created = id || 'ep-' + crypto.randomBytes(6).toString('hex');
       // 秘密を先に書く。一覧に出た時点でキーがそろっているように。
@@ -608,6 +620,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     },
     /** 保存済みの接続先を確かめ直す（一覧の「接続を確認」）。結果を記録し、モデルの一覧を取り直す */
     async recheck(id) {
+      if (managed) throw new CheckError(t('compat.store.badAgent'));
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
       if (!e) throw new CheckError(t('compat.store.notFound'));
@@ -640,6 +653,10 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     },
     /** 新しい会話の既定（'' = 公式）。設定で明示的に「既定にする」を押したときだけ呼ぶ */
     async setDefault(agent, id) {
+      if (managed) {
+        if (id) throw new CheckError(t('compat.store.badAgent'));
+        return;
+      }
       if (!COMPAT_AGENTS.includes(agent)) throw new Error(t('compat.store.badAgent'));
       const target = String(id ?? '');
       await update(data => {
@@ -648,6 +665,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       });
     },
     async defaultFor(agent) {
+      if (managed) return '';
       // 一覧のファイルが読めなくても、新しい会話とエージェントの切り替えは公式で続けられるようにする（resolve は今どおり止める）
       const data = await read().catch(() => null);
       if (!data) return '';
@@ -660,6 +678,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
      */
     async resolve(id, agent) {
       if (!id) return null;
+      if (managed) throw new EndpointError(t('compat.resolve.deleted'), 'deleted');
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
       if (!e) throw new EndpointError(t('compat.resolve.deleted'), 'deleted');
@@ -678,8 +697,8 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
           }
         } else key = (await secrets.get(secretKey(e.id)))?.key ?? '';
       } catch (err) { if (err instanceof EndpointError) throw err; throw new EndpointError(err.code === 'SECRET_LOCKED' ? err.message : t('compat.resolve.keyUnreadable', { name: e.name }), 'unreadable'); }
-      return { id: e.id, agent: e.agent, kind: KIND[e.agent], name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
-        roles: { ...e.roles }, models: storedModels(e).models, options: { ...(e.options ?? {}) } };
+      return { id: e.id, agent: e.agent, kind: kindOf(e.agent, e.preset), preset: e.preset, name: e.name, baseUrl: e.baseUrl, auth: e.auth ?? (key ? 'bearer' : 'none'), key,
+        roles: { ...e.roles }, ...storedModels(e), options: { ...(e.options ?? {}) } };
     },
   };
 }

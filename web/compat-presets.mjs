@@ -9,11 +9,7 @@
 // 表示の文言は読み込みの時点の言語で t() から作る（core も読むが、core が使うのは KIND・ROLE_KEYS・COMPAT_AGENTS だけ）。
 import { t } from './i18n.mjs';
 
-// 互換の接続先を選べるエージェント（能力の印 compatEndpoints が対応のもの）。画面は core を読めないので並べて持ち、
-// 印との一致は agents-lint の試験が確かめる（tests/lint-agents.mjs の ALLOWED の compatEndpoints）
-export const COMPAT_AGENTS = ['claude', 'codex', 'grok']; // backend-allow: 印 compatEndpoints と同じ組（agents-lint が突き合わせる）
-
-export const KIND = { claude: 'anthropic-messages', codex: 'openai-responses', grok: 'openai-chat-completions' };
+export const kindOf = (agent, preset) => presetOf(agent, preset)?.kind ?? KIND[agent];
 export const KIND_LABEL = { 'anthropic-messages': t('compat.kind.anthropic'), 'openai-responses': t('compat.kind.responses'), 'openai-chat-completions': 'OpenAI Chat Completions' };
 
 /** Claude Code の役割。main は会話の既定（ANTHROPIC_MODEL）、haiku は背景の処理とタイトル生成 */
@@ -25,17 +21,12 @@ export const CLAUDE_ROLES = [
 ];
 /** エージェントごとの役割の一覧（Claude だけが複数持つ。画面は id を書かずにここから引く） */
 export const ROLES_BY_AGENT = { claude: CLAUDE_ROLES };
-export const ROLE_KEYS = { claude: CLAUDE_ROLES.map(r => r.key), codex: ['main'], grok: ['main'] };
 
 /** 認証の送り方。auto は確認のときに Bearer と x-api-key の両方で試して決める（Claude だけ） */
 export const AUTH_LABEL = { auto: t('compat.auth.auto'), bearer: 'Bearer', 'x-api-key': 'x-api-key', 'api-key': t('compat.auth.apiKeyHeader'), none: t('compat.auth.none') };
 
 /** 互換の接続先で無くなる・分からなくなるもの（画面 4）。Pleiad の画面に出ているものだけを並べる */
-export const LOST = {
-  claude: { gone: [t('compat.lost.usage'), 'Fast mode', t('compat.lost.cost')], unknown: [t('compat.lost.webSearch')] },
-  codex: { gone: [t('compat.lost.usage'), t('compat.lost.webSearch'), t('compat.lost.cost')], unknown: [] },
-  grok: { gone: [t('compat.lost.usage'), t('compat.lost.webSearch'), t('compat.lost.cost')], unknown: [] },
-};
+const CODE_ASSISTANT_LOST = { gone: [t('compat.lost.usage'), t('compat.lost.webSearch'), t('compat.lost.cost')], unknown: [] };
 export function lostText(agent) {
   const l = LOST[agent] ?? LOST.claude;
   return l.gone.join(' · ') + (l.unknown.length ? ' · ' + l.unknown.map(item => t('compat.lost.unknown', { item })).join(' · ') : '');
@@ -43,33 +34,60 @@ export function lostText(agent) {
 
 export const CONTEXT_CANDIDATES = [['32768', '32K'], ['131072', '128K'], ['200000', '200K'], ['262144', '256K'], ['1000000', '1M']];
 
-export const PRESETS = {
-  claude: [
-    { id: 'openrouter', name: 'OpenRouter', hint: t('compat.preset.openrouter'), urls: [{ value: 'https://openrouter.ai/api', hint: t('compat.preset.urlPreset') }], auth: 'bearer',
-      roles: { main: '~anthropic/claude-sonnet-latest', opus: '~anthropic/claude-opus-latest', sonnet: '~anthropic/claude-sonnet-latest', haiku: '~anthropic/claude-haiku-latest' } },
-    { id: 'zai', name: 'Z.ai (GLM)', hint: 'GLM Coding Plan', urls: [{ value: 'https://api.z.ai/api/anthropic', hint: t('compat.preset.international') }, { value: 'https://open.bigmodel.cn/api/anthropic', hint: t('compat.preset.china') }], auth: 'bearer',
-      roles: { main: 'glm-5.3', opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3-flash' } },
-    { id: 'kimi', name: 'Kimi', hint: 'Moonshot AI', urls: [{ value: 'https://api.moonshot.ai/anthropic', hint: t('compat.preset.urlPreset') }], auth: 'bearer', thinking: true,
-      roles: { main: 'kimi-k2.7-code', opus: 'kimi-k2.7-code', sonnet: 'kimi-k2.7-code', haiku: 'kimi-k2.7-turbo' } },
-    { id: 'deepseek', name: 'DeepSeek', hint: 'api.deepseek.com', urls: [{ value: 'https://api.deepseek.com/anthropic', hint: t('compat.preset.urlPreset') }], auth: 'x-api-key',
-      roles: { main: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-flash', haiku: 'deepseek-flash' } },
-    { id: 'litellm', name: 'LiteLLM', hint: t('compat.preset.selfProxy'), urls: [{ value: 'http://localhost:4000', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
-    { id: 'ollama', name: 'Ollama', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:11434', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
-    { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.anthropicUrl'), urls: [], auth: 'auto', roles: {} },
-  ],
-  codex: [
-    { id: 'openrouter', name: 'OpenRouter', hint: t('compat.preset.openrouter'), urls: [{ value: 'https://openrouter.ai/api/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
-    { id: 'azure', name: 'Azure OpenAI', hint: t('compat.preset.azure'), urls: [{ value: t('compat.preset.azureUrl'), hint: t('compat.preset.urlPreset') }], auth: 'api-key', roles: {} },
-    { id: 'ollama', name: 'Ollama', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:11434/v1', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
-    { id: 'lmstudio', name: 'LM Studio', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:1234/v1', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
-    { id: 'vllm', name: 'vLLM', hint: t('compat.preset.selfServer'), urls: [{ value: 'http://localhost:8000/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
-    { id: 'litellm', name: 'LiteLLM', hint: t('compat.preset.selfProxy'), urls: [{ value: 'http://localhost:4000/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
-    { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.responsesUrl'), urls: [], auth: 'bearer', roles: {} },
-  ],
-  grok: [
-    { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.custom'), urls: [], auth: 'bearer', roles: {} },
-  ],
+// 能力の印 compatEndpoints と同じ組であることを agents-lint が確認する。
+const CONNECTIONS = {
+  claude: {
+    kind: 'anthropic-messages',
+    lost: { gone: [t('compat.lost.usage'), 'Fast mode', t('compat.lost.cost')], unknown: [t('compat.lost.webSearch')] },
+    presets: [
+      { id: 'openrouter', name: 'OpenRouter', hint: t('compat.preset.openrouter'), urls: [{ value: 'https://openrouter.ai/api', hint: t('compat.preset.urlPreset') }], auth: 'bearer',
+        roles: { main: '~anthropic/claude-sonnet-latest', opus: '~anthropic/claude-opus-latest', sonnet: '~anthropic/claude-sonnet-latest', haiku: '~anthropic/claude-haiku-latest' } },
+      { id: 'zai', name: 'Z.ai (GLM)', hint: 'GLM Coding Plan', urls: [{ value: 'https://api.z.ai/api/anthropic', hint: t('compat.preset.international') }, { value: 'https://open.bigmodel.cn/api/anthropic', hint: t('compat.preset.china') }], auth: 'bearer',
+        roles: { main: 'glm-5.3', opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3-flash' } },
+      { id: 'kimi', name: 'Kimi', hint: 'Moonshot AI', urls: [{ value: 'https://api.moonshot.ai/anthropic', hint: t('compat.preset.urlPreset') }], auth: 'bearer', thinking: true,
+        roles: { main: 'kimi-k2.7-code', opus: 'kimi-k2.7-code', sonnet: 'kimi-k2.7-code', haiku: 'kimi-k2.7-turbo' } },
+      { id: 'deepseek', name: 'DeepSeek', hint: 'api.deepseek.com', urls: [{ value: 'https://api.deepseek.com/anthropic', hint: t('compat.preset.urlPreset') }], auth: 'x-api-key',
+        roles: { main: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-flash', haiku: 'deepseek-flash' } },
+      { id: 'litellm', name: 'LiteLLM', hint: t('compat.preset.selfProxy'), urls: [{ value: 'http://localhost:4000', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
+      { id: 'ollama', name: 'Ollama', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:11434', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
+      { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.anthropicUrl'), urls: [], auth: 'auto', roles: {} },
+    ],
+  },
+  codex: {
+    kind: 'openai-responses', lost: CODE_ASSISTANT_LOST,
+    presets: [
+      { id: 'openrouter', name: 'OpenRouter', hint: t('compat.preset.openrouter'), urls: [{ value: 'https://openrouter.ai/api/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
+      { id: 'azure', name: 'Azure OpenAI', hint: t('compat.preset.azure'), urls: [{ value: t('compat.preset.azureUrl'), hint: t('compat.preset.urlPreset') }], auth: 'api-key', roles: {} },
+      { id: 'ollama', name: 'Ollama', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:11434/v1', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
+      { id: 'lmstudio', name: 'LM Studio', hint: t('compat.preset.localNoKey'), urls: [{ value: 'http://localhost:1234/v1', hint: t('compat.preset.urlPreset') }], auth: 'none', nokey: true, roles: {}, context: '32768' },
+      { id: 'vllm', name: 'vLLM', hint: t('compat.preset.selfServer'), urls: [{ value: 'http://localhost:8000/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
+      { id: 'litellm', name: 'LiteLLM', hint: t('compat.preset.selfProxy'), urls: [{ value: 'http://localhost:4000/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
+      { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.responsesUrl'), urls: [], auth: 'bearer', roles: {} },
+    ],
+  },
+  grok: {
+    kind: 'openai-chat-completions', lost: CODE_ASSISTANT_LOST,
+    presets: [
+      { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.custom'), urls: [], auth: 'bearer', roles: {} },
+    ],
+  },
+  'pleiad-agent': { // backend-allow: Pleiad Agent の互換接続先の定義
+    kind: 'openai-chat-completions', lost: { gone: [], unknown: [] },
+    presets: [
+      { id: 'openai', name: 'OpenAI', urls: [{ value: 'https://api.openai.com/v1' }], auth: 'bearer', roles: {} },
+      { id: 'anthropic', name: 'Anthropic', urls: [{ value: 'https://api.anthropic.com' }], kind: 'anthropic-messages', auth: 'x-api-key', roles: {} },
+      { id: 'openrouter', name: 'OpenRouter', hint: t('compat.preset.openrouter'), urls: [{ value: 'https://openrouter.ai/api/v1' }], auth: 'bearer', roles: {} },
+      { id: 'custom', name: t('compat.preset.custom'), hint: 'OpenAI Chat Completions', urls: [], auth: 'bearer', roles: {} },
+    ],
+  },
 };
+
+export const COMPAT_AGENTS = Object.keys(CONNECTIONS);
+const connectionValues = key => Object.fromEntries(Object.entries(CONNECTIONS).map(([agent, value]) => [agent, value[key]]));
+export const KIND = connectionValues('kind');
+export const LOST = connectionValues('lost');
+export const PRESETS = connectionValues('presets');
+export const ROLE_KEYS = Object.fromEntries(COMPAT_AGENTS.map(agent => [agent, ROLES_BY_AGENT[agent]?.map(role => role.key) ?? ['main']]));
 
 export function presetOf(agent, id) {
   return (PRESETS[agent] ?? []).find(p => p.id === id) ?? (PRESETS[agent] ?? []).find(p => p.id === 'custom') ?? null;
@@ -83,12 +101,13 @@ export function urlCandidates(agent, presetId) {
 }
 
 /** URL の入力に添える一文（画面 3 の②）。間違いに見えるときだけ。正しそうなら ''（説明文は出さない） */
-export function urlHelp(agent, url) {
+export function urlHelp(agent, url, preset) {
+  const kind = kindOf(agent, preset);
   const v = String(url ?? '').trim();
   if (/<[^>]+>/.test(v)) return t('compat.urlHelp.placeholder');
-  if (agent === 'claude' && /\/v1\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/v1' });
-  if (agent === 'codex' && /\/responses\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/responses' });
-  if (agent === 'grok' && /\/chat\/completions\/?$/.test(v)) return /* backend-allow: URL の形はエージェントの API ごとに違う */ t('compat.urlHelp.trailing', { suffix: '/chat/completions' });
+  if (kind === 'anthropic-messages' && /\/v1\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/v1' });
+  if (kind === 'openai-responses' && /\/responses\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/responses' });
+  if (kind === 'openai-chat-completions' && /\/chat\/completions\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/chat/completions' });
   return '';
 }
 

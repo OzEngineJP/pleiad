@@ -1024,3 +1024,64 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     close: () => new Promise(r => { try { server.closeAllConnections?.(); } catch {} server.close(() => r()); }),
   };
 }
+
+// Model tickets and the OpenAI-compatible stream use different credentials.
+export function installFakePlusModels(plus, { upstream, upstreamKey, runtime, desktopToken, model = 'fixture' }) {
+  const tickets = new Map();
+  const completions = [];
+  const issue = (res, body) => {
+    if (body.model !== model || body.purpose !== 'conversation') return err(res, 400, 'bad_request', 'model or purpose');
+    const ticket = crypto.randomUUID();
+    tickets.set(ticket, body.tenantId);
+    return json(res, 201, { ticket, expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  };
+  plus.route('GET', '/v1/models', (req, res) => req.headers.authorization
+    ? err(res, 400, 'bad_request', 'unexpected authentication')
+    : json(res, 200, { data: [{ id: model, name: 'Fixture model', reasoning_efforts: ['high'] }] }));
+  plus.route('GET', '/v1/tenants', (req, res) => req.headers.authorization === 'Bearer ' + desktopToken
+    ? json(res, 200, { tenants: [{ id: runtime.tenantId, kind: 'personal' }] })
+    : err(res, 401, 'unauthenticated', 'desktop identity'));
+  plus.route('POST', '/v1/model-tickets', async (req, res) => {
+    const body = JSON.parse(await readBody(req));
+    if (!desktopToken || req.headers.authorization !== 'Bearer ' + desktopToken || body.tenantId !== runtime.tenantId) {
+      return err(res, 401, 'unauthenticated', 'desktop identity');
+    }
+    return issue(res, body);
+  });
+  plus.route('POST', '/v1/cloud-runtime/model-tickets', async (req, res) => {
+    const body = JSON.parse(await readBody(req));
+    if (req.headers.authorization !== 'Bearer ' + runtime.token ||
+        body.tenantId !== runtime.tenantId || body.cloudHostId !== runtime.cloudHostId || body.generation !== runtime.generation) {
+      return err(res, 401, 'unauthenticated', 'runtime identity');
+    }
+    return issue(res, body);
+  });
+  plus.route('POST', '/v1/chat/completions', async (req, res) => {
+    const ticket = req.headers.authorization?.replace(/^Bearer /, '');
+    const tenantId = tickets.get(ticket);
+    tickets.delete(ticket);
+    const body = JSON.parse(await readBody(req));
+    if (!tenantId || req.headers['x-pleiad-tenant'] !== tenantId ||
+        req.headers['x-pleiad-model-purpose'] !== 'conversation' || !/^[0-9a-f-]{36}$/.test(req.headers['x-request-id'] ?? '') ||
+        body.model !== model || body.stream !== true || !Array.isArray(body.tools)) {
+      return err(res, 403, 'ticket_scope', 'model ticket scope');
+    }
+    completions.push({ ticket, id: req.headers['x-request-id'], body });
+    const abort = new AbortController();
+    res.once('close', () => abort.abort());
+    try {
+      const response = await fetch(upstream, {
+        method: 'POST', headers: { authorization: 'Bearer ' + upstreamKey, 'content-type': 'application/json' },
+        body: JSON.stringify(body), signal: abort.signal,
+      });
+      res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'application/json' });
+      res.flushHeaders();
+      if (response.body) for await (const chunk of response.body) res.write(chunk);
+      res.end();
+    } catch {
+      if (res.headersSent || res.destroyed) res.destroy();
+      else err(res, 502, 'upstream_error', 'fixture unavailable');
+    }
+  });
+  return completions;
+}

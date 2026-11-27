@@ -1093,7 +1093,7 @@ Claude のモデルの一覧は、アカウント（組織）で変わる（承�
 
 通常のホストで試すには、起動時の `AGENT_HOST_BACKENDS` のカンマ区切り一覧に `pleiad-agent` を含める。管理下ホストでは Pleiad Agent だけが登録される。
 
-Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/388abd761f57d81abcdc34d1a76f0e2cba1c1f52/docs/stdio.md)
+Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/bf9e5336046fd4c3c4eb6cb84a5554d26bbf1d0b/docs/stdio.md)
 
 会話 ID の確定を保存してからプロンプトを送る。子は受付とモデルへの配達を別に通知し、履歴に残した送信 ID で重複を判定する。確定前に子が終了した場合はターンを失敗として扱い、自動で再送しない。Pleiad は本文、道具の呼び出しと結果を既存の会話イベントに変換し、添付と送信待ちは共通の処理を使う。旧 Procway の履歴は Pleiad の保存データから開ける。
 
@@ -1108,13 +1108,17 @@ Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`ple
 | `usage.recorded` | 道具実行を挟む各モデル呼び出しの使用量を合算する |
 | `approval.request` / `interaction.request` | 既存の承認・質問カードを表示する。ファイル作成の本文とパッチは承認前に編集できる |
 | `decision.cancel` | 中断・モード変更・時間切れでカードを閉じる |
+| `finished` / 確定前の切断 | `turnResult` で終了結果を確定する |
 
 既定の権限では、ファイルへの書き込みとホストの道具の呼び出しを承認カードで確認する。読み取り・計画モードではファイルを読んだり質問したりできる。計画を確認した後は、利用者が入力欄で実行時の権限を選ぶ。再起動時は Pleiad の未解決カードとエージェントの保存済みの要求を照合し、同じ承認・質問カードを再表示する。元の発言は一度だけ記録され、既に完了した道具も再実行されない。
 
 Pleiad の委譲・ブラウザー・デスクトップ・操作・コンテキスト・シェルは、会話と実行中のターンに結び付けた認証済みの Model Context Protocol（MCP）の接続で子に渡す。接続用の認証情報はモデルの入力と会話履歴に含めない。画像に対応したモデルには道具の画像が届き、構造化された結果はテキストとして届く。
-| `finished` / 確定前の切断 | `turnResult` で終了結果を確定する |
 
-モデルはホスト起動時に設定する。
+通常のホストでは、エージェントの設定で Pleiad Agent の［接続先］を開く。OpenAI 互換・Anthropic・OpenRouter の接続先を追加し、確認した API キーを「秘密情報と変数」に保存して使う。入力欄で接続先、モデル、対応するモデルの推論の強さを選べる。ターンの使用量は、道具を挟むモデル呼び出しごとに合算する。すべての呼び出しから費用が返った場合は、使用量とともに米ドルで表示する。
+
+Pleiad Plus は同じ［接続先］から選べる。管理下ホストでは Pleiad Plus だけを使う。Pleiad の親プロセスが Plus API からモデルのリクエストごとに短命の券を取り、`Authorization: Bearer <券>` を付けて `/v1/chat/completions` に `stream: true` と道具の定義を送る。モデル一覧は Plus の `/v1/models` から取得する。一覧の口が未提供の環境では、初期モデル `qwen/qwen3.8-27b` を提示する。利用者の API キーと Plus の認証情報はエージェントの子プロセスに渡さない。
+
+通常のホストで開発用の接続を起動時に指定する場合は、次の環境変数を使う。
 
 | 環境変数 | 値 |
 |---|---|
@@ -1125,7 +1129,6 @@ Pleiad の委譲・ブラウザー・デスクトップ・操作・コンテキ�
 | `AGENT_HOST_PLEIAD_AGENT_API_KEY` | ホスト環境から直接渡す場合のキー。公式 API では `OPENAI_API_KEY` または `ANTHROPIC_API_KEY` も使える |
 | `AGENT_HOST_PLEIAD_AGENT_VISION` | 画像を入力できるモデルでは `1` |
 
-認証はホストがモデル API へ接続するときに行う。組み込みの道具はファイルの一覧・読み取り・検索と、画像対応モデルでの画像読み取りに限る。承認と質問、Pleiad の会話別の MCP やホスト道具は後続の実装で接続する。
 
 ## 3. 変えないこと
 

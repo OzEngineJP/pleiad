@@ -85,6 +85,12 @@ export async function startFakeCompatApi(options = {}) {
     if (req.method === 'POST' && /\/chat\/completions$/.test(p) && state.chat) {
       if (!authed) return json(res, 401, { error: { message: 'invalid api key' } });
       if (!body?.messages) return json(res, 400, { error: { message: 'messages is required' } });
+      if (body.stream === true) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'hello from fake compat' }, finish_reason: 'stop' }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 4, cost: 0.01 } }) + '\n\n');
+        return res.end('data: [DONE]\n\n');
+      }
       return json(res, 200, { id: 'chat_fake', object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] });
     }
     json(res, 404, { error: { message: 'not found' } });
