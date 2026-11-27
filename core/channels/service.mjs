@@ -57,7 +57,6 @@ import { randomUUID } from 'node:crypto';
 import { isUnreadCompletion } from '../../web/unread.mjs';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 import { ARCHIVE_FOLDER, ROOT_FOLDER, threadGroups } from '../../web/channels/thread-folders.mjs';
-import { behindOfTasks, liveTasksOf } from '../../web/work-status.mjs';
 import { authorKey, isAuthor, isId, newId, POST_STATES } from './types.mjs';
 import { createChannelStore } from './store.mjs';
 import { createThreadStore, emptyThread, threadTitle } from './threads.mjs';
@@ -395,10 +394,9 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return { channelId, threadId, status: thread.status ?? '' };
     },
 
-    async organizeThreads({ channelId, action, folderId, name, threadId, beforeId }, runningWork) {
+    async organizeThreads({ channelId, action, folderId, name, threadId, beforeId }) {
       const rows = action === 'moveThread' || action === 'restoreThread'
         ? (await this.threadIndex({ channelId, all: true })).threads : [];
-      const work = folderId === ARCHIVE_FOLDER ? await runningWork?.() : null;
       return patchChannel(channelId, (channel) => {
         if (channel.kind !== 'channel' || channel.home || channel.archivedAt) throw invalid('channel cannot be organized');
         const layout = channel.threadFolders ?? { folders: [], groups: {}, restore: {} };
@@ -427,12 +425,6 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           if (!destination) throw invalid('folder not found');
           if (beforeId === threadId) return channel;
           if (target === ARCHIVE_FOLDER && source !== ARCHIVE_FOLDER) {
-            const ids = new Set(Object.values(row.sessions));
-            const busy = [row.state, ...Object.values(row.live ?? {})].some(state => state === 'working' || state === 'waiting')
-              || [...(work?.turns ?? []), ...(work?.permissions ?? [])].some(item => ids.has(item.sessionId))
-              || (work?.background ?? []).some(item => ids.has(item.sessionId) && behindOfTasks(item.tasks))
-              || [...ids].some(id => liveTasksOf(work?.tasks, id).length);
-            if (busy) throw invalid('thread is working or waiting');
             layout.restore[threadId] = { folderId: source, beforeId: siblings[siblings.indexOf(row) + 1]?.threadId ?? null };
           }
           if (target !== ARCHIVE_FOLDER) delete layout.restore[threadId];

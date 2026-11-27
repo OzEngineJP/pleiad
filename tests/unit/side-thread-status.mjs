@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { createSide } from '../../web/side.mjs';
-import { threadActivity } from '../../web/work-status.mjs';
+import { ARCHIVE_FOLDER, ROOT_FOLDER } from '../../web/channels/thread-folders.mjs';
 import { sessionTitle } from '../../core/bots/sessions.mjs';
 
 export const name = 'side-thread-status';
@@ -201,6 +201,35 @@ export default async function (t) {
     t.ok('fork の器の中の行は level 3', rowOf(root, 'child')?.getAttribute('aria-level') === '3');
   } finally { familyDom.restore(); }
 
+  const archiveDom = installDom();
+  try {
+    const moves = [];
+    const side = createSide({ onOrganizeThreads: action => moves.push(action) });
+    const root = archiveDom.els.get('groups');
+    const row = { id: 'thread:c1:t1', title: 'dev', thread: { channelId: 'c1', threadId: 't1' } };
+    const archived = { ...row, id: 'thread:c1:t2', thread: { channelId: 'c1', threadId: 't2' } };
+    side.setDirectory({ channels: [{ ...channel, threadFolders: { folders: [], groups: { [ARCHIVE_FOLDER]: ['t2'] } } }] });
+    side.setFace('channels');
+    const watch = { threads: [row, archived], unreadIds: new Set([archived.id]), bgWaiting: new Map([[archived.id, 1]]),
+      runningIds: new Set([row.id, archived.id]), waitingIds: new Set([archived.id]) };
+    side.render([], watch);
+    const head = () => find(root, n => n.classList.contains('channel-archive-head'));
+    const active = rowOf(root, row.id);
+    head().getBoundingClientRect = () => ({ top: 0, height: 32 });
+    active.ondragstart({ ...dragEvent('dragstart'), target: { closest: () => null } });
+    const over = dragEvent('dragover');
+    head().ondragover(over);
+    t.ok('実行中のスレッドのドラッグをアーカイブが受け付ける', over.dataTransfer.dropEffect === 'move' && head().dataset.threadDrop === 'inside');
+    head().ondrop(dragEvent('drop'));
+    t.ok('アーカイブに落とすとスレッドの移動を送る', moves.length === 1 && moves[0].threadId === 't1' && moves[0].folderId === ARCHIVE_FOLDER);
+    for (const [removed, expected] of [[null, 'wait only'], ['waitingIds', 'run'], ['runningIds', 'run sat'], ['bgWaiting', 'unread-mark']]) {
+      if (removed) watch[removed] = undefined;
+      side.render([], watch);
+      const marks = find(head(), n => n.classList.contains('channel-thread-mark')).children;
+      t.ok(`閉じたアーカイブに最優先の印を 1 つ出す (${expected})`, marks.length === 1 && marks[0].getAttribute('class') === expected);
+    }
+  } finally { archiveDom.restore(); }
+
   // ---- 並びは新しい順だけ。状態が長く動いていない会話も浮かせず、印（◌ と日数）も出さない（docs/design-system.md §4.1「行」）
   const orderDom = installDom();
   try {
@@ -340,18 +369,22 @@ export default async function (t) {
 
     // スレッドの行のメニューを実際に組み、候補の項目が statusChoices どおりで、今の状態（候補に無い）は hint に出ることを見る
     const shown = [];
+    const moves = [];
     const context = vm.createContext({
       side: { statusChoices: () => ['A', '残した器'] },
-      threadActivity, state: {},
+      ARCHIVE_FOLDER, ROOT_FOLDER, organizeThreads: move => moves.push(move),
       showMenu: (x, y, items) => shown.push(items),
       viewAddress: { go: () => {} }, threadCwd: () => null, copy: () => {}, setThreadStatusOf: () => {},
       t: (key) => key,
     });
     vm.runInContext(body('function threadMenu('), context);
-    vm.runInContext('threadMenu', context)({ id: 'thread:c1:t1', thread: { channelId: 'c1', threadId: 't1' }, title: 'x', status: 'チャンネルのスレッドだけ' }, 0, 0);
+    vm.runInContext('threadMenu', context)({ id: 'thread:c1:t1', thread: { channelId: 'c1', threadId: 't1' }, title: 'x', status: 'チャンネルのスレッドだけ' }, 0, 0, { folderId: ROOT_FOLDER, folders: [] });
     const change = shown[0]?.find((i) => i.label === 'session.menu.changeStatus');
     const labels = change?.sub().filter((i) => i.label && !i.input).map((i) => i.label);
     t.ok('メニューの候補は statusChoices の順。候補に無い今の状態は足さず hint で示す',
       JSON.stringify(labels) === JSON.stringify(['A', '残した器', 'session.menu.clearStatus']) && change.hint === 'チャンネルのスレッドだけ', JSON.stringify({ labels, hint: change?.hint }));
+    const archive = shown[0]?.find(i => i.label === 'channels:side.moveThread')?.sub().find(i => i.label === 'channels:side.threadArchive');
+    if (archive && !archive.disabled) archive.onClick();
+    t.ok('スレッドのメニューからアーカイブに移せる', moves[0]?.folderId === ARCHIVE_FOLDER && moves[0].threadId === 't1');
   }
 }

@@ -95,7 +95,7 @@ export default async function (t) {
     await service.markRead({ channelId: a, at: direct.at });
     await service.withdraw({ channelId: a, postIds: [direct.id] });
 
-    const organize = (action, args = {}, work) => service.organizeThreads({ channelId: a, action, ...args }, work);
+    const organize = (action, args = {}) => service.organizeThreads({ channelId: a, action, ...args });
     const ordered = async (channel) => {
       const { threads } = await service.threadIndex({ channelId: a, all: true });
       return new Map([...threadGroups(channel.threadFolders, threads)].map(([id, members]) => [id, members.map(row => row.threadId)]));
@@ -111,14 +111,16 @@ export default async function (t) {
     const inserted = await organize('moveThread', { threadId: roots[3], folderId: first, beforeId: roots[6] });
     t.ok('直下からフォルダーへ移して間に挿入', (await ordered(inserted)).get(first).join() === [roots[3], roots[6]].join());
 
-    await service.threads.update(a, roots[6], { sessions: { b_owl: 's_active' } });
-    const archive = work => organize('moveThread', { threadId: roots[6], folderId: ARCHIVE_FOLDER }, async () => work);
-    t.ok('応答中・あなた待ち・子が作業中はアーカイブへ移せない',
-      await codeOf(() => archive({ turns: [{ sessionId: 's_active' }] })) === 'INVALID'
-      && await codeOf(() => archive({ permissions: [{ sessionId: 's_active' }] })) === 'INVALID'
-      && await codeOf(() => archive({ background: [{ sessionId: 's_active', tasks: [{ type: 'subagent' }] }] })) === 'INVALID');
-
-    const archived = await organize('moveThread', { threadId: roots[6], folderId: ARCHIVE_FOLDER });
+    const archive = () => organize('moveThread', { threadId: roots[6], folderId: ARCHIVE_FOLDER });
+    await service.threads.update(a, roots[6], { sessions: { b_owl: 's_active' }, state: 'working' });
+    t.ok('応答中もアーカイブへ移せる', (await ordered(await archive())).get(ARCHIVE_FOLDER).includes(roots[6]));
+    await organize('restoreThread', { threadId: roots[6] });
+    await service.threads.update(a, roots[6], { state: 'waiting', live: { b_owl: 'waiting' } });
+    const archived = await archive();
+    t.ok('あなた待ちもアーカイブへ移せる', (await ordered(archived)).get(ARCHIVE_FOLDER).includes(roots[6]));
+    await service.threads.update(a, roots[6], { state: 'working', live: { b_owl: 'working' } });
+    t.ok('アーカイブ内で作業を再開しても所属が変わらない',
+      (await ordered(await service.get({ channelId: a }))).get(ARCHIVE_FOLDER).includes(roots[6]));
     const reader = createChannelService({ dir: path.join(tmp, 'channels') });
     try {
       await reader.start();

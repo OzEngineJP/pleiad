@@ -483,7 +483,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (placement) {
       r.dataset.folderDepth = level - 2;
       r.append(title, glyph, when);
-      dragSource(r, placement.channelId, 'thread', s.thread.threadId, placement.folderId);
+      dragSource(r, placement.channelId, 'thread', s.thread.threadId);
       dropTarget(r, placement.channelId, drag => drag.kind === 'thread', (after) => ({
         action: 'moveThread', folderId: placement.folderId, beforeId: after ? placement.nextId : s.thread.threadId,
       }), { insert: true, self: s.thread.threadId });
@@ -510,12 +510,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   let threadDrag = null;
 
-  function dragSource(node, channelId, kind, id, folderId) {
+  function dragSource(node, channelId, kind, id) {
     if (!onOrganizeThreads) return;
     node.draggable = true;
     node.ondragstart = (e) => {
       if (e.target.closest('button')) { e.preventDefault(); return; }
-      threadDrag = { channelId, kind, id, folderId };
+      threadDrag = { channelId, kind, id };
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', id);
       node.classList.add('dragging');
@@ -527,33 +527,27 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     };
   }
 
-  function threadBusy(channelId, id) {
-    const key = `thread:${channelId}:${id}`;
-    return last.runningIds.has(key) || last.waitingIds.has(key) || last.bgWaiting.has(key);
-  }
-
   function dropTarget(node, channelId, accept, actionOf, { insert = false, self } = {}) {
     function target(e) {
       if (threadDrag?.channelId !== channelId || threadDrag.id === self || !accept(threadDrag)) return null;
       const rect = node.getBoundingClientRect();
       const after = e.clientY >= rect.top + rect.height / 2;
       const action = actionOf(after, threadDrag);
-      const rejected = action.folderId === ARCHIVE_FOLDER && threadDrag.folderId !== ARCHIVE_FOLDER && threadBusy(channelId, threadDrag.id);
       const surface = typeof insert === 'function' ? insert(threadDrag) : insert;
-      return { action, rejected, style: surface === 'after' ? 'after' : surface ? (after ? 'after' : 'before') : 'inside' };
+      return { action, style: surface === 'after' ? 'after' : surface ? (after ? 'after' : 'before') : 'inside' };
     }
     node.ondragover = (e) => {
       const drop = target(e);
       if (!drop) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = drop.rejected ? 'none' : 'move';
-      node.dataset.threadDrop = drop.rejected ? 'rejected' : drop.style;
+      e.dataTransfer.dropEffect = 'move';
+      node.dataset.threadDrop = drop.style;
     };
     node.ondragleave = (e) => { if (!node.contains(e.relatedTarget)) delete node.dataset.threadDrop; };
     node.ondrop = (e) => {
       const drop = target(e);
       delete node.dataset.threadDrop;
-      if (!drop || drop.rejected) return;
+      if (!drop) return;
       e.preventDefault();
       const id = threadDrag.id;
       const action = drop.action;

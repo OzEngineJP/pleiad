@@ -5633,8 +5633,6 @@ function threadMenu(s, x, y, placement) {
   const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   const setStatus = (status) => setThreadStatusOf({ channelId, threadId }, status);
   const move = (folderId, beforeId) => organizeThreads({ channelId, threadId, action: 'moveThread', folderId, beforeId });
-  const activity = threadActivity((state.threadIndex?.threads ?? []).find(row => row.channelId === channelId && row.threadId === threadId) ?? {}, state);
-  const archiveDisabled = activity.running || activity.waiting || activity.behind > 0;
   const destinations = placement ? [
     { id: ROOT_FOLDER, name: t('channels:side.noFolder') },
     ...placement.folders,
@@ -5647,7 +5645,7 @@ function threadMenu(s, x, y, placement) {
       { label: t('channels:side.moveThread'), sub: () => [
         ...destinations.map(({ id, name }) => ({
           label: name, checked: id === placement.folderId,
-          disabled: id === placement.folderId || (id === ARCHIVE_FOLDER && archiveDisabled),
+          disabled: id === placement.folderId,
           onClick: () => move(id),
         })),
         ...(placement.previousId ? [{ label: t('channels:side.moveUp'), onClick: () => move(placement.folderId, placement.previousId) }] : []),

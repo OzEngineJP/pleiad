@@ -141,6 +141,10 @@ export default async function (t) {
       const address = { channelId: dev.id, threadId: thread.id };
       const progress = await until(async () => (await call('channels.read', address)).posts
         .find(p => p.turn && p.state === 'working'), { label: '途中の返信' });
+      if (!visible) {
+        const archived = await call('channels.organizeThreads', { ...address, action: 'moveThread', folderId: 'archive' });
+        t.ok('応答中のスレッドをアーカイブに移動できる', archived.threadFolders.groups.archive.includes(thread.id));
+      }
       await call('channels.markRead', { ...address, at: progress.at });
       if (visible) await host.cmd('presence', { slot: 'channel', sessionId: channelNoticeId(address), visible, shownAt: progress.at });
       await gates.open(gate);
@@ -152,6 +156,13 @@ export default async function (t) {
       t.ok(visible ? '返信を表示中の完了通知は最初から既読' : '離れた後の完了通知は未読で返信を指す',
         row.unread === !visible && row.threadTitle.includes(gate) && row.at === completed?.completedAt
         && row.at === event.completedAt && completed.completedAt > progress.at, JSON.stringify(row));
+      if (!visible) {
+        const channel = await call('channels.get', { channelId: row.target.channelId });
+        const index = await call('channels.threads', { channelId: row.target.channelId, all: true });
+        t.ok('完了後もアーカイブに残り、通知のスレッドは未読になる',
+          channel.threadFolders.groups.archive.includes(row.target.threadId)
+          && index.threads.some(x => x.threadId === row.target.threadId && x.unread));
+      }
     }
     await host.cmd('presence', { slot: 'channel', sessionId: null, visible: false });
 

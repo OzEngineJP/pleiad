@@ -189,7 +189,7 @@ export const channelOps = [
     }),
     output: z.unknown(),
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: (ctx, args) => run(ctx, () => ctx.channels.organizeThreads(args, () => ctx.app.runningWork())),
+    handler: (ctx, args) => run(ctx, () => ctx.channels.organizeThreads(args)),
   }),
   defineOp({
     id: 'channels.setThreadStatus', summary: D('setThreadStatus', 'summary'), risk: 'write',
