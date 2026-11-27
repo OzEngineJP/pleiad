@@ -2899,7 +2899,7 @@ const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports:
   // 残ったタブの URL の張り直し。Pleiad だったことの分かる port（このプロセスで替わる前・前回の起動のもの）だけを触る
   movedUrl: url => movedPageUrl(url, { from: earlierPagePorts, to: pagePorts, secret: pageSecrets.key, htmlKeys }),
   mask: message => secretMasker.json(message),
-  clients: () => [...runtime.sockets].filter(client => !browserConnections.has(client)),
+  clients: () => new Set([...runtime.sockets].filter(client => !browserConnections.has(client))),
   watching: client => watching.get(client), watchingModal: client => watchingModal.get(client),
   watchingThread: client => {
     const slot = watchingThread.get(client);
