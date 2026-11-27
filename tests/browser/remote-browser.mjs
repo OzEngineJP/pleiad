@@ -315,6 +315,18 @@ try {
       }
       scenarios.push('host-scoped keys and virtual WebSocket');
 
+      async function assertTaskOpenDenied(name, openRef) {
+        const message = await page.evaluate(async ({ name, openRef }) => {
+          try {
+            await window.mounts[name].taskLink({ action: 'open', openRef });
+            return null;
+          } catch (error) {
+            return error.message;
+          }
+        }, { name, openRef });
+        assert.equal(message, 'host denied task link');
+      }
+
       const [desk, cloud] = mounted;
       const [view, second] = views;
       const requestId = randomUUID();
@@ -328,7 +340,7 @@ try {
       assert.deepEqual(link.updates, [{ hostId: desk.hostId, openRef: task.sessionId, state: 'not_started', version: 1 }]);
       assert.deepEqual(await page.evaluate(openRef => window.mounts.desk.taskLink({ action: 'open', openRef }), task.sessionId), task);
       assert.deepEqual(await page.evaluate(requestId => window.mounts.desk.taskLink({ action: 'start', requestId }), requestId), task);
-      await assert.rejects(page.evaluate(openRef => window.mounts.cloud.taskLink({ action: 'open', openRef }), task.sessionId));
+      await assertTaskOpenDenied('cloud', task.sessionId);
       await desk.pc.runTurn({ sessionId: task.sessionId, prompt: 'echo:private-test' }, { ms: 20_000 });
       await until(() => link.updates.at(-1)?.state === 'completed', 'task link completion');
       assert.equal(link.updates.at(-1).openRef, task.sessionId);
@@ -411,7 +423,7 @@ try {
         window.mount(value);
       }, { ...options(desk), name: 'desk-org', tenantId: organizationTenant });
       await state('desk-org', 'ready');
-      await assert.rejects(page.evaluate(openRef => window.mounts['desk-org'].taskLink({ action: 'open', openRef }), task.sessionId));
+      await assertTaskOpenDenied('desk-org', task.sessionId);
       const organization = page.frameLocator('#desk-org').frameLocator('#view');
       await organization.locator('html[data-remote-embedded]').waitFor({ timeout: 30_000 }).catch(async error => {
         const loader = page.frameLocator('#desk-org');

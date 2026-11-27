@@ -368,7 +368,9 @@ export default async function(t) {
           message:ply('ply_delegate', { kind:'mechanical', backend:'fake', task:'echo:grandchild', title:'grandchild' }) }) });
         let grandchild = null;
         for (let i = 0; i < 200 && !grandchild; i++) { grandchild = (await tasksOf(child.sessionId))[0] ?? null; if (!grandchild) await sleep(50); }
-        const other = (await run({ backend:'fake', cwd:ROOT, prompt:'echo:other' })).sessionId;
+        // 孫の実行が始まる途中でも、関係のない会話の ID は作成の応答から取る。
+        const { sessionId: other } = await screen.cmd('newSession', { backend:'fake', cwd:ROOT });
+        await run({ sessionId:other, prompt:'echo:other' });
         const from = screen.events.length;
         await screen.cmd('watchSession', { sessionId:parent });
         const resets = screen.events.slice(from).filter(event => event.type === 'tab:info' && event.reset).map(event => event.sessionId);
