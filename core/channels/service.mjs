@@ -53,7 +53,10 @@
 //
 // 失敗は ChannelError（code と params）。ops が OpError に直す（辞書 agent:ops.errors.<code>）。
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { EMOJI_RE } from '../../web/emoji.mjs';
+import { ARCHIVE_FOLDER, ROOT_FOLDER, threadGroups } from '../../web/channels/thread-folders.mjs';
+import { behindOfTasks, liveTasksOf } from '../../web/work-status.mjs';
 import { authorKey, isAuthor, isId, newId, POST_STATES } from './types.mjs';
 import { createChannelStore } from './store.mjs';
 import { createThreadStore, emptyThread, threadTitle } from './threads.mjs';
@@ -83,6 +86,11 @@ const invalid = (detail) => new ChannelError('INVALID', { detail }, `INVALID ${d
 
 const foldName = (s) => String(s ?? '').normalize('NFKC').toLowerCase();
 const clone = (v) => (v === undefined ? v : structuredClone(v));
+
+function insertBefore(items, item, beforeId, idOf) {
+  const index = beforeId == null ? -1 : items.findIndex(candidate => idOf(candidate) === beforeId);
+  items.splice(index < 0 ? items.length : index, 0, item);
+}
 
 /** チャンネルの名前の整え方: 前後の空白と先頭の # を除く。空・改行入り・長すぎるものは断る */
 export function normalizeChannelName(name) {
@@ -379,6 +387,56 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const thread = await threadStore.update(channelId, threadId, { status: status ? String(status) : null });
       emitThread(thread);
       return { channelId, threadId, status: thread.status ?? '' };
+    },
+
+    async organizeThreads({ channelId, action, folderId, name, threadId, beforeId }, runningWork) {
+      const rows = action === 'moveThread' || action === 'restoreThread'
+        ? (await this.threadIndex({ channelId, all: true })).threads : [];
+      const work = folderId === ARCHIVE_FOLDER ? await runningWork?.() : null;
+      return patchChannel(channelId, (channel) => {
+        if (channel.kind !== 'channel' || channel.home || channel.archivedAt) throw invalid('channel cannot be organized');
+        const layout = channel.threadFolders ?? { folders: [], groups: {}, restore: {} };
+        const folders = layout.folders;
+        const folder = folders.find(item => item.id === folderId);
+        if (action === 'createFolder') {
+          if (folders.length >= 100) throw invalid('too many folders');
+          folders.push({ id: randomUUID(), name: normalizeChannelName(name) });
+        } else if (action === 'renameFolder' || action === 'moveFolder') {
+          if (!folder) throw invalid('folder not found');
+          if (action === 'renameFolder') folder.name = normalizeChannelName(name);
+          else if (beforeId !== folderId) {
+            const ordered = folders.filter(item => item !== folder);
+            insertBefore(ordered, folder, beforeId, item => item.id);
+            layout.folders = ordered;
+          }
+        } else {
+          const row = rows.find(item => item.threadId === threadId);
+          if (!row) throw invalid('thread not found');
+          const groups = threadGroups(layout, rows);
+          const [source, siblings] = [...groups].find(([, members]) => members.includes(row));
+          const previous = layout.restore[threadId];
+          if (action === 'restoreThread' && source !== ARCHIVE_FOLDER) return channel;
+          const target = action === 'restoreThread' ? previous?.folderId ?? ROOT_FOLDER : folderId;
+          const destination = groups.get(target);
+          if (!destination) throw invalid('folder not found');
+          if (beforeId === threadId) return channel;
+          if (target === ARCHIVE_FOLDER && source !== ARCHIVE_FOLDER) {
+            const ids = new Set(Object.values(row.sessions));
+            const busy = [row.state, ...Object.values(row.live ?? {})].some(state => state === 'working' || state === 'waiting')
+              || [...(work?.turns ?? []), ...(work?.permissions ?? [])].some(item => ids.has(item.sessionId))
+              || (work?.background ?? []).some(item => ids.has(item.sessionId) && behindOfTasks(item.tasks))
+              || [...ids].some(id => liveTasksOf(work?.tasks, id).length);
+            if (busy) throw invalid('thread is working or waiting');
+            layout.restore[threadId] = { folderId: source, beforeId: siblings[siblings.indexOf(row) + 1]?.threadId ?? null };
+          }
+          if (target !== ARCHIVE_FOLDER) delete layout.restore[threadId];
+          siblings.splice(siblings.indexOf(row), 1);
+          insertBefore(destination, row, action === 'restoreThread' ? previous?.beforeId : beforeId, item => item.threadId);
+          // Persist only buckets involved in this move. Untouched legacy threads keep their normal order.
+          for (const id of new Set([source, target])) layout.groups[id] = groups.get(id).map(item => item.threadId);
+        }
+        return { ...channel, threadFolders: layout };
+      });
     },
 
     async search({ query, channelId, limit = LIMITS.searchDefault }) {

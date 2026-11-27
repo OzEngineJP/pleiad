@@ -98,7 +98,8 @@ import { overlaySessions, revertFailed, currentRows } from './pending-sidebar.mj
 import { createMoveLanes, settleAll } from './sidebar-moves.mjs';
 import { vocabKey, vocabReady, defaultModelOf, modelsRequest, createEffortsLoader, createEffortsView } from './composer-vocab.mjs';
 import { createAuxSlot, beginAux, settleAux, clearAux, auxState, auxData } from './composer-aux.mjs';
-import { behindOfTasks, liveTasksOf } from './work-status.mjs';
+import { behindOfTasks, liveTasksOf, threadActivity } from './work-status.mjs';
+import { ARCHIVE_FOLDER, ROOT_FOLDER } from './channels/thread-folders.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
@@ -5547,7 +5548,9 @@ const side = createSide({
   },
   onSetIcon: (status, icon) => cmd("setStatusIcon", { status, icon })
     .catch((e) => sideNote(t("session.menu.iconFailed", { error: e.message }))),
-  onContext: (s, x, y) => (s.thread ? threadMenu(s, x, y) : rowMenu(s, x, y)),
+  onContext: (s, x, y, placement) => (s.thread ? threadMenu(s, x, y, placement) : rowMenu(s, x, y)),
+  onOrganizeThreads: organizeThreads,
+  onThreadFolderMenu: threadFolderMenu,
   onGroupContext: (st, x, y) => groupMenu(st, x, y),
   onFamilyContext: (root, members, x, y) => familyMenu(root, members, x, y),
   onSetGrouped: (s, ungrouped) => setGrouped(s, ungrouped),
@@ -5594,14 +5597,61 @@ function setThreadStatusOf({ channelId, threadId }, status) {
     .catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
 }
 
-/** スレッドの行のメニュー: 開く・流れを開く・作業フォルダーと ID のコピー・状態（会話と同じ状態のグループ） */
-function threadMenu(s, x, y) {
+function organizeThreads(args) {
+  return cmd('invoke', { op: 'channels.organizeThreads', args })
+    .catch(e => sideNote(t('channels:side.organizeFailed', { error: e.message })));
+}
+
+function threadFolderMenu({ channel, folder, index, onOpenChannel, onNewInChannel }, x, y) {
+  const channelId = channel.id;
+  const folders = channel.threadFolders?.folders ?? [];
+  const move = (beforeId) => organizeThreads({ channelId, action: 'moveFolder', folderId: folder.id, beforeId });
+  const items = folder ? [
+    { label: t('channels:side.renameFolder'), sub: () => [
+      { input: { value: folder.name, placeholder: t('channels:side.folderName'), onCommit: name => organizeThreads({ channelId, action: 'renameFolder', folderId: folder.id, name }) } },
+    ] },
+    ...(index > 0 ? [{ label: t('channels:side.moveUp'), onClick: () => move(folders[index - 1].id) }] : []),
+    ...(index < folders.length - 1 ? [{ label: t('channels:side.moveDown'), onClick: () => move(folders[index + 2]?.id) }] : []),
+  ] : [
+    { label: t('channels:side.openFeed'), onClick: () => onOpenChannel?.(channelId) },
+    { label: t('channels:side.newInChannel', { name: channel.name }), onClick: () => onNewInChannel?.(channelId) },
+    { label: t('channels:side.createFolder'), sub: () => [
+      { input: { placeholder: t('channels:side.folderName'), onCommit: name => organizeThreads({ channelId, action: 'createFolder', name }) } },
+    ] },
+  ];
+  showMenu(x, y, items, folder?.name ?? channel.name);
+}
+
+/** 開く・作業フォルダーと ID のコピー・スレッドの所属と状態 */
+function threadMenu(s, x, y, placement) {
   const { channelId, threadId } = s.thread;
   const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
   const setStatus = (status) => setThreadStatusOf({ channelId, threadId }, status);
+  const move = (folderId, beforeId) => organizeThreads({ channelId, threadId, action: 'moveThread', folderId, beforeId });
+  const activity = threadActivity((state.threadIndex?.threads ?? []).find(row => row.channelId === channelId && row.threadId === threadId) ?? {}, state);
+  const archiveDisabled = activity.running || activity.waiting || activity.behind > 0;
+  const destinations = placement ? [
+    { id: ROOT_FOLDER, name: t('channels:side.noFolder') },
+    ...placement.folders,
+    { id: ARCHIVE_FOLDER, name: t('channels:side.threadArchive') },
+  ] : [];
   showMenu(x, y, [
     { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
     { label: t('channels:side.openFeed'), onClick: () => viewAddress.go({ channelId }) },
+    ...(placement ? [
+      { label: t('channels:side.moveThread'), sub: () => [
+        ...destinations.map(({ id, name }) => ({
+          label: name, checked: id === placement.folderId,
+          disabled: id === placement.folderId || (id === ARCHIVE_FOLDER && archiveDisabled),
+          onClick: () => move(id),
+        })),
+        ...(placement.previousId ? [{ label: t('channels:side.moveUp'), onClick: () => move(placement.folderId, placement.previousId) }] : []),
+        ...(placement.nextId ? [{ label: t('channels:side.moveDown'), onClick: () => move(placement.folderId, placement.afterNextId) }] : []),
+      ] },
+      ...(placement.folderId === ARCHIVE_FOLDER ? [{
+        label: t('channels:side.restoreThread'), onClick: () => organizeThreads({ channelId, threadId, action: 'restoreThread' }),
+      }] : []),
+    ] : []),
     // 作業フォルダー（スレッドの bot の会話の作業場所）と ID のコピー（Chats の会話の行と同じ）
     ...(threadCwd(s) ? [{ label: t("session.menu.copyCwd"), hint: threadCwd(s), onClick: () => copy(threadCwd(s), t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) }] : []),
     { label: t("session.menu.copyId"), onClick: () => copy(threadId, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
@@ -5626,13 +5676,16 @@ function renderSessions() {
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // bot のスレッド（channels.threads の索引）。会話に似た行にして、走っている・あなた待ち・未読の印は会話と同じ集合で渡す
   const runningIds = new Set(state.runningIds), waitingIds = new Set(state.waitingIds);
+  const bgWaiting = new Map(state.bgWaiting);
   const threadRows = (state.threadIndex?.threads ?? []).map((th) => {
     const id = `thread:${th.channelId}:${th.threadId}`;
-    if (th.state === 'working' || Object.values(th.live ?? {}).includes('working')) runningIds.add(id);
-    if (th.state === 'waiting' || Object.values(th.live ?? {}).includes('waiting')) waitingIds.add(id);
+    const activity = threadActivity(th, state);
+    if (activity.running) runningIds.add(id);
+    else if (activity.behind) bgWaiting.set(id, activity.behind);
+    if (activity.waiting) waitingIds.add(id);
     if (th.unread) unreadIds.add(id);
     return { id, thread: { channelId: th.channelId, threadId: th.threadId, ...(th.branchOf ? { branch: true } : {}) }, bot: { botId: th.bots?.[0] ?? null, channelId: th.channelId, threadId: th.threadId, kind: 'thread' },
-      title: th.title, status: th.status ?? '', lastModified: th.lastAt };
+      title: th.title, status: th.status ?? '', lastModified: th.lastAt, stopped: th.stopped };
   });
   // 脇で選ばれて見える行: Channels の面ではそのスレッド、会話の面では開いている会話
   const where = (() => { try { return viewAddress.current; } catch { return null; } })();   // 起動の途中（アドレスを作る前）は無い
@@ -5652,7 +5705,7 @@ function renderSessions() {
     chromeWaitIds: state.chromeWaitIds,
     answerWaitIds: state.answerWaitIds,
     threads: threadRows,
-    bgWaiting: state.bgWaiting,
+    bgWaiting,
     unreadIds,
     // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
     interrupted: new Map(listed.filter(isInterrupted).map(s => [s.id, { ...s.interrupted, unread: interruptUnread(s, readCompletions.readAt(s.id)) }])),
