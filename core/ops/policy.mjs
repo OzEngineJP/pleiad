@@ -46,7 +46,7 @@ export const HUMAN_ONLY = Object.freeze({
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）
-  remotePairing: { commands: ['remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'remoteRevoke', 'remoteRevokedHide', 'remotePlusRequestsResume', 'remoteDevices', 'setRemoteSettings', 'setRemoteDeviceAgent', 'plusHostRebind'], settings: [] },
+  remotePairing: { commands: ['remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'remoteRevoke', 'remoteRevokedHide', 'remotePlusRequestsResume', 'remoteDevices', 'remotePcWorkspaces', 'setRemoteSettings', 'setRemoteDeviceAgent', 'plusHostRebind'], settings: [] },
 });
 /**
  * ホストの PC の画面だけでできる命令（ADR 0248）。中継越しの端末の画面から来たものは 403 host_only で断る。
