@@ -6,7 +6,7 @@
 //
 // 試験用の fake は、環境変数で印を切り替える（台本のため）ので、ここには置かず core/backends/fake.mjs が持つ。
 // 性質だけは AGENT_TRAITS.fake に置く（値は環境で変わらない）。
-import { covered, impossible, todo } from './capability-marks.mjs';
+import { CAPABILITY_KEYS, covered, impossible, todo } from './capability-marks.mjs';
 import { AGY_WAIT_SLICE_MS } from './computer-timing.mjs';
 import { definePerAgentMap } from './agents.mjs';
 
@@ -17,6 +17,29 @@ import { definePerAgentMap } from './agents.mjs';
  * #180: 内部呼出しと次の発言の候補）。
  */
 export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
+  'pleiad-agent': {
+    ...Object.fromEntries(CAPABILITY_KEYS.map(key => [key, impossible('Outside the current Pleiad Agent integration', 'design')])),
+    title: covered,
+    tag: covered,
+    fork: covered,
+    forkMessage: covered,
+    rewind: covered,
+    approvals: 'interactive',
+    mcpApproval: 'agent',
+    steer: true,
+    liveMode: true,
+    alwaysAllow: true,
+    hostTools: covered,
+    plyAgents: true,
+    plyInstructions: true,
+    plyControl: true,
+    plyShell: true,
+    nativeShellOff: true,
+    nativeMcpOff: true,
+    plyContext: 'turn',
+    browser: true,
+    computerUse: { images: 'inline', waitSliceMs: null },
+  },
   claude: {
     // server の compactConversation が /compact を発言として送る（compact() は持たない）
     compact: 'prompt',
@@ -305,5 +328,6 @@ export const AGENT_TRAITS = definePerAgentMap('AGENT_TRAITS', {
   opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
   devin: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
+  'pleiad-agent': { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: false, secretsViaEnvFile: false },
   fake: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, liveSecrets: true, secretsViaEnvFile: false },
 }, { extra: ['fake'] });

@@ -1089,6 +1089,44 @@ Claude のモデルの一覧は、アカウント（組織）で変わる（承�
 - **引く時機。** 画面の要求・確かめは手元の一覧で答え、寿命（30 分）を過ぎていれば裏で引き直す。`models(cwd, { passive: true })` は手元の一覧だけで答える（CLI を起こさない・待たない。使用量の取り置きの判定用）。起動時・SDK 取得後の先読み（`warmModels`）は、ログイン中と使える登録アカウントを 1 つずつ順に引く。アカウントの追加・トークンの差し替え・削除は `invalidateModels(accountId)` でそのアカウントの記憶だけを捨て、追加・差し替えは引き直す。一覧が手元に入った・変わったときは `onModelsChanged` の口で知らせ、サーバーが画面へ `claudeAccountsChanged` を送る
 - **画面。** 語彙の要求・取得の鍵にアカウントを入れ、アカウントを替えたら引き直す。アカウントを替えて今のモデルが新しい一覧に無いときは、`accounts: 'agent'` のバックエンドと同じ扱い（会話は `settings.modelUnavailable` で断る）
 
+### 2.12 Pleiad Agent（標準入出力、試験中）
+
+通常のホストで試すには、起動時の `AGENT_HOST_BACKENDS` のカンマ区切り一覧に `pleiad-agent` を含める。管理下ホストでは Pleiad Agent だけが登録される。
+
+Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/388abd761f57d81abcdc34d1a76f0e2cba1c1f52/docs/stdio.md)
+
+会話 ID の確定を保存してからプロンプトを送る。子は受付とモデルへの配達を別に通知し、履歴に残した送信 ID で重複を判定する。確定前に子が終了した場合はターンを失敗として扱い、自動で再送しない。Pleiad は本文、道具の呼び出しと結果を既存の会話イベントに変換し、添付と送信待ちは共通の処理を使う。旧 Procway の履歴は Pleiad の保存データから開ける。
+
+| 子からの通知 | Pleiad の会話での扱い |
+|---|---|
+| `opened` | `session` で子の会話 ID を保存する |
+| `accepted` | 以降の途中指示を受け付ける |
+| `delivered` | `userMessage.delivered` で送信を確定する |
+| `assistant.message.delta` / `assistant.message.completed` | `text.delta` と `text.end` で応答を表示する |
+| `assistant.reasoning.delta` | `thinking.delta` で途中の推論を表示する |
+| `tool.call.scheduled` / `tool.call.completed` | `tool.start` と `tool.result` を同じ道具の ID で結ぶ |
+| `usage.recorded` | 道具実行を挟む各モデル呼び出しの使用量を合算する |
+| `approval.request` / `interaction.request` | 既存の承認・質問カードを表示する。ファイル作成の本文とパッチは承認前に編集できる |
+| `decision.cancel` | 中断・モード変更・時間切れでカードを閉じる |
+
+既定の権限では、ファイルへの書き込みとホストの道具の呼び出しを承認カードで確認する。読み取り・計画モードではファイルを読んだり質問したりできる。計画を確認した後は、利用者が入力欄で実行時の権限を選ぶ。再起動時は Pleiad の未解決カードとエージェントの保存済みの要求を照合し、同じ承認・質問カードを再表示する。元の発言は一度だけ記録され、既に完了した道具も再実行されない。
+
+Pleiad の委譲・ブラウザー・デスクトップ・操作・コンテキスト・シェルは、会話と実行中のターンに結び付けた認証済みの Model Context Protocol（MCP）の接続で子に渡す。接続用の認証情報はモデルの入力と会話履歴に含めない。画像に対応したモデルには道具の画像が届き、構造化された結果はテキストとして届く。
+| `finished` / 確定前の切断 | `turnResult` で終了結果を確定する |
+
+モデルはホスト起動時に設定する。
+
+| 環境変数 | 値 |
+|---|---|
+| `AGENT_HOST_PLEIAD_AGENT_MODEL` | モデル ID |
+| `AGENT_HOST_PLEIAD_AGENT_PROVIDER` | `openai`（既定、Chat Completions）または `anthropic`（Messages） |
+| `AGENT_HOST_PLEIAD_AGENT_BASE_URL` | API のベース URL。既定は選んだプロバイダーの公式 API。HTTP はループバックのみ |
+| `AGENT_HOST_PLEIAD_AGENT_KEY_ID` | Pleiad に保存した API キーの ID |
+| `AGENT_HOST_PLEIAD_AGENT_API_KEY` | ホスト環境から直接渡す場合のキー。公式 API では `OPENAI_API_KEY` または `ANTHROPIC_API_KEY` も使える |
+| `AGENT_HOST_PLEIAD_AGENT_VISION` | 画像を入力できるモデルでは `1` |
+
+認証はホストがモデル API へ接続するときに行う。組み込みの道具はファイルの一覧・読み取り・検索と、画像対応モデルでの画像読み取りに限る。承認と質問、Pleiad の会話別の MCP やホスト道具は後続の実装で接続する。
+
 ## 3. 変えないこと
 
 - 承認の保留・猶予・中断（design.md §8.5）。`server.mjs` の

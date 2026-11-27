@@ -1,6 +1,6 @@
 // バックエンドのレジストリ。
 //
-// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定は core/backends/agents.mjs の fake を除く全部）で選ぶ。
+// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定は core/backends/agents.mjs の DEFAULT_AGENT_IDS）で選ぶ。
 // 読み込みは動的 import にしてある。理由: claude.mjs は Agent SDK を引き込むので、
 // `AGENT_HOST_BACKENDS=fake` のテストでは**そもそも読み込みたくない**
 // （SDK 無しでサーバが起動できることが、バックエンド抽象化ができている証拠になる）。
@@ -132,7 +132,7 @@ const wanted = managedBackendIds ?? String(process.env.AGENT_HOST_BACKENDS ?? DE
   .filter(Boolean);
 
 for (const id of wanted) {
-  const where = KNOWN[id] ?? (managedBackendIds && id === 'pleiad-agent' ? './pleiad-agent.mjs' : null);
+  const where = KNOWN[id];
   if (!where) {
     if (Object.hasOwn(RETIRED, id)) continue;
     console.error(`  知らないバックエンド: ${id}（無視した）`);

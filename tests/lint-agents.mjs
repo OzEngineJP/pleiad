@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scanJs } from './lint-i18n.mjs';
-import { AGENTS, DEFAULT_AGENT_IDS } from '../core/backends/agents.mjs';
+import { AGENTS, REGISTERABLE_AGENT_IDS } from '../core/backends/agents.mjs';
 import { CAPABILITY_STATES } from '../core/backends/agent-marks.mjs';
 import { HOOK_AGENTS, UNIFY_TARGETS } from '../core/hooks-config.mjs';
 
@@ -168,7 +168,7 @@ export function updateBaseline({ root = ROOT, baselineFile = BASELINE_FILE } = {
 const LIST_SCAN_DIRS = ['core', 'web', 'desktop', 'bin', 'site'];
 const LIST_SKIP_DIRS = new Set(['node_modules', 'locales']);
 const LIST_SKIP_FILE = (file) => /(^|[/\\])backends[/\\][^/\\]+\.mjs$/.test(file);   // エージェントの記述そのものは正本なので対象外
-const IDS = new Set(DEFAULT_AGENT_IDS);
+const IDS = new Set(REGISTERABLE_AGENT_IDS);
 const KW_REGEX = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'throw', 'else', 'do', 'instanceof', 'yield', 'await']);
 
 // ---- 字句 ----
@@ -357,14 +357,15 @@ function resolver(files) {
 // ---- 正本から引く「持つべき組」 ----
 export function expectedSets() {
   return {
+    nativeSources: new Set(REGISTERABLE_AGENT_IDS.filter(id => AGENTS[id].contextSources !== null)),
     // Hooks の機構をそのまま持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）
     nativeHooks: new Set(HOOK_AGENTS),
     // Hooks の統合の対象（機構そのまま＋記述の hooksAs で形を写せるもの。core/hooks-config.mjs の UNIFY_TARGETS）
     unifyTargets: new Set(UNIFY_TARGETS),
     // Hooks のイベント名の表を持つエージェント（機構そのまま＋plugin 経由で表が要るもの）
-    hookEventOwners: new Set([...HOOK_AGENTS, ...DEFAULT_AGENT_IDS.filter(id => ['plugin', 'config'].includes(AGENTS[id].hooksVia))]),
+    hookEventOwners: new Set([...HOOK_AGENTS, ...REGISTERABLE_AGENT_IDS.filter(id => ['plugin', 'config'].includes(AGENTS[id].hooksVia))]),
     // 互換エンドポイントを立てられるエージェント（core/backends/agent-marks.mjs の CAPABILITY_STATES.<id>.compatEndpoints が true）
-    compatEndpoints: new Set(DEFAULT_AGENT_IDS.filter(id => CAPABILITY_STATES[id]?.compatEndpoints === true)),
+    compatEndpoints: new Set(REGISTERABLE_AGENT_IDS.filter(id => CAPABILITY_STATES[id]?.compatEndpoints === true)),
   };
 }
 
@@ -388,13 +389,20 @@ export const ALLOWED = [
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
   { file: 'web/compat-presets.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの preset の対象' },
   { file: 'web/api-keys-settings.mjs', expect: 'compatEndpoints', reason: 'API キーの設定カードでエージェント名を出す対象（互換エンドポイントの利用者）' },
+  { file: 'web/hooks-card.mjs', expect: 'unifyTargets', reason: 'Hooks の統合先として画面に表示するエージェント' },
+  ...['core/context-doc-matrix.mjs', 'core/context-runtime.mjs', 'core/context-scan.mjs', 'core/context-settings.mjs', 'web/session-context.mjs'].map(file => ({
+    file, expect: 'nativeSources', reason: '指示・Skills・MCP の探索元の形式を持つエージェント',
+  })),
+  { file: 'core/context-mcp-matrix.mjs', expect: 'nativeSources', reason: '外部 MCP の列の既定順。記載のない列は末尾' },
   // 固定の組（記述から引けないもの。引けるなら expect にする）
+  { file: 'core/backend-shape-diagnostics.mjs', ids: ['claude', 'codex'], reason: '非公開の会話ログ形式を直接読むアダプター' },
+  { file: 'web/delegation-routing-view.mjs', expect: 'nativeSources', reason: '個別の表記を持つ既存のエージェントの補助名' },
   { file: 'core/context-settings.mjs', ids: ['claude', 'codex'], reason: 'DEFAULT_SOURCES: 既定で探す探索元。新しいエージェントを既定で足すかは別の判断' },
   { file: 'core/context-scan.mjs', ids: ['claude', 'codex'], reason: 'ユーザーの全体の指示ファイルの別名（gemini は形式名でエージェントの id ではない）' },
   { file: 'core/plus/sync/targets.mjs', ids: ['claude', 'codex'], reason: 'Plus の同期で扱う形式の名（gemini は形式名でエージェントの id ではない）' },
   { file: 'core/mcp-config.mjs', ids: ['claude', 'codex', 'devin'], reason: '外部 MCP の設定ファイルとして読める形式（この 3 形式だけ読み方を持つ）' },
   { file: 'web/mcp-config.mjs', ids: ['claude', 'codex', 'devin'], reason: 'MCP の設定カードが扱える形式（core/mcp-config.mjs と同じ 3 形式）' },
-  { file: 'core/ply-instructions.mjs', ids: ['claude', 'codex'], reason: 'LEGACY_AGENTS: 前の版の選択肢（固定の組。今の選択肢は DEFAULT_AGENT_IDS から引く）' },
+  { file: 'core/ply-instructions.mjs', ids: ['claude', 'codex'], reason: 'LEGACY_AGENTS: 前の版の選択肢（固定の組。今の選択肢は REGISTERABLE_AGENT_IDS から引く）' },
   { file: 'core/computer-use/apps.mjs', ids: ['claude', 'codex'], reason: 'computer-use が起動したと見なす CLI の実行ファイル名（プロセス名との照合）' },
   { file: 'core/ops/mcp.mjs', ids: ['claude', 'codex', 'devin'], reason: 'MCP の操作が扱える形式（core/mcp-config.mjs と同じ 3 形式）' },
   { file: 'core/hooks-agents.mjs', ids: ['grok', 'devin'], reason: 'compat: Claude の設定の Hooks を自分で取り込むエージェントの取り込みの止め方（Grok の互換・Devin の取り込み。ADR 0338）' },
@@ -484,7 +492,7 @@ export function selftest() {
   ok('id-literal: 走査から外す場所（作られたもの・外の CLI の写し）', ['site/docs/src/a.mjs', 'site/dist/a.js', 'site/.astro/a.mjs', 'scripts/zero-downtime/codex/a.mjs', 'core/backends/a.mjs']
     .every((f) => ID_EXCLUDE.some((re) => re.test(f))) && !ID_EXCLUDE.some((re) => re.test('scripts/zero-downtime/stage1-7/a.mjs')));
   // 規則 2: 拾える形・許可・見逃し
-  const all = DEFAULT_AGENT_IDS;
+  const all = REGISTERABLE_AGENT_IDS;
   const src = [
     `import { HOOK_AGENTS } from '../core/hooks-config.mjs';`,
     `const A = ['${all[0]}', '${all[1]}'];`,                               // 部分一覧 → 拾う

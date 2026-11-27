@@ -5,14 +5,12 @@
 // 段の候補と既定はモデルの一覧（models()）の efforts / defaultEffort から取る（codex・claude・antigravity・fake）。
 // reason は段を選べないときの理由（'' の行に付ける。画面の無効のスライダーの説明）。
 import { t } from './i18n.mjs';
-import { definePerAgentMap } from './backends/agents.mjs';
 
-// 段を固定の一覧で持つのは claude と fake だけ。null は固定の一覧を持たない（モデルの一覧 models() の efforts から取る）
-const levels = definePerAgentMap('levels', {
+// 固定の一覧が無い場合はモデルの一覧 models() の efforts から取る。
+const levels = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
-  codex: null, antigravity: null, opencode: null, devin: null, grok: null,
   fake: ['low', 'medium', 'high'],
-}, { extra: ['fake'] });
+};
 /**
  * endpoint は会話が選んでいる互換の接続先（core/compat-endpoints.mjs の一覧の行。無ければ公式）。
  * 互換の接続先では既定の段が分からない（design-system の規則どおり「既定」の段を作らない）。

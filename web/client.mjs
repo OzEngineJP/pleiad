@@ -2705,6 +2705,22 @@ function foldSettledCard(card, head, code, target) {
   head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
 }
 
+function approvalEditor(ev, container) {
+  const original = ev.editableField ? ev.input?.[ev.editableField] : null;
+  if (typeof original !== 'string' || original.length > 1_000_000) return () => ({});
+  const details = el('details');
+  const label = t('chat.approval.editInput');
+  const textarea = el('textarea', 'code');
+  textarea.value = original;
+  textarea.setAttribute('aria-label', label);
+  textarea.rows = 5;
+  textarea.style.width = '100%';
+  details.append(el('summary', null, label), textarea);
+  container.append(details);
+  const displayed = textarea.value;
+  return () => textarea.value === displayed ? {} : { editedInput: textarea.value };
+}
+
 /**
  * ツールの承認を、走っているまとまりの最新の行の場所に出す（許可・拒否をその場で押せる）。決着したらカードが縮んで普通の行に戻り、
  * まとまりに残る（外に ◇ の 1 行を残さない）。行は「動詞・主役・補足」の並びのまま、押したら 3 つのボタンを止めて受け取りを待つ
@@ -2732,6 +2748,7 @@ function rowApprovalCard(ev, row, { activity: act = activity } = {}) {   // act:
   const allow = el("button", "btn btn-primary", t("chat.approval.allow"));
   for (const b of [always, deny, allow]) b.type = "button";
   acts.append(res, ...(canAlways ? [always] : []), deny, allow);
+  const editApproval = approvalEditor(ev, box);
   box.append(acts);
   const buttons = [always, deny, allow];
   const verb = (ok, forever) => (ok ? (forever ? t("chat.approval.always") : t("chat.approval.allow")) : t("chat.approval.deny"));
@@ -2749,7 +2766,7 @@ function rowApprovalCard(ev, row, { activity: act = activity } = {}) {   // act:
     res.replaceChildren(el("span", null, t("chat.approval.sending", { action: verb(ok, forever) })));
     const arc = setTimeout(() => res.prepend(runMark()), 150);
     try {
-      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) });
+      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? editApproval() : { messageKey: "userDenied" }) });
     } catch (e) {
       clearTimeout(arc);
       delete box.dataset.sending;
@@ -2915,6 +2932,7 @@ function permissionCard(ev, into = null) {
   allow.type = "button";
   if (ev.browserSite) { actions.append(allow); if (canAlways) actions.append(always); actions.append(deny); }
   else { if (canAlways) actions.append(always); actions.append(deny, allow); }
+  const editApproval = approvalEditor(ev, card);
   card.append(actions);
 
   // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
@@ -2932,7 +2950,7 @@ function permissionCard(ev, into = null) {
     const arc = setTimeout(() => res.prepend(runMark()), 150);
     try {
       // 拒否の理由はエージェントに返る。画面の言語ではなく会話の言語で返すよう、文ではなく印を送る（サーバーが会話の言語で訳す）
-      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? {} : { messageKey: "userDenied" }) });
+      await cmd("resolvePermission", { id: ev.id, allow: ok, always: forever, ...(ok ? editApproval() : { messageKey: "userDenied" }) });
     } catch (e) {
       clearTimeout(arc);
       delete card.dataset.sending;

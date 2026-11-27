@@ -130,6 +130,7 @@ const NATIVE_READERS = definePerAgentMap('NATIVE_READERS', {
     if (kind === 'skill' && (isAgentsSkillsPath(origin.path) || isAgentsSkillsPath(origin.realPath))) return true;
     return devinImportFormat(kind, origin.path, origin.source, origin.scope) !== null;
   },
+  'pleiad-agent': () => false,
   grok(_kind, origin) {
     return origin.source === 'grok' || origin.source === 'common' || origin.source === 'claude';
   },
@@ -207,6 +208,7 @@ const LOCK_CHECKS = definePerAgentMap('LOCK_CHECKS', {
     const own = origins.filter((o) => isDevinOwnPath(o.path) || isDevinOwnPath(o.realPath) || (o.source === 'devin' && o.scope === 'user'));
     return own.length ? { lockedOn: true, reason: scopeLockReason(own) } : imported;
   },
+  'pleiad-agent': () => null,
   grok(kind, entryOrSummary) {
     if (entryOrSummary === '__workspace__') {
       return { lockedOn: true, reason: 'workspace' };
@@ -237,6 +239,7 @@ export const DOC_AGENT_TRAITS = definePerAgentMap('DOC_AGENT_TRAITS', {
   opencode: { perFileInstructionExclude: false, perNameSkillList: false, managedServeOnDiff: true, relay: true },
   devin: { perFileInstructionExclude: false, perNameSkillList: false, relay: true, legacyPlyKeepsNative: true },
   grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: true },
+  'pleiad-agent': { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
 });
 
 /**

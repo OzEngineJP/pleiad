@@ -20,6 +20,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { ROOT } from './server.mjs';
+import { startPleiadAgentFixture } from './pleiad-agent-fixture.mjs';
 import { installFakeClaude } from './fake-claude.mjs';
 import { AGENTS } from '../../core/backends/agents.mjs';
 import { CAPABILITIES, RUN_ARG_FEATURES, gateRunArgs, isCapabilityState } from '../../core/backends/contract.mjs';
@@ -37,6 +38,8 @@ const node = (file) => `node "${path.join(ROOT, 'tests/lib', file)}"`;
 const dir = async (...parts) => { const p = path.join(...parts); await fs.mkdir(p, { recursive: true }); return p; };
 
 export const RIGS = {
+  'pleiad-agent': async () => ({ ...await startPleiadAgentFixture(), prompt: text => text,
+    slow: '[fixture:hold]', fail: '[fixture:fail]', running: 'text.delta' }),
   fake: async (scratch) => ({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_STATE_DIR: await dir(scratch, 'fake-state') }, prompt: (text) => text, slow: 'slow', fail: 'fail' }),
   claude: async (scratch) => {
     const cli = await installFakeClaude(path.join(scratch, 'cli'));
@@ -588,6 +591,54 @@ async function probeGrok({ scratch, caps }) {
 
 /** エージェント → 1 ターン流して、印ごとの証拠を返す関数（{ scratch, caps } を受ける） */
 export const DELIVERY_PROBES = Object.freeze({
+  'pleiad-agent': async ({ scratch, caps }) => {
+    const { backend } = await import('../../core/backends/pleiad-agent.mjs');
+    const fixture = await startPleiadAgentFixture({ token: 'test-credential-only' });
+    const relay = await listen(async (req, res) => {
+      const name = req.url.slice(1);
+      if (req.headers.authorization !== 'Bearer delivery-' + name) return res.writeHead(401).end();
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const rpc = JSON.parse(Buffer.concat(chunks));
+      if (rpc.id == null) return res.writeHead(202).end();
+      const result = rpc.method === 'initialize'
+        ? { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name, version: '1' } }
+        : { tools: [{ name: 'probe', inputSchema: { type: 'object' } }] };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result }));
+    });
+    try {
+      const args = deliveryArgs(caps, { cwd: scratch });
+      for (const name of ['agent', 'browser', 'computer', 'context', 'control', 'shell']) {
+        const key = name + 'Runtime';
+        const endpoint = name === 'agent' ? 'agents' : name;
+        args[key] = { ...args[key], url: relay.origin + '/' + endpoint,
+          headers: { Authorization: 'Bearer delivery-' + endpoint } };
+      }
+      await withEnv(fixture.env, () => backend.runTurn(args));
+      const body = fixture.model.calls[0];
+      if (JSON.stringify(body).includes('test-credential-only')) throw new Error('Credential was present in model input');
+      const seen = body.tools.map(tool => tool.function.name);
+      const hasMcp = name => seen.some(tool => tool.startsWith(`mcp__${name}__`));
+      if (seen.some(tool => !tool.startsWith('mcp__') &&
+          !['list_files', 'read_file', 'search_files', 'write_file', 'apply_patch', 'Edit', 'request_user_action'].includes(tool))) {
+        throw new Error('Unexpected native tool in hosted session');
+      }
+      const prompt = body.messages.map(message => message.content).join('\n');
+      return { seen, evidence: {
+        plyInstructions: has(prompt, instr('instructions')),
+        plyAgents: hasMcp('ply_agents'),
+        plyControl: hasMcp('ply_control'),
+        plyShell: hasMcp('ply_shell'),
+        plyContext: hasMcp('ply_context'),
+        browser: hasMcp('ply_browser'),
+        computerUse: hasMcp('ply_computer')
+      } };
+    } finally {
+      relay.server.closeAllConnections();
+      await Promise.all([relay.close(), fixture.close()]);
+    }
+  },
   claude: probeClaude,
   codex: probeCodex,
   antigravity: probeAntigravity,

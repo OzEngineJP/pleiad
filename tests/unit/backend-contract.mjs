@@ -8,14 +8,14 @@ import {
   CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, IMPOSSIBLE_CAUSES, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, TRAIT_KEYS, RUN_ARG_FEATURES,
   checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, gateRunArgs, impossible, legacyCapabilities, todo, traitProblem,
 } from '../../core/backends/contract.mjs';
-import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, definePerAgentMap, idleCompactionKey } from '../../core/backends/agents.mjs';
+import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, REGISTERABLE_AGENT_IDS, definePerAgentMap, idleCompactionKey } from '../../core/backends/agents.mjs';
 import {
   DELIVERY_ARG_KEYS, DELIVERY_HINTS, DELIVERY_PROBES, EXTRA_PROBES, PROBE_MARKS, RIGS, deliveryArgs, deliveryRequired, loadNatives, probeVerdict,
 } from '../lib/backend-common.mjs';
 import { ROOT } from '../lib/server.mjs';
 
 // 現役のエージェント（試験用の fake を除く）
-const ACTIVE = DEFAULT_AGENT_IDS;
+const ACTIVE = REGISTERABLE_AGENT_IDS;
 
 // 性質（能力ではない。ADR 0274）ごとの契約の試験（tests/run.mjs の suite 名）。性質を足すときはここにも足す
 const TRAIT_CONTRACTS = {
@@ -67,17 +67,18 @@ export default async function (t) {
     t.ok(`${id}: 記述の shellTools が、toolHints の shape: 'shell' と同じ名前`, Array.isArray(a.shellTools) && JSON.stringify([...a.shellTools].sort()) === JSON.stringify(hinted),
       JSON.stringify({ shellTools: a.shellTools, hinted }));
   }
-  t.ok('既定で有効にするのは fake を除く全部', DEFAULT_AGENT_IDS.join() === Object.keys(AGENTS).filter((id) => id !== 'fake').join());
+  t.ok('既定で有効にする一覧から試験中の Pleiad Agent と fake を除く',
+    DEFAULT_AGENT_IDS.join() === REGISTERABLE_AGENT_IDS.filter(id => id !== 'pleiad-agent').join());
   t.ok('身代わりの一覧に、記述に無いエージェントが無い', Object.keys(RIGS).every((id) => Object.hasOwn(AGENTS, id)));
   t.ok('CLI の実行ファイルを差し替える環境変数はエージェントごとに独立する',
     new Set(Object.values(AGENTS).filter((a) => a.cli).map((a) => a.cli.binEnv)).size === Object.values(AGENTS).filter((a) => a.cli).length);
 
   // エージェントごとの表（definePerAgentMap）: 足りない・知らないエージェントのキーは黙って通さない
   const perAgentError = (map, opts) => { try { definePerAgentMap('check', map, opts); return null; } catch (e) { return String(e.message); } };
-  const fullMap = () => Object.fromEntries(DEFAULT_AGENT_IDS.map((id) => [id, 1]));
+  const fullMap = () => Object.fromEntries(REGISTERABLE_AGENT_IDS.map((id) => [id, 1]));
   t.ok('エージェントごとの表: 全エージェントを書けば通り、書き換えられない', perAgentError(fullMap()) === null && Object.isFrozen(definePerAgentMap('check', fullMap())));
   t.ok('エージェントごとの表: 足りないエージェント・知らないエージェントのキーは落とす',
-    (perAgentError(Object.fromEntries(DEFAULT_AGENT_IDS.slice(1).map((id) => [id, 1]))) ?? '').includes(`足りない: ${DEFAULT_AGENT_IDS[0]}`)
+    (perAgentError(Object.fromEntries(REGISTERABLE_AGENT_IDS.slice(1).map((id) => [id, 1]))) ?? '').includes(`足りない: ${DEFAULT_AGENT_IDS[0]}`)
     && (perAgentError({ ...fullMap(), 'no-such-agent': 1 }) ?? '').includes('知らない: no-such-agent'));
   t.ok('エージェントごとの表: extra で試験用の別名を足せる（足していなければ落とす）',
     perAgentError({ ...fullMap(), fake: 1 }, { extra: ['fake'] }) === null && perAgentError({ ...fullMap(), fake: 1 }) !== null);

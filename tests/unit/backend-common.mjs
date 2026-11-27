@@ -45,6 +45,7 @@ async function lifecycle(t, id) {
   } finally {
     state.c.close();
     try { await state.server.stop(); } catch (e) { t.ok(`${id}: バックエンドのイベントが契約に外れない`, false, String(e.message)); }
+    await rig.close?.();
     await fs.rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
   }
   if (error) t.ok(`${id}: 共通の契約を最後まで確かめられる`, false, `${error.stack ?? error}\n${state.server.tail()}`);

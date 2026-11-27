@@ -175,6 +175,22 @@ export const AGENTS = {
     accountAddNotice: null,
     logoutConfirm: null,
   },
+  'pleiad-agent': {
+    module: './pleiad-agent.mjs',
+    shortLabel: null,
+    brand: null,
+    cli: null,
+    idleCompaction: null,
+    rebuildIdleMinutes: null,
+    contextSources: null,
+    hooksAs: null,
+    hooksVia: null,
+    shellTools: [],
+    shellDefault: 'native',
+    contextAt: 'turn',
+    accountAddNotice: null,
+    logoutConfirm: null,
+  },
   fake: {
     module: './fake.mjs',
     shortLabel: null,
@@ -195,8 +211,11 @@ export const AGENTS = {
 
 export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice', 'logoutConfirm']);
 
-/** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
-export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
+/** 能力や契約を定義するエージェント。試験専用の fake は除く。 */
+export const REGISTERABLE_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
+
+/** 通常のホストで AGENT_HOST_BACKENDS を省略したときに登録するエージェント。 */
+export const DEFAULT_AGENT_IDS = Object.freeze(REGISTERABLE_AGENT_IDS.filter((id) => id !== 'pleiad-agent'));
 
 /**
  * エージェントごとの表（id -> 値）を作る。エージェントを足したのに表へ書き忘れた・知らない id を書いた、を読み込みの時点で落とす
@@ -204,7 +223,7 @@ export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) =
  * ids は表が持つべき id（既定は fake を除く全部）。extra は ids に足す id（試験用の fake など）。無い・余分なキーは例外。
  * 値の「無い」は呼び出し側が null・空で明示する（キーを省かない）。
  */
-export function definePerAgentMap(name, map, { ids = DEFAULT_AGENT_IDS, extra = [] } = {}) {
+export function definePerAgentMap(name, map, { ids = REGISTERABLE_AGENT_IDS, extra = [] } = {}) {
   const expected = [...ids, ...extra];
   const missing = expected.filter((id) => !Object.hasOwn(map, id));
   const unknown = Object.keys(map).filter((id) => !expected.includes(id));

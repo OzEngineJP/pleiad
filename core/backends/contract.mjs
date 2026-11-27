@@ -46,13 +46,13 @@ const UNVERIFIED_REASON = /確かめていない|口を確かめていない|#\d
  * 印の値の違反（無ければ null）。状態の理由・原因・Issue の形もここで見る。
  * checkBackendShape が id とファイルを添えて出す。
  */
-export function capabilityProblem(key, value) {
+export function capabilityProblem(key, value, { initialIntegration = false } = {}) {
   const spec = CAPABILITIES[key];
   if (!spec) return `capability ${key} is not in core/backends/capability-marks.mjs CAPABILITIES`;
   if (isCapabilityState(value)) {
     if (spec.absent === undefined) return `capability ${key} cannot be a state (${spec.hint})`;
     if (!['covered', 'impossible', 'todo'].includes(value.state)) return `capability ${key} has unknown state ${JSON.stringify(value.state)} (use covered, impossible('reason', cause), or todo('#Issue'))`;
-    if (spec.required && value.state !== 'covered' && value !== RETIRED) return `capability ${key} is required for every active agent (support it; impossible and todo are only for retired backends)`;
+    if (spec.required && value.state !== 'covered' && value !== RETIRED && !initialIntegration) return `capability ${key} is required for every active agent (support it; impossible and todo are only for retired backends)`;
     if (value.state === 'covered' && !spec.covered) return `capability ${key} cannot be covered (Pleiad has no common fallback; use impossible('reason', cause) or todo('#Issue'))`;
     if (value.state === 'impossible') {
       if (!(typeof value.reason === 'string' && value.reason.trim())) return `capability ${key} impossible needs a reason (impossible('reason', cause))`;
@@ -98,7 +98,12 @@ export function checkBackendShape(native) {
       continue;
     }
     const value = caps[key];
-    const problem = capabilityProblem(key, value);
+    // The first Pleiad Agent release supports conversation and read-only tools.
+    // Keep the production requirements for the other backends and all other marks.
+    const initialIntegration = id === 'pleiad-agent' &&
+      ['plyInstructions', 'plyAgents', 'browser', 'plyControl', 'secrets'].includes(key) &&
+      value?.state === 'impossible' && value.cause === 'design';
+    const problem = capabilityProblem(key, value, { initialIntegration });
     if (problem) { problems.push(`${id}: ${problem} (write it for ${id} in ${marksFile})`); continue; }
     const spec = CAPABILITIES[key];
     if (isCapabilityState(value)) {
@@ -239,7 +244,7 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   'connectors',
   // onContextRebuild: 記録からの組み立て直し（ADR 0287）の区切りを会話へ記録する受け口。conversations.mjs の引き継ぎの包みが呼ぶ
   'onContextRebuild',
-  'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',
+  'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger', 'pendingDecision',
   'authorize', 'backend', 'isActive', 'origin', 'progress',
 ]));
 

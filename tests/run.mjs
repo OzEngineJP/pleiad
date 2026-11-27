@@ -298,6 +298,7 @@ const SUITES = [
   // Devin・Grok のモデルの一覧の置き場（models() の TTL キャッシュ）: 取りかけの分け合い・失敗は覚えない・強制の取り直し
   './unit/backend-model-cache.mjs',
   './unit/backend-common.mjs',
+  './unit/server-pleiad-agent.mjs',
   // エージェントの種類の漏れの lint（tests/lint-agents.mjs。core/backends/ の外）: id の直書きのラチェット・backend-allow の印の数と死んだ印・一覧への入れ忘れ・README・AGENTS.md の一致
   './unit/agents-lint.mjs',
   // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
