@@ -792,20 +792,6 @@ export function wrapBackend(native) {
         throw new Error(t("conversations.toolRunning"));
       }
     }
-    let forkIds;
-    if (native.forkBefore && r?.nativeId && r.base === 0 && !options.snapshot) {
-      const rawOf = executionMessageIds(r, native.id);
-      const boundaryId = before ?? options.upToMessageId;
-      const rawBoundary = rawOf(boundaryId);
-      if (boundaryId === undefined || rawBoundary) {
-        const forked = await native.fork(r.nativeId, { title: options.title,
-          ...(before !== undefined ? { beforeMessageId: rawBoundary } : options.upToMessageId ? { upToMessageId: rawBoundary } : {}) });
-        forkIds = { nativeId: forked.sessionId, messages: Object.fromEntries(messages.flatMap(m => {
-          const raw = rawOf(m.uuid);
-          return raw ? [[raw, m.uuid]] : [];
-        })) };
-      }
-    }
     presents = await copyShots(presents, id, child);
     const now = Date.now();
     const parent = { sessionId: id, atMessage: cutId ?? null,
@@ -818,14 +804,31 @@ export function wrapBackend(native) {
       cwd: meta.cwd ?? source.cwd, createdAt: now, lastModified: now };
     // One atomic record owns the ID, lineage, metadata, complete messages and attachments.
     // Publish only after persistence succeeds: a failed fork cannot appear in the list.
+    let forkIds;
     try {
       await store.inheritSettings(id, child);
+      if (native.forkBefore && r?.nativeId && r.base === 0 && !options.snapshot) {
+        const rawOf = executionMessageIds(r, native.id);
+        const boundaryId = before ?? options.upToMessageId;
+        const rawBoundary = rawOf(boundaryId);
+        if (boundaryId === undefined || rawBoundary) {
+          const forked = await native.fork(r.nativeId, { title: options.title,
+            ...(before !== undefined ? { beforeMessageId: rawBoundary } : options.upToMessageId ? { upToMessageId: rawBoundary } : {}) });
+          forkIds = { nativeId: forked.sessionId, messages: Object.fromEntries(messages.flatMap(m => {
+            const raw = rawOf(m.uuid);
+            return raw ? [[raw, m.uuid]] : [];
+          })) };
+        }
+      }
       await save({ [child]: { backend: native.id, nativeId: forkIds?.nativeId ?? null, base: forkIds ? 0 : messages.length,
         messages: structuredClone(messages), presents: structuredClone(presents),
         segments: forkIds ? [{ backend: native.id, nativeId: forkIds.nativeId }] : [], ...(forkIds ? { forkIds } : {}), info,
         ...(r?.contextStart ? { contextStart: Math.min(classifySystemMessages(r.messages.slice(0, r.contextStart)).length, messages.length), contextSince: r.contextSince } : {}), _dirty: true } });
     } catch (error) {
       delete (await all())[child];
+      if (forkIds) {
+        await deleteConversation(forkIds.nativeId, native.id).catch(() => noteDeleted(native.id, forkIds.nativeId));
+      }
       await fs.rm(windowShotFolder(store.dataDir, child), { recursive: true, force: true }).catch(() => {});
       await fs.rm(sessionFilePath(child), { force: true }).catch(() => {});
       await store.removeSession(child);
