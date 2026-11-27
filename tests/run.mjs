@@ -493,6 +493,10 @@ const SUITES = [
   './unit/context-key.mjs',
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',
+  // 外部 MCP の中継の本文の上限: 読む間だけ効き、長い起動・ツールの答えを切らない
+  './unit/context-bridge-timeouts.mjs',
+  // 保持役の MCP の口（core/context-mcp-held.mjs）の閉じ方: 止める・記録を捨てる・手を離す
+  './unit/context-mcp-held.mjs',
   './unit/context-paging.mjs',
   './unit/mcp-orphans.mjs',
   './unit/worktree-mcp.mjs',

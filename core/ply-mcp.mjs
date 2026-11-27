@@ -13,6 +13,9 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js
 import { withFileLock } from './secret-store.mjs';
 import { t } from './i18n.mjs';
 
+/** 外部 MCP の起動（initialize と一覧）の待ちの既定。npx の冷えた起動は 20 秒を超える（ADR 0368）。上限も同じ 60 秒 */
+export const MCP_STARTUP_TIMEOUT_SEC = 60;
+
 export const MASK = '••••';
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const own = (o, k) => Object.hasOwn(o, k);
@@ -330,7 +333,7 @@ export function createPlyMcp({ dataDir, secrets }) {
       // 秘密なしで取り込んだ登録は、値を入れるまでつながない（空の値で送ると、認証の失敗が接続先に記録される）
       if (definition.pending?.length) throw Object.assign(new Error(t('context.mcp.pendingValues', { keys: definition.pending.join(', ') })), { code: 'MCP_AUTH_REQUIRED' });
       const stored = await secrets.get(secretKey(name, 'static')) ?? {};
-      const timeout = Math.min(60000, (definition.startup_timeout_sec ?? 20) * 1000);
+      const timeout = Math.min(MCP_STARTUP_TIMEOUT_SEC * 1000, (definition.startup_timeout_sec ?? MCP_STARTUP_TIMEOUT_SEC) * 1000);
       if (definition.transport === 'stdio') {
         return { type: 'stdio', command: definition.command, args: definition.args ?? [], cwd: definition.cwd ? path.resolve(cwd, definition.cwd) : cwd,
           env: { ...getDefaultEnvironment(), ...(stored.env ?? {}) }, timeout, definition };
