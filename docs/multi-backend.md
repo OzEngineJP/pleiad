@@ -1089,7 +1089,9 @@ Claude のモデルの一覧は、アカウント（組織）で変わる（承�
 - **引く時機。** 画面の要求・確かめは手元の一覧で答え、寿命（30 分）を過ぎていれば裏で引き直す。`models(cwd, { passive: true })` は手元の一覧だけで答える（CLI を起こさない・待たない。使用量の取り置きの判定用）。起動時・SDK 取得後の先読み（`warmModels`）は、ログイン中と使える登録アカウントを 1 つずつ順に引く。アカウントの追加・トークンの差し替え・削除は `invalidateModels(accountId)` でそのアカウントの記憶だけを捨て、追加・差し替えは引き直す。一覧が手元に入った・変わったときは `onModelsChanged` の口で知らせ、サーバーが画面へ `claudeAccountsChanged` を送る
 - **画面。** 語彙の要求・取得の鍵にアカウントを入れ、アカウントを替えたら引き直す。アカウントを替えて今のモデルが新しい一覧に無いときは、`accounts: 'agent'` のバックエンドと同じ扱い（会話は `settings.modelUnavailable` で断る）
 
-### 2.12 Pleiad Agent（標準入出力）
+### 2.12 Pleiad Agent（標準入出力、試験中）
+
+通常のホストで試すには、起動時の `AGENT_HOST_BACKENDS` のカンマ区切り一覧に `pleiad-agent` を含める。管理下ホストでは Pleiad Agent だけが登録される。
 
 Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/4c0713fe089520e6bee3534ccf9e0274b440df8e/docs/stdio.md)
 

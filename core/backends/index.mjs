@@ -1,6 +1,6 @@
 // バックエンドのレジストリ。
 //
-// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定は core/backends/agents.mjs の fake を除く全部）で選ぶ。
+// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定は core/backends/agents.mjs の DEFAULT_AGENT_IDS）で選ぶ。
 // 読み込みは動的 import にしてある。理由: claude.mjs は Agent SDK を引き込むので、
 // `AGENT_HOST_BACKENDS=fake` のテストでは**そもそも読み込みたくない**
 // （SDK 無しでサーバが起動できることが、バックエンド抽象化ができている証拠になる）。
