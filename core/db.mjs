@@ -753,8 +753,12 @@ export function notificationTable(db) {
     markSession(sessionId, upTo, at, kinds = null) {
       return Number(db.prepare(`UPDATE notifications SET read_at = ? WHERE session_id = ? AND read_at IS NULL AND at <= ?${kindClause(kinds)}`).run(at, sessionId, upTo, ...(kinds ?? [])).changes);
     },
-    markChannel(channelId, upTo, at) {
-      return Number(prepared(db, 'UPDATE notifications SET read_at = ? WHERE channel_id = ? AND read_at IS NULL AND at <= ?').run(at, channelId, upTo).changes);
+    markChannel(channelId, upTo, at, threadId) {
+      const scope = threadId
+        ? "json_extract(data, '$.threadId') = ?"
+        : "(json_extract(data, '$.threadId') IS NULL OR (kind = 'mention' AND json_extract(data, '$.postId') = json_extract(data, '$.threadId')))";
+      return Number(prepared(db, `UPDATE notifications SET read_at = ? WHERE channel_id = ? AND read_at IS NULL AND at <= ? AND ${scope}`)
+        .run(at, channelId, upTo, ...(threadId ? [threadId] : [])).changes);
     },
     /** あなた待ちを決着させる（決着した行は既読にもする）。変えたら true */
     resolve(dedupeKey, at, outcome) {

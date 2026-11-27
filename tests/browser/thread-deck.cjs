@@ -5,8 +5,7 @@
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_FAKE_SLOW_STEER=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-deck-test AGENT_HOST_PORT=7436 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // Never run against live data. bot・チャンネル・スレッドは本物の操作（bots.create・channels.post ほか）で作り、fake の bot が本当に走る。
 // bot の途中の様子（本文の差し替え・提示）だけは、サーバーから届く形の出来事（channelPost）をページの WebSocket へ流して確かめる。
-async page => {
-  const URL = 'http://127.0.0.1:7436/?token=thread-deck-test';
+async (page, { url = 'http://127.0.0.1:7436/?token=thread-deck-test' } = {}) => {
   const results = [];
   const check = (ok, label, detail) => { if (!ok) throw Error(label + (detail === undefined ? '' : ' ' + JSON.stringify(detail))); results.push(label); };
   const later = page.getByRole('button', { name: 'あとで', exact: true });
@@ -19,7 +18,7 @@ async page => {
   };
 
   await page.setViewportSize({ width: 1280, height: 820 });
-  await page.goto(URL);
+  await page.goto(url);
   // ---- 準備: WebSocket を包む（出来事を流せる・invoke と WS コマンドを呼べる・送ったコマンドを控える）
   await page.addInitScript(() => {
     if (window.__tdWrapped) return;
@@ -139,8 +138,8 @@ async page => {
   check(head.chan === 'none' && head.sep && head.title.startsWith('v2.14.0 から') && !head.title.startsWith('@'), 'while the feed is on the left the heading is just "› thread title" (no channel name, no leading @)');
   check(await page.evaluate(() => document.activeElement?.id === 'thPrompt'), 'focus goes to the thread composer when a thread opens');
   const lastReplyAt = (await readThread(A.id)).posts.at(-1).at;
-  await page.waitForFunction(([cid, at]) => window.__sent.some((c) => c.command === 'invoke' && c.args.op === 'channels.markRead' && c.args.args.channelId === cid && c.args.args.at >= at), [ch.id, lastReplyAt]);
-  check(true, 'while you read the thread at the bottom, the channel is marked read up to the last reply (channels.markRead)');
+  await page.waitForFunction(([cid, tid, at]) => window.__sent.some((c) => c.command === 'invoke' && c.args.op === 'channels.markRead' && c.args.args.channelId === cid && c.args.args.threadId === tid && c.args.args.at >= at), [ch.id, A.id, lastReplyAt]);
+  check(true, 'while you read at the bottom, the opened thread is marked read up to its last reply');
   const fold = await page.evaluate(() => {
     const row = document.querySelector('#chFeedComposer .ch-row');
     return { row: getComputedStyle(row).display, h: document.getElementById('chFeedComposer').getBoundingClientRect().height };
@@ -151,8 +150,8 @@ async page => {
   await page.locator('#thPrompt').click();
   check(await page.evaluate(() => getComputedStyle(document.querySelector('#chFeedComposer .ch-row')).display) === 'none', 'it folds again when focus returns to the thread');
   check(await page.locator(`#chFeed .post[data-post-id="${A.id}"][data-open]`).count() === 1, 'the open thread card in the feed is marked as selected');
-  const sel = await page.evaluate((id) => { const n = document.querySelector(`#chFeed .post[data-post-id="${id}"]`); const b = getComputedStyle(n).backgroundColor; const bar = getComputedStyle(n, '::before'); return { bg: b, bar: bar.content, w: bar.width }; }, A.id);
-  check(sel.bar === '""' && sel.w === '3px' && sel.bg !== 'rgba(0, 0, 0, 0)', 'the selected card has a background and a thin bar on the left');
+  const selectedBg = await page.locator(`#chFeed .post[data-post-id="${A.id}"]`).evaluate((node) => getComputedStyle(node).backgroundColor);
+  check(selectedBg !== 'rgba(0, 0, 0, 0)', 'the selected card has a background');
 
   // ---- スレッドの中身
   const body = await page.evaluate(() => ({

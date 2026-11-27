@@ -26,13 +26,13 @@ export function botState(bot, { sessions = [], runningIds = new Set(), waitingId
 
 /**
  * 脇の面の切り替え（チャット / bot）の印。あなたを待っているもの（承認待ちの会話・あなたを待っている bot・あなた宛ての投稿）が
- * あれば、その側を見ている間も片付くまで 'mark'（アイコン右上の点）を残す。作業中・未読だけでは付けない
- * @param {{ tab?: 'chats'|'channels', channels: object[], botStates: string[], chats: { waiting: boolean, running?: boolean } }} o
+ * あれば 'mark'、無ければ未読のある側に 'unread' を出す。選択中の面でも表示する。
  */
-export function tabDots({ channels = [], botStates = [], chats = {} }) {
+export function tabDots({ channels = [], botStates = [], chats = {}, channelThreadsUnread = false }) {
   const live = channels.filter((c) => !c.archivedAt);
-  const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark' : null;
-  const chatsDot = chats.waiting ? 'mark' : null;
+  const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark'
+    : channelThreadsUnread || live.some((c) => !c.home && (c.unread ?? 0) > 0) ? 'unread' : null;
+  const chatsDot = chats.waiting ? 'mark' : chats.unread ? 'unread' : null;
   return { chats: chatsDot, channels: channelsDot };
 }
 

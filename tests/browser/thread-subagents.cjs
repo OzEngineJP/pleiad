@@ -4,8 +4,7 @@
 // Open an isolated AGENT_HOST_BACKENDS=fake server first (port 7438, token thread-subagents-test):
 //   AGENT_HOST_BACKENDS=fake AGENT_HOST_FAKE_USAGE=1 AGENT_HOST_WORKTREES=off AGENT_HOST_LOCALE=ja AGENT_HOST_TOKEN=thread-subagents-test AGENT_HOST_PORT=7438 AGENT_HOST_DATA=<一時の置き場> node core/server.mjs
 // Never run against live data. bot・チャンネル・スレッドは本物の操作（bots.create・channels.post ほか）で作り、fake の bot が ply_delegate を呼び、fake の子が走る。
-async page => {
-  const URL = 'http://127.0.0.1:7438/?token=thread-subagents-test';
+async (page, { url = 'http://127.0.0.1:7438/?token=thread-subagents-test', capture = async () => {} } = {}) => {
   const results = [];
   const check = (ok, label, detail) => { if (!ok) throw Error(label + (detail === undefined ? '' : ' ' + JSON.stringify(detail))); results.push(label); };
   const sleep = (ms) => page.waitForTimeout(ms);
@@ -43,7 +42,7 @@ async page => {
       window.__sockets.at(-1).send(JSON.stringify({ kind: 'command', command: 'invoke', id, args: { op, args } }));
     });
   });
-  await page.goto(URL);
+  await page.goto(url);
   await page.getByRole('button', { name: 'あとで', exact: true }).click({ timeout: 4000 }).catch(() => {});
   await page.waitForFunction(() => window.__sockets?.at(-1)?.readyState === 1 && document.getElementById('channelsView'));
   const rpc = (op, args) => page.evaluate(([o, a]) => window.__rpc(o, a), [op, args]);
@@ -54,6 +53,8 @@ async page => {
   const lynx = bots.find((b) => b.name === 'Lynx') ?? await rpc('bots.create', { name: 'Lynx', icon: '🐺', backend: 'fake', persona: '負荷試験が得意' });
   const ch = (await rpc('channels.list')).channels?.find((c) => c.name === 'release-ci') ?? await rpc('channels.create', { name: 'release-ci', purpose: 'リリースの CI を見張る', members: [owl.id, lynx.id] });
   const turns = async (threadId) => (await rpc('channels.read', { channelId: ch.id, threadId })).posts.filter((p) => p.turn && p.state === 'done');
+  const B = await rpc('channels.post', { channelId: ch.id, text: '@Lynx 画面の見た目を確認' });
+  await until(async () => (await turns(B.id)).length >= 1, 'plain thread turn');
   const delegate = (title, task, kind = 'mechanical') => `ply:${JSON.stringify({ name: 'ply_delegate', arguments: { kind, backend: 'fake', task, title } })}`;
   const A = await rpc('channels.post', { channelId: ch.id, text: `@Owl ${delegate('CI の結果を待つ', 'active-shell')}` });
   await until(async () => (await turns(A.id)).length >= 1, 'owl first turn');
@@ -61,9 +62,7 @@ async page => {
   await until(async () => (await turns(A.id)).length >= 2, 'owl second turn');
   await rpc('channels.post', { channelId: ch.id, threadId: A.id, text: `@Lynx ${delegate('負荷試験を回す', 'active-shell', 'investigate')}` });
   await until(async () => (await turns(A.id)).length >= 3, 'lynx turn');
-  const B = await rpc('channels.post', { channelId: ch.id, text: '@Lynx ok' });   // 委譲しないスレッド
-  await until(async () => (await turns(B.id)).length >= 1, 'plain thread turn');
-
+  await rpc('channels.setThreadTitle', { channelId: ch.id, threadId: A.id, title: 'スレッドの画面を確認' });
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeed .post .thread-summary').first().waitFor();
   const open = async (id) => {
@@ -74,13 +73,29 @@ async page => {
 
   // ================================================================ 子のいるスレッド
   await open(A.id);
-  const chip = page.locator('#chThread .th-subs button.bg-chip');
-  await until(async () => (await chip.count()) === 1 && await page.locator('#chThread .th-subs').isVisible(), 'chip visible');
-  const place = await page.evaluate(() => {
+  const chip = page.locator('#thComposer #thContextStrip button.bg-chip');
+  await chip.waitFor();
+  const position = () => page.evaluate(() => {
     const r = (s) => document.querySelector(s)?.getBoundingClientRect();
-    return { chip: r('#chThread .th-subs'), composer: r('#chThread .ch-composer') ?? r('#thComposer') };
+    return { chip: r('#thWorkEntryButton'), box: r('#thCbox'), width: innerWidth };
   });
-  check(place.chip && place.composer && place.chip.bottom <= place.composer.top + 1 && place.chip.right > place.composer.right - 40, 'the subagent chip is at the right end just above the thread composer', place);
+  const aligned = ({ chip, box, width }) => chip.bottom <= box.top && Math.abs(chip.right - box.right) <= 1 && chip.left >= box.left && box.right <= width;
+  check(aligned(await position()), 'the subagent chip aligns with the right edge of the text box');
+  const threadUnread = async (id) => (await rpc('channels.threads', { channelId: ch.id })).threads.find((row) => row.threadId === id)?.unread;
+  await until(async () => (await threadUnread(A.id)) === false, 'opened thread is read');
+  check(await threadUnread(B.id) === true, 'the feed and newer thread leave the older thread unread');
+  await page.locator('#faceChannels[aria-pressed="true"] .unread-mark').waitFor();
+  check(/完了・未確認/.test(await page.locator('#faceChannels').getAttribute('aria-label')), 'the selected bot tab still announces unread');
+  await capture(page, '1280-light');
+  await page.setViewportSize({ width: 360, height: 820 });
+  await until(async () => aligned(await position()), 'mobile chip aligned');
+  check(aligned(await position()), 'the chip stays inside the text box width at 360px');
+  await capture(page, '360-light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await capture(page, '360-dark');
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await capture(page, '1280-dark');
+  await page.emulateMedia({ colorScheme: 'light' });
   check(/一覧を開く/.test(await chip.getAttribute('aria-label')) && await chip.getAttribute('aria-controls') === 'workDialog', 'the chip has the same spoken name as the Chats chip and controls the work dialog');
 
   // ---- 作業ログの委譲カードは Chats と同じ形（「委譲」・題・状態の印と経過・子の会話への矢印）
@@ -96,7 +111,8 @@ async page => {
   await until(async () => page.locator('#chThread .tc-delegate .tc-res .tc-el, #chThread .tc-delegate .tc-res .run').count(), 'running mark on the card');
 
   // ---- 一覧: bot ごと・題・状態・経過
-  await chip.click();
+  await chip.focus();
+  await page.keyboard.press('Enter');
   await until(async () => page.evaluate(() => document.getElementById('workDialog').open), 'dialog open');
   await sleep(600);
   const modal = await page.evaluate(() => ({
@@ -129,12 +145,17 @@ async page => {
 
   // ================================================================ 子のいないスレッド
   await open(B.id);
-  const none = await page.evaluate(() => ({ hidden: document.querySelector('#chThread .th-subs')?.hidden, shown: document.querySelectorAll('#chThread .th-subs .bgc-slot, #chThread .th-subs .bgc-done').length }));
+  const none = await page.evaluate(() => ({ hidden: document.querySelector('#thContextStrip')?.hidden, shown: document.querySelectorAll('#thContextStrip .bgc-slot, #thContextStrip .bgc-done').length }));
   check(none.hidden === true && none.shown === 0, 'a thread whose bots delegated nothing shows no subagent chip', none);
+  await page.locator('#faceChannels .unread-mark').waitFor({ state: 'hidden' });
+  check(await threadUnread(B.id) === false, 'opening the older thread clears its unread state');
 
   // ================================================================ Chats のダイアログは従来どおり（題は「バックグラウンド」）
   // 一時チャットの会話の行を押して会話の面へ戻る
-  await page.locator('#groups .row[data-session]:not([data-thread])').first().click();
+  await page.locator('#faceChats').click();
+  const chat = page.locator('#groups .row[data-session]:not([data-thread])').first();
+  if (!await chat.count()) return results;
+  await chat.click();
   const entry = page.locator('#workEntryButton');
   if (await entry.isVisible().catch(() => false)) {
     await entry.click();

@@ -111,15 +111,15 @@ export default async function (t) {
     t.ok('notifications.list のページ（limit・hasMore・before）', page.items.length === 2 && page.hasMore === true && (await list({ limit: 2, before: page.items[1].seq })).items.every((x) => x.seq < page.items[1].seq));
     t.ok('不正な引数（limit 0・filter 違い）は INVALID で断る', await call('notifications.list', { limit: 0 }).then(() => false, () => true) && await call('notifications.list', { filter: 'x' }).then(() => false, () => true));
 
-    // ---- @あなた（bot の投稿）。チャンネルの既読で既読
+    // ---- @あなた（bot の返信）。スレッドの既読で既読
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev', members: [owl.id] });
     from = host.mark();
     const root = await call('channels.post', { channelId: dev.id, text: '@Owl echo:@あなた 確認してください' });
     const mention = await until(async () => (await list({ filter: 'mention' })).items.find((x) => x.target.channelId === dev.id), { ms: 20_000, label: '@あなた' });
     t.ok('bot の @あなた が行になる（書いた bot・チャンネル名・スレッドの題・投稿へ飛ぶ。未読）', mention.unread === true && mention.actor?.name === 'Owl' && mention.channelName === 'dev' && mention.target.threadId === root.id && typeof mention.target.postId === 'string' && mention.threadTitle.includes('@Owl'), JSON.stringify(mention));
-    await call('channels.markRead', { channelId: dev.id, at: Date.now() });
-    t.ok('チャンネルを既読にすると、その通知も既読になる', (await until(async () => (await list({ filter: 'mention' })).items.find((x) => x.id === mention.id && x.unread === false), { label: '既読' })) !== null);
+    await call('channels.markRead', { channelId: dev.id, threadId: root.id, at: Date.now() });
+    t.ok('スレッドを既読にすると、その通知も既読になる', (await until(async () => (await list({ filter: 'mention' })).items.find((x) => x.id === mention.id && x.unread === false), { label: '既読' })) !== null);
 
     // ---- bot の返事の失敗（ADR 0358）: 通知は、bot の中の会話でなく、失敗した返事のあるスレッドと返事の投稿を指す
     const rootFail = await call('channels.post', { channelId: dev.id, text: '@Owl fail' });

@@ -316,6 +316,31 @@ export default async function (t) {
     await unreadSvc.threads.update(uc.id, mine.id, { state: 'working' });
     t.ok('list: threadsWorking は state が working のスレッドの数', (await unreadSvc.list()).find((c) => c.id === uc.id).threadsWorking === 1);
     t.ok('markRead: 数でない at は INVALID', (await codeOf(() => unreadSvc.markRead({ channelId: uc.id, at: 'x' }))) === 'INVALID');
+
+    const legacy = await unreadSvc.post({ channelId: uc.id, threadId: mine.id, text: '以前の返信' }, HUMAN);
+    const legacyStore = createChannelStore({ dir: path.join(tmp, 'unread', 'channels') });
+    const indexPath = path.join(tmp, 'unread', 'channels', 'index.json');
+    const legacyIndex = JSON.parse(await fs.readFile(indexPath, 'utf8'));
+    legacyIndex.reads[uc.id] = { readAt: legacy.at, mentionAt: legacy.at };
+    await fs.writeFile(indexPath, JSON.stringify(legacyIndex));
+    const scoped = makeService('unread', { emit: (e) => events.push(e), now: () => (clock += 10), listBots: async () => botList });
+    const a = await scoped.post({ channelId: uc.id, text: '先のスレッド' }, HUMAN);
+    await scoped.post({ channelId: uc.id, threadId: a.id, text: '@あなた 先の返信' }, BOT);
+    const b = await scoped.post({ channelId: uc.id, text: '後のスレッド' }, HUMAN);
+    const reply = await scoped.post({ channelId: uc.id, threadId: b.id, text: '後の返信' }, BOT);
+    const top = await scoped.post({ channelId: uc.id, text: '新しい投稿' }, BOT);
+    const row = async (id) => (await scoped.threadIndex({ channelId: uc.id })).threads.find((th) => th.threadId === id);
+    await scoped.markRead({ channelId: uc.id, at: top.at });
+    t.ok('投稿一覧の既読はスレッドの未読を消さず、旧データの既読を引き継ぐ',
+      (await row(a.id)).unread && (await row(b.id)).unread && !(await row(mine.id)).unread
+      && (await legacyStore.readState(uc.id)).legacyThreadReadAt === legacy.at);
+    const marked = await scoped.markRead({ channelId: uc.id, threadId: b.id, at: reply.at });
+    const after = (await scoped.list()).find((c) => c.id === uc.id);
+    t.ok('後のスレッドを読んでも先の未読とあなた宛ては残る',
+      marked.readAt === reply.at && (await row(a.id)).unread && !(await row(b.id)).unread
+      && after.unread === 1 && after.mentions === 1
+      && (await scoped.markRead({ channelId: uc.id, threadId: b.id, at: 1 })).readAt === reply.at
+      && events.some((e) => e.type === 'channelRead' && e.channelId === uc.id && e.threadId === b.id && e.readAt === reply.at));
     void clockBase;
 
     // アーカイブ

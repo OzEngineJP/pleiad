@@ -39,14 +39,15 @@ export default function (t) {
   // ---- タブの点（05-2: 作業中 ◌ は出さない。05-3: あなた待ちの点は見ている側でも片付くまで残す）
   const dots = (o) => tabDots({ channels: [], botStates: [], chats: {}, ...o });
   t.ok('Chats を見ていて bot があなた待ち → Channels に mark', dots({ tab: 'chats', botStates: ['idle', 'waiting'] }).channels === 'mark');
-  t.ok('あなた宛ての投稿も mark。作業中の bot や未読だけでは付けない', dots({ tab: 'chats', channels: [{ mentions: 1 }] }).channels === 'mark'
-    && dots({ tab: 'chats', botStates: ['working'] }).channels === null && dots({ tab: 'chats', channels: [{ unread: 3 }] }).channels === null);
+  t.ok('あなた宛ては未読より優先。未読だけなら選択中の面にも出す', dots({ channels: [{ mentions: 1, unread: 3 }] }).channels === 'mark'
+    && dots({ botStates: ['working'] }).channels === null && dots({ tab: 'channels', channels: [{ unread: 3 }] }).channels === 'unread'
+    && dots({ channelThreadsUnread: true }).channels === 'unread');
   t.ok('アーカイブしたチャンネルの未読は数えない', dots({ tab: 'chats', channels: [{ unread: 3, mentions: 1, archivedAt: 1 }] }).channels === null);
   t.ok('見ている側でもあなた待ちが残っている間は mark を残す', dots({ tab: 'channels', botStates: ['waiting'], chats: { waiting: true } }).channels === 'mark'
     && dots({ tab: 'channels', chats: { waiting: true } }).chats === 'mark');
-  t.ok('チャット側: あなた待ちなら mark、作業中や未読だけでは null（見ている側でも残す）', dots({ tab: 'channels', chats: { waiting: true, running: true } }).chats === 'mark'
-    && dots({ tab: 'channels', chats: { running: true } }).chats === null && dots({ tab: 'channels', chats: { unread: true } }).chats === null
-    && dots({ tab: 'channels' }).chats === null && dots({ tab: 'chats', chats: { waiting: true } }).chats === 'mark');
+  t.ok('チャット側でも未読を表示し、あなた待ちを優先する', dots({ chats: { waiting: true, unread: true } }).chats === 'mark'
+    && dots({ chats: { running: true } }).chats === null && dots({ tab: 'chats', chats: { unread: true } }).chats === 'unread'
+    && dots({}).chats === null);
 
   // ---- 検索の行
   const rows = channelNameRows(channels, parseTerms('check'));

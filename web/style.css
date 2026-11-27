@@ -2597,7 +2597,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 
 
 /* 承認済み（2026-10-23）: 作業・メーターを入力欄の 8px 上の 1 段にする。待ち行は会話の筋の末尾（ADR 0265） */
-#contextStrip{padding:0;margin-bottom:8px;min-height:28px;gap:8px}
+:is(#contextStrip,#thContextStrip){padding:0;margin-bottom:8px;min-height:28px;gap:8px}
 #contextStrip::before{content:"";flex:1}
 #contextStrip > .work-entry{order:1;margin-left:auto}
 #contextStrip > .context-meter-wrap{order:2;flex:none}
@@ -2612,11 +2612,11 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 #wkContextStrip > .context-strip-status{order:3}
 #wkContextStrip > .usage-chip{order:4;margin-left:0;flex:none}
 @media (max-width:700px){
-  #contextStrip{min-height:var(--hit)}
-  #contextStrip .bg-chip{height:var(--hit)}
-  #contextStrip .bgc-logo,#contextStrip .bgc-logo .row-be{width:var(--fs-xl);height:var(--fs-xl)}
-  #contextStrip .bgc-logo .row-be img{height:var(--fs-xl)}
-  #contextStrip .bgc-n{font-size:var(--fs-meta)}
+  :is(#contextStrip,#thContextStrip){min-height:var(--hit)}
+  :is(#contextStrip,#thContextStrip) .bg-chip{height:var(--hit)}
+  :is(#contextStrip,#thContextStrip) .bgc-logo,:is(#contextStrip,#thContextStrip) .bgc-logo .row-be{width:var(--fs-xl);height:var(--fs-xl)}
+  :is(#contextStrip,#thContextStrip) .bgc-logo .row-be img{height:var(--fs-xl)}
+  :is(#contextStrip,#thContextStrip) .bgc-n{font-size:var(--fs-meta)}
 }
 
 /* モデルの面のアカウントの 2 行目で、claude.ai のコネクターが止まっている（ADR 0340 段 3。web/client.mjs の connectorsNote） */

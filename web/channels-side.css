@@ -17,6 +17,7 @@
 .side-face button[aria-pressed="true"]{color:var(--ink-strong);font-weight:700}
 .side-face button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px;z-index:2}
 .side-face-ico-wrap{position:relative;display:inline-flex;flex:none}
+.side-face-ico-wrap > .unread-mark{position:absolute;width:11px;height:11px;top:-5px;right:-6px}
 .side-face-ico-wrap.has-wait::after{content:"";position:absolute;top:-3px;right:-4px;width:7px;height:7px;border-radius:50%;color:var(--ink-mark);background:currentColor;box-shadow:0 0 0 1.5px var(--surface-3)}
 .side-face button[aria-pressed="true"] .side-face-ico-wrap.has-wait::after{box-shadow:0 0 0 1.5px var(--surface-paper)}
 @media (prefers-color-scheme:dark){

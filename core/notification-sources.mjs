@@ -100,7 +100,7 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
         const [actor, place] = [post.author?.kind === 'bot' ? await botActor(post.author.botId) : null, await placeOf(post.channelId, threadId)];
         return inbox.add({ kind: 'mention', dedupeKey: `mention:${post.id}`, at: post.at, channelId: post.channelId, data: { threadId, postId: post.id, actor, ...place } });
       }
-      if (event?.type === 'channelRead') return inbox.markChannel(event.channelId, event.readAt);
+      if (event?.type === 'channelRead') return inbox.markChannel(event.channelId, event.readAt, event.threadId);
       if (event?.type === 'channelsChanged' && event.channel?.archivedAt && event.channel.id) return inbox.removeChannel(event.channel.id);
       return null;
     }),

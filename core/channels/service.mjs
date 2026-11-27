@@ -44,7 +44,7 @@
 //   edit({ channelId, postId, text?, state?, presents?, mentions? }, author): Promise<Post>      … 自分の投稿だけ（検査は ops）。text を変えたら mentions も解き直す
 //   remove({ channelId, postId }, author): Promise<void>
 //   react({ channelId, postId, emoji, on }, author): Promise<{ reactions: Post['reactions'] }>   … bot の投稿なら hooks.reacted へ渡す
-//   markRead({ channelId, at }): Promise<{ readAt: number }>      … 進める向きにだけ動く（別の端末が先に進めていたら戻さない）
+//   markRead({ channelId, threadId?, at }): Promise<{ readAt: number }> … 指定したスレッド、または投稿一覧の既読を進める
 //   stopThread({ channelId, threadId }, author): Promise<ThreadState>
 //        … stopped: { by, at } を残して channelThread を出し、hooks.stopThread へ渡す（ターンを止める・システムの投稿は S4）
 //   mentionsOf(text, author?): Promise<string[]>                          … text の @ を解いた bot の id（'you' も入る）。post の mentions と同じ解き方
@@ -262,13 +262,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
 
     async list() {
       const [channels, reads, threads] = await Promise.all([store.channels(), store.allReadStates(), threadStore.list()]);
+      const threadReads = new Map(threads.map((th) => [`${th.channelId}\n${th.threadId}`, th.readAt ?? 0]));
       return Promise.all(channels.map(async (channel) => {
         const read = { readAt: 0, mentionAt: 0, ...reads[channel.id] };
         let unread = 0, mentions = 0;
         for (const p of await store.snapshot(channel.id)) {
           if (p.deletedAt || p.author?.kind === 'human') continue;
-          if (p.at > read.readAt) unread++;
-          if (p.at > read.mentionAt && p.mentions?.includes('you')) mentions++;
+          const replyReadAt = p.threadId ? Math.max(read.legacyThreadReadAt ?? read.readAt, threadReads.get(`${channel.id}\n${p.threadId}`) ?? 0) : null;
+          if (p.at > (replyReadAt ?? read.readAt)) unread++;
+          if (p.at > (replyReadAt ?? read.mentionAt) && p.mentions?.includes('you')) mentions++;
         }
         return { ...shown(channel), unread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
       }));
@@ -325,7 +327,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           r.lastAt = Math.max(r.lastAt, p.at);
           replies.set(p.threadId, r);
         }
-        const channelRead = reads[channel.id]?.readAt ?? 0;
+        const channelRead = reads[channel.id]?.legacyThreadReadAt ?? reads[channel.id]?.readAt ?? 0;
         const rows = [];
         for (const root of all_) {
           if (root.threadId !== null || root.deletedAt) continue;
@@ -590,10 +592,12 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     async markRead({ channelId, threadId, at }) {
       await need(channelId);
       if (!Number.isFinite(at)) throw invalid('at must be a number');
-      // スレッドを読んだ: そのスレッドの既読も進める（脇の行の未読。チャンネルの既読は今までどおり同じ値を進める）
       if (threadId) {
-        await needPost(channelId, threadId);
-        emitThread(await threadStore.update(channelId, threadId, { readAt: at }));
+        const root = await needPost(channelId, threadId);
+        if (root.threadId !== null || root.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(threadId) });
+        const thread = await threadStore.update(channelId, threadId, { readAt: at });
+        emit({ type: 'channelRead', channelId, threadId, readAt: thread.readAt });
+        return { readAt: thread.readAt };
       }
       const state = await store.setReadState(channelId, { readAt: at, mentionAt: at });
       emit({ type: 'channelRead', channelId, readAt: state.readAt });

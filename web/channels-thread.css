@@ -139,9 +139,6 @@
 .th-perms{--gut:62px;margin-top:2px}
 .th-perms:empty{display:none}
 
-/* サブエージェントの入口: 入力欄のすぐ上の右端（Chats の入力欄の上の帯と同じチップ。style.css の .work-entry・.strip-chip）。子がいなければ出さない */
-.th-subs{justify-content:flex-end;margin:0 16px 2px}
-.th-subs[hidden]{display:none}
 /* 一覧（#workDialog）の bot ごとの見出し: アイコンと名前 */
 .bg-bot{display:flex;align-items:center;gap:6px}
 .th-jump{bottom:calc(var(--ch-composer-h,96px) + 56px)}
@@ -163,6 +160,5 @@
   .post-tail{font-size:var(--fs-body);line-height:1.7}
   .th-sys,.th-shell-where,.th-branch-from{margin-left:0}
   .th-perms{--gut:24px;margin-left:-24px}
-  .th-subs{margin:0 10px 2px}
   .deck[data-deck=solo] .th-side{display:inline-flex}   /* 形・位置・印は全部の ≡ で同じ（style.css の .side-opener） */
 }

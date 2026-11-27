@@ -64,7 +64,7 @@ export function backendLogo(id, label) {
   return mark;
 }
 
-function unreadMark() {
+export function unreadMark() {
   const mark = svgEl("svg", { viewBox: "0 0 14 14", class: "unread-mark", role: "img", "aria-label": t("sidebar.unread") });
   const title = svgEl("title");
   title.textContent = t("sidebar.unread");
@@ -1788,8 +1788,17 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     /** Chats の側に、あなたを待っている会話・未読の会話があるか（脇のタブの点。web/channels/sidebar.mjs） */
     attention() {
       // bot の会話（DM・ルーティンの待ち）は bot の面の印（web/channels/sidebar.mjs の botState）が受け持つ
-      const mine = last.sessions.filter((s) => !s.bot);
-      return { waiting: mine.some((s) => last.waitingIds.has(s.id)), running: mine.some((s) => last.runningIds.has(s.id)), unread: mine.some((s) => last.unreadIds.has(s.id)) };
+      const mine = homeRowsOf();
+      const { homeIds, ownerOf } = homeOwners();
+      const unread = (s) => last.unreadIds.has(s.id);
+      return {
+        waiting: mine.some((s) => last.waitingIds.has(s.id)),
+        unread: mine.some(unread),
+        channelThreadsUnread: last.threads.some((s) => {
+          const channel = directory.channels.get(s.thread.channelId);
+          return channel && !channel.archivedAt && (!homeIds.has(channel.id) || ownerOf(s)) && unread(s);
+        }),
+      };
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */
     setDirectory({ channels = [], bots = [], stateOf = directory.stateOf, botMenu = directory.botMenu, selected = directory.selected } = {}) {

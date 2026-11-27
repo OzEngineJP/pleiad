@@ -186,7 +186,9 @@ export function createChannelStore({ dir, now = Date.now } = {}) {
       let result;
       await mutateIndex((idx) => {
         const cur = { ...emptyRead(), ...idx.reads[channelId] };
-        result = { readAt: Math.max(cur.readAt, readAt ?? 0), mentionAt: Math.max(cur.mentionAt, mentionAt ?? 0) };
+        // 以前のチャンネル共通の既読は引き継ぎ、以後の投稿一覧の既読から切り離す。
+        result = { readAt: Math.max(cur.readAt, readAt ?? 0), mentionAt: Math.max(cur.mentionAt, mentionAt ?? 0),
+          legacyThreadReadAt: cur.legacyThreadReadAt ?? cur.readAt };
         idx.reads[channelId] = result;
         return idx;
       });

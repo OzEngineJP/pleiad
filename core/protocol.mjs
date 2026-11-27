@@ -321,7 +321,7 @@ export const EVENTS = new Set([
   "channelPost",     // { channelId, op: add|edit|delete, post } 投稿の追加・編集・削除（bot のターンの投稿の進み具合は 1 秒に 1 回まで）
   "channelReaction", // { channelId, postId, reactions } リアクションの付け外し
   "channelThread",   // { channelId, threadId, thread: ThreadState } スレッドの状態（作業中・トークン・止めた印）
-  "channelRead",     // { channelId, readAt } 別の端末・窓の既読
+  "channelRead",     // { channelId, threadId?, readAt } 別の端末・窓での投稿一覧またはスレッドの既読
   "botsChanged",     // { bot?: Bot, removed?: string }
   "memoryChanged",   // { layer, rev } 記憶が増えた・直した・忘れた（中身は memory.list で取り直す）
   "brainChanged",    // { botId } bot の思考の流れ・気がかり・心拍の状態が変わった（中身は brain.view で取り直す。ADR 0126）

@@ -346,7 +346,8 @@ export function createSidebar(host, getTabs) {
     const tabs = getTabs?.();
     if (!tabs) return;
     const now = live();
-    const dots = tabDots({ tab: tabs.tab, channels: S.channels, botStates: S.bots.map((b) => botState(b, now)), chats: side?.attention?.() ?? {} });
+    const chats = side?.attention?.() ?? {};
+    const dots = tabDots({ channels: S.channels, botStates: S.bots.map((b) => botState(b, now)), chats, channelThreadsUnread: chats.channelThreadsUnread });
     tabs.setDot('chats', dots.chats);
     tabs.setDot('channels', dots.channels);
   }

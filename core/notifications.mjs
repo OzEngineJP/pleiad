@@ -22,7 +22,7 @@
 //     list({ filter?, before?, limit? }): { items, unread, waiting, hasMore }
 //     counts(): { unread, waiting }
 //     markRead({ ids?, all? }): { changed }
-//     markSession(sessionId, upTo, kinds?)・markChannel(channelId, upTo)  … 会話・チャンネルの既読に合わせる
+//     markSession(sessionId, upTo, kinds?)・markChannel(channelId, upTo, threadId?)  … 会話・投稿一覧・スレッドの既読に合わせる
 //     viewSession(sessionId, upTo)  … その会話を upTo（表示した履歴の時点）まで見た。種類を問わず既読にする
 //     settle(dedupeKey, outcome)  … あなた待ちの決着（outcome: allowed | answered | denied | cancelled）
 //     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
@@ -125,10 +125,10 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       if (n) changed();
       return n;
     },
-    /** チャンネルの既読（channels.markRead の readAt）が進んだ。そのチャンネルの通知を upTo まで既読にする */
-    markChannel(channelId, upTo) {
+    /** 指定したスレッド、または投稿一覧の通知を upTo まで既読にする */
+    markChannel(channelId, upTo, threadId) {
       if (typeof channelId !== 'string' || !Number.isFinite(upTo)) return 0;
-      const n = open().markChannel(channelId, upTo, now());
+      const n = open().markChannel(channelId, upTo, now(), threadId);
       if (n) changed();
       return n;
     },

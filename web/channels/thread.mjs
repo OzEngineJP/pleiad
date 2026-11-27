@@ -87,13 +87,6 @@ export function createThread(host) {
   frame.append(log);
   // サブエージェントの入口（入力欄のすぐ上の右端。Chats の「バックグラウンド」と同じチップ。bot が委譲した子がいなければ出さない）。
   // 押すと bot ごとに子を並べる一覧が開く（Chats と同じ部品。docs/design-system.md「バックグラウンド」）
-  const subs = el('div', 'work-entry th-subs');
-  subs.hidden = true;
-  const subsButton = el('button', 'strip-chip bg-chip');
-  subsButton.type = 'button';
-  subsButton.setAttribute('aria-controls', 'workDialog');
-  subs.append(subsButton);
-  const subsChip = createBackgroundChip(subsButton);
   // 入力欄は Chats の会話と同じ部品（web/channels/thread-composer.mjs。ADR 0157）。宛先は本文の @ だけ（ADR 0362）
   let voiceView = null;
   const composer = createThreadComposer({
@@ -125,7 +118,9 @@ export function createThread(host) {
       try { return (await host.cmd('suggestTitle', { sessionId }))?.title ?? null; }
       catch (err) { composer.say(t('session.titleSuggestFailed', { error: err?.message ?? String(err) }), true); return null; }
     } });
-  root.append(head.el, frame, subs, composer.el);
+  const { strip: subs, entry: subsButton } = composer.work;
+  const subsChip = createBackgroundChip(subsButton);
+  root.append(head.el, frame, composer.el);
   composer.bindDropZone(root);
   wireAttachmentZoom(log, host);
   const deck = createDeck({ view, body, feed: feedRoot, thread: root, top });
@@ -250,16 +245,19 @@ export function createThread(host) {
     toc.focusSearch();
   }, true);
 
-  // 既読: スレッドを見ていて末尾にいる間は、返信までチャンネルの既読を進める（流れの既読は流れの投稿だけを見るので、スレッドの返信が未読のまま残らないように）
+  // スレッドを見ていて末尾にいる間は、そのスレッドの既読を返信まで進める。
   let readTimer = null, readSent = 0;
   const watching = () => document.body.classList.contains('channels') && deck.state !== 'feed' && document.visibilityState !== 'hidden';
   function markRead() {
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
       const last = S.posts.at(-1);
-      if (!S.threadId || !S.ready || !last || !watching() || !nearBottom() || last.at <= readSent) return;
+      if (!S.threadId || !S.ready || !last?.threadId || !watching() || !nearBottom() || last.at <= readSent) return;
+      const { channelId, threadId, seq } = S;
       readSent = last.at;
-      host.invoke('channels.markRead', { channelId: S.channelId, at: last.at }).catch(() => { readSent = 0; });
+      host.invoke('channels.markRead', { channelId, threadId, at: last.at }).catch(() => {
+        if (S.seq === seq && readSent === last.at) readSent = 0;
+      });
     }, 300);
   }
   document.addEventListener('visibilitychange', () => { syncWatch(); if (watching()) markRead(); });

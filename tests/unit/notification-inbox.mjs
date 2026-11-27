@@ -60,8 +60,10 @@ export default async function (t) {
     t.ok('upTo を進めれば、後の分も既読になる', inbox.viewSession('s5', clock + 1000) === 1);
     inbox.add({ kind: 'mention', dedupeKey: 'mention:p9', at: clock + 50, channelId: 'c2', data: { threadId: 't9', postId: 'p9' } });
     inbox.add({ kind: 'failed', dedupeKey: 'failed:s6:1', at: clock + 20, sessionId: 's6', channelId: 'c2', data: { threadId: 't9' } });
-    t.ok('チャンネルの既読（readAt）が進むと、そのチャンネルの通知を readAt まで既読にする（bot のスレッドの失敗も）', inbox.markChannel('c2', clock + 30) === 1
+    t.ok('スレッドの既読が進むと、同じスレッドの通知を readAt まで既読にする（bot の失敗も）', inbox.markChannel('c2', clock + 30, 't9') === 1
       && inbox.list().items.find((x) => x.target.postId === 'p9').unread === true && inbox.list().items.find((x) => x.target.sessionId === 's6').unread === false);
+    inbox.add({ kind: 'failed', dedupeKey: 'failed:dm:1', at: clock + 20, channelId: 'dm', data: { threadId: null, postId: 'dm_post' } });
+    t.ok('DM の投稿一覧の既読は、スレッドに属さない失敗の通知も既読にする', inbox.markChannel('dm', clock + 30) === 1);
     t.ok('すべて既読（all）で未読は 0', inbox.markRead({ all: true }).changed > 0 && inbox.counts().unread === 0 && inbox.counts().waiting === 1);
 
     // ---- 再起動
@@ -176,7 +178,12 @@ export default async function (t) {
     await sources.observe({ type: 'channelPost', op: 'add', post: { ...post().post, id: 'p_top', threadId: null } });
     t.ok('流れの根の投稿（threadId なし）への @あなた は、その投稿がスレッドの根', inbox.list({ filter: 'mention' }).items.find((x) => x.target.postId === 'p_top')?.target.threadId === 'p_top');
     await sources.observe({ type: 'channelRead', channelId: 'c_dev', readAt: clock + 1000 });
-    t.ok('channelRead（チャンネルの既読）で、そのチャンネルの通知が既読になる', inbox.list({ filter: 'mention' }).items.every((x) => x.unread === false) && inbox.list().items.find((x) => x.target.threadId === 'p_root' && x.kind === 'failed').unread === false);
+    const mentionUnread = (id) => inbox.list({ filter: 'mention' }).items.find((x) => x.target.postId === id)?.unread;
+    t.ok('投稿一覧を既読にすると根の通知だけが既読になる', mentionUnread('p_top') === false && mentionUnread('p_m1') === true);
+    await sources.observe(post({ id: 'p_other_reply', threadId: 'p_other' }));
+    await sources.observe({ type: 'channelRead', channelId: 'c_dev', threadId: 'p_root', readAt: clock + 1000 });
+    t.ok('スレッドを既読にするとそのスレッドの通知だけが既読になる', mentionUnread('p_m1') === false && mentionUnread('p_other_reply') === true
+      && inbox.list().items.find((x) => x.target.threadId === 'p_root' && x.kind === 'failed').unread === false);
     await sources.observe({ type: 'channelsChanged', channel: { id: 'c_dev', archivedAt: 5 } });
     t.ok('channelsChanged でアーカイブされたチャンネルの行は消える', inbox.list({ limit: 100 }).items.every((x) => x.target.channelId !== 'c_dev'));
     await sources.sessionRemoved('chat');

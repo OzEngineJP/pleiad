@@ -4,7 +4,7 @@
 //   - 書きかけはスレッドごとに端末へ（流れの入力欄と同じ入れ物。ch-composer.mjs の draftStore）
 // 宛先のチップと、スレッドごとの設定のチップ（作業フォルダー・モデル・承認モード）は持たない。宛先は本文の @ だけで決まり、
 // @ が無ければ前に答えた bot が受ける。設定は bot のページでだけ変える（ADR 0362）。行は添付と送信だけ。
-// まだ使わない部品（送信の日時、待ち行列、文脈の帯、中断・再開）は隠す（段ごとに開ける）。
+// 上段はサブエージェントのボタンだけを使う。送信の日時、待ち行列、文脈のメーター、再開は隠す。
 // 口は流れの入力欄（createChComposer）と同じ形にしてある（thread.mjs がそのまま使う）。
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
@@ -19,7 +19,7 @@ import { announce } from '../message-actions.mjs';
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
 /** スレッドではまだ使わない部品（段ごとに開ける） */
-const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextStrip', 'usageChip', 'nextSettings',
+const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextMeterWrap', 'contextStripStatus', 'usageChip', 'nextSettings',
   'resumeNote', 'armedNote', 'draftFail', 'connNote', 'cwdChip', 'modelChip'];
 
 /**
@@ -48,6 +48,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
   form.noValidate = true;
   const els = composerEls(PREFIX, form);
   for (const part of UNUSED) if (els[part]) els[part].hidden = true;
+  els.workEntry.hidden = false;
   els.abort.hidden = true;
   els.abort.onclick = () => onStop();
 
@@ -349,6 +350,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
 
   return {
     el: form,
+    work: { strip: els.contextStrip, entry: els.workEntryButton },
     input,
     editor: c.editor,
     attach: att,

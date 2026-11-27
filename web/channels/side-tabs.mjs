@@ -2,6 +2,7 @@
 // 最後の面は覚える（再読み込みで同じ面に戻す。場所は web/view-address.mjs）。あなた待ちが残っている間は、今いる側でもアイコン右上の点と読み上げ名を保つ。
 import { t } from '../i18n.mjs';
 import { reducedMotion } from '../motion.mjs';
+import { unreadMark } from '../side.mjs';
 
 const KEY = 'agent-host-side-tab';
 const TABS = ['chats', 'channels'];
@@ -35,12 +36,24 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     for (const b of faceButtons) b.setAttribute('aria-pressed', String(b.dataset.face === tab));
     for (const name of TABS) {
       const wait = dotState[name] === 'mark';
+      const unread = dotState[name] === 'unread';
       wraps[name]?.classList.toggle('has-wait', wait);
+      const wrap = wraps[name];
+      const mark = wrap?.querySelector('.unread-mark');
+      if (unread && wrap && !mark) {
+        const dot = unreadMark();
+        dot.setAttribute('aria-hidden', 'true');
+        wrap.append(dot);
+      } else if (!unread) mark?.remove();
       const btn = faceButtons.find((b) => b.dataset.face === name);
       if (!btn) continue;
       if (wait) {
         btn.setAttribute('aria-label', waitingLabel(name));
         btn.title = t('channels:side.face.waitingTip');
+      } else if (unread) {
+        const label = name === 'chats' ? t('channels:side.face.chats') : t('channels:side.face.channels');
+        btn.setAttribute('aria-label', `${label} · ${t('sidebar.unread')}`);
+        btn.title = t('sidebar.unread');
       } else {
         btn.removeAttribute('aria-label');
         btn.removeAttribute('title');
@@ -80,7 +93,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
   return {
     get tab() { return tab; },
     set,
-    /** あなた待ちの印（kind: 'mark' = あなた待ち、それ以外は消す） */
-    setDot(name, kind) { if (name in dotState) { dotState[name] = kind === 'mark' ? 'mark' : null; paint(); } },
+    /** あなた待ち・未読の印 */
+    setDot(name, kind) { if (name in dotState && dotState[name] !== kind) { dotState[name] = kind; paint(); } },
   };
 }
