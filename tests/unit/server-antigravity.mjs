@@ -31,6 +31,7 @@ export default async function (t) {
   /** fake-agy（ACP）が受けた依頼を 1 行 1 JSON で控えたもの */
   const acpFrames = async () => (await fs.readFile(acpLog, "utf8").catch(() => "")).split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const promptLog = path.join(scratch, "agy-prompts.log");
+  const hydrogen = ["medium", "high", "xhigh", "low"].map((level) => `gemini-4-hydrogen-${level}`);
 
   const readJson = async (file, fallback) => JSON.parse(await fs.readFile(file, "utf8").catch(() => fallback));
   /** 身代わりが起きた順の pid（fake-agy.mjs が控える）。 */
@@ -54,6 +55,7 @@ export default async function (t) {
       { id: "fake-antigravity-2", label: "Fake Antigravity 2 (Thinking)" },
       { id: "fake-flash-high", label: "Fake Flash (High)" },
       { id: "fake-flash-low", label: "Fake Flash (Low)" },
+      ...hydrogen.map((id) => ({ id, label: id })),
     ],
     defaultLabel: "Fake Flash (High)", fetchedAt: Date.now(),
   }));
@@ -66,6 +68,8 @@ export default async function (t) {
       FAKE_AGY_PID_FILE: pidFile,
       FAKE_AGY_ACP_LOG: acpLog,
       FAKE_AGY_PROMPT_LOG: promptLog,
+      FAKE_AGY_EXTRA_MODELS: hydrogen.join(","),
+      FAKE_AGY_SPLIT_MODEL: "gemini-4-hydrogen",
     },
     dataDir,
     timeoutMs: 30_000,
@@ -291,6 +295,15 @@ export default async function (t) {
     t.ok("段を選ぶと、既定のモデルの段違いの id を session/set_config_option の model に渡す",
       low.outcome === "ok" && lowSet.some((f) => f.params?.configId === "model" && f.params?.value === "fake-flash-low"),
       JSON.stringify(lowSet));
+
+    for (const model of hydrogen) {
+      const before = (await acpFrames()).length;
+      const turn = await c.runTurn({ prompt: "Hydrogen", sessionId: null, cwd: ROOT, backend: "antigravity", mode: "yolo", model }, { ms: 60_000 });
+      const frames = (await acpFrames()).slice(before);
+      t.ok(`分かれて返るモデルと段を検証して ${model} で送れる`,
+        turn.outcome === "ok" && frames.some((f) => f.method === "session/set_config_option" && f.params?.configId === "model" && f.params?.value === model)
+          && frames.some((f) => f.method === "session/prompt"), JSON.stringify({ outcome: turn.outcome, methods: frames.map((f) => f.method) }));
+    }
 
     // ---- 中断。プロトコルに中断が無いのでプロセスを落とす
     const mark = c.mark();

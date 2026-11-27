@@ -386,7 +386,7 @@ const ACP_MODES = [
   { id: "plan", name: "Plan", description: "Plan before acting" },
   { id: "skip", name: "Skip Permissions", description: "Never ask for permission" },
 ];
-const ACP_THOUGHT_LEVELS = ["low", "medium", "high"];
+const ACP_THOUGHT_LEVELS = ["low", "medium", "high", "xhigh"];
 const ACP_AUTH_METHODS = [
   { id: "oauth-personal", name: "Log in with Google", description: "Sign in with a Google account" },
   { id: "oauth-business", name: "Log in with Google (Workspace)", description: "Sign in with a Google Workspace account" },
@@ -469,8 +469,13 @@ async function runAcp() {
     const byLabel = label ? (rows.find(([, name]) => name === label) ?? rows[0]) : null;
     return (asked ?? byLabel)?.[0] ?? null;
   };
+  const splitModel = process.env.FAKE_AGY_SPLIT_MODEL;
+  const splitLevel = (id) => ACP_THOUGHT_LEVELS.find((level) => id === `${splitModel}-${level}`);
+  const modelOptions = () => [...new Map(MODEL_ROWS().map(([id, name]) => splitLevel(id)
+    ? [splitModel, { value: splitModel, name: splitModel }]
+    : [id, { value: id, name }])).values()];
   const configOptions = (data) => [
-    { id: "model", name: "Model", category: "model", type: "select", currentValue: data.model ?? "", options: MODEL_ROWS().map(([value, name]) => ({ value, name })) },
+    { id: "model", name: "Model", category: "model", type: "select", currentValue: (splitLevel(data.model) ? splitModel : data.model) ?? "", options: modelOptions() },
     { id: "thought_level", name: "Thinking", category: "thought_level", type: "select", currentValue: data.thought, options: ACP_THOUGHT_LEVELS.map((value) => ({ value, name: value })) },
     { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: data.mode, options: ACP_MODES.map((m) => ({ value: m.id, name: m.name })) },
   ];
@@ -840,8 +845,10 @@ async function runAcp() {
       const session = need(params);
       const option = configOptions(session.data).find((o) => o.id === params.configId);
       if (!option) throw acpError(-32602, `Unknown config option: ${params.configId}`);
-      if (!option.options.some((o) => o.value === params.value)) throw acpError(-32602, `Invalid value '${params.value}' for config option '${params.configId}'`);
+      const combined = option.id === "model" && splitLevel(params.value) && MODEL_ROWS().some(([id]) => id === params.value);
+      if (!combined && !option.options.some((o) => o.value === params.value)) throw acpError(-32602, `Invalid value '${params.value}' for config option '${params.configId}'`);
       session.data[{ model: "model", thought_level: "thought", mode: "mode" }[option.id]] = params.value;
+      if (combined) session.data.thought = splitLevel(params.value);
       save(session.data);
       const options = configOptions(session.data);
       update(params.sessionId, { sessionUpdate: "config_option_update", configOptions: options });

@@ -249,16 +249,31 @@ function liveEntry(handle) {
   return entry?.client?.alive && entry.sessionId ? entry : null;
 }
 
+function matchesAgyConfig(config, configId, value) {
+  if (!Array.isArray(config)) return false;
+  const current = config.find((option) => option.id === configId)?.currentValue;
+  if (current === value) return true;
+  if (configId !== "model" || !current) return false;
+  // agy は段付き ID を受け取っても、結果の model と thought_level を別々に返すことがある。
+  const level = config.find((option) => option.id === "thought_level")?.currentValue;
+  return Boolean(level && `${current}-${level}` === value);
+}
+
 /** モデル・段（agyTarget の結果）を agy の設定に反映して確かめる。断られたら configRejected の印つきで投げる */
 async function applyTarget(on, target) {
   const options = [];
-  if (target.model && target.model !== on.modelId) options.push(["model", target.model]);
-  if (!target.model && target.effort) options.push(["thought_level", target.effort]);
+  if (target.model) {
+    const matches = on.config.some((option) => option.id === "model")
+      ? matchesAgyConfig(on.config, "model", target.model)
+      : target.model === on.modelId;
+    if (!matches) options.push(["model", target.model]);
+  } else if (target.effort) options.push(["thought_level", target.effort]);
   for (const [configId, value] of options) {
     const applied = await on.client.call("session/set_config_option", { sessionId: on.sessionId, configId, value });
     if (Array.isArray(applied?.configOptions)) on.config = applied.configOptions;
-    const current = applied?.configOptions?.find((o) => o.id === configId)?.currentValue;
-    if (current !== value) throw Object.assign(new Error(t("antigravity.errors.modelRejected")), { configRejected: { option: configId } });
+    if (!matchesAgyConfig(applied?.configOptions, configId, value)) {
+      throw Object.assign(new Error(t("antigravity.errors.modelRejected")), { configRejected: { option: configId } });
+    }
     if (configId === "model") on.modelId = value;
   }
 }

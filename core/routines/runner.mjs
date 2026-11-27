@@ -50,7 +50,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
   const locale = () => host?.currentLocale?.() ?? 'ja';
 
   const textOf = (routine, note) => `${routine.name}\n${routine.prompt}${note ? `\n\n${note}` : ''}`;
-  const systemPost = (channelId, threadId, text) => channels.post({ channelId, threadId, text }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
+  const systemPost = (channelId, threadId, text, taint) => channels.post({ channelId, threadId, text, ...(taint ? { taint } : {}) }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
 
   async function modeFor(routine, bot) {
     const modes = host.getBackend?.(bot.backend)?.modes?.() ?? {};
@@ -111,8 +111,10 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
         await dispatch.wake({ botId: bot.id, channel, threadId: root.id, post: root });
         if (!entry.ended) armStartCheck(entry);
       } catch (e) {
-        log(`could not start ${routine.name}:`, errText(e));
-        await systemPost(channel.id, root.id, agentT(locale(), 'channel.turn.failed', { error: errText(e) }));
+        const reason = errText(e);
+        log(`could not start ${routine.name}:`, reason);
+        if (entry.sessionId) await host.recordStartFailure?.(entry.sessionId, reason, { notify: true });
+        await systemPost(channel.id, root.id, agentT(locale(), 'channel.turn.failed', { error: reason }), root.taint);
         await finish(entry, 'failed');
       }
       return { runId, postId: root.id, state: 'working' };

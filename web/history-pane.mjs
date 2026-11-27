@@ -227,7 +227,7 @@ export function createHistoryPane(hooks) {
    */
   function historyRole(m) {
     if (m.kind === 'command' || m.kind === 'shell') return 'user';
-    if (m.kind === 'compactSummary' || m.kind === 'interrupt' || m.kind === 'teammate' || m.kind === 'interruptionNote' || m.kind === 'modelSwitch' || m.kind === 'channelEvent' || m.kind === 'contextNote' || m.internalTaskNotice) return null;
+    if (m.kind === 'turnFailure' || m.kind === 'compactSummary' || m.kind === 'interrupt' || m.kind === 'teammate' || m.kind === 'interruptionNote' || m.kind === 'modelSwitch' || m.kind === 'channelEvent' || m.kind === 'contextNote' || m.internalTaskNotice) return null;
     return m.role;
   }
   /** items の index の直前にある発言の役割（無ければ null） */

@@ -164,6 +164,19 @@ export default async function (t) {
     const sizeBefore = (await roots()).length;
     await call('routines.delete', { routineId: every.id });
     t.ok('ルーティンを消しても、実行の履歴（根の投稿のスレッド）は残る', (await roots()).length === sizeBefore && (await call('routines.list', {})).routines.every((r) => r.id !== every.id));
+
+    const early = await call('routines.create', { name: 'undelivered', botId: owl.id, channelId: ops.id, prompt: '集計して', trigger: { kind: 'daily', at: '03:00', weekdaysOnly: false } });
+    await setClock(early.nextAt);
+    const earlyRoot = await until(async () => (await roots(early.id))[0], { label: '送信前に失敗する日次実行' });
+    await settled(earlyRoot, 'failed');
+    const failedThread = await read(earlyRoot.id);
+    const failedSession = failedThread.threads[0].sessions[owl.id];
+    const reason = 'fake: failed before the prompt was delivered';
+    const failedHistory = await c.cmd('loadSession', { sessionId: failedSession, live: true });
+    t.ok('送信前の失敗理由がスレッドの失敗投稿と開き直した会話に残る',
+      failedThread.posts.some((post) => post.state === 'failed' && post.failure === reason) &&
+      failedHistory.messages.filter((row) => row.kind === 'turnFailure' && row.error === reason).length === 1,
+      JSON.stringify({ posts: failedThread.posts.map((post) => [post.state, post.failure]), messages: failedHistory.messages }));
   } finally {
     for (const c of clients) c.close();
     for (const s of servers) await s.stop().catch(() => {});

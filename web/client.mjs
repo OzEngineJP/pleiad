@@ -1185,10 +1185,10 @@ function place(w) { mainView.place(w); }
 function append(node, key) { return mainView.append(node, key); }
 
 /** 出来事の一行。筋の節は持たない。html はこちらで組み立てた文字列だけ（中身は escText 済み） */
-function sys(html) {
+function sys(html, { mount = true } = {}) {
   const m = el("div", "m sys");
   m.innerHTML = html;
-  append(m);
+  if (mount) append(m);
   return m;
 }
 
@@ -1762,6 +1762,7 @@ function taskNoticeNode(text, at = '') {
  * 落とすものは null、システム側のものでなければ undefined（呼び出し側が普通の発言として描く）
  */
 function systemHistoryNode(m) {
+  if (m.kind === 'turnFailure') return turnFailedRow(m, { mount: false });
   if (m.kind === 'compactSummary') return null;   // 区切りの「要約を表示」に入っている（サーバーが外す。念のため）
   if (m.kind === 'interrupt') return interruptHistoryLine(m);
   if (m.kind === 'teammate') return teammateNode(m, hhmm(m.at));
@@ -3251,9 +3252,9 @@ function isMine(ev) {
 // 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 // mainView.apply の主だけの仕事（hooks が呼ぶ）
-function turnFailedRow(ev) {
+function turnFailedRow(ev, { mount = true } = {}) {
   // ターンの失敗は会話の出来事として残す。「✕ 失敗」は強い字（ツールの失敗と同じ語）
-  const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]));
+  const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]), { mount });
   node.classList.add("turn-failed");
   // ログインの期限切れ（401）だけは、何が切れたかの一文と直す入口に替える（web/auth-expired.mjs。ADR 0212）
   if (ev.kind === 'auth' && ev.auth?.mode === 'connectorsLogin') {

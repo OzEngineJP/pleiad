@@ -36,6 +36,7 @@
 //
 // 区画ごとの持ち主（区画の外は触らない）: channels = S1、bots = S2、memory = S3、dispatch = S4、routines = R1（P2）、webhook = H1（P3）。
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
@@ -55,7 +56,17 @@ export function createBotHost(deps) {
   const { store, dataDir, emitGlobal } = deps;
   const emit = (event) => emitGlobal({ ...event, sessionId: null });
   const emitSession = (sessionId, event) => emitGlobal({ ...event, sessionId });
-  const host = { ...deps, emit, emitSession };
+  async function recordStartFailure(sessionId, error, { notify = false } = {}) {
+    if (notify) emitSession(sessionId, { type: 'turnResult', outcome: 'error', error });
+    try {
+      const previous = (await store.get(sessionId)).botStartFailures ?? [];
+      const row = { uuid: randomUUID(), at: new Date().toISOString(), role: 'system', kind: 'turnFailure', text: '', error };
+      await store.setSessionData(sessionId, 'botStartFailures', [...previous, row].slice(-16));
+    } catch (err) {
+      console.error('  could not record a bot start failure:', String(err?.message ?? err));
+    }
+  }
+  const host = { ...deps, emit, emitSession, recordStartFailure };
   const lazy = (get) => (...args) => get()(...args);
 
   /** sidecar の `bot`（SessionBot）。bot の会話でなければ null */

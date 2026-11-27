@@ -158,6 +158,18 @@ export default async function (t) {
     t.ok('包んだ本文が実際のバックエンドのnotesに渡る', notesReply.text.includes('small payload in notes') && notesReply.text.includes('<routine-payload'));
     const twice = await call('routines.rotateSecret', { routineId: routine.id });
     t.ok('再発行で違う秘密になり、出来事へは秘密を配らない', twice.secret !== rotated.secret && !JSON.stringify(client.events).includes(twice.secret));
+    await call('routines.update', { routineId: routine.id, name: 'undelivered' });
+    await sendApp('startup failure', twice.secret);
+    const failedRoot = await until(async () => (await read()).posts.find((p) => p.state === 'failed'));
+    const failedThread = await read(failedRoot.id);
+    const sessionId = failedThread.threads[0].sessions[bot.id];
+    const reason = 'fake: failed before the prompt was delivered';
+    const { messages } = await client.cmd('loadSession', { sessionId });
+    t.ok('webhook 実行で送信前に失敗した理由がライブ・スレッドの投稿・会話の履歴に残る',
+      client.events.some((ev) => ev.sessionId === sessionId && ev.type === 'turnResult' && ev.error === reason) &&
+      failedThread.posts.some((post) => post.state === 'failed' && post.failure === reason && post.taint === 'webhook') &&
+      messages.filter((row) => row.kind === 'turnFailure' && row.error === reason).length === 1,
+      JSON.stringify({ posts: failedThread.posts.map((post) => [post.state, post.failure, post.taint]), messages }));
   } finally {
     client?.close(); await app?.stop();
     if (server) { server.closeAllConnections(); await new Promise((r) => server.close(r)); }

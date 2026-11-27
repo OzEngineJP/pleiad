@@ -11191,6 +11191,17 @@ function notifyScheduleMissed(row) {
     .then(sent => (sent?.length ? schedule.patch(row.id, { notified: true }) : null)).catch(() => {});
 }
 
+function placeBotStartFailures(messages, failures) {
+  if (!failures?.length) return messages;
+  const rows = [...messages];
+  for (const failure of failures) {
+    const at = Date.parse(failure.at);
+    const next = rows.findIndex(row => Date.parse(row.at) > at);
+    rows.splice(next < 0 ? rows.length : next, 0, failure);
+  }
+  return rows;
+}
+
 /** 予定の発言を送信待ちへ渡す。遅れて送ったことを、履歴の発言に添えるため会話に覚える（decorateScheduled） */
 async function sendScheduledNow(row) {
   compactionScheduler.cancel(row.sessionId);
@@ -11968,6 +11979,7 @@ wss.on("connection", (ws, req) => {
               uuid: m.uuid, role: m.role, text: m.text, tools: m.tools,
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
+            data.messages = placeBotStartFailures(data.messages, sidecar.botStartFailures);
             const draft = (await store.get(sessionId)).draft ?? null;
             const nativeCompactions = backend.getCompactions ? await timing.run('compactions', () => backend.getCompactions(sessionId).catch(() => [])) : [];
             const savedCompactions = await store.getCompactions(sessionId);
@@ -11988,7 +12000,8 @@ wss.on("connection", (ws, req) => {
               const snap = liveSnapshot(live, { backend: turn.backend?.id ?? null, model: turn.info?.model || null });
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
-              return { messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : []), ...snap.messages], sidecar), ...shellRuns.rows(sessionId, sidecar)],
+              const messages = [...shellRuns.placeKept([...live.messages, ...(user ? [user] : []), ...snap.messages], sidecar), ...shellRuns.rows(sessionId, sidecar)];
+              return { messages: placeBotStartFailures(messages, sidecar.botStartFailures),
                 presents: [...live.presents, ...snap.presents], events: snap.events };
             };
             if (msg.args?.older && read.turn && !msg.args?.live) {

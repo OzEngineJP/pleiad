@@ -884,7 +884,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (!release) { deferForUpdate(sessionId); return; }
     try {
       await inbox.mark(ids, 'delivering');
-      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, callers: callersOf(items) });
+      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, taint: sb.taint, callers: callersOf(items) });
       refreshThread(channel.id, threadId);
       const key = threadKeyOf(channel.id, threadId);
       // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
@@ -913,14 +913,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       if (result === 'requeue') { await inbox.mark(ids, 'pending'); retryLater(sessionId); }
       else if (result === 'cancelled') await inbox.remove(ids);
       else {
-        await inbox.mark(ids, 'unknown', { error: errText(err) });
+        const reason = pre.error ?? (err ? errText(err) : agentT(locale(), 'ui:chat.sys.unknownReason'));
+        await host.recordStartFailure?.(sessionId, reason, { notify: !pre.error });
+        await inbox.mark(ids, 'unknown', { error: reason });
         const failedKey = threadKeyOf(pre.channelId, pre.threadId);
         if (failedKey) failedKeys.add(failedKey);
         // 始められなかった失敗も、返事の場所に出す（ターンの投稿の「✕ 失敗」。理由は failure）
-        const reason = errText(err);
-        const failed = await channels.post({ channelId: pre.channelId, threadId: pre.threadId, text: agentT(locale(), 'channel.turn.failed', { error: reason }), state: 'failed',
+        const failed = await channels.post({ channelId: pre.channelId, threadId: pre.threadId, text: agentT(locale(), 'channel.turn.failed', { error: reason }), state: 'failed', taint: pre.taint,
           turn: { botId: pre.botId, sessionId }, failure: oneLine(reason, 300), mentions: [], new: true }, botAuthor(pre.botId)).catch((e) => { log('could not write the failed reply:', errText(e)); return null; });
-        if (!failed) await systemPost(pre.channelId, pre.threadId, agentT(locale(), 'channel.turn.failed', { error: reason }));
+        if (!failed) await systemPost(pre.channelId, pre.threadId, agentT(locale(), 'channel.turn.failed', { error: reason }), undefined, pre.taint);
       }
       // 始められない間にたまった出来事（途中送信できず pending のまま）を取り残さない。止めた・失敗が続くときは配り直さない（次の @ でまとめて渡る）
       if (result !== 'requeue' && (await inbox.list({ sessionId, status: 'pending' })).length) {
@@ -934,7 +935,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (result !== 'requeue') await releaseFollowers(sessionId).catch((e) => log('could not deliver a heard post:', errText(e)));
   }
 
-  const systemPost = (channelId, threadId, text, state) => channels.post({ channelId, threadId, text, ...(state ? { state } : {}) }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
+  const systemPost = (channelId, threadId, text, state, taint) => channels.post({ channelId, threadId, text, ...(state ? { state } : {}), ...(taint ? { taint } : {}) }, { kind: 'system' }).catch((e) => log('could not write a system post:', errText(e)));
 
   // ------------------------------------------------------------ 休憩中（使用量の上限。ADR 0119）
 
@@ -1192,6 +1193,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   function onTurnEvent(turn, event, { replay = false } = {}) {
     const sessionId = turn?.info?.sessionId;
     const rec = sessionId ? active.get(sessionId) : null;
+    if (!rec && !replay && event?.type === 'turnResult' && event.outcome === 'error') {
+      const pre = starting.get(sessionId);
+      if (pre) pre.error = event.error;
+    }
     if (!rec || rec.ended || !event?.type) return;
     if (replay) {
       if (ANSWER_EVENTS.has(event.type)) commit(rec, { replay: true });
@@ -1431,6 +1436,11 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const sessionId = turn?.info?.sessionId;
     const rec = sessionId ? active.get(sessionId) : null;
     if (!rec) {
+      const pre = starting.get(sessionId);
+      if (pre && outcome === 'error' && !interrupted && !turn.compactTrigger) {
+        await notStarted(sessionId, pre.itemIds, outcome);
+        return;
+      }
       // 圧縮のターン（記録は作らない）の間にたまった出来事は、ここで渡す
       if (sessionId && turn.compactTrigger) await pump(sessionId);
       return;
@@ -1444,6 +1454,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       await rec.chain.catch(() => {});
       const ok = outcome === 'ok';
       const state = ok ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
+      if (state === 'failed' && !rec.committed && rec.error && POST_KINDS.has(rec.kind)) {
+        await host.recordStartFailure?.(sessionId, rec.error);
+      }
       if (ok && !rec.committed) commit(rec);
       if (!rec.committed && rec.itemIds.length) await inbox.mark(rec.itemIds, 'unknown', { error: rec.error ?? String(outcome) });
       // 聞こえた投稿だけのターンでも、assistant の文章があれば道具の前後を問わず残す（ADR 0128）。
@@ -1454,6 +1467,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         rec.postId = post?.id ?? null;
       }
       if (rec.postId) ({ woke, reply } = await finalizePost(rec, state, ok, { limited }));
+      else if (state === 'failed' && rec.channelId && POST_KINDS.has(rec.kind)) {
+        await systemPost(rec.channelId, rec.threadId, agentT(locale(), 'channel.turn.failed', { error: rec.error ?? '' }), undefined, rec.taint);
+      }
       // 途中送信で前の投稿を確定していて、最後の投稿に返事が無いとき（何も言わずに終えた・まだ投稿が無い）は、前の投稿の返事を呼んだ bot へ返す（ADR 0117 の追記）
       if (!reply && rec.priorReply && (ok || state === 'failed') && !rec.stopped && !limited) reply = rec.priorReply;
       const key = threadKeyOf(rec.channelId, rec.threadId);
