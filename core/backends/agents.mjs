@@ -22,6 +22,7 @@ import path from 'node:path';
  *             文字列なら、その id の値を借りる（fake は claude の値で試験する）
  * hooksAs     Pleiad がそろえる Hooks を、このエージェントへ、どのエージェントの形を真似て渡すか（core/hooks-config.mjs の UNIFY_TARGETS）。
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
+ * hookEvents  模倣する形のうち、実行できるイベントを明示する場合の一覧。
  * hooksVia    hooksAs のエージェントへの渡し方。'callback' は Pleiad の中で走らせてエージェントのプラグインの口から呼ぶ（OpenCode）、
  *             'plugin' はエージェントが自分で走らせる hooks のファイルを、その会話だけのプラグインとして渡す（Grok）。hooksAs が null なら null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
@@ -59,6 +60,7 @@ export const AGENTS = {
     contextSources: ['claude'],
     hooksAs: null,
     hooksVia: null,
+    hookEvents: null,
     shellTools: ['Bash', 'PowerShell'],
     shellDefault: 'native',
     contextAt: 'turn',
@@ -75,6 +77,7 @@ export const AGENTS = {
     contextSources: ['codex'],
     hooksAs: null,
     hooksVia: null,
+    hookEvents: null,
     shellTools: ['commandExecution'],
     shellDefault: 'native',
     contextAt: 'turn',
@@ -98,6 +101,7 @@ export const AGENTS = {
     contextSources: ['common', 'antigravity'],
     hooksAs: null,
     hooksVia: null,
+    hookEvents: null,
     shellTools: ['run_command'],
     shellDefault: 'native',
     contextAt: 'conversation',
@@ -121,6 +125,7 @@ export const AGENTS = {
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
     hooksVia: 'callback',
+    hookEvents: null,
     // bash が裏で起こしたサーバーを待って戻らなくなる（v1.19.3。2026-10-18）ので、既定で ply_shell だけにする
     shellTools: ['bash', 'shell'],
     shellDefault: 'ply',
@@ -144,6 +149,7 @@ export const AGENTS = {
     contextSources: ['common', 'claude', 'devin', 'opencode'],
     hooksAs: 'claude',
     hooksVia: 'config',
+    hookEvents: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
@@ -168,6 +174,7 @@ export const AGENTS = {
     // Grok の Hooks の形は Claude Code と同じ。セッション限定のプラグイン（_meta.pluginDirs）の hooks/hooks.json で渡す
     hooksAs: 'claude',
     hooksVia: 'plugin',
+    hookEvents: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。grok-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
@@ -180,11 +187,12 @@ export const AGENTS = {
     shortLabel: null,
     brand: null,
     cli: null,
-    idleCompaction: null,
+    idleCompaction: { enabled: false, delayMinutes: 25 },
     rebuildIdleMinutes: null,
     contextSources: null,
-    hooksAs: null,
-    hooksVia: null,
+    hooksAs: 'claude',
+    hooksVia: 'callback',
+    hookEvents: ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'],
     shellTools: [],
     shellDefault: 'native',
     contextAt: 'turn',
@@ -201,6 +209,7 @@ export const AGENTS = {
     contextSources: null,
     hooksAs: null,
     hooksVia: null,
+    hookEvents: null,
     shellTools: ['fake_shell'],
     shellDefault: 'native',
     contextAt: 'turn',
@@ -209,7 +218,7 @@ export const AGENTS = {
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice', 'logoutConfirm']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'hookEvents', 'shellTools', 'shellDefault', 'contextAt', 'accountAddNotice', 'logoutConfirm']);
 
 /** 能力や契約を定義するエージェント。試験専用の fake は除く。 */
 export const REGISTERABLE_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));

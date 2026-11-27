@@ -332,10 +332,20 @@ export async function deleteHiddenConversation(id, backendOf) {
   return true;
 }
 
+// A native fork keeps the copied messages' visible IDs so that lineage and attachments still resolve.
+function executionMessageIds(record, backend) {
+  const fork = record.forkIds;
+  const inherited = fork && fork.nativeId === record.nativeId
+    ? new Map(Object.entries(fork.messages).map(([raw, visible]) => [visible, raw])) : null;
+  return uuid => nativeUuid(uuid, backend, record.nativeId) ?? inherited?.get(uuid) ?? null;
+}
+
 // Preserve messages the native engine has compacted away; refresh matching messages in place.
 export function mergeMessages(record, recent, backend) {
   record._dirty = true;
   const segment = record.messages.slice(record.base);
+  const fork = record.forkIds;
+  const inherited = fork && fork.nativeId === record.nativeId ? fork.messages : null;
   const rows = recent.map((raw) => {
     const m = { ...raw, backend };
     if (Array.isArray(m.toolCalls)) {
@@ -347,7 +357,9 @@ export function mergeMessages(record, recent, backend) {
     if (typeof m.liveUuid === "string") m.uuid = m.liveUuid;
     delete m.liveUuid;
     // Native engines may reuse item IDs in a new execution segment.
-    if (m.uuid && record.nativeId) m.uuid = `${backend}:${record.nativeId}:${m.uuid}`;
+    if (m.uuid && record.nativeId) {
+      m.uuid = inherited && Object.hasOwn(inherited, m.uuid) ? inherited[m.uuid] : `${backend}:${record.nativeId}:${m.uuid}`;
+    }
     // 送った全文（指示を前に足したもの）はハッシュだけを残す。再生の全文を原文に戻すのに使う（alignPositional）
     if (m.role === "user" && typeof m.sent === "string") m.promptHash = promptHash(m.sent);
     delete m.sent;
@@ -711,16 +723,20 @@ export function wrapBackend(native) {
     // 会話全体だけを複製できるネイティブ API（forkWhole。Grok）は、切り口の無い全体の分岐にだけ使う
     // （指定を落として全履歴を子へ漏らさない。切り口つきは下の Pleiad の写しで分ける）
     const whole = native.forkWhole === true && options.upToMessageId === undefined;
-    if (before === undefined && !options.snapshot && !r && native.fork && (native.capabilities?.forkMessage === true || whole)) {
+    if ((before === undefined || native.forkBefore) && !options.snapshot && !r && native.fork && (native.capabilities?.forkMessage === true || whole)) {
       // SDK の分岐は transcript だけを写す（UUID は付け直し）。提示は会話ごとの記録（core/history.mjs）にあるので、切り口までの分を選んでおき、子へ写す
       let carried = await readPresents(id, { strict: true });
       let sourceMessages = null;
-      if (carried.length) {
+      let parent;
+      if (carried.length || before !== undefined) {
         const full = await wrapped.getMessages(id);
-        const at = options.upToMessageId === undefined ? full.length - 1 : full.findIndex(m => m.uuid === options.upToMessageId);
-        if (at < 0) throw new Error(t("conversations.forkMessageNotFound"));
-        carried = presentsThrough(full, carried, at);
+        const boundary = before ?? options.upToMessageId;
+        const index = boundary === undefined ? full.length - 1 : full.findIndex(m => m.uuid === boundary);
+        if (boundary !== undefined && index < 0) throw new Error(t("conversations.forkMessageNotFound"));
+        const at = before === undefined ? index : index - 1;
+        carried = at < 0 ? [] : presentsThrough(full, carried, at);
         sourceMessages = full.slice(0, at + 1);
+        if (before !== undefined) parent = { sessionId: id, atMessage: full[at]?.uuid ?? null, beforeMessage: before };
       }
       const result = await native.fork(id, options);
       await store.inheritSettings(id, result.sessionId);
@@ -736,7 +752,7 @@ export function wrapBackend(native) {
         });
         await seedPresents(result.sessionId, rows);
       }
-      return result;
+      return parent ? { ...result, parent } : result;
     }
     const source = await wrapped.getSession(id);
     if (!source) throw new Error(t("conversations.forkSourceUnreadable"));
@@ -788,13 +804,31 @@ export function wrapBackend(native) {
       cwd: meta.cwd ?? source.cwd, createdAt: now, lastModified: now };
     // One atomic record owns the ID, lineage, metadata, complete messages and attachments.
     // Publish only after persistence succeeds: a failed fork cannot appear in the list.
+    let forkIds;
     try {
       await store.inheritSettings(id, child);
-      await save({ [child]: { backend: native.id, nativeId: null, base: messages.length,
-        messages: structuredClone(messages), presents: structuredClone(presents), segments: [], info,
+      if (native.forkBefore && r?.nativeId && r.base === 0 && !options.snapshot) {
+        const rawOf = executionMessageIds(r, native.id);
+        const boundaryId = before ?? options.upToMessageId;
+        const rawBoundary = rawOf(boundaryId);
+        if (boundaryId === undefined || rawBoundary) {
+          const forked = await native.fork(r.nativeId, { title: options.title,
+            ...(before !== undefined ? { beforeMessageId: rawBoundary } : options.upToMessageId ? { upToMessageId: rawBoundary } : {}) });
+          forkIds = { nativeId: forked.sessionId, messages: Object.fromEntries(messages.flatMap(m => {
+            const raw = rawOf(m.uuid);
+            return raw ? [[raw, m.uuid]] : [];
+          })) };
+        }
+      }
+      await save({ [child]: { backend: native.id, nativeId: forkIds?.nativeId ?? null, base: forkIds ? 0 : messages.length,
+        messages: structuredClone(messages), presents: structuredClone(presents),
+        segments: forkIds ? [{ backend: native.id, nativeId: forkIds.nativeId }] : [], ...(forkIds ? { forkIds } : {}), info,
         ...(r?.contextStart ? { contextStart: Math.min(classifySystemMessages(r.messages.slice(0, r.contextStart)).length, messages.length), contextSince: r.contextSince } : {}), _dirty: true } });
     } catch (error) {
       delete (await all())[child];
+      if (forkIds) {
+        await deleteConversation(forkIds.nativeId, native.id).catch(() => noteDeleted(native.id, forkIds.nativeId));
+      }
       await fs.rm(windowShotFolder(store.dataDir, child), { recursive: true, force: true }).catch(() => {});
       await fs.rm(sessionFilePath(child), { force: true }).catch(() => {});
       await store.removeSession(child);
@@ -825,14 +859,16 @@ export function wrapBackend(native) {
     const presents = await wrapped.getPresents(id);
     const keep = keptPresentIndexes(full, presents, at - 1);
     const nativeId = existing ? existing.nativeId : id;
-    const rawOf = uuid => (existing ? nativeUuid(uuid, native.id, nativeId) : uuid);
+    const rawOf = existing ? executionMessageIds(existing, native.id) : uuid => uuid;
     const rawTarget = rawOf(group ?? target.uuid), rawBefore = at > 0 ? rawOf(full[at - 1].groupUuid ?? full[at - 1].uuid) : null;
     const how = native.capabilities?.rewind;
     // Claude の切り口は「残す最後の発言」の uuid。ツール呼びだけの発言は連続するエントリを 1 つに束ねて先頭の uuid を持つので、
     // その後ろが落ちて中途半端な枝から続く。本文のある返答が切り口のときだけ使う（ほかはホスト管理）
     const before = at > 0 ? full[at - 1] : null;
     const cutable = how !== "resumeAt" || Boolean(before?.role === "assistant" && String(before.text ?? "").trim());
-    const inSegment = Boolean(nativeId) && at > (existing ? existing.base : 0) && Boolean(rawTarget) && Boolean(rawBefore) && cutable;
+    const base = existing?.base ?? 0;
+    const hasBoundary = (at > base && rawBefore) || (at === base && native.rewindFirst);
+    const inSegment = Boolean(nativeId && rawTarget && hasBoundary && cutable);
     return { existing, full, at, target, keep, nativeId, rawTarget, rawBefore, how, inSegment, removed: removedSummary(full, at), since: Date.parse(target.at ?? "") };
   }
   wrapped.rewindPlan = async (id, { beforeMessageId } = {}) => {

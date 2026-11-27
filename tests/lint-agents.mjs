@@ -389,7 +389,6 @@ export const ALLOWED = [
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
   { file: 'web/compat-presets.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの preset の対象' },
   { file: 'web/api-keys-settings.mjs', expect: 'compatEndpoints', reason: 'API キーの設定カードでエージェント名を出す対象（互換エンドポイントの利用者）' },
-  { file: 'web/hooks-card.mjs', expect: 'unifyTargets', reason: 'Hooks の統合先として画面に表示するエージェント' },
   ...['core/context-doc-matrix.mjs', 'core/context-runtime.mjs', 'core/context-scan.mjs', 'core/context-settings.mjs', 'web/session-context.mjs'].map(file => ({
     file, expect: 'nativeSources', reason: '指示・Skills・MCP の探索元の形式を持つエージェント',
   })),

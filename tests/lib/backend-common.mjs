@@ -608,7 +608,9 @@ export const DELIVERY_PROBES = Object.freeze({
       res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result }));
     });
     try {
-      const args = deliveryArgs(caps, { cwd: scratch });
+      const hooksRuntime = await hookRuntime(scratch, 'pleiad-agent');
+      await fs.writeFile(path.join(scratch, '添付 ファイル.txt'), 'fixture text');
+      const args = deliveryArgs(caps, { cwd: scratch, prompt: '[fixture:read]', hooksRuntime });
       for (const name of ['agent', 'browser', 'computer', 'context', 'control', 'shell']) {
         const key = name + 'Runtime';
         const endpoint = name === 'agent' ? 'agents' : name;
@@ -625,8 +627,11 @@ export const DELIVERY_PROBES = Object.freeze({
         throw new Error('Unexpected native tool in hosted session');
       }
       const prompt = body.messages.map(message => message.content).join('\n');
+      const marker = await fs.readFile(hooksRuntime.marker, 'utf8').catch(() => '');
       return { seen, evidence: {
         plyInstructions: has(prompt, instr('instructions')),
+        visualize: has(prompt, MARK.visualize),
+        hooks: marker === 'ran\n',
         plyAgents: hasMcp('ply_agents'),
         plyControl: hasMcp('ply_control'),
         plyShell: hasMcp('ply_shell'),

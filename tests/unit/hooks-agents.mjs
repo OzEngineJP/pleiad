@@ -24,7 +24,7 @@ import { t as T } from '../../core/i18n.mjs';
 export const name = 'hooks-agents';
 export const title = 'Hook × エージェント: 行 ID・移行の式・旧の保存と同じ動き・一覧と実行時の一致・二重に動かさない・鍵の理由・操作の承認';
 
-const AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok'];
+const AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'devin', 'grok', 'pleiad-agent'];
 const [CLAUDE, CODEX, AGY, OPENCODE, DEVIN, GROK] = AGENTS;
 
 const w = async (p, v) => { await fs.mkdir(path.dirname(p), { recursive: true }); await fs.writeFile(p, typeof v === 'string' ? v : JSON.stringify(v, null, 2)); };
@@ -107,7 +107,7 @@ export default async function (t) {
         let L = legacy[a], N = adopted[a];
         if (L?.error || N?.error) { if (L?.error !== N?.error) bad.push(`${a}: error ${L?.error} / ${N?.error}`); continue; }
         // 渡すものも止めるものも無いターンは、旧が空の記録を返しても新が null でも起動は同じ（OpenCode のコールバック無し・Devin の取り込みはそのまま）
-        const idle = x => x && [OPENCODE, DEVIN].includes(a) && !x.runtime?.supplied?.length && !devinTurnConfig({ hooksRuntime: x.runtime })?.read_config_from;
+        const idle = x => x && [OPENCODE, DEVIN, 'pleiad-agent'].includes(a) && !x.runtime?.supplied?.length && !devinTurnConfig({ hooksRuntime: x.runtime })?.read_config_from;
         if (idle(L)) L = null;
         if (idle(N)) N = null;
         if (!L !== !N) { bad.push(`${a}: ${L ? 'legacy ran' : 'legacy null'} / ${N ? 'new ran' : 'new null'}`); continue; }

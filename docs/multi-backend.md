@@ -1091,9 +1091,13 @@ Claude のモデルの一覧は、アカウント（組織）で変わる（承�
 
 ### 2.12 Pleiad Agent（標準入出力、試験中）
 
+会話のメニューから分岐し、送信済みの自分の発言を編集して巻き戻せる。実行中の会話を分岐するときは、Pleiad が保存済みの履歴と添付を枝へ写す。入力欄の `/compact` はモデルへ渡す文脈を圧縮する。圧縮の前の発言と添付は、引き続き会話で読める。
+
+指示と Skills はプラグイン設定で選んだものを使う。Pleiad が渡す Hooks は送信時と道具の実行の前後に動く。外部 MCP と ToDo は会話にひも付いた Pleiad の道具から使える。HTML の可視化は、会話の添付と同じ画面から開ける。
+
 通常のホストで試すには、起動時の `AGENT_HOST_BACKENDS` のカンマ区切り一覧に `pleiad-agent` を含める。管理下ホストでは Pleiad Agent だけが登録される。
 
-Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/bf9e5336046fd4c3c4eb6cb84a5554d26bbf1d0b/docs/stdio.md)
+Pleiad は `pleiad-agent` を GitHub の完全なコミットで固定し、`pleiad-agent stdio` を起動する。開発時は `AGENT_HOST_PLEIAD_AGENT_BIN` にローカルの `src/cli.mjs` を指定できる。ターンを実行する間だけ会話ごとに子プロセスを持ち、終了後は履歴を Pleiad データディレクトリの `pleiad-agent` から読む。次のターンは同じ会話 ID で開き直す。[標準入出力プロトコル](https://github.com/OzEngineJP/pleiad-agent/blob/ced5dce98d9cd5881dd9f1fb0ae23ae372ccb1cc/docs/stdio.md)
 
 会話 ID の確定を保存してからプロンプトを送る。子は受付とモデルへの配達を別に通知し、履歴に残した送信 ID で重複を判定する。確定前に子が終了した場合はターンを失敗として扱い、自動で再送しない。Pleiad は本文、道具の呼び出しと結果を既存の会話イベントに変換し、添付と送信待ちは共通の処理を使う。旧 Procway の履歴は Pleiad の保存データから開ける。
 
