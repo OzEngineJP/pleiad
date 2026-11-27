@@ -48,6 +48,8 @@ export default async function (t) {
       }
       if (prompt === 'delegate to fixture') return { tool: { name: 'mcp__ply_agents__ply_delegate',
         args: { kind: 'mechanical', backend: 'fake', task: 'echo:native parent child' } } };
+      if (prompt === 'host shell fixture') return { tool: { name: 'mcp__ply_shell__run',
+        args: { command: 'echo PLEIAD_SHELL_FIXTURE' } } };
       if (prompt === 'computer screenshot fixture') return { tool: { name: 'mcp__ply_computer__screenshot',
         args: { title: '画面を確かめる' } } };
       if (prompt === 'browser handoff fixture') return { tool: { name: 'mcp__ply_browser__hand_to_user',
@@ -105,6 +107,9 @@ export default async function (t) {
     const backends = await client.cmd('backends');
     t.ok('管理下ホストは実際の Pleiad Agent だけを公開する', backends.map(backend => backend.id).join() === 'pleiad-agent');
     t.ok('管理下のホストは利用者の接続先を出さない', backends[0].capabilities.compatEndpoints === false);
+    t.ok('Pleiad のシェルだけを公開し、存在しないネイティブ設定の切り替えは出さない',
+      backends[0].capabilities.plyShell === true && backends[0].capabilities.nativeShellOff === false &&
+      backends[0].capabilities.nativeMcpOff === false);
     const catalog = await client.cmd('models', { backend: 'pleiad-agent' });
     t.ok('Plus のモデル一覧と推論の強さを返す', catalog.fixture?.label === 'Fixture model' &&
       catalog.fixture.efforts.join() === 'high', JSON.stringify(catalog));
@@ -154,12 +159,44 @@ export default async function (t) {
     t.ok('モデルの認証キーをリクエスト本文や会話に出さない',
       !JSON.stringify([fixture.model.calls, history, events]).includes('fixture-key-only'));
 
+    const { sessionId: steerSession } = await client.cmd('newSession', { backend: 'pleiad-agent', cwd });
+    const steerMark = client.mark();
+    fixture.model.hold();
+    try {
+      await client.cmd('sendMessage', { sessionId: steerSession, messageId: 'ply-agent-before-steer', prompt: '[fixture:read]' });
+      await client.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'ply-agent-before-steer', { from: steerMark });
+      const steer = { sessionId: steerSession, messageId: 'ply-agent-steer', prompt: '途中で伝えた指示' };
+      await client.cmd('sendMessage', steer);
+      await client.cmd('sendMessage', steer);
+      await client.waitFor(e => e.type === 'userMessage' && e.messageId === steer.messageId && e.pending, { from: steerMark });
+    } finally {
+      fixture.model.release();
+    }
+    await client.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'ply-agent-steer', { from: steerMark });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === steerSession, { from: steerMark });
+    const steered = await client.cmd('loadSession', { sessionId: steerSession });
+    t.ok('実行中に重ねて送った同じ指示は、同じターンのモデルと履歴に一度だけ届く',
+      fixture.model.calls.at(-1).messages.filter(m => m.role === 'user' && m.content === '途中で伝えた指示').length === 1 &&
+      steered.messages.filter(m => m.role === 'user' && m.text === '途中で伝えた指示').length === 1);
+
     const filePath = path.join(cwd, '結果 ファイル.txt');
     const exists = () => fs.stat(filePath).then(() => true, error => {
       if (error.code !== 'ENOENT') throw error;
       return false;
     });
     const writeArgs = { sessionId, messageId: 'ply-agent-write-001', prompt: '[fixture:write]', mode: 'default' };
+    const { sessionId: planSession } = await client.cmd('newSession', { backend: 'pleiad-agent', cwd });
+    const planMark = client.mark();
+    await client.cmd('sendMessage', { ...writeArgs, sessionId: planSession, messageId: 'ply-agent-enter-plan' });
+    const beforePlan = await waitForCard(planSession, 'tool', planMark);
+    await client.cmd('setTurnSettings', { sessionId: planSession, mode: 'plan' });
+    const appliedPlan = await client.cmd('applyTurnSettingsNow', { sessionId: planSession });
+    await client.waitFor(e => e.type === 'permissionSettled' && e.id === beforePlan.id, { from: planMark });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === planSession, { from: planMark });
+    const planned = await client.runTurn({ sessionId: planSession, prompt: '[fixture:write]', mode: 'plan' });
+    t.ok('作業中にプランモードへ変えると書き込みの承認を閉じ、その後の書き込みも実行しない',
+      appliedPlan.applied === 'live' && planned.outcome === 'ok' && !await exists());
+
     const writeMark = client.mark();
     await client.cmd('sendMessage', writeArgs);
     const approval = await waitForCard(sessionId, 'tool', writeMark);
@@ -170,10 +207,24 @@ export default async function (t) {
       restoredApproval.input.content === 'proposed text' && !await exists());
     const approveMark = client.mark();
     await client.cmd('resolvePermission', { id: restoredApproval.id, allow: true, editedInput: '画面で編集した本文' });
-    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId, { from: approveMark });
-    t.ok('承認された編集内容を書き込む', await fs.readFile(filePath, 'utf8') === '画面で編集した本文');
+    const resumedWrite = await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId, { from: approveMark });
+    t.ok('承認された編集内容を書き込む', await exists() && await fs.readFile(filePath, 'utf8') === '画面で編集した本文',
+      JSON.stringify(resumedWrite));
     t.ok('書き込みの再開で利用者の発言は増えない',
       (await client.cmd('loadSession', { sessionId })).messages.filter(m => m.role === 'user' && m.text.includes('[fixture:write]')).length === 1);
+    const { sessionId: alwaysSession } = await client.cmd('newSession', { backend: 'pleiad-agent', cwd });
+    const grantMark = client.mark();
+    await client.cmd('sendMessage', { ...writeArgs, sessionId: alwaysSession, messageId: 'ply-agent-always-allow' });
+    const grant = await waitForCard(alwaysSession, 'tool', grantMark);
+    await client.cmd('resolvePermission', { id: grant.id, allow: true, always: true });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === alwaysSession, { from: grantMark });
+    await fs.writeFile(filePath, 'before restarting');
+    await restart();
+    const alwaysMark = client.mark();
+    const always = await client.runTurn({ sessionId: alwaysSession, prompt: '[fixture:write]', mode: 'default' }, { ms: 15_000 });
+    t.ok('常に許可した道具を同じ会話で使うと、再起動後も承認を聞かない',
+      always.outcome === 'ok' && !client.since(alwaysMark).some(event => event.type === 'permission' && event.sessionId === alwaysSession) &&
+      await fs.readFile(filePath, 'utf8') === 'proposed text');
 
     const surveyMark = client.mark();
     await client.cmd('sendMessage', { sessionId, messageId: 'ply-agent-survey-001', prompt: '[fixture:survey]' });
@@ -249,11 +300,13 @@ export default async function (t) {
 
     const invoke = (op, args) => client.cmd('invoke', { op, args: { sessionId, ...args } });
     const added = await invoke('todos.add', { items: [{ text: 'Inspect chart' }] });
-    const updated = await invoke('todos.update', { ifRev: added.rev, items: [{ id: added.items[0].id, status: 'done' }] });
+    const artifact = path.join(cwd, 'chart.html');
+    const updated = await invoke('todos.update', { ifRev: added.rev, items: [{ id: added.items[0].id, status: 'done',
+      links: [{ path: artifact, title: 'Figure' }] }] });
     const conflict = await invoke('todos.update', { ifRev: added.rev, items: [{ id: added.items[0].id, status: 'doing' }] }).catch(error => error);
     const todos = await invoke('todos.list', {});
     t.ok('古い版の ToDo 編集と競合した場合に新しい状態を保つ', updated.rev > added.rev && conflict instanceof Error &&
-      todos.items[0].status === 'done');
+      todos.items[0].status === 'done' && todos.items[0].links[0]?.path === artifact);
 
     const plusClient = createPlusClient({ config: { apiBase: plus.url }, getIdToken: async () => desktopToken });
     const desktopPlus = createPlusModelConnection({ apiBase: plus.url, client: plusClient });
@@ -290,6 +343,18 @@ export default async function (t) {
       (await client.cmd('listSessions')).find(row => row.id === releaseSession)?.title === 'Title written by a person' &&
       JSON.stringify(beforeTitle.messages) === JSON.stringify(afterTitle.messages) &&
       titleCall.model === 'fixture' && titleCall.messages.length === 1 && !titleCall.tools?.length);
+
+    await client.cmd('setStatus', { sessionId: releaseSession, status: '確認済み', reasonKey: 'menu' });
+    const listed = (await client.cmd('listSessions')).find(row => row.id === releaseSession);
+    t.ok('会話メニューで変えた状態は Pleiad Agent の会話一覧に残る', listed?.status === '確認済み');
+
+    const { sessionId: shellSession } = await client.cmd('newSession', { backend: 'pleiad-agent', cwd });
+    const shellMark = client.mark();
+    const shellTurn = await client.runTurn({ sessionId: shellSession, prompt: 'host shell fixture' });
+    t.ok('Pleiad のシェルは承認を経て実行され、モデルに結果が戻る',
+      shellTurn.outcome === 'ok' &&
+      client.since(shellMark).some(e => e.type === 'permission' && e.toolName === 'ply_shell' && e.sessionId === shellSession) &&
+      fixture.model.calls.at(-1).messages.some(m => m.role === 'tool' && m.content.includes('PLEIAD_SHELL_FIXTURE')));
 
     const suggestionMark = client.mark();
     await client.cmd('setPref', { key: 'composer.suggestions', value: true });
