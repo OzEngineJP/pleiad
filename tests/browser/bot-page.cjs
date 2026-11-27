@@ -63,7 +63,7 @@ async page => {
   check(await page.evaluate(() => { const h = document.getElementById('channelsPageTitle').getBoundingClientRect(); return h.width <= 1 && h.height <= 1; }), 'bot のページの上に、汎用の「Channels」の見出しは出さない');
   await shot('01-new');
   await page.locator('#botObName').fill('Owl');
-  await page.keyboard.press('Enter');
+  await page.locator('#botObName').press('Enter');
   await page.waitForSelector('#botView .bp-ob-step .bp-swatches');
   check(await page.locator('#botView .bp-ob-step .bp-swatch').count() === 8 && await page.locator('#botView .bp-ob-step .bp-swatch[aria-pressed="true"]').count() === 1, '2 段目は 8 色で、1 つが選ばれている');
   await page.locator('#botView .bp-ob-step .bp-swatch[data-color="5"]').click();
