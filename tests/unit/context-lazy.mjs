@@ -97,9 +97,9 @@ export default async function (t) {
     {
       const store = memStore(); let starts = 0;
       const f = await setup(m => {
-        if (m.method === 'initialize') { starts++; if (starts > 1) return { error: { code: -32603, message: 'cannot start' } }; return init; }
+        if (m.method === 'initialize') { starts++; if (starts === 2) return { error: { code: -32603, message: 'cannot start' } }; return init; }
         if (m.method === 'tools/list') return { tools: [tool()] };
-        if (m.method === 'tools/call') return { content: [] };
+        if (m.method === 'tools/call') return { content: [{ type: 'text', text: 'again' }] };
         return {};
       }, store);
       const item = f.item('bad');
@@ -108,11 +108,13 @@ export default async function (t) {
       const r1 = await call(b.port, item.id);
       assert(r1.result?.isError);
       await until(() => b.runtime.report.entries[0].status === 'failed');
-      const n = starts;
+      // 失敗の後もツールは写しのまま広告し、次の呼び出しで起こし直す
+      assert((await rpc(b.port, 'tools/list')).result.tools.some(x => x.name.startsWith('m_')));
       const r2 = await call(b.port, item.id);
-      assert(r2.result?.isError && starts === n);
+      assert(!r2.error && r2.result?.content?.[0]?.text === 'again' && starts === 3, JSON.stringify({ r2, starts }));
+      assert(b.runtime.report.entries[0].status === 'connected');
       await b.port.close();
-      t.ok('起動に失敗した呼び出しはエラーの返り、行は失敗へ。ターン内は起き直さない', true);
+      t.ok('起動に失敗した呼び出しはエラーの返り、行は失敗へ。次の呼び出しで起こし直す（ADR 0368）', true);
     }
     {
       const store = memStore(); let v = 1;

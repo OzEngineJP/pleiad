@@ -15,6 +15,8 @@ export const CONTEXT_MCP_PATH = '/mcp/context';
 const CONNECT_CONCURRENCY = 8;
 // 開き直しを待つ上限（外部の MCP を起こし直すのに手間取っても、呼び出しを止めっぱなしにしない）
 const REOPEN_WAIT_MS = 120_000;
+/** 依頼の本文を読む間だけの、無通信の上限（読み終えたら外す。ツールの待ちは tool_timeout_sec が決める） */
+const BODY_IDLE_MS = 15_000;
 // MCP_CONFIG は mcpTransportConfig（core/context-runtime.mjs）の設定の誤り。文言は言語で変わるので code で見る
 const configError = e => e?.code === 'INVALID' || e?.code === 'SECRET_LOCKED' || e?.code === 'MCP_CONFIG';
 
@@ -135,7 +137,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
 /**
  * 外部 MCP の口。stdio の MCP を保持役の子として起こし、サーバーを起こし直しても付け直す。
  */
-export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, dataDir = null, appVersion = '', log = () => {} } = {}) {
+export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, dataDir = null, appVersion = '', log = () => {}, bodyIdleMs = BODY_IDLE_MS } = {}) {
   const holderDataDir = dataDir ?? bootEnv('AGENT_HOST_DATA');
   const bindings = new Map();
   const opening = new Set();
@@ -420,25 +422,27 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
     return {[kind]:rows};
   }
   async function callExternal(b, call, args) {
-    // standby の MCP は最初の呼び出しで起きる。起きる間は行を「起動しています」にし、活動の帯にも出す（承認は呼び出し側が先に済ませる）
-    if (call.lazy && !call.startFailed) {
+    // standby の MCP は最初の呼び出しで起きる。起きる間は行を「起動しています」にし、活動の帯にも出す（承認は呼び出し側が先に済ませる）。
+    // 起動に失敗したら lazy のまま残し、次の呼び出しで起こし直す（失敗した entry は退役済みなので、wake が新しく取り直す。ADR 0368）
+    if (call.lazy) {
       const row = b.runtime.report.entries.find(e => e.id === call.item.id);
-      if (row && row.status === 'standby') { row.status = 'starting'; await b.changed(); }
+      if (row && ['standby', 'failed', 'needs-auth'].includes(row.status)) { row.status = 'starting'; await b.changed(); }
       b.activity?.('mcpStart', call.item.name);
+      const standby = call.lease.result;
       let woken;
       try { woken = await connections.wake(call.lease, b); }
       catch (e) { woken = { result: { status: 'failed', reason: e?.message } }; }
       b.activity?.('thinking');
-      call.entry = woken.entry;
+      if (woken.entry) call.entry = woken.entry;
       if (woken.result.status !== 'connected') {
-        call.startFailed = true;
+        // 一覧を作り直しても（register）、写しのツールを standby のまま広告し続ける
+        call.lease.result = standby;
         if (row && row.status === 'starting') { row.status = woken.result.status === 'needs-auth' ? 'needs-auth' : 'failed'; row.reason = woken.result.reason ?? t('context.bridge.connectFailed'); if (woken.result.reasonCode) row.reasonCode = woken.result.reasonCode; }
         await b.changed();
         throw woken.result.reason ? Object.assign(new Error(woken.result.reason), { code: 'MCP_START' }) : new Error('MCP start failed');
       }
       call.lazy = false; call.client = woken.result.client;
     }
-    if (call.startFailed) throw Object.assign(new Error('MCP start failed'), { code: 'MCP_START' });
     const invoke = () => call.client.callTool({ name: call.name, arguments: args }, undefined,
       { timeout: Math.min(300000, (call.item.definition.tool_timeout_sec ?? 60) * 1000), signal: b.controller.signal });
     let result, failure;
@@ -470,8 +474,10 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, 
     let m;
     try {
       const chunks = []; let bytes = 0;
-      req.setTimeout(15000, () => req.destroy());
+      req.setTimeout(bodyIdleMs, () => req.destroy());
       for await (const c of req) { bytes += c.length; if (bytes > 1024*1024) return json(413, {}); chunks.push(c); }
+      // 外部 MCP の起動とツールの実行は 15 秒を超えうる。本文の上限を残すと、返す前に接続を切ってしまう
+      req.setTimeout(0);
       m = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch { return json(400, { error: 'Invalid JSON' }); }
     if (m?.jsonrpc !== '2.0' || typeof m.method !== 'string') return json(400, {});

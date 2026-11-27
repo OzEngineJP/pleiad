@@ -24,7 +24,7 @@ export const ADOPT_TURN_MARK = 'turn';
 export function holderSource(client, state, { spawned = false, redelivered = false } = {}) {
   const id = String(state.id);
   const queue = [];
-  let wake = null;
+  let wake = null, stopped = false;
   // attach の前の write は保持役が捨てる（subscribe していない親は子に触れない）。attach の後に順に送る（付け直す側が最初に出す中断など）
   let attached = spawned;
   const early = [];
@@ -61,7 +61,8 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
     async *attach(from) {
       await source.open(from);
       for (;;) {
-        while (!queue.length) await new Promise(resolve => { wake = resolve; });
+        while (!stopped && !queue.length) await new Promise(resolve => { wake = resolve; });
+        if (stopped) return;
         const item = queue.shift();
         if (item.lost) throw new Error(`adopt: the holder connection was lost (${item.lost})`);
         if (item.exit) { yield item; return; }
@@ -74,6 +75,8 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
     ack(seq) { if (seq > source.acked) { source.acked = seq; client.ack(id, seq); } },
     write(data) { if (attached) return client.write(id, data); early.push(data); return true; },
     release() { return client.release(id); },
+    /** 読みの列を終わらせる（手を離す・止める側。core/context-mcp-held.mjs の close） */
+    stop() { stopped = true; poke(); },
     dispose() { client.off('out', onOut); client.off('exit', onExit); client.off('disconnect', onDisconnect); },
   };
   return source;
