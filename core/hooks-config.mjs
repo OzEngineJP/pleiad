@@ -50,6 +50,9 @@ export const HOOK_EVENTS = {
   grok: ['SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'StopCancelled', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
     'PermissionDenied', 'UserPromptSubmit', 'Notification', 'SubagentStart', 'SubagentStop', 'SubagentEnd', 'PreCompact', 'PostCompact'],
 };
+for (const [id, descriptor] of Object.entries(AGENTS)) {
+  if (descriptor.hookEvents) HOOK_EVENTS[id] = descriptor.hookEvents;
+}
 // 一覧の並び（ライフサイクル順）。開始 → 入力 → ツール前 → 権限 → ツール後／失敗 → サブエージェント／圧縮 → 停止 → 終了、固有のものは後ろ
 export const HOOK_ORDER = ['SessionStart', 'Setup', 'UserPromptSubmit', 'UserPromptExpansion', 'PreInvocation', 'PreToolUse', 'PermissionRequest',
   'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'PostInvocation', 'SubagentStart', 'SubagentStop', 'PreCompact',

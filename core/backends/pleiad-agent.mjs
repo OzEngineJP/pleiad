@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { dataDir, get, setSessionData } from '../store.mjs';
@@ -9,6 +10,8 @@ import { t } from '../i18n.mjs';
 import { editableField, hostTools, interactionQuestions } from './pleiad-agent-tools.mjs';
 import { managedBackendIds } from './host-policy.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
+import { docStopsNative } from './context-capabilities.mjs';
+import { createHookRunner } from './opencode-hooks.mjs';
 
 const ID = 'pleiad-agent';
 const require = createRequire(import.meta.url);
@@ -81,12 +84,12 @@ function historyMessages(messages) {
       return call;
     });
     const text = textOf(content);
-    if (text || toolCalls.length) rows.push({ role, uuid, text, ts: createdAt, ...(toolCalls.length ? { toolCalls } : {}) });
+    if (text || toolCalls.length) rows.push({ role, uuid, text, at: createdAt, ts: createdAt, ...(toolCalls.length ? { toolCalls } : {}) });
   }
   return rows;
 }
 
-function liveEvents(emit) {
+function liveEvents(emit, trigger) {
   const textIds = new Set();
   const usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
   let costKnown = true;
@@ -114,6 +117,12 @@ function liveEvents(emit) {
         emit({ type: 'tool.result', id: event.toolCallId, text: typeof text === 'string' ? text : JSON.stringify(text), isError: !event.ok });
         break;
       }
+      case 'compact.started':
+        emit({ type: 'compaction', phase: 'start', trigger });
+        break;
+      case 'compact.applied':
+        emit({ type: 'compaction', phase: 'complete', trigger, summary: event.summary, compacted: event.compacted !== false });
+        break;
       case 'usage.recorded':
         usage.inputTokens += event.inputTokens ?? 0;
         usage.outputTokens += event.outputTokens ?? 0;
@@ -185,12 +194,48 @@ function endpointSettings(endpoint, model) {
   model ||= endpoint.roles.main || endpoint.models[0];
   const url = new URL(endpoint.baseUrl + (protocol === 'anthropic' ? '/v1/messages' : '/chat/completions'));
   return { model, protocol, url, auth: endpoint.auth, openRouter: endpoint.preset === 'openrouter' || url.hostname === 'openrouter.ai',
-    vision: endpoint.modelInfo?.[model]?.vision === true };
+    vision: endpoint.modelInfo?.[model]?.vision === true, windowTokens: endpoint.modelInfo?.[model]?.context };
+}
+
+function settingsFor(runtime, hooksRuntime, scanOptions) {
+  const source = kind => managedBackendIds || runtime?.owners?.[kind] === 'ply' || docStopsNative(runtime?.docs?.[kind])
+    ? 'host' : 'native';
+  const settingsSources = {
+    instructions: source('instruction'),
+    skills: source('skill'),
+    hooks: hooksRuntime ? 'host' : source('hooks'),
+  };
+  const native = Object.values(settingsSources).includes('native');
+  return { settingsSources, ...(native ? { settingsHome: scanOptions?.home ?? os.homedir() } : {}) };
+}
+
+const hookTools = { read_file: 'read', write_file: 'write', apply_patch: 'patch', Glob: 'glob', Grep: 'grep', search_files: 'grep', list_files: 'list' };
+
+async function replyToHook(runner, frame, signal) {
+  const input = frame.input ?? {};
+  const tool = hookTools[input.toolName] ?? input.toolName;
+  const args = input.args;
+  switch (frame.phase) {
+    case 'runUserPromptSubmit': {
+      const result = await runner.promptSubmit(input.prompt, { signal });
+      return { blocked: Boolean(result.block), additionalContext: result.context };
+    }
+    case 'runPreToolUse': {
+      const result = await runner.beforeTool({ tool, args }, { signal });
+      return { blocked: Boolean(result.block), updatedInput: result.args };
+    }
+    case 'runPostToolUse': {
+      const result = await runner.afterTool({ tool, args, output: input.result }, { signal });
+      return { blocked: false, additionalContext: result.append };
+    }
+    default: return { blocked: true };
+  }
 }
 
 async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, mode, effort, endpoint, emit, onPromptDelivered,
   signal: controller, control, askPermission, agentRuntime, contextRuntime, controlRuntime, shellRuntime,
-  computerRuntime, browserRuntime, pendingDecision, addedInstructions }) {
+  computerRuntime, browserRuntime, pendingDecision, addedInstructions, botInstructions, visualizeInstructions,
+  hooksRuntime, scanOptions, trigger }) {
   const signal = controller?.signal;
   const cli = cliPath();
   if (!cli) throw new Error('Configure the Pleiad Agent executable first');
@@ -217,7 +262,10 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
   let outcome = 'error';
   let turnSent = false;
   let nativeId = sessionId;
-  const normalize = liveEvents(emit);
+  const normalize = liveEvents(emit, trigger);
+  const hooks = new AbortController();
+  const hookSignal = signal ? AbortSignal.any([signal, hooks.signal]) : hooks.signal;
+  let hookRunner;
   try {
     let config, getKey;
     const local = !managedBackendIds && !endpoint && modelSettings();
@@ -235,7 +283,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       const catalog = await plus?.models(signal);
       model ||= Object.keys(catalog ?? {})[0];
       if (!model || !catalog || !Object.hasOwn(catalog, model)) throw new Error('Select an available Pleiad Plus model');
-      config = { model, protocol: 'openai', url: plus.url, managed: true, openRouter: true, vision: catalog[model].vision === true };
+      config = { model, protocol: 'openai', url: plus.url, managed: true, openRouter: true, vision: catalog[model].vision === true, windowTokens: catalog[model].context };
       getKey = requestSignal => plus.authorization(model, requestSignal);
     }
     if (!config.model) throw new Error('Select a Pleiad Agent model');
@@ -267,22 +315,29 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
         greeted = true;
         supportsTools = frame.capabilities?.includes('host-tools');
         if (pendingDecision && !frame.capabilities?.includes('resume-decision')) throw new Error('Decision recovery is unavailable');
+        if (trigger && !frame.capabilities?.includes('compact')) throw new Error('Compaction is unavailable');
+        if (hooksRuntime && !frame.capabilities?.includes('host-hooks')) throw new Error('Host hooks are unavailable');
         const tools = supportsTools ? { mode: mode ?? 'default', ...hostTools({ ply_agents: agentRuntime, ply_context: contextRuntime,
           ply_control: controlRuntime, ply_shell: shellRuntime, ply_computer: computerRuntime,
           ply_browser: browserRuntime && { ...browserRuntime, instructions: 'Use ply_browser for browser handoff and downloads.' } }) } : {};
-        if (supportsTools && addedInstructions) tools.instructions = [tools.instructions, addedInstructions].filter(Boolean).join('\n\n');
+        if (supportsTools) tools.instructions = [tools.instructions, addedInstructions, botInstructions, visualizeInstructions].filter(Boolean).join('\n\n');
+        const settings = frame.capabilities?.includes('settings-sources') ? settingsFor(contextRuntime, hooksRuntime, scanOptions) : {};
         await write({ type: 'open', id: openId, version: VERSION, ...(sessionId ? { sessionId, resume: true } : {}),
-          protocol: config.protocol, model: config.model, vision: config.vision, reasoningEffort: effort, ...tools });
+          protocol: config.protocol, model: config.model, vision: config.vision, reasoningEffort: effort, ...tools, ...settings, hostHooks: Boolean(hooksRuntime) });
       } else if (frame.type === 'opened' && frame.id === openId && !turnSent) {
         clearTimeout(timer);
         nativeId = frame.sessionId;
         await emit({ type: 'session', sessionId: nativeId, first: !sessionId, model: config.model });
         if (signal?.aborted) break;
-        await write(pendingDecision ? { type: 'turn.resume', id, requestId: pendingDecision.id } : { type: 'turn', id, prompt });
+        if (hooksRuntime) hookRunner = createHookRunner(hooksRuntime, {
+          base: { cwd, session_id: hostSessionId ?? nativeId }, onRun: run => emit({ type: 'hookRun', ...run }),
+        });
+        await write(trigger ? { type: 'compact', id } : pendingDecision
+          ? { type: 'turn.resume', id, requestId: pendingDecision.id } : { type: 'turn', id, prompt });
         turnSent = true;
         emit({ type: 'activity', state: 'thinking' });
       } else if (frame.type === 'accepted' && frame.id === id) {
-        if (control) {
+        if (control && !trigger) {
           control.handle = handle;
           control.steerConfirms = true;
           control.steer = item => {
@@ -299,6 +354,15 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
         else if (pendingSteers.delete(frame.id)) emit({ type: 'userMessage.delivered', messageId: frame.id, nativeId: frame.messageId });
       } else if (frame.type === 'event' && frame.turnId === id) {
         normalize(frame.event);
+      } else if (frame.type === 'context' && frame.turnId === id && Number.isFinite(frame.estimatedTokens)) {
+        const windowTokens = config.windowTokens ?? frame.estimatedTokensThreshold;
+        if (Number.isFinite(windowTokens) && windowTokens > 0) {
+          emit({ type: 'contextWindow', usedTokens: frame.estimatedTokens, windowTokens });
+        }
+      } else if (frame.type === 'hook.request' && frame.turnId === id && hookRunner) {
+        void replyToHook(hookRunner, frame, hookSignal).catch(() => ({ blocked: true })).then(result => {
+          if (!hookSignal.aborted) return send({ type: 'hook.resolve', id: frame.id, turnId: id, ...result });
+        });
       } else if ((frame.type === 'accepted' || frame.type === 'error') && modes.has(frame.id)) {
         modes.get(frame.id)(frame.type === 'accepted');
       } else if (frame.type === 'decision.cancel' && frame.turnId === id) {
@@ -339,6 +403,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
     clearTimeout(timer);
     clearTimeout(stopTimer);
     signal?.removeEventListener('abort', abort);
+    hooks.abort();
     for (const request of requests.values()) request.abort();
     for (const decision of decisions.values()) decision.abort();
     for (const settle of modes.values()) settle(false);
@@ -422,5 +487,16 @@ export const backend = {
     resolveKey = host.pleiadAgentModelKey;
     plus = host.pleiadAgentPlus;
   },
+  forkBefore: true,
+  rewindFirst: true,
+  async fork(sessionId, { beforeMessageId, upToMessageId, title } = {}) {
+    const { forkHistory } = await adapter(cliPath(), 'history');
+    return forkHistory({ homeDir, sessionId, before: beforeMessageId, through: upToMessageId, title });
+  },
+  async rewind(sessionId, { beforeMessageId } = {}) {
+    const { rewindHistory } = await adapter(cliPath(), 'history');
+    return rewindHistory({ homeDir, sessionId, before: beforeMessageId });
+  },
+  compact: runTurn,
   runTurn,
 };

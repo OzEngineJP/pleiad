@@ -6,7 +6,10 @@ import { createPlusModelConnection } from '../../core/plus/model-connection.mjs'
 import { startPleiadAgentFixture } from '../lib/pleiad-agent-fixture.mjs';
 import { installFakePlusModels, startFakePlus } from '../lib/fake-plus.mjs';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
-import { startServer } from '../lib/server.mjs';
+import { connectHolder } from '../../core/holder/client.mjs';
+import { defaultHolderRoot } from '../../core/process.mjs';
+import { hash } from '../../core/context-runtime.mjs';
+import { ROOT, startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-pleiad-agent';
@@ -15,8 +18,13 @@ export const title = 'Pleiad Agent の道具・添付と送信待ち';
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agent-'));
   const cwd = path.join(scratch, '日本語 の作業場所');
+  const desktopDir = path.join(scratch, 'desktop');
   const fixture = await startPleiadAgentFixture({ token: 'fixture-key-only',
-    usage: { prompt_tokens: 10, completion_tokens: 3, cost: 0.01 } });
+    usage: { prompt_tokens: 10, completion_tokens: 3, cost: 0.01 },
+    reply: body => body.messages.at(-1)?.content === '[fixture:visualize]' ? [
+      'visualize' + JSON.stringify({ path: path.join(cwd, 'chart.html'), title: 'Figure' }),
+      'visualize' + JSON.stringify({ path: path.join(cwd, 'invalid.html'), title: 'Invalid figure' }),
+    ].join('\n') : undefined });
   const plus = await startFakePlus();
   const runtime = { tenantId: '11111111-1111-4111-8111-111111111111',
     cloudHostId: '22222222-2222-4222-8222-222222222222', generation: 2, token: 'r'.repeat(43) };
@@ -152,6 +160,56 @@ export default async function (t) {
     t.ok('承認後にホストの道具が実行される', fixture.model.calls.at(-1).messages.some(message =>
       message.role === 'tool' && message.content.includes('ply_task_list ok')));
 
+    const beforeFork = await client.cmd('loadSession', { sessionId });
+    const target = beforeFork.messages.filter(message => message.role === 'user')[1];
+    const branch = await client.cmd('fork', { sessionId, beforeMessageId: target.uuid });
+    const child = await client.cmd('loadSession', { sessionId: branch.sessionId });
+    const branchRow = (await client.cmd('lineage', { sessionId: branch.sessionId })).sessions.find(row => row.id === branch.sessionId);
+    const prefix = beforeFork.messages.slice(0, beforeFork.messages.findIndex(message => message.uuid === target.uuid));
+    t.ok('発言の編集から分岐すると、その手前の発言 ID と分岐元が残る',
+      branchRow?.parent?.beforeMessage === target.uuid && child.messages.map(m => m.uuid).join() === prefix.map(m => m.uuid).join());
+    t.ok('分岐元には元の履歴と添付が残る',
+      (await client.cmd('loadSession', { sessionId })).messages.map(m => m.uuid).join() === beforeFork.messages.map(m => m.uuid).join() &&
+      beforeFork.presents.some(p => p.path === file.path) && !child.presents.some(p => p.path === file.path));
+
+    const branchTurn = await client.runTurn({ sessionId: branch.sessionId, prompt: 'continue branch' }, { ms: 15_000 });
+    t.ok('分岐から送ると手前の道具の結果がモデルに届く', branchTurn.outcome === 'ok' &&
+      fixture.model.calls.at(-1).messages.some(m => m.role === 'tool' && m.content.includes('道具の結果')));
+
+    const rewindMark = client.mark();
+    await client.cmd('sendMessage', { sessionId, messageId: 'ply-agent-rewind-001', prompt: 'replacement',
+      rewind: { beforeMessageId: target.uuid } });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId, { from: rewindMark, ms: 15_000 });
+    const rewound = await client.cmd('loadSession', { sessionId });
+    t.ok('同じ会話の巻き戻しでは発言の手前を残し、その後の添付を外す',
+      rewound.messages.slice(0, prefix.length).map(m => m.uuid).join() === prefix.map(m => m.uuid).join() &&
+      rewound.messages.some(m => m.role === 'user' && m.text === 'replacement') &&
+      !rewound.messages.some(m => m.uuid === target.uuid) && !rewound.presents.some(p => p.path === file.path));
+
+    const compactMark = client.mark();
+    await client.cmd('compactConversation', { sessionId });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === sessionId, { from: compactMark, ms: 15_000 });
+    t.ok('既存の圧縮操作で開始・完了と文脈の大きさが届き、発言 ID を保つ',
+      client.since(compactMark).some(e => e.type === 'compaction' && e.phase === 'complete') &&
+      client.since(compactMark).some(e => e.type === 'contextWindow') &&
+      (await client.cmd('loadSession', { sessionId })).messages.map(m => m.uuid).join() === rewound.messages.map(m => m.uuid).join());
+
+    await fs.writeFile(path.join(cwd, 'chart.html'), '<p>Fixture chart</p>');
+    await fs.writeFile(path.join(cwd, 'invalid.html'), Buffer.from([255]));
+    const vizTurn = await client.runTurn({ sessionId, prompt: '[fixture:visualize]' }, { ms: 15_000 });
+    const vizHistory = await client.cmd('loadSession', { sessionId });
+    t.ok('会話には HTML の可視化と、UTF-8 でない可視化のエラーが残る', vizTurn.outcome === 'ok' &&
+      vizHistory.presents.some(p => p.kind === 'visualization' && p.caption === 'Figure' && p.content === '<p>Fixture chart</p>') &&
+      vizHistory.presents.some(p => p.kind === 'visualization' && p.caption === 'Invalid figure' && p.error));
+
+    const invoke = (op, args) => client.cmd('invoke', { op, args: { sessionId, ...args } });
+    const added = await invoke('todos.add', { items: [{ text: 'Inspect chart' }] });
+    const updated = await invoke('todos.update', { ifRev: added.rev, items: [{ id: added.items[0].id, status: 'done' }] });
+    const conflict = await invoke('todos.update', { ifRev: added.rev, items: [{ id: added.items[0].id, status: 'doing' }] }).catch(error => error);
+    const todos = await invoke('todos.list', {});
+    t.ok('古い版の ToDo 編集と競合した場合に新しい状態を保つ', updated.rev > added.rev && conflict instanceof Error &&
+      todos.items[0].status === 'done');
+
     const plusClient = createPlusClient({ config: { apiBase: plus.url }, getIdToken: async () => desktopToken });
     const desktopPlus = createPlusModelConnection({ apiBase: plus.url, client: plusClient });
     const auth = await desktopPlus.authorization('fixture', new AbortController().signal);
@@ -165,12 +223,77 @@ export default async function (t) {
     const resultsBefore = completions.length;
     client.close();
     await server.stop();
-    server = await startServer({ dataDir: path.join(scratch, 'desktop'), env: {
-      AGENT_HOST_BACKENDS: 'pleiad-agent', AGENT_HOST_PLEIAD_AGENT_BIN: fixture.env.AGENT_HOST_PLEIAD_AGENT_BIN,
-      AGENT_HOST_PLUS_API: plus.url,
+    server = await startServer({ dataDir: desktopDir, env: {
+      ...fixture.env, AGENT_HOST_BACKENDS: 'pleiad-agent,fake', AGENT_HOST_PLUS_API: plus.url,
     } });
-    client = await open(server);
+    client = await open({ ...server, autoAllow: true });
     const desktopSession = (await client.cmd('newSession', { backend: 'pleiad-agent', cwd })).sessionId;
+    const nativeInstruction = 'Fixture instruction from CLAUDE.md';
+    const hostInstruction = 'Fixture instruction from AGENTS.md';
+    await fs.writeFile(path.join(cwd, 'CLAUDE.md'), nativeInstruction);
+    await fs.writeFile(path.join(cwd, 'AGENTS.md'), hostInstruction);
+    const skillDir = path.join(cwd, '.claude', 'skills', 'fixture-review');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: fixture-review\ndescription: Review the fixture\n---\nReview the fixture.');
+    const none = { sources: [], excludePaths: [] };
+    const setInstructions = (owner, sources) => client.cmd('setContextSettings', { cwd, place: cwd, kind: 'instruction',
+      value: { owner, user: none, directory: { ...none, sources } } });
+    const latestInput = () => JSON.stringify(fixture.model.calls.at(-1).messages);
+    const onlyInstruction = (expected, other) => latestInput().split(expected).length === 2 && !latestInput().includes(other);
+    await setInstructions('native', ['claude']);
+    await client.runTurn({ sessionId: desktopSession, prompt: 'native instructions' });
+    t.ok('エージェント管理にすると Claude の指示が一度届く', onlyInstruction(nativeInstruction, hostInstruction));
+    await setInstructions('ply', ['common']);
+    await client.runTurn({ sessionId: desktopSession, prompt: 'host instructions' });
+    t.ok('Pleiad 管理に切り替えると共通の指示が一度届く', onlyInstruction(hostInstruction, nativeInstruction));
+    const slash = await client.cmd('slashSkills', { cwd });
+    t.ok('入力欄のスラッシュ候補に作業場所の Skill が現れる', JSON.stringify(slash).includes('fixture-review'));
+
+    const desktopHistory = await client.cmd('loadSession', { sessionId: desktopSession });
+    const secondUser = desktopHistory.messages.filter(message => message.role === 'user')[1];
+    const desktopBranch = await client.cmd('fork', { sessionId: desktopSession, beforeMessageId: secondUser.uuid });
+    const continued = await client.runTurn({ sessionId: desktopBranch.sessionId, prompt: 'desktop branch reply' });
+    const input = fixture.model.calls.at(-1).messages;
+    t.ok('デスクトップの分岐はモデルに元の発言を一度だけ渡し、除外した発言を渡さない',
+      continued.outcome === 'ok' && input.filter(m => m.role === 'user' && m.content === 'native instructions').length === 1 &&
+      !latestInput().includes('host instructions') && input.at(-1).content === 'desktop branch reply');
+
+    await fs.writeFile(path.join(cwd, 'hook-result.txt'), 'read from host hook');
+    await fs.writeFile(path.join(cwd, 'rewrite-read.mjs'), [
+      "let body = ''; for await (const chunk of process.stdin) body += chunk;",
+      "const { tool_input } = JSON.parse(body);",
+      "if (!tool_input.file_path) process.exit(1);",
+      "await (await import('node:fs/promises')).appendFile('hook-fired.txt', 'ran\\n');",
+      "console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...tool_input, file_path: 'hook-result.txt' } } }));",
+    ].join('\n'));
+    await client.cmd('savePlyHook', { cwd, value: { name: 'Rewrite fixture read', agent: 'claude',
+      event: 'PreToolUse', matcher: 'Read', command: 'node rewrite-read.mjs', targets: ['pleiad-agent'] } });
+    const hooks = await client.cmd('hooksMatrix', { cwd });
+    const hook = hooks.rows.find(row => row.name === 'Rewrite fixture read');
+    if (!hook) throw new Error('Configured hook is missing from the matrix');
+    await client.cmd('setHookAgent', { cwd, key: hook.key, agent: 'pleiad-agent', on: true, revision: hooks.revision });
+    const readWithHook = await client.runTurn({ sessionId: desktopSession, prompt: '[fixture:read]' });
+    t.ok('設定で登録したフックが一度だけ実行され、変更後のパスを読む',
+      readWithHook.outcome === 'ok' && await fs.readFile(path.join(cwd, 'hook-fired.txt'), 'utf8').catch(() => '') === 'ran\n' &&
+      fixture.model.calls.at(-1).messages.some(m => m.role === 'tool' && m.content.includes('read from host hook')));
+
+    await fs.mkdir(path.join(cwd, '.git'), { recursive: true });
+    await fs.writeFile(path.join(cwd, '.mcp.json'), JSON.stringify({ mcpServers: { counter: {
+      command: process.execPath, args: [path.join(ROOT, 'tests', 'lib', 'stateful-mcp.mjs')],
+    } } }));
+    await client.cmd('setContextSettings', { cwd, place: cwd, kind: 'mcp',
+      value: { owner: 'ply', user: none, directory: { ...none, sources: ['claude'] } } });
+    await client.runTurn({ sessionId: desktopSession, prompt: 'connect configured MCP' });
+    const context = await client.cmd('sessionContext', { sessionId: desktopSession });
+    const counter = context?.report?.entries?.find(entry => entry.name === 'counter' && entry.status === 'connected');
+    if (counter) {
+      const tool = 'mcp__ply_context__m_' + hash([counter.id, 'count']).slice(0, 24);
+      await client.runTurn({ sessionId: desktopSession, prompt: '[fixture:mcp:' + tool + ']' });
+    }
+    t.ok('設定済みの外部 MCP を会話の道具として実行する', Boolean(counter) &&
+      fixture.model.calls.at(-1).messages.some(m => m.role === 'tool' && m.content.includes('count:1')));
+
+
     for (const [provider, suffix, authMode] of [['openai', '/v1', 'bearer'], ['openrouter', '/api/v1', 'bearer'], ['anthropic', '', 'x-api-key']]) {
       const input = { agent: 'pleiad-agent', name: provider, preset: provider, baseUrl: byok.url + suffix,
         authMode, roles: { main: 'desktop-fixture' } };
@@ -203,13 +326,23 @@ export default async function (t) {
         !JSON.stringify([result, await client.cmd('invoke', { op: 'apiKeys.list' })]).includes('desktop-fixture-key'));
     }
     t.ok('利用者の接続を選んだターンは管理の接続を使わない', completions.length === resultsBefore);
+
+    await client.cmd('switchBackend', { sessionId: desktopSession, backend: 'fake' });
+    const switched = await client.runTurn({ sessionId: desktopSession, backend: 'fake', prompt: 'echo:switched' });
+    const handedOff = await client.cmd('loadSession', { sessionId: desktopSession });
+    t.ok('エージェントの切り替え後も同じ会話で両方の履歴を読める',
+      switched.outcome === 'ok' && handedOff.messages.some(m => m.uuid === secondUser.uuid) &&
+      handedOff.messages.some(m => m.role === 'user' && m.text === 'echo:switched'));
   } finally {
     client?.close();
     try { await server?.stop(); } finally {
       await byok.close();
       await plus.close();
       await fixture.close();
-      await fs.rm(scratch, { recursive: true, force: true });
+      const holder = await connectHolder({ dataDir: desktopDir, root: defaultHolderRoot(desktopDir) }).catch(() => null);
+      holder?.shutdown();
+      holder?.close();
+      await fs.rm(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   }
 }

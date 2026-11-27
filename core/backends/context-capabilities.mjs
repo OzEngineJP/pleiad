@@ -130,7 +130,10 @@ const NATIVE_READERS = definePerAgentMap('NATIVE_READERS', {
     if (kind === 'skill' && (isAgentsSkillsPath(origin.path) || isAgentsSkillsPath(origin.realPath))) return true;
     return devinImportFormat(kind, origin.path, origin.source, origin.scope) !== null;
   },
-  'pleiad-agent': () => false,
+  'pleiad-agent'(kind, origin) {
+    if (kind === 'instruction') return /(?:^|\/)CLAUDE\.md$/i.test(origin.path);
+    return origin.source === 'claude';
+  },
   grok(_kind, origin) {
     return origin.source === 'grok' || origin.source === 'common' || origin.source === 'claude';
   },
@@ -239,7 +242,7 @@ export const DOC_AGENT_TRAITS = definePerAgentMap('DOC_AGENT_TRAITS', {
   opencode: { perFileInstructionExclude: false, perNameSkillList: false, managedServeOnDiff: true, relay: true },
   devin: { perFileInstructionExclude: false, perNameSkillList: false, relay: true, legacyPlyKeepsNative: true },
   grok: { perFileInstructionExclude: false, perNameSkillList: false, relay: true },
-  'pleiad-agent': { perFileInstructionExclude: false, perNameSkillList: false, relay: false },
+  'pleiad-agent': { perFileInstructionExclude: false, perNameSkillList: false, relay: true },
 });
 
 /**

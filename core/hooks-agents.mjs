@@ -31,7 +31,7 @@ export const LOCK_REASONS = Object.freeze(['own', 'workspace', 'relay', 'admin']
 const GROUPS = ['ply', 'own', 'place', 'root', 'admin'];
 const ORDER = [CLAUDE, CODEX, AGY, 'opencode', DEVIN, GROK]; // backend-allow: 一覧の列の並び（外部 MCP の一覧と同じ）
 // 列の短い名前（エージェントの記述の shortLabel）。画面の短い名前は有効なエージェントの分しか届かないので、使っていないエージェントの列も短い名前で出せるよう一覧に載せる
-const COLUMNS = () => [...UNIFY_TARGETS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+const COLUMNS = () => [...ORDER.filter(a => UNIFY_TARGETS.includes(a)), ...UNIFY_TARGETS.filter(a => !ORDER.includes(a))];
 const COLUMN_LABELS = () => Object.fromEntries(COLUMNS().map(a => [a, agentPresentation(a).shortLabel ?? a]));
 const KEY_RE = /^(?:h-[0-9a-f]{12}|hk-[0-9a-f]{16}|ws:hooks)$/;
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
