@@ -12,6 +12,7 @@ import { managedBackendIds } from './host-policy.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
 import { docStopsNative } from './context-capabilities.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
+import { computerResult, computerToolInput, isComputerTool, mcpText } from './computer-delivery.mjs';
 
 const ID = 'pleiad-agent';
 const require = createRequire(import.meta.url);
@@ -72,6 +73,10 @@ function historyMessages(messages) {
         const call = calls.get(block.toolCallId);
         if (call && block.kind === 'tool_result') {
           call.result = block.result?.data ?? block.result?.summary ?? block.result;
+          if (isComputerTool(call.name) && block.result?.data?.response) {
+            const { text, ...display } = computerResult(mcpText(block.result.data.response), text => ({ text }));
+            Object.assign(call, display, { result: text });
+          }
           call.isError = block.ok === false;
         }
       }
@@ -79,7 +84,8 @@ function historyMessages(messages) {
     }
     if (role !== 'user' && role !== 'assistant') continue;
     const toolCalls = (content ?? []).filter(block => block.kind === 'tool_use').map(block => {
-      const call = { id: block.toolCallId, name: block.name, input: block.args };
+      const input = isComputerTool(block.name) ? computerToolInput(block.name, block.args) : block.args;
+      const call = { id: block.toolCallId, name: block.name, input };
       calls.set(call.id, call);
       return call;
     });
@@ -91,6 +97,7 @@ function historyMessages(messages) {
 
 function liveEvents(emit, trigger) {
   const textIds = new Set();
+  const computerCalls = new Set();
   const usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
   let costKnown = true;
   return event => {
@@ -109,12 +116,19 @@ function liveEvents(emit, trigger) {
         if (streamed || text) emit({ type: 'text.end', uuid: event.messageId });
         break;
       }
-      case 'tool.call.scheduled':
-        emit({ type: 'tool.start', id: event.toolCallId, name: event.name, input: event.args });
+      case 'tool.call.scheduled': {
+        const computer = isComputerTool(event.name);
+        if (computer) computerCalls.add(event.toolCallId);
+        emit({ type: 'tool.start', id: event.toolCallId, name: event.name,
+          input: computer ? computerToolInput(event.name, event.args) : event.args });
         break;
+      }
       case 'tool.call.completed': {
         const text = event.result?.data?.content ?? event.result?.summary ?? '';
-        emit({ type: 'tool.result', id: event.toolCallId, text: typeof text === 'string' ? text : JSON.stringify(text), isError: !event.ok });
+        const raw = computerCalls.delete(event.toolCallId) && event.result?.data?.response;
+        const display = raw ? computerResult(mcpText(raw), text => ({ text }))
+          : { text: typeof text === 'string' ? text : JSON.stringify(text) };
+        emit({ type: 'tool.result', id: event.toolCallId, ...display, isError: !event.ok });
         break;
       }
       case 'compact.started':
@@ -234,8 +248,8 @@ async function replyToHook(runner, frame, signal) {
 
 async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model, mode, effort, endpoint, emit, onPromptDelivered,
   signal: controller, control, askPermission, agentRuntime, contextRuntime, controlRuntime, shellRuntime,
-  computerRuntime, browserRuntime, pendingDecision, addedInstructions, botInstructions, visualizeInstructions,
-  hooksRuntime, scanOptions, trigger }) {
+  computerRuntime, browserRuntime, browserInstructions, pendingDecision, addedInstructions, botInstructions, visualizeInstructions,
+  hooksRuntime, scanOptions, trigger, internal }) {
   const signal = controller?.signal;
   const cli = cliPath();
   if (!cli) throw new Error('Configure the Pleiad Agent executable first');
@@ -287,7 +301,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       getKey = requestSignal => plus.authorization(model, requestSignal);
     }
     if (!config.model) throw new Error('Select a Pleiad Agent model');
-    await mkdir(homeDir, { recursive: true });
+    if (!internal) await mkdir(homeDir, { recursive: true });
     const { VERSION, readFrames, writeFrame } = await adapter(cli, 'frames');
     if (signal?.aborted) { outcome = 'aborted'; return; }
     child = spawnCli([process.execPath, cli], ['stdio'], {
@@ -313,18 +327,27 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       if (!greeted) {
         if (frame.type !== 'hello' || frame.version !== VERSION) throw new Error('Unsupported Pleiad Agent protocol');
         greeted = true;
+        if (internal) {
+          if (!frame.capabilities?.includes('completion')) throw new Error('Independent model calls are unavailable');
+          if (signal?.aborted) break;
+          turnSent = true;
+          await write({ type: 'complete', id, prompt, protocol: config.protocol, model: config.model, reasoningEffort: effort });
+          continue;
+        }
         supportsTools = frame.capabilities?.includes('host-tools');
         if (pendingDecision && !frame.capabilities?.includes('resume-decision')) throw new Error('Decision recovery is unavailable');
         if (trigger && !frame.capabilities?.includes('compact')) throw new Error('Compaction is unavailable');
         if (hooksRuntime && !frame.capabilities?.includes('host-hooks')) throw new Error('Host hooks are unavailable');
         const tools = supportsTools ? { mode: mode ?? 'default', ...hostTools({ ply_agents: agentRuntime, ply_context: contextRuntime,
           ply_control: controlRuntime, ply_shell: shellRuntime, ply_computer: computerRuntime,
-          ply_browser: browserRuntime && { ...browserRuntime, instructions: 'Use ply_browser for browser handoff and downloads.' } }) } : {};
+          ply_browser: browserRuntime && { ...browserRuntime, instructions: browserInstructions } }) } : {};
         if (supportsTools) tools.instructions = [tools.instructions, addedInstructions, botInstructions, visualizeInstructions].filter(Boolean).join('\n\n');
         const settings = frame.capabilities?.includes('settings-sources') ? settingsFor(contextRuntime, hooksRuntime, scanOptions) : {};
         await write({ type: 'open', id: openId, version: VERSION, ...(sessionId ? { sessionId, resume: true } : {}),
           protocol: config.protocol, model: config.model, vision: config.vision, reasoningEffort: effort, ...tools, ...settings, hostHooks: Boolean(hooksRuntime) });
-      } else if (frame.type === 'opened' && frame.id === openId && !turnSent) {
+      } else if (internal && frame.type === 'completion' && frame.id === id && !signal?.aborted) {
+        emit(frame);
+      } else if (!internal && frame.type === 'opened' && frame.id === openId && !turnSent) {
         clearTimeout(timer);
         nativeId = frame.sessionId;
         await emit({ type: 'session', sessionId: nativeId, first: !sessionId, model: config.model });
@@ -450,6 +473,21 @@ export const backend = {
   defaultConnectionLabel: 'Pleiad Plus',
   capabilities: CAPABILITY_STATES[ID],
   traits: AGENT_TRAITS[ID],
+  internalCallSettings: ({ model, effort }) => ({ model, effort }),
+  async internalTurn({ prompt, model, effort, cwd, endpoint, signal }) {
+    let completion, failure;
+    await runTurn({ prompt, model, effort, cwd: cwd || os.tmpdir(), endpoint, signal: { signal }, internal: true, emit(frame) {
+      if (frame.type === 'completion') completion = { text: frame.text, usage: frame.usage };
+      if (frame.type === 'turnResult' && frame.outcome === 'error') failure = frame.error;
+    } });
+    if (signal?.aborted) return { ...completion, aborted: true };
+    if (failure || !completion) throw new Error(failure ?? 'Pleiad Agent returned no completion');
+    return completion;
+  },
+  async suggestNext(args) {
+    const result = await backend.internalTurn(args);
+    return result.aborted ? null : result.text;
+  },
   modes: () => ({
     default: { label: t('modes.ask'), scope: 'workspace', autonomy: 'ask', enforced: false },
     auto: { label: 'auto', scope: 'workspace', autonomy: 'ask', enforced: false },

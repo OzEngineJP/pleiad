@@ -20,6 +20,8 @@ export const CAPABILITY_STATES = definePerAgentMap('CAPABILITY_STATES', {
   'pleiad-agent': {
     ...Object.fromEntries(CAPABILITY_KEYS.map(key => [key, impossible('Outside the current Pleiad Agent integration', 'design')])),
     title: covered,
+    internalCall: 'ephemeral',
+    promptSuggestions: covered,
     tag: covered,
     fork: true,
     forkMessage: true,

@@ -4,8 +4,10 @@ import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
-export async function startPleiadAgentFixture(options) {
-  const cli = process.env.AGENT_HOST_PLEIAD_AGENT_BIN || require.resolve('pleiad-agent/cli');
+export async function startPleiadAgentFixture(options, { packagedRoot } = {}) {
+  const cli = packagedRoot
+    ? createRequire(path.join(packagedRoot, 'package.json')).resolve('pleiad-agent/cli')
+    : process.env.AGENT_HOST_PLEIAD_AGENT_BIN || require.resolve('pleiad-agent/cli');
   const fixture = path.resolve(path.dirname(cli), 'adapters/stdio/fixtures/model.mjs');
   const { startScriptedModel } = await import(pathToFileURL(fixture).href);
   const model = await startScriptedModel(options);
@@ -14,7 +16,7 @@ export async function startPleiadAgentFixture(options) {
     close: model.close,
     env: {
       AGENT_HOST_BACKENDS: 'pleiad-agent',
-      AGENT_HOST_PLEIAD_AGENT_BIN: cli,
+      AGENT_HOST_PLEIAD_AGENT_BIN: packagedRoot ? '' : cli,
       AGENT_HOST_PLEIAD_AGENT_PROVIDER: 'openai',
       AGENT_HOST_PLEIAD_AGENT_MODEL: 'fixture',
       AGENT_HOST_PLEIAD_AGENT_BASE_URL: model.baseUrl,

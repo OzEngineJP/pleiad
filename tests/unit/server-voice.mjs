@@ -1,4 +1,4 @@
-// 通話モードをサーバー越しに（偽の OpenRouter・fake バックエンド）: キーは人だけが入れ、画面へもログへも返さない・/voice-ws の認可・声から返事の読み上げまでの一巡・設定と使用量。
+// 通話モードをサーバー越しに（偽の OpenRouter・Pleiad Agent）: キーは人だけが入れ、画面へもログへも返さない・/voice-ws の認可・声から返事の読み上げまでの一巡・設定と使用量。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,7 @@ import WebSocket from 'ws';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { startFakeOpenRouter, toneFrame } from '../lib/fake-openrouter.mjs';
+import { startPleiadAgentFixture } from '../lib/pleiad-agent-fixture.mjs';
 import { BINARY_AUDIO } from '../../core/voice/session.mjs';
 
 export const name = 'server-voice';
@@ -29,8 +30,9 @@ export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-voice-')));
   const reply = '署名の鍵は、リポジトリの Secrets にあります。\n\n```\ngh secret set SIGNING_KEY\n```\n';
   const api = await startFakeOpenRouter({ transcripts: [`steps:${JSON.stringify({ steps: [{ text: reply }] })}`] });
+  const model = await startPleiadAgentFixture({ reply: () => reply });
   const dataDir = path.join(scratch, 'data');
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_VOICE_API: api.url }, dataDir, timeoutMs: 60_000 });
+  const server = await startServer({ env: { ...model.env, AGENT_HOST_VOICE_API: api.url }, dataDir, timeoutMs: 60_000 });
   const c = await open({ port: server.port, token: server.token });
   const log = () => server.tail(400);
   try {
@@ -77,10 +79,9 @@ export default async function (t) {
     t.ok('偽の OpenRouter への要求: 聞き取りは WAV・言語 ja・キーはヘッダ。投機の見本を先に 1 回送り、確定はそれを再利用（1 回だけ）', api.records.stt.length === 1 && api.records.stt[0].format === 'wav' && api.records.stt[0].language === 'ja' && api.records.stt[0].auth === `Bearer ${KEY}`);
 
     // 画面（クライアント）の役: 確定した発言を、いまの送信の経路で会話へ送る → 返事がホストで読み上げられる
-    const from = c.mark();
-    await c.cmd('runTurn', { prompt: final.text, backend: 'fake', cwd: ROOT, messageId: 'voice-m1' });
-    const session = (await c.waitFor((e) => e.type === 'session' && e.sessionId, { from, ms: 20000 })).sessionId;
+    const { sessionId: session } = await c.cmd('newSession', { backend: 'pleiad-agent', cwd: ROOT });
     voice.send({ t: 'target', target: { kind: 'chat', sessionId: session } });
+    await c.cmd('runTurn', { sessionId: session, prompt: final.text, messageId: 'voice-m1' });
     await waitFor(() => voice.json.filter((m) => m.t === 'seg.end').length >= 2, 15000);
     const segs = voice.json.filter((m) => m.t === 'seg');
     t.ok('返事: 本文の文だけを読み、コードは読まずに言い添えの文（skip: code）', segs.map((s) => s.text).join('|') === '署名の鍵は、リポジトリの Secrets にあります。|コードは画面に出しました' && segs.at(-1).skip === 'code', JSON.stringify(segs.map((s) => s.text)));
@@ -115,6 +116,7 @@ export default async function (t) {
     c.close();
     await server.stop();
     await api.close();
+    await model.close();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }
