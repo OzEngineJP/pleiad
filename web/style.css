@@ -268,24 +268,25 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 /* 検索欄。消すボタンは欄の中の右端（語があるときだけ）。焦点の輪は欄全体に付く */
 .qbox{flex:1;min-width:0;display:flex;align-items:center;background:var(--surface-paper);border-radius:var(--r-pill)}
 .qbox:has(input:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
-.qbox input{flex:1;min-width:0;background:transparent;border-radius:var(--r-pill);padding:6px 12px;font-size:var(--fs-s)}
+.qbox input{flex:1;min-width:0;background:transparent;border-radius:var(--r-pill);padding:6px 12px;font-size:var(--fs)}
 .qbox input:focus-visible{outline:none}
 .qbox input::placeholder{color:var(--ink-weak)}
 .qbox input::-webkit-search-cancel-button{display:none}
 .qbox #filterBtn{width:32px;height:32px;flex:none;border-radius:var(--r-pill)}
-.side-add-row{display:flex;align-items:center;gap:6px;min-height:32px;padding:0 8px;text-align:left;border-radius:var(--r-s);background:transparent;color:var(--ink);font-size:var(--fs-body);font-weight:400;cursor:pointer}
+.side-add-row{display:flex;align-items:center;gap:6px;min-height:32px;padding:0 8px;text-align:left;border-radius:var(--r-s);background:transparent;color:var(--ink);font-size:var(--fs);font-weight:400;cursor:pointer}
 .side-add-row > svg.i{width:20px;height:16px;flex:none;color:var(--ink-weak)}
 .side-add-row:hover,.side-add-row:focus-visible{background:var(--surface-hover)}
 #newSession{margin:4px 10px 0;flex:none}
 @media (pointer:coarse), (max-width:700px){
   .qbox #filterBtn{width:44px;height:44px}
-  .side-add-row{min-height:44px;font-size:var(--fs-target)}
+  .side-add-row,.qbox input{font-size:16px}
+  .side-add-row{min-height:44px}
 }
 .qclear{flex:none;width:24px;height:24px;margin-right:3px;display:grid;place-items:center;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer;padding:0}
 .qclear:hover{background:var(--surface-hover);color:var(--ink)}
 .qclear svg.i{width:12px;height:12px}
 /* 最近の検索（空の検索欄に入ったときの候補。5 件） */
-#recentPop{top:40px;left:12px;right:44px}
+#recentPop{top:40px;left:12px;right:12px}
 #recentPop .li svg.i{width:13px;height:13px;flex:none;color:var(--ink-weak)}
 #recentPop .li::before{display:none}
 #recentPop .li.kb{background:var(--surface-hover)}
@@ -299,14 +300,6 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 .fchip .x:hover{color:var(--ink)}
 .groups{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 10px 16px;display:flex;flex-direction:column;gap:2px}
 .grp-head{display:flex;align-items:center;gap:4px;padding:2px 4px 6px 2px;font-size:var(--fs-s);min-height:28px}
-/* 状態のアイコン。既定は無し。触れると空の枠が現れ、押すと選べる。状態は自由文字列なのでアイコンはラベルに紐付かず、
-   人間でも AI でも付けられる（sidecar に { [statusId]: { icon } } で持つ） */
-.grp-icon{width:22px;height:22px;flex:none;display:inline-grid;place-items:center;border-radius:var(--r-s);background:transparent;cursor:pointer;font-size:13px;color:var(--ink);line-height:1;padding:0}
-/* 既定はフォルダ。弱い色で置き、触れると本文色 */
-.grp-icon svg.i{color:var(--ink-weak);transition:color var(--dur-fast) var(--ease-out)}
-.grp-head:hover .grp-icon svg.i,.grp-icon:focus-visible svg.i{color:var(--ink)}
-/* 押せる。触れると薄い丸。右クリックの「アイコンを変える」からも同じ選択が開く */
-.grp-icon:hover,.grp-icon:focus-visible{background:var(--surface-hover);border-radius:50%}
 /* 落とせる先。掴んでいる間、上に来たグループの面が一段持ち上がる（線は引かない） */
 .grp{border-radius:var(--r-m);transition:background-color var(--dur-fast) var(--ease-out)}
 .grp.over{background:var(--surface-1)}

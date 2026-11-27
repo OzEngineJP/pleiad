@@ -104,6 +104,35 @@ const PLUS = "M12 5v14M5 12h14";
 // 既定のアイコン。アイコン未設定のグループはフォルダ（他のアイコンと同じ線幅 1.6・丸端）
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 
+/** 10px の chevron。閉じているとき右向き、開くと 90° 回る（回転は CSS） */
+function chevron() {
+  const svg = svgEl("svg", { class: "fam-chev", viewBox: "0 0 10 10", "aria-hidden": "true" });
+  svg.append(svgEl("path", { d: "M3.5 1.5 7 5l-3.5 3.5" }));
+  return svg;
+}
+
+export function sideDisclosure(glyph) {
+  const slot = el("span", "side-disclosure");
+  slot.setAttribute("aria-hidden", "true");
+  const mark = el("span", "side-disclosure-glyph");
+  mark.append(glyph);
+  slot.append(mark, chevron());
+  return slot;
+}
+
+export function sideAddRow(key, label, action) {
+  const row = el("div", "side-add-row");
+  row.tabIndex = -1;
+  row.id = `side-add-${key}`;
+  row.dataset.key = `add:${key}`;
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-level", "2");
+  row.append(icon(PLUS), el("span", "row-t", label));
+  row.treeOpen = () => action(row);
+  row.onclick = row.treeOpen;
+  return row;
+}
+
 /** 作業ディレクトリの末尾。一覧で場所を見分けるのに足りる最小 */
 const shortDir = (d) => String(d ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() ?? "";
 
@@ -347,7 +376,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const behind = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
       if (isCollapsed) sec.classList.add("collapsed");
 
-      const head = el("div", "grp-head");
+      const head = el("div", "grp-head status-head");
       const setOpen = (open) => { const k = st ?? ""; if (open) collapsed.delete(k); else collapsed.add(k); save(); render(); };
       treeItem(head, `g:${st ?? ""}`, 1, {
         expanded: !isCollapsed,
@@ -355,16 +384,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         expand: setOpen,
         menu: onGroupContext && ((x, y) => onGroupContext(st, x, y)),
       });
-      // アイコン・＋・… はマウスとタッチのためのもの。キーボードは見出しの Shift+F10 のメニューから同じことをする
-      const ic = el("button", "grp-icon", iconOf(st) ?? "");
-      if (!iconOf(st)) ic.append(icon(FOLDER));
-      ic.type = "button";
-      ic.tabIndex = -1;
-      ic.title = t("sidebar.group.pickIcon");
-      ic.onclick = (e) => { e.stopPropagation(); openIconPicker(st, ic); };
+      const ic = sideDisclosure(iconOf(st) || icon(FOLDER));
       const name = el("span", "grp-name" + (st == null ? " none" : ""), st ?? t("session.status.none"));
-      name.setAttribute("role", "button");
-      name.onclick = () => setOpen(isCollapsed);
+      head.onclick = () => setOpen(isCollapsed);
       head.append(ic, name);
       const pendingStatus = last.pendingStatuses.get(st);
       if (pendingStatus) {
@@ -385,6 +407,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         add.type = "button";
         add.tabIndex = -1;
         add.title = t("sidebar.group.newSession");
+        add.setAttribute("aria-label", add.title);
         add.append(icon(PLUS));
         add.onclick = (e) => { e.stopPropagation(); onNew?.({ status: st, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); };
         head.append(add);
@@ -481,7 +504,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
     if (placement) {
-      r.dataset.folderDepth = level - 2;
+      r.dataset.folderDepth = Number(placement.folderId !== ROOT_FOLDER);
       r.append(title, glyph, when);
       dragSource(r, placement.channelId, 'thread', s.thread.threadId);
       dropTarget(r, placement.channelId, drag => drag.kind === 'thread', (after) => ({
@@ -639,7 +662,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     }
   }
 
-  function channelSection(channel, rows) {
+  function channelSection(channel, rows, level) {
     const { id: key, name, threadFolders: layout } = channel;
     const folders = layout?.folders ?? [];
     const groups = threadGroups(layout, rows, row => row.thread.threadId);
@@ -652,14 +675,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return { wrapper, panel };
     }
 
-    function header({ cls, id, level, closed, toggle, open, menu, glyph, label, members, directUnread = 0 }) {
+    function header({ cls, id, isChannel = false, closed, toggle, open, menu, glyph, label, members, directUnread = 0 }) {
       const node = el('div', `grp-head channel-thread-face ${cls}`);
-      treeItem(node, id, level, { expanded: !closed, open, expand: toggle, menu });
-      const title = el('span', level === 1 ? 'grp-name chsec-name' : 'grp-name', label);
+      treeItem(node, id, isChannel ? level : level + 1, { expanded: !closed, open, expand: toggle, menu });
+      const title = el('span', isChannel ? 'grp-name chsec-name' : 'grp-name', label);
       title.onclick = open;
       const mark = el('span', 'channel-thread-mark');
       const count = el('span', 'row-when');
-      if (closed || level === 2) {
+      if (closed || !isChannel) {
         count.textContent = String(members.length);
         count.setAttribute('aria-label', t('channels:side.threadCount', { count: members.length }));
       }
@@ -724,7 +747,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     glyph.setAttribute('aria-hidden', 'true');
     glyph.append(el('span', 'chsec-ic', '#'), chevron());
     glyph.onclick = () => toggle(closed);
-    const heading = header({ cls: 'chsec-head', id: `c:${key}`, level: 1, closed, toggle,
+    const heading = header({ cls: 'chsec-head', id: `c:${key}`, isChannel: true, closed, toggle,
       open: () => onOpenChannel ? onOpenChannel(key) : toggle(closed),
       menu: onThreadFolderMenu && ((x, y) => onThreadFolderMenu({ channel, onOpenChannel, onNewInChannel }, x, y)),
       glyph, label: name, members: rows, directUnread: closed ? channel.unread : channel.directUnread });
@@ -732,7 +755,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       action: 'moveThread', folderId: ROOT_FOLDER, beforeId: groups.get(ROOT_FOLDER)[0]?.thread.threadId,
     }), { insert: 'after' });
     wrapper.append(heading, panel);
-    appendThreads(panel, ROOT_FOLDER, 2);
+    appendThreads(panel, ROOT_FOLDER, level + 1);
 
     for (const [index, folder] of [...folders, { id: ARCHIVE_FOLDER, name: t('channels:side.threadArchive') }].entries()) {
       const archive = folder.id === ARCHIVE_FOLDER;
@@ -740,7 +763,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const closed = chCollapsed.has(id) !== archive;
       const group = section(id, 'channel-thread-folder', closed);
       const toggle = (open) => setOpen(id, open, archive);
-      const head = header({ cls: 'channel-folder-head' + (archive ? ' channel-archive-head' : ''), id, level: 2, closed, toggle,
+      const head = header({ cls: 'channel-folder-head' + (archive ? ' channel-archive-head' : ''), id, closed, toggle,
         open: () => toggle(closed), glyph: threadFolderIcon(archive), label: folder.name, members: groups.get(folder.id),
         menu: !archive && onThreadFolderMenu && ((x, y) => onThreadFolderMenu({ channel, folder, index }, x, y)) });
       head.addEventListener('click', (e) => { if (e.target === head || e.target.closest('.channel-folder-icon')) toggle(closed); });
@@ -749,35 +772,46 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         ? { action: 'moveThread', folderId: folder.id }
         : { action: 'moveFolder', beforeId: after ? folders[index + 1]?.id : folder.id },
       { self: folder.id, insert: drag => drag.kind === 'folder' });
-      appendThreads(group.panel, folder.id, 3);
+      appendThreads(group.panel, folder.id, level + 2);
       group.wrapper.append(head, group.panel);
       panel.append(group.wrapper);
     }
     return wrapper;
   }
 
-  /** bot の面の「Bots ＋」の見出し（「チャンネル ＋」と同じ形。＋ と見出しは初めての bot の段へ）。bot が 0 なら下に「bot はまだありません」 */
-  function botsHead(count) {
-    const sec = keyed(el("section", "grp botsec-top"), "bots-head", true);
+  function botPaneGroup({ key, label, glyph, addLabel, add, mark, hideHeading = false }) {
+    const collapseKey = `section:${key}`;
+    const closed = !hideHeading && chCollapsed.has(collapseKey);
+    const sec = keyed(el("section", `grp side-list${closed ? " collapsed" : ""}`), collapseKey, true);
     sec.setAttribute("role", "none");
-    const head = el("div", "cs-label");
-    const make = () => onNewBot
-      ? onNewBot(head)
-      : document.dispatchEvent(new CustomEvent("channels:show", { detail: { kind: "bot", id: "new" } }));
-    treeItem(head, "c:new-bot", 1, { open: make });
-    head.setAttribute("aria-label", `${t("channels:side.sections.bots")}, ${t("channels:side.newBot")}`);
-    head.onclick = make;
-    const add = el("button", "btn btn-icon cs-add");
-    add.type = "button";
-    add.tabIndex = -1;
-    add.title = t("channels:side.newBot");
-    add.setAttribute("aria-label", t("channels:side.newBot"));
-    add.append(icon(PLUS));
-    add.onclick = (e) => { e.stopPropagation(); make(); };
-    head.append(el("span", "cs-label-t", t("channels:side.sections.bots")), add);
-    sec.append(head);
-    if (!count) sec.append(el("div", "empty", t("channels:side.botsEmpty")));
-    return sec;
+    const children = keyed(el("div", "rows side-list-rows"), `${collapseKey}:rows`, true);
+    children.setAttribute("role", "group");
+    const setOpen = (open) => {
+      if (open === !chCollapsed.has(collapseKey)) return;
+      if (open) chCollapsed.delete(collapseKey); else chCollapsed.add(collapseKey);
+      save();
+      render();
+    };
+    if (!hideHeading) {
+      const head = el("div", "grp-head side-list-head");
+      const toggle = () => setOpen(closed);
+      treeItem(head, `section:${key}`, 1, { expanded: !closed, open: toggle, expand: setOpen });
+      head.onclick = toggle;
+      const name = el("span", "grp-name", label);
+      const button = el("button", "btn btn-icon grp-add cs-add");
+      button.type = "button";
+      button.tabIndex = -1;
+      button.title = addLabel;
+      button.setAttribute("aria-label", addLabel);
+      button.append(icon(PLUS));
+      button.onclick = (e) => { e.stopPropagation(); add(button); };
+      const status = closed ? mark() : null;
+      head.append(sideDisclosure(glyph), name, ...(status ? [status] : []), button);
+      head.setAttribute("aria-label", spoken([name, ...(status ? [status] : [])]));
+      sec.append(head);
+    }
+    sec.append(children);
+    return { sec, children, setOpen };
   }
 
   /** bot の 1 行。DM のスレッドは元の投稿から開く */
@@ -790,7 +824,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const sel = face === "channels" && directory.selected?.kind === "bot" && directory.selected.id === b.id;
     if (sel) { head.classList.add("sel"); head.setAttribute("aria-current", "page"); }
     const openMenu = (x, y, options) => directory.botMenu(b, x, y, head, { opener: root, ...options });
-    treeItem(head, `b:${b.id}`, 1, { open: go, menu: directory.botMenu && openMenu });
+    treeItem(head, `b:${b.id}`, 2, { open: go, menu: directory.botMenu && openMenu });
     const av = botIcon(b, "bot-face-av bot-row-icon");
     av.setAttribute("aria-hidden", "true");
     const label = el("span", "grp-name chsec-name", b.name);
@@ -839,15 +873,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       buildHomeStatuses(wanted, homeRowsOf(matchesFilter));
       return;
     }
-    if (!filtering()) putExtra(wanted, "routines");
-    const bots = [...directory.bots.values()].filter(b => !b.plain);
-    wanted.append(botsHead(bots.length));
-    for (const b of bots) {
-      const rows = last.threads.filter(s => s.thread.channelId === b.dmChannelId);
-      if (filtering() && !rows.some(matchesFilter)) continue;
-      wanted.append(botSection(b, rows));
-    }
-    if (!filtering()) putExtra(wanted, "channels");
+    const filtered = filtering();
+    if (!filtered) putExtra(wanted, "routines");
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
       .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
     const byChannel = new Map();
@@ -855,11 +882,47 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       if (!byChannel.has(s.thread.channelId)) byChannel.set(s.thread.channelId, []);
       byChannel.get(s.thread.channelId).push(s);
     }
+    const channelForm = channelExtras().find(n => n?.dataset.sec === "channels");
+    const createChannel = (anchor) => channelForm?.startCreate?.(anchor, () => channelGroup.setOpen(true));
+    const channelGroup = botPaneGroup({
+      key: "channels", label: t("channels:side.sections.channels"),
+      glyph: icon("M4 5h16v11H9l-5 4V5zM8 9h8m-8 3h5"),
+      addLabel: t("channels:side.newChannel"), add: createChannel, hideHeading: filtered,
+      mark: () => threadGroupMark(channels.flatMap(c => byChannel.get(c.id) ?? []), channels.some(c => c.unread > 0)),
+    });
     for (const c of channels) {
       const rows = (byChannel.get(c.id) ?? []).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
-      if (filtering() && !rows.length) continue;
-      wanted.append(channelSection(c, rows));
+      if (filtered && !rows.length) continue;
+      channelGroup.children.append(channelSection(c, rows, filtered ? 1 : 2));
     }
+    if (!filtered && channelForm) {
+      putExtra(channelGroup.children, "channels");
+      channelGroup.children.append(sideAddRow("channel", t("channels:side.addChannel"), createChannel));
+    }
+    wanted.append(channelGroup.sec);
+
+    const bots = [...directory.bots.values()].filter(b => !b.plain);
+    const matches = bots.map(b => [b, last.threads.filter(s => s.thread.channelId === b.dmChannelId)])
+      .filter(([, rows]) => !filtered || rows.some(matchesFilter));
+    const createBot = (anchor) => onNewBot
+      ? onNewBot(anchor)
+      : document.dispatchEvent(new CustomEvent("channels:show", { detail: { kind: "bot", id: "new" } }));
+    const botGroup = botPaneGroup({
+      key: "bots", label: t("channels:side.sections.bots"),
+      glyph: icon("M5 9a3 3 0 0 1 4-3 3.2 3.2 0 0 1 6 0 3 3 0 0 1 4 3c2 1 3 3 3 5 0 4-4 6-10 6S2 18 2 14c0-2 1-4 3-5zM9 11v4m6-4v4"),
+      addLabel: t("channels:side.newBot"), add: createBot,
+      mark: () => {
+        const state = matches.map(([b]) => directory.stateOf(b));
+        const rows = matches.flatMap(([, threads]) => threads);
+        if (state.includes("waiting") || rows.some(s => last.waitingIds.has(s.id))) return approvalMark(1);
+        if (state.includes("working")) return runMark(t("channels:side.botState.working"));
+        return threadGroupMark(rows, matches.some(([b]) => directory.channels.get(b.dmChannelId)?.unread > 0));
+      },
+    });
+    if (!bots.length) botGroup.children.append(el("div", "empty", t("channels:side.botsEmpty")));
+    for (const [b, rows] of matches) botGroup.children.append(botSection(b, rows));
+    botGroup.children.append(sideAddRow("bot", t("channels:side.addBot"), createBot));
+    wanted.append(botGroup.sec);
   }
 
   /** channelExtras の節（data-sec）の置き場の印を足す。描くと元の節がそこへ入る（reconcile）。節が無ければ何も置かない */
@@ -872,7 +935,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     wanted.append(keep);
   }
 
-  /** 新しいチャット（一時チャットの見出しの ＋・Ctrl+Shift+O）。絞り込みのエージェント（1 つだけのとき）・状態・作業ディレクトリを引き継ぐ */
+  /** 一覧先頭の新規チャットと Ctrl+Shift+O は絞り込みのエージェント（1 つだけのとき）・状態・作業ディレクトリを引き継ぐ */
   function newChat() {
     onNew?.({
       backend: filter.backends.length === 1 ? filter.backends[0] : undefined,
@@ -1064,13 +1127,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return svg;
   }
 
-  /** 10px の chevron。閉じているとき右向き、開くと 90° 回る（回転は CSS） */
-  function chevron() {
-    const svg = svgEl("svg", { class: "fam-chev", viewBox: "0 0 10 10", "aria-hidden": "true" });
-    svg.append(svgEl("path", { d: "M3.5 1.5 7 5l-3.5 3.5" }));
-    return svg;
-  }
-
   /** 承認待ちの印。器の見出しでは文言を出さず ◆ だけ（2 件以上なら数を添える） */
   function approvalMark(n) {
     const label = n > 1 ? t("sidebar.waitingCount", { count: n }) : t("sidebar.waiting");
@@ -1212,7 +1268,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return keep;
     }
     const open = s.id === last.currentId;
-    const r = keyed(el("div", "row" + (open ? " sel" : "")), key);
+    const r = keyed(el("div", "row side-chat-row" + (open ? " sel" : "")), key);
     nextRows.set(key, { signature, node: r });
     const pendingRow = last.pendingRows.get(s.id);
     const interactive = s.id != null && pendingRow?.kind !== 'new';
@@ -1935,9 +1991,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     },
     /** この状態で新しいセッション（見出しのメニューから。見出しの ＋ と同じ） */
     newIn(status) { onNew?.({ status, cwd: filter.dir ?? cwdNow?.() ?? "", backend: filter.backends.length === 1 ? filter.backends[0] : undefined }); },
-    /** グループのアイコン選択を開く（右クリックのメニューから。見出しのアイコンを押したのと同じ） */
+    /** 状態の見出しのメニューからアイコン選択を開く */
     pickIcon(status) {
-      const anchor = [...root.querySelectorAll(".grp-icon")].find((b) => b.dataset.status === status);
+      const anchor = [...root.querySelectorAll(".status-head .side-disclosure")].find((b) => b.dataset.status === status);
       if (anchor) openIconPicker(status, anchor);
     },
     /**

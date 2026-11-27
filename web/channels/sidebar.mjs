@@ -2,12 +2,13 @@
 //   Bots（bot の面の木。行は web/side.mjs の botSection）… 状態（作業中・あなた待ち）・右クリックのメニュー・選ばれた行を setDirectory で渡す
 //   ルーティン（木の一番上の畳める見出し）… 次に動く時刻の近い順に全部を 1 行ずつ（件数では絞らない。ADR 0260）。一時停止中は薄く、直近の失敗は「✕ 失敗」。
 //                                       畳んだ間は見出しに走っている弧と「✕N」。押すと編集のシート（routine-sheet.mjs）、＋で新規
-//   チャンネル（Bots の下の見出し）… ＋でその場に名前の欄を出して作る（channels.create）。チャンネルの行は web/side.mjs の木が描く
-// 木の節（ルーティン・チャンネル）は #channelsSide に置いておき、絞り込んでいないとき web/side.mjs の channelExtras が #groups へ入れる。
+//   チャンネルの作成欄 … web/side.mjs のチャンネル一覧の中に入る（channels.create）
+// ルーティンとチャンネルの作成欄は #channelsSide に置き、絞り込んでいないとき channelExtras が #groups へ入れる。
 // 検索は Chats と同じ欄（#q）で両方を横断する（side.connectChannels。結果の行に「Chats」「#チャンネル」）。
 // 読むのは channels.list・bots.list・channels.search・routines.list（routine-store.mjs）、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged・routinesChanged。
 // 開く入口は document の channels:show（{ kind: 'channel', id, threadId? } / { kind: 'bot', id }。web/channels/index.mjs）。
-import { el, svgEl } from '../dom.mjs';
+import { el, icon } from '../dom.mjs';
+import { sideAddRow, sideDisclosure } from '../side.mjs';
 import { t } from '../i18n.mjs';
 import { runMark } from '../arc.mjs';
 import { botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
@@ -23,16 +24,6 @@ const ICONS = {
 const RELOAD_WAIT_MS = 150;     // 出来事が続けて来たら 1 回にまとめて読み直す（作業中の投稿は 1 秒に 1 回届く）
 const ROUTINES_OPEN_KEY = 'agent-host-side-routines-open';   // ルーティンの見出しを開いているか（'1'。既定は畳む）
 
-const icon = (d) => {
-  const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  svg.append(svgEl('path', { d }));
-  return svg;
-};
-const chevron = () => {
-  const svg = svgEl('svg', { class: 'fam-chev', viewBox: '0 0 10 10', 'aria-hidden': 'true' });
-  svg.append(svgEl('path', { d: 'M3.5 1.5 7 5l-3.5 3.5' }));
-  return svg;
-};
 const message = (e) => String(e?.message ?? e ?? '');
 
 /**
@@ -59,62 +50,25 @@ export function createSidebar(host, getTabs) {
   const navigate = (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail }));
   const newRoutine = () => openRoutine(S.view?.kind === 'channel' ? { channelId: S.view.id } : {});
 
-  // ---------------------------------------------------------------- チャンネルの見出し（「チャンネル ＋」。木の treeitem）
-  const chan = {};
-  if (secs.channels) {
-    const sec = secs.channels;
-    sec.replaceChildren();
-    sec.setAttribute('role', 'none');
-    const label = el('div', 'cs-label');
-    label.id = 'csChannelsLabel';
-    label.dataset.key = 'c:new-channel';
-    label.setAttribute('role', 'treeitem');
-    label.setAttribute('aria-level', '1');
-    label.setAttribute('aria-label', `${t('channels:side.sections.channels')}, ${t('channels:side.newChannel')}`);
-    label.treeOpen = () => startCreate();
-    // 見出しのどこを押しても欄を出す（ルーティンの見出しが全体で開閉するのと同じく、文字も押せる）
-    label.addEventListener('click', () => startCreate());
-    const name = el('span', 'cs-label-t', t('channels:side.sections.channels'));
-    const add = el('button', 'btn btn-icon cs-add');
-    add.type = 'button';
-    add.tabIndex = -1;
-    add.title = t('channels:side.newChannel');
-    add.setAttribute('aria-label', t('channels:side.newChannel'));
-    add.append(icon(ICONS.plus));
-    add.addEventListener('click', (e) => { e.stopPropagation(); startCreate(); });
-    label.append(name, add);
-    const rows = el('div', 'cs-rows');
-    rows.setAttribute('role', 'none');
-    sec.append(label, rows);
-    Object.assign(chan, { label, add, rows });
-  }
+  const channelForm = secs.channels;
+  if (channelForm) channelForm.startCreate = startCreate;
 
   // ---------------------------------------------------------------- ルーティンの見出し（一時チャット・チャンネルと同じ畳める見出し。木の treeitem）
   const rt = {};
   if (secs.routines) {
     const sec = secs.routines;
     sec.replaceChildren();
-    sec.className = 'cs-sec grp chsec cs-rt';
+    sec.className = 'cs-sec grp side-list cs-rt';
     sec.setAttribute('role', 'none');
-    const head = el('div', 'grp-head chsec-head cs-head');
+    const head = el('div', 'grp-head side-list-head');
     head.id = 'csRoutinesHead';
     head.dataset.key = 'c:routines';
     head.setAttribute('role', 'treeitem');
     head.setAttribute('aria-level', '1');
     head.treeOpen = () => setRoutinesOpen(!S.routinesOpen);
     head.treeExpand = (open) => setRoutinesOpen(open);
-    const chev = el('button', 'chsec-chev');
-    chev.type = 'button';
-    chev.tabIndex = -1;
-    chev.setAttribute('aria-hidden', 'true');
-    chev.append(chevron());
-    chev.addEventListener('click', (e) => { e.stopPropagation(); setRoutinesOpen(!S.routinesOpen); });
-    const ic = el('span', 'chsec-ic');
-    ic.setAttribute('aria-hidden', 'true');
-    ic.append(icon(ICONS.clock));
-    const name = el('span', 'grp-name chsec-name', t('channels:side.sections.routines'));
-    name.setAttribute('role', 'button');
-    name.addEventListener('click', () => setRoutinesOpen(!S.routinesOpen));
+    const name = el('span', 'grp-name', t('channels:side.sections.routines'));
+    head.addEventListener('click', head.treeOpen);
     const marks = el('span', 'cs-rt-marks');
     const add = el('button', 'btn btn-icon grp-add cs-add');
     add.type = 'button';
@@ -123,8 +77,8 @@ export function createSidebar(host, getTabs) {
     add.setAttribute('aria-label', t('channels:routines.new'));
     add.append(icon(ICONS.plus));
     add.addEventListener('click', (e) => { e.stopPropagation(); newRoutine(); });
-    head.append(chev, ic, name, marks, add);
-    const rows = el('div', 'rows cs-rows');
+    head.append(sideDisclosure(icon(ICONS.clock)), name, marks, add);
+    const rows = el('div', 'rows side-list-rows');
     rows.setAttribute('role', 'group');
     sec.append(head, rows);
     Object.assign(rt, { sec, head, marks, rows });
@@ -249,7 +203,7 @@ export function createSidebar(host, getTabs) {
       return row;
     });
     if (!nodes.length) nodes.push(el('div', 'empty cs-empty', routineStore.loaded ? t('channels:side.routinesEmpty') : t('channels:side.loading')));
-    rt.rows.replaceChildren(...nodes);
+    rt.rows.replaceChildren(...nodes, sideAddRow('routine', t('channels:side.addRoutine'), newRoutine));
   }
 
   function routineMenu(r, x, y) {
@@ -263,12 +217,18 @@ export function createSidebar(host, getTabs) {
   routineStore.subscribe(() => paintRoutines());
 
   // ---------------------------------------------------------------- チャンネルを作る（＋ → その場の名前の欄）
-  async function startCreate() {
-    if (host.botEnablement && !await host.botEnablement.request(chan.label)) return;
+  let createOpener;
+  async function startCreate(anchor, reveal) {
+    const fromTree = document.activeElement?.id === 'groups';
+    if (host.botEnablement && !await host.botEnablement.request(anchor)) return;
+    createOpener = () => (fromTree ? document.getElementById('groups') : anchor.classList.contains('cs-add')
+      ? document.querySelector('#groups [data-key="section:channels"] .cs-add')
+      : document.getElementById('side-add-channel'))?.focus();
+    reveal();
     S.creating = true;
     S.createError = '';
     paintCreate();
-    chan.rows?.querySelector('.cs-new input')?.focus();
+    channelForm.querySelector('.cs-new input')?.focus();
   }
   function endCreate() {
     S.creating = false;
@@ -277,11 +237,11 @@ export function createSidebar(host, getTabs) {
     paintCreate();
   }
   function paintCreate() {
-    if (!chan.rows) return;
+    if (!channelForm) return;
     // 打っている途中に描き直さない（出来事で paint が呼ばれても、欄はそのまま）
-    const shown = chan.rows.querySelector('.cs-new');
+    const shown = channelForm.querySelector('.cs-new');
     if (S.creating && shown && shown.dataset.err === S.createError) return;
-    chan.rows.replaceChildren(...(S.creating ? [createField()] : []));
+    channelForm.replaceChildren(...(S.creating ? [createField()] : []));
   }
   function createField() {
     const wrap = el('div', 'cs-new');
@@ -313,7 +273,7 @@ export function createSidebar(host, getTabs) {
       if (e.isComposing || e.keyCode === 229) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;   // 修飾キー付きはアプリの近道（Ctrl+Shift+O・Ctrl+B・Ctrl+Shift+F）へ通す
       e.stopPropagation();   // 木（#groups）の文字での移動・Enter に渡さない
-      if (e.key === 'Escape') { e.preventDefault(); endCreate(); chan.add?.focus(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); endCreate(); createOpener?.(); return; }
       if (e.key !== 'Enter' || busy) return;
       e.preventDefault();
       const name = input.value.trim().replace(/^#+/, '').trim();
@@ -332,7 +292,7 @@ export function createSidebar(host, getTabs) {
       } catch (err) {
         S.createError = message(err);
         paintCreate();
-        const again = chan.rows?.querySelector('.cs-new input');
+        const again = channelForm.querySelector('.cs-new input');
         if (again) { again.value = input.value; again.focus(); }
       } finally {
         busy = false;
