@@ -8736,8 +8736,7 @@ function workContext(anchor) {
 }
 /** この会話の右の欄をダイアログの中に出せるか（Channels のスレッドのダイアログは従来どおりメインで開く） */
 function modalPaneFor(sessionId) {
-  const body = $('workBody');
-  return $('workDialog').open && !bg.scope && Boolean(body.dataset.paneKind) && body.dataset.sessionId === sessionId;
+  return Boolean(sessionId) && modalPaneTarget() === sessionId;
 }
 const modalPane = { wasMain: false, owner: null, opener: null, openerPath: '' };
 /** 欄をダイアログの中へ載せ替える（載せ替え済みなら何もしない）。メインで開いていた欄は閉じて、ダイアログを閉じたら開き直す */
@@ -8784,7 +8783,11 @@ $('workBody').addEventListener('click', event => {
 }, true);
 // ダイアログが見ている会話。子の会話を見ている間は、メインの会話とは別にホストへ伝える（ホストは窓口ごとに許可する会話を決める）
 let modalWatched = null;
-const modalWatchId = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind === 'task' ? $('workBody').dataset.sessionId || null : null);
+const modalPaneTarget = () => {
+  const { paneKind, sessionId } = $('workBody').dataset;
+  return $('workDialog').open && paneKind ? sessionId || null : null;
+};
+const modalWatchId = () => $('workBody').dataset.paneKind === 'task' ? modalPaneTarget() : null;
 const modalPresence = createPresenceReporter({
   send: (visible, sessionId, shownAt) => cmd('presence', { visible, sessionId, slot: 'modal', ...(shownAt ? { shownAt } : {}) }),
   current: modalWatchId, visible: watchingNow, shown: id => shownUpTo.get(id) ?? null });
@@ -8811,7 +8814,6 @@ browserEntry = setupBrowserEntry({ button: $('browserEntry'),
 phoneEntryView.addEventListener('change', () => { browserEntry?.paint(); modalEntry?.paint(); });
 // 作業のダイアログの見出しの「パネルを開く」（主の #browserEntry と同じ部品の 2 つ目。見る先は選んでいる子の会話）。
 // 子の会話（task）は子のタブ、サブエージェント（subagent）は親のタブ。委譲先ホストの子は欄を持たないので隠れる（sessionId が無い）
-const modalPaneTarget = () => ($('workDialog').open && !bg.scope && $('workBody').dataset.paneKind ? $('workBody').dataset.sessionId || null : null);
 const modalRightPane = {
   isOpen: () => { const id = modalPaneTarget(); return Boolean(id) && chromePanel?.isOpen() === true && filePreview.mounted() === $('workDialog') && chromePanel.sessionId === id; },
   close() { if (modalRightPane.isOpen()) chromePanel.close(); },
