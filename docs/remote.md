@@ -237,6 +237,10 @@ WS は 1 本のストリームなので、大きいメッセージの後ろに�
 ホストの子の会話（ホストの AI が、ホストの PC で作業する）
 ```
 
+管理下のクラウドホストから利用者の PC へ任せるときも、既存の `ply_delegate { host, backend }` と `/agent` を使う。実行先の PC がバックエンドの登録、委譲の受け入れ、承認モードを判定する。ペアリング済みの PC が見つからない、同名の候補が複数ある、オフライン、委譲を受けられない、指定のバックエンドが無効、の各場合は理由を依頼元へ返す。
+
+クラウド側では、ランナーが利用者に対応するペアリング情報を持つリモート端末を用意し、`AGENT_HOST_KIND=cloud` と Node.js のプロセス間通信を付けて `core/server.mjs` を起動する。ランナーは `core/remote/agent-service.mjs` の `createRemoteAgentService({ getDevice, post })` に端末を渡し、子からの `remote-agent` メッセージを `handle` へ、`post` の応答と通知を子へ送る。接続先の一覧が変わったら `refresh()` を呼び、再接続時は `resync()` で一覧と接続状態を送り直せる。
+
 - **口**: ストリームの WS_OPEN の path が `/agent`（`checkPath` で読み直した結果）のものを、接続口が自分で受ける。`forwardStream`（ローカルのサーバーへの組み立て直し）は通さない。口の上は JSON の文字のメッセージ 1 通 = 1 つの便りで、1 通は 256 KiB まで。形の違う便り・知らない種類は捨てる（ストリームは閉じない）。端末が自分で名乗った `deviceId` は信じず、ハンドシェイクで確かめた端末（`device.id`）を使う。
 - **主体**: agent・`via: 'remote'`・`deviceId`。会話には束縛されない。依頼元は `requester = { sessionId, title, mode }`（端末の会話の ID・題・承認モードの位置）で、ホストのタスクの親は `remote:<deviceId>:<sessionId>` の仮の ID。画面の human の権限は渡さない。
 - **端末 → ホストの便り**（`t` で見分ける）:

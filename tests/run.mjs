@@ -267,6 +267,7 @@ const SUITES = [
   // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
   './unit/docs-source.mjs',
   './unit/backend-registry.mjs',
+  './unit/managed-host.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',
   './unit/devin-models.mjs',

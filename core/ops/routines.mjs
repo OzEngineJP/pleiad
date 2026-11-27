@@ -27,6 +27,7 @@ const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 async function run(ctx, fn) {
   try { return await fn(); }
   catch (err) {
+    if (err.code === 'MANAGED_BACKEND_DENIED') throw new OpError(err.code, err.message);
     if (err instanceof RoutineError) throw new OpError(err.code, agentT(ctx.locale, `ops.errors.${err.code}`, err.params));
     if (err instanceof RoutineStoreError && err.code === 'ROUTINE_NOT_FOUND') throw new OpError('ROUTINE_NOT_FOUND', agentT(ctx.locale, 'ops.errors.ROUTINE_NOT_FOUND', { id: err.id ?? '' }));
     if (err instanceof RoutineStoreError && err.code === 'ROUTINE_INVALID') throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: err.message }));

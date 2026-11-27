@@ -97,6 +97,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
   async function needBot(botId) {
     const bot = typeof botId === 'string' && botId ? await bots.get({ botId }).catch(() => null) : null;
     if (!bot || bot.deletionPending) throw new RoutineError('BOT_NOT_FOUND', { id: String(botId) });
+    host.assertBackendAllowed?.(bot.backend);
     return bot;
   }
   async function needChannel(channelId) {

@@ -38,15 +38,15 @@ const delegateDescription = (locale, hosts = [], kinds = DEFAULT_KINDS, routing 
  * kinds は ply_delegate の kind に書ける作業の種類（設定の kinds。直せるので固定の一覧は持たない）
  * routing は委譲先の自動選択が有効か。無効なら ply_delegate・ply_usage の説明を、backend を省く使い方を言わない文にする（agentInstructions と同じ）
  */
-export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kinds = DEFAULT_KINDS, routing = true) => [
+export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS, kinds = DEFAULT_KINDS, routing = true, managed = false) => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。自動選択が無効なら backend が無いとエラー（説明もそう書く）。
   // backend は無効のときも required にしない（省いたら、設定が無効だと言うエラーで導く。ホストへ任せるときはホストの設定で決まる）。
   // kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
   // account は backend と一緒に書き、子の登録アカウントを固定する（ply_usage の account の値。ADR 0205）
   // endpoint は子を互換の接続先（ply_usage の endpoints の id か名前）で走らせる。account とは一緒に書けない（ADR 0361）
-  tool('ply_delegate', delegateDescription(locale, hosts, kinds, routing), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str, endpoint: str,
-    ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
+  tool('ply_delegate', delegateDescription(locale, hosts, kinds, routing), { kind: { type: 'string', enum: kinds.map(k => k.id) }, task: str, title: str, backend: managed ? str : { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str, endpoint: str,
+    ...(hosts.length || managed ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
   // backend・model・effort・account は子の設定を替える（次のターンから。ADR 0134・0205）。設定だけなら message を省ける
@@ -61,7 +61,7 @@ export const DELEGATING_TOOLS = ['ply_delegate', 'ply_task_send'];
 
 // Dedicated, stable names: never remap these tools through the external-MCP hash bridge.
 // routing は、委譲先の自動選択が今有効かを返す関数（server は設定を読む）。instructions とツールの説明をその時の値で作る
-export function createAgentBridge({ call, hosts = () => [], backends = () => DEFAULT_AGENT_IDS, kinds = () => DEFAULT_KINDS, routing = () => true }) {
+export function createAgentBridge({ call, hosts = () => [], backends = () => DEFAULT_AGENT_IDS, kinds = () => DEFAULT_KINDS, routing = () => true, managed = false }) {
   const bindings = new Map();
   return {
     // locale は接続した会話の言語。橋は会話ごとに開くので、instructions・ツールの説明・エラーはその会話の言語で返す。
@@ -95,7 +95,7 @@ export function createAgentBridge({ call, hosts = () => [], backends = () => DEF
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_agents', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0169）
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts(), backends(), kinds(), routing()) };
+      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts(), backends(), kinds(), routing(), managed) };
       else if (m.method === 'tools/call') {
         try {
           // host の引数は、今使えるホストが無くても受ける（会話の途中で設定が変わっても、説明つきの失敗にする。callAgentOp の host の分岐が理由を言う）

@@ -95,7 +95,6 @@ import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { CONNECTOR_TTL_MS, connectorList, createConnectorReader, readClaudePlugins } from './context-claude-extras.mjs';
 import { createClaudeConnectorsCache } from './claude-connectors.mjs';
-import { probeClaudeConnectors } from './backends/claude.mjs';
 import { claudeLoginPresent, logoutClaudeOwnDir, macKeychainAuthFailure, sweepClaudeOwnDirArchives } from './claude-own-dir.mjs';
 import { connectorListProbe, createClaudeConnectorsWiring } from './claude-connectors-auth.mjs';
 import { shouldMarkUsageExpired } from './backends/claude-usage.mjs';
@@ -217,6 +216,7 @@ import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, accountUnavailableBackend,
 } from "./backends/index.mjs";
+import { assertBackendAllowed, backendAllowed, managedBackendIds } from './backends/host-policy.mjs';
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
 import { startReviewPlusLogin } from './review-plus-login.mjs';
@@ -575,7 +575,8 @@ const plyMcp = createPlyMcp({ dataDir: store.dataDir, secrets: mcpSecrets });
 mcpSecrets.migrate().catch(() => {});
 // Claude のアカウント（会話ごとに選ぶ。アカウントごとの専用フォルダの claude.ai のログイン。ADR 0353。core/claude-accounts.mjs）
 // 子の claude CLI の起動の形（ログインとアカウントの削除の logout で同じものを使う）
-const claudeCliCommand = () => cliCommand('claude');
+const claudeBackendId = 'claude'; // 既存のアカウント・ログイン API は Claude 専用（ADR 0353）
+const claudeCliCommand = () => backendAllowed(claudeBackendId) ? cliCommand(claudeBackendId) : null;
 const claudeAccounts = createClaudeAccounts({ dataDir: store.dataDir,
   // macOS だけ、アカウントを消す前に同じ CLAUDE_CONFIG_DIR で claude auth logout を呼ぶ（ADR 0351。ほかの OS は何もしない）
   logout: dir => logoutClaudeOwnDir(dir, { command: claudeCliCommand }) });
@@ -1323,6 +1324,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   const turn = runtime.turns.get(owner);
   const lng = turn?.agentLocale ?? locale;
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
+  if (!(name === 'ply_delegate' && args.host !== undefined)) assertBackendAllowed(args.backend);
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng,
     accounts: async b => accountRows(b), held: b => heldSlots(b.id), inTiers: b => tierAccounts(routingSettingsCache, b.id), endpoints: usageEndpoints });
@@ -1395,7 +1397,11 @@ function mcpApprovalByHost(backend, modeId) {
 }
 
 async function callRemoteDelegate(owner, turn, args, lng) {
-  if (!remoteDelegation.enabled) throw new Error(agentT(lng, 'delegation.remote.unavailable'));
+  if (!remoteDelegation.enabled) {
+    const error = new Error(agentT(lng, 'delegation.remote.unavailable'));
+    if (managedBackendIds) error.code = 'HOST_UNAVAILABLE';
+    throw error;
+  }
   if (mcpApprovalByHost(turn.backend, turn.info.mode)) {
     const answer = await askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
@@ -1777,7 +1783,10 @@ async function remoteDelegate({ device, requester, args, signal, lng, owner, val
   if (clean.isolate !== undefined && typeof clean.isolate !== 'boolean') throw new Error(agentT(lng, 'tasks.isolateInvalid'));
   // 作業場所はホストのパスとホストの規則で解釈する（省けばホストのホーム）。端末の cwd は使わない
   const cwd = path.resolve(os.homedir(), typeof clean.cwd === 'string' && clean.cwd.trim() ? clean.cwd : '.');
-  const routed = await routeDelegation(clean, lng, cwd);
+  const routed = await routeDelegation(clean, lng, cwd).catch(err => {
+    if (err.code === 'MANAGED_BACKEND_DENIED') throw new AgentError(err.code, err.message);
+    throw err;
+  });
   const child = getBackend(routed.backend);
   if (!child) throw new Error(agentT(lng, 'delegation.backendDisabled'));
   // 子の承認モードは依頼元（端末の会話）の位置まで継ぐ。手元の委譲と同じ resolveDelegatedMode（上限はホスト側に持たない）
@@ -1893,6 +1902,7 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
 hosts: () => remoteDelegation?.describe() ?? [],
 // backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
 backends: () => listBackends().map(b => b.id),
+managed: managedBackendIds !== null,
 // ply_delegate の kind に書ける作業の種類（設定 › 委譲で利用者が直せるので、都度設定から引く）
 kinds: () => routingSettingsCache.kinds,
 // 委譲先の自動選択が有効か。無効なら instructions とツールの説明を「backend を必ず書く」文にする（都度設定から引く）
@@ -1902,7 +1912,12 @@ routing: () => routingSettingsCache.enabled });
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。自動選択に使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
 // （uses の judge:routing。判定のモデルは OpenRouter でキーは 1 つ）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
 // 前の版の判定の項目（judgeByKind・escalateToQwen・escalateToCerebras）とクリエイティブの段（tv）は読むときに今の形へ直し、次に保存するときに書き直す
-let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
+function managedRoutingSettings(settings) {
+  if (!managedBackendIds) return settings;
+  return { ...settings, tiers: Object.fromEntries(Object.entries(settings.tiers).map(([tier, candidates]) =>
+    [tier, candidates.filter(candidate => backendAllowed(parseCandidate(candidate)?.backend))])) };
+}
+let routingSettingsCache = managedRoutingSettings(normalizeSettings((await store.getPrefs()).delegationRouting));
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext, currentLocale()); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
@@ -1983,6 +1998,7 @@ const ROUTING_USAGE_AUTO = process.env.AGENT_HOST_ROUTING_USAGE !== 'off';
  * cwd は委譲先の作業場所（モデルの一覧は場所の設定で変わりうるので、選んだモデルをそこで確かめ直す）
  */
 async function routeDelegation(args, lng, cwd) {
+  assertBackendAllowed(args.backend);
   const settings = routingSettingsCache;
   if (!kindOrder(settings).includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng, settings.kinds) }));
   // 依頼元が名指しした互換の接続先（ADR 0361）。account とは一緒に書けない。backend を省けば接続先のエージェント。
@@ -1991,6 +2007,7 @@ async function routeDelegation(args, lng, cwd) {
     if (args.account !== undefined) throw new Error(agentT(lng, 'delegation.endpointWithAccount'));
     if (args.backend !== undefined && typeof args.backend !== 'string') throw new Error(agentT(lng, 'delegation.backendDisabled'));
     const chosen = await requestedEndpoint(args.endpoint, lng, args.backend);
+    assertBackendAllowed(chosen.agent);
     if (!getBackend(chosen.agent)) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     return { ...args, backend: chosen.agent, endpoint: chosen.endpoint,
       routing: pinnedRouting({ kind: args.kind, backend: chosen.agent, model: args.model, endpoint: chosen.endpoint, endpointLabel: chosen.label }) };
@@ -2251,6 +2268,7 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   if (original.host) throw new Error(t('delegation.retryRemote'));
   let parsed = parseCandidate(candidate);
   if (!parsed) throw new Error(t('routing.retry.badCandidate'));
+  assertBackendAllowed(parsed.backend);
   // 候補はアカウントまで含む（ADR 0264）。account を別に書いた呼び出し（前の版の画面）は候補に畳む
   if (parsed.account == null && typeof account === 'string' && account) {
     candidate = candidateId(parsed.backend, parsed.model, account);
@@ -3414,6 +3432,7 @@ async function providerQuota(backend, { force = false } = {}) {
  *   新規 … クライアントの指定。1つしか有効になっていなければそれに落とす
  */
 async function pickBackend(sessionId, given) {
+  assertBackendAllowed(given);
   if (sessionId) {
     // 対応を終えたエージェントの会話もここで引ける（retired を持つ）。続ける操作は refuseRetired で断る
     const current = await resolveBackendForSession(sessionId);
@@ -3850,6 +3869,8 @@ const completionNotices = createCompletionNotices({
 
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
 async function savePref(key, value, backendId, { quiet = false } = {}) {
+  assertBackendAllowed(backendId);
+  if (key === 'backend') assertBackendAllowed(value);
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
@@ -4604,10 +4625,18 @@ async function applyContextRebuild(enabled) {
 async function applyRoutingSettings(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
   const raw = { ...migrateLegacySettings((await store.getPrefs()).delegationRouting ?? {}).raw };
-  for (const [key, value] of Object.entries(migrateLegacySettings(patch).raw)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
+  const changes = migrateLegacySettings(patch).raw;
+  for (const [key, value] of Object.entries(changes)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
   for (const key of RETIRED_KEYS) delete raw[key];
   let settings;
   try { settings = normalizeSettings(raw, { strict: true }); } catch (e) { throw routingSettingsError(e); }
+  if (managedBackendIds) {
+    for (const candidates of Object.values(changes.tiers ?? {})) {
+      for (const candidate of candidates) assertBackendAllowed(parseCandidate(candidate)?.backend);
+    }
+    settings = managedRoutingSettings(settings);
+    if (raw.tiers) raw.tiers = settings.tiers;
+  }
   // 段から外した候補の上書きは保存しない（外して入れ直したときに前の上書きが付かない）
   const efforts = pruneEfforts(raw.efforts, settings);
   if (efforts) raw.efforts = efforts; else delete raw.efforts;
@@ -5100,6 +5129,7 @@ async function createSession(args) {
 }
 
 async function initializeSession(args, creation) {
+  assertBackendAllowed(args?.backend);
   const existing = creation && await conversationForCreation(creation.requestId);
   if (existing) {
     if (existing.creation.fingerprint !== creation.fingerprint) throw new Error(t('queue.idConflict'));
@@ -5185,6 +5215,7 @@ async function initializeSession(args, creation) {
 
 /** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
 async function reserveTurnSettings(args, { delegated = false, limitSwitch = false } = {}) {
+  assertBackendAllowed(args?.backend);
   const { sessionId, cwd: requestedCwd, cancel } = args ?? {};
   const explicit = { ...args };
   if (!sessionId) throw new Error(t('session.required'));
@@ -5887,6 +5918,8 @@ const opsCompat = {
   get: (id) => compatEndpoints.get(String(id ?? '')),
   deleteNote: (e) => t('compat.deleteConfirm', { name: e?.name ?? e?.id ?? '' }),
   recheck: async (id) => {
+    const endpoint = managedBackendIds ? await opsCompat.get(id) : null;
+    if (endpoint) assertOpBackendAllowed(endpoint.agent);
     let result;
     try { result = await compatEndpoints.recheck(String(id ?? '')); }
     catch (e) { if (e instanceof CheckError) throw new OpError('ENDPOINT_NOT_FOUND', e.message); throw e; }
@@ -6069,6 +6102,12 @@ const opsHooks = {
 // 設定 › 外部 MCP に出す、Claude だけにある MCP（プラグイン・claude.ai のコネクター。ADR 0327）。コネクターは最後に読めた一覧を覚えておく
 // 読み取りは、新しい会話の既定の Claude のアカウント（無ければログイン中）で起こす。コネクターの入口がオンのアカウントは会話と同じ組み立てで読み、
 // 止める条件に当たれば読めなかった扱いにする（ログイン中のアカウントで読み直さない・覚えの一覧を書かない。ADR 0340）
+async function probeClaudeConnectors(args) {
+  assertBackendAllowed(claudeBackendId);
+  const { probeClaudeConnectors: probe } = await import('./backends/claude.mjs');
+  return probe(args);
+}
+
 const claudeConnectors = createConnectorReader({ file: path.join(store.dataDir, 'claude-connectors.json'),
   probe: connectorListProbe({
     defaultId: () => defaultAccount('claude'), // backend-allow: コネクターの一覧は Claude の既定のアカウントで読む（ADR 0327・0340）
@@ -6962,6 +7001,7 @@ const opsShell = {
 const opsSessionWork = {
   // 切り替えの見込み: 今のエージェントと承認モード、切り替え先と、切り替えたときの承認モード（切り替え先の最初のモード。core/conversations.mjs の switchBackend）
   switchPlan: async (sessionId, targetId) => {
+    assertBackendAllowed(targetId);
     const source = await resolveBackendForSession(sessionId).catch(() => null);
     if (!source) return null;
     const mode = await resolveMode(sessionId, undefined, source).catch(() => Object.keys(source.modes())[0] ?? 'default');
@@ -6972,6 +7012,7 @@ const opsSessionWork = {
   },
   switchBackend: (sessionId, targetId) => withWritableSession(sessionId, () => opsSessionWork.switchWritableBackend(sessionId, targetId)),
   switchWritableBackend: async (sessionId, targetId) => {
+    assertBackendAllowed(targetId);
     if (runtime.turns.has(sessionId) || switching.has(sessionId) || forking.has(sessionId)) throw new Error(t('session.finishBeforeSwitch'));
     compactionScheduler.cancel(sessionId);
     switching.add(sessionId);
@@ -7291,6 +7332,35 @@ async function routeSettingNotice(notice) {
   return { sessionId: delegation.parentSessionId, via: { taskId: task.taskId, title: task.title ?? null, status: task.status } };
 }
 
+function assertOpBackendAllowed(backend) {
+  try {
+    assertBackendAllowed(backend);
+  } catch (err) {
+    if (err.code === 'MANAGED_BACKEND_DENIED') throw new OpError(err.code, err.message);
+    throw err;
+  }
+}
+
+function validateManagedOpInput(id, input) {
+  if (id === 'delegation.delegate' && input.host !== undefined) return;
+  assertOpBackendAllowed(input.backend);
+  if (id === 'settings.set' && input.key === 'backend') assertOpBackendAllowed(input.value);
+  if (id === 'settings.set' && input.key === 'delegationRouting') {
+    for (const candidates of Object.values(input.value?.tiers ?? {})) {
+      if (Array.isArray(candidates)) for (const candidate of candidates) assertOpBackendAllowed(parseCandidate(candidate)?.backend);
+    }
+  }
+  if (id === 'bots.update') assertOpBackendAllowed(input.pulse?.backend);
+  if (id === 'bots.setRouting') {
+    for (const candidates of Object.values(input.settings.tiers)) {
+      for (const candidate of candidates) assertOpBackendAllowed(parseCandidate(candidate, { allowDefault: true })?.backend);
+    }
+  }
+  if (id.startsWith('mcp.native')) assertOpBackendAllowed(input.format);
+  if (id === 'mcp.import') for (const { format } of input.items) assertOpBackendAllowed(format);
+  if (id === 'endpoints.list' || id.startsWith('context.') || id.startsWith('hooks.')) assertOpBackendAllowed(input.agent);
+}
+
 /**
  * 操作の一覧（registry.invoke）へ渡す依存。locale は呼び出し元の言語（会話の言語・PC の言語）。
  * modeOf は束縛された会話の承認モード（引けなければ undefined。policy は弱い側に倒す）。audit は書く操作の記録（by: 'agent'・via・sessionId）
@@ -7298,6 +7368,7 @@ async function routeSettingNotice(notice) {
 function opsDeps(lng = currentLocale()) {
   return {
     locale: lng,
+    validateInput: managedBackendIds ? validateManagedOpInput : undefined,
     withSessionWrite: withWritableSession,
     app: opsApp,
     sessions: opsSessions,
@@ -8689,7 +8760,22 @@ const remoteCards = {
     if (runtime.waiting.size) broadcastRunning();
   },
 };
-const remoteAgentBridge = parentPortRemoteAgent(hostedPort);
+// The cloud runner owns the paired device and the credentials for its /agent
+// connections. Accept only the remote delegation protocol over its private IPC.
+const cloudAgentPort = managedBackendIds && process.connected ? {
+  postMessage(message) {
+    if (!process.connected) return false;
+    process.send(message, () => {});
+    return true;
+  },
+  on(type, listener) {
+    if (type === 'message') process.on('message', message => {
+      if (message?.type?.startsWith?.('remote-agent')) listener({ data: message });
+    });
+    if (type === 'detach') process.on('disconnect', listener);
+  },
+} : null;
+const remoteAgentBridge = parentPortRemoteAgent(hostedPort ?? cloudAgentPort);
 const remoteDelegation = createRemoteDelegation({
   bridge: remoteAgentBridge, tasks: () => agentTasks, agentT, titleOf: async id => (await store.get(id)).title ?? '', cards: remoteCards,
   locale: () => currentLocale(), changed: () => permissionsChanged(), log: line => console.log(`  ${line}`),
@@ -8754,6 +8840,7 @@ agentTasks = await createAgentTasks({
     // 作業場所は元のタスクの絶対パスを渡すので、依頼元のターンが無くても決まる
     const manual = args.routing?.mode === 'manual';
     if ((!parent && !manual && !remoteReq) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
+    assertBackendAllowed(args.backend);
     let backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     let cwd = path.resolve(parent?.info.cwd ?? (remoteReq ? os.homedir() : (await store.get(owner)).cwd) ?? process.cwd(), args.cwd ?? '.');
@@ -9248,7 +9335,7 @@ function makeBotHost() {
     reserveBotStart: () => updateGate.locked ? null : updateGate.enter(),
     // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
     internalCall: internalCalls.call,
-    getBackend, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
+    getBackend, assertBackendAllowed, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
     routeBotSession,
     botRoutingView: bot => delegationRoutingState(bot),
     refreshBotRouting: () => { if (ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {}); },
@@ -9395,6 +9482,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   let backend = await pickBackend(sessionId, args?.backend);
   if (!args?.settings) backend = refuseRetired(backend);
   const reserved = args?.settings ?? (sessionId ? (await store.get(sessionId)).nextSettings : null);
+  assertBackendAllowed(reserved?.backend);
   if (args?.settings && !getBackend(reserved.backend)) throw new Error(t('turn.reservedInvalid'));
   const delegated = Boolean(sessionId && (await store.get(sessionId)).delegation);
   // 予約を効かせるために止めたターンの続き（applyReservedNow）。予約を適用したら「変えました」の跡の行を残す
@@ -11244,6 +11332,7 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
     // 一覧は送信待ちの処理（kick）の後ろに並ぶので、読み終えた時点でもう始まっているかもしれない。読んだ後に確かめ直す
     if (sessionBusy(sessionId)) throw resumeRunning();
     const entry = await store.get(sessionId);
+    assertBackendAllowed(entry.nextSettings?.backend);
     const interrupted = interruptedOf(entry.interrupted);
     if (!interrupted) throw Object.assign(new Error(t('resume.notInterrupted')), { code: 'NOT_INTERRUPTED' });
     const open = items.filter(m => !['sent', 'cancelled'].includes(m.status));
@@ -11279,6 +11368,7 @@ async function resumeWritableSession(sessionId, { onSettled } = {}) {
 async function withWritableSession(sessionId, fn) {
   if (!sessionId) return fn();
   const meta = await store.get(sessionId);
+  assertBackendAllowed(meta.backend);
   if (meta.deletedBot) throw new OpError('READ_ONLY', t('session.deletedBotReadOnly'));
   // 確実な旧内部会話はもう書けない（Issue #180。送る・題を替える・圧縮する等の会話操作は全部ここを通る）。
   // ネイティブ id の直接指定も、その id を持つ Pleiad の会話の印まで辿って断る
@@ -11348,6 +11438,7 @@ function sendSettings(value) {
     if (typeof value[key] !== 'string' || value[key].length > limit) throw new Error(t('turn.reservedInvalid'));
     settings[key] = value[key];
   }
+  assertBackendAllowed(settings.backend);
   return { ...settings, worktreePending: value.worktreePending };
 }
 
@@ -11860,10 +11951,12 @@ wss.on("connection", (ws, req) => {
         case 'compatEndpoints':
           return await viaOp('endpoints.list');
         case 'compatEndpointCheck': {
+          assertBackendAllowed(msg.args?.input?.agent);
           try { return reply(true, await compatEndpoints.check(msg.args?.input, { id: msg.args?.id ?? null })); }
           catch (e) { if (e instanceof CheckError) return reply(true, { ok: false, error: e.message, lines: e.lines ?? [], code: e.code }); throw e; }
         }
         case 'compatEndpointSave': {
+          assertBackendAllowed(msg.args?.input?.agent);
           const saved = await compatEndpoints.save(msg.args?.input, msg.args?.receipt, { id: msg.args?.id ?? null });
           emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
           return reply(true, saved);
@@ -11877,6 +11970,7 @@ wss.on("connection", (ws, req) => {
         // account（'' = CLI のログイン）を付け、既定の接続先を公式に戻してから既定のアカウントを書く（データの形は今のまま）
         case 'compatEndpointDefault': {
           const agentId = String(msg.args?.agent ?? '');
+          assertBackendAllowed(agentId);
           const account = msg.args?.account;
           if (account !== undefined) {
             const backend = getBackend(agentId);
@@ -11891,15 +11985,18 @@ wss.on("connection", (ws, req) => {
           return reply(true, await compatEndpoints.list());
         }
         case 'claudeAccounts':
+          assertBackendAllowed(claudeBackendId);
           return reply(true, await enrichClaudeAccountsList(await claudeAccounts.list()));
         // 名前の変更だけ（新しいアカウントは claudeLoginStart の名前とログインで作る。ADR 0353）
         case 'saveClaudeAccount': {
+          assertBackendAllowed(claudeBackendId);
           const { id, name } = msg.args ?? {};
           const saved = await claudeAccounts.rename({ id, name });
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, { ...saved, ...(await enrichClaudeAccountsList(await claudeAccounts.list())) });
         }
         case 'deleteClaudeAccount': {
+          assertBackendAllowed(claudeBackendId);
           const accountId = String(msg.args?.id ?? '');
           claudeLogin.cancelAccount(accountId);
           await claudeAccounts.remove(accountId);
@@ -11915,14 +12012,17 @@ wss.on("connection", (ws, req) => {
         }
         // アカウントの認可（専用フォルダの claude auth login）を Pleiad から回す。accountId が無ければ name の新しいアカウント（ADR 0353）。進み具合は claudeLogin イベント
         case 'claudeLoginStart': {
+          assertBackendAllowed(claudeBackendId);
           const { kind, accountId, name, open } = msg.args ?? {};
           if (accountId && !(await claudeAccounts.has(String(accountId)))) throw new Error(t('accounts.notRegistered'));
           if (!accountId) await claudeAccounts.assertNameFree(name);   // 認可を回す前に、名前の不正・重複を止める
           return reply(true, claudeLogin.start({ kind, accountId: accountId ? String(accountId) : undefined, name: name ? String(name).trim() : undefined, open: Boolean(open) }));
         }
         case 'claudeLoginCode':
+          assertBackendAllowed(claudeBackendId);
           return reply(true, claudeLogin.submitCode(String(msg.args?.loginId ?? ''), msg.args?.code));
         case 'claudeLoginCancel':
+          assertBackendAllowed(claudeBackendId);
           return reply(true, claudeLogin.cancel(String(msg.args?.loginId ?? '')));
 
         // 使えるエージェントと、その語彙・出し分けの材料

@@ -72,7 +72,7 @@ export async function waitForTestHolders({ timeoutMs = 12_000 } = {}) {
  * @param lazy 待ち受けるのを待たず、起こしてすぐ返す
  *   返り値の ready() が待ち受けるまで待ち、port を決める。起動前に終われば ready() が投げる
  */
-export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs"), args = [], lazy = false } = {}) {
+export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs"), args = [], lazy = false, ipc = false } = {}) {
   // 呼び出し側がトークンを渡したらそれを使う（起こし直すときに、前のサーバーと同じトークンで起こす。tests/lib/restart.mjs）
   const token = env.AGENT_HOST_TOKEN || crypto.randomBytes(12).toString("hex");
   // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
@@ -141,7 +141,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   const child = spawn(process.execPath, [entry, ...args], {
     cwd: ROOT,
     env: childEnv,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
   });
 
   // 落ちたときに何が起きていたか言えるよう、直近の出力だけ手元に残す

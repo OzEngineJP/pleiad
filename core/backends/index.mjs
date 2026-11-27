@@ -9,6 +9,7 @@ import { wrapBackend as wrapNative, conversationBackend } from "../conversations
 import { t } from "../i18n.mjs";
 import { NO_CAPABILITIES, NO_TRAITS, legacyCapabilities, impossible, isCapabilityState } from "./contract.mjs";
 import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
+import { assertBackendAllowed, backendAllowed, managedBackendIds } from './host-policy.mjs';
 
 // id -> そのモジュールの場所（エージェントの記述 core/backends/agents.mjs の module）。ここに無い id は無視する（環境変数からの任意 import は許さない）
 const KNOWN = Object.fromEntries(Object.entries(AGENTS).map(([id, a]) => [id, a.module]));
@@ -125,13 +126,13 @@ function retiredBackend(id, info) {
 // 既定は記述にある試験用以外の全部。読み込めないものは skip され、CLI を使うものは
 // 最初に使うまでプロセスを起こさないので、使う CLI だけ入っていれば動く
 // （一覧の取得はバックエンドごとに失敗を握るので巻き添えにならない）。
-const wanted = String(process.env.AGENT_HOST_BACKENDS ?? DEFAULT_AGENT_IDS.join(","))
+const wanted = managedBackendIds ?? String(process.env.AGENT_HOST_BACKENDS ?? DEFAULT_AGENT_IDS.join(","))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
 for (const id of wanted) {
-  const where = KNOWN[id];
+  const where = KNOWN[id] ?? (managedBackendIds && id === 'pleiad-agent' ? './pleiad-agent.mjs' : null);
   if (!where) {
     if (Object.hasOwn(RETIRED, id)) continue;
     console.error(`  知らないバックエンド: ${id}（無視した）`);
@@ -139,7 +140,7 @@ for (const id of wanted) {
   }
   try {
     const mod = await import(where);
-    if (mod?.backend?.id) enabled.set(mod.backend.id, wrapBackend(mod.backend));
+    if (mod?.backend?.id && backendAllowed(mod.backend.id)) enabled.set(mod.backend.id, wrapBackend(mod.backend));
   } catch (err) {
     // 1つ読めなくても他は動かす。SDK が入っていない環境で fake だけ使う、が成り立つように。
     console.error(`  バックエンド ${id} を読み込めなかった: ${String(err?.message ?? err)}`);
@@ -155,7 +156,7 @@ export function getBackend(id) {
 
 /** 会話の持ち主として引く。対応を終えたバックエンドなら、その代わり（retired に断る理由を持つ）を返す。 */
 export function sessionBackend(id) {
-  return enabled.get(id) ?? retired.get(id) ?? null;
+  return enabled.get(id) ?? (backendAllowed(id) ? retired.get(id) : null) ?? null;
 }
 
 /** 有効なバックエンドを、AGENT_HOST_BACKENDS に書かれた順で返す。 */
@@ -225,9 +226,11 @@ export function describeBackends() {
 export async function resolveBackendForSession(sessionId) {
   if (!sessionId) return null;
   const managed = await conversationBackend(sessionId);
+  assertBackendAllowed(managed);
   if (managed) return sessionBackend(managed);
 
   const entry = await store.get(sessionId).catch(() => null);
+  assertBackendAllowed(entry?.backend);
   const known = entry?.backend ? sessionBackend(entry.backend) : null;
   if (known) return known;
 

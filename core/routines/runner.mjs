@@ -94,6 +94,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
       const bot = await bots.get({ botId: routine.botId }).catch(() => null);
       if (!enabled()) { running.delete(routine.id); return disabled; }
       if (!bot) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: 'botMissing', missed, note: source === 'webhook' ? '' : note }, { recordLast: true }); }
+      host.assertBackendAllowed?.(bot.backend);
       if (!channel || channel.archivedAt) { running.delete(routine.id); return await skipped(routine, channel, { runId, reason: channel ? 'channelArchived' : 'channelMissing', missed, note }, { recordLast: true }); }
 
       const root = await channels.post({
@@ -228,6 +229,7 @@ export function createRunner({ channels, bots, dispatch, host, clock, record, ag
     if (closed) throw new RunnerError('CLOSED', 'the routine runner is stopped');
     const bot = await bots.get({ botId: routine.botId }).catch(() => null);
     if (!bot) throw new RunnerError('BOT_NOT_FOUND', routine.botId);
+    host.assertBackendAllowed?.(bot.backend);
     const modes = host.getBackend?.(bot.backend)?.modes?.() ?? {};
     const plan = modes.plan?.scope === 'readonly' ? 'plan' : Object.entries(modes).find(([, m]) => m?.scope === 'readonly' || m?.scope === 'none')?.[0];
     if (!plan) throw new RunnerError('NO_READONLY_MODE', `${bot.backend} has no read-only (plan) approval mode, so a dry run cannot be made safely`);

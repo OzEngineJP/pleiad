@@ -307,6 +307,7 @@ export function createRegistry({ ops = [], settings = [] } = {}) {
       const issues = issuesOf(parsed.error);
       return failure('INVALID', { detail: issues.map((i) => `${i.path || '(root)'}: ${i.message}`).join('; ') }, { issues });
     }
+    deps.validateInput?.(op.id, parsed.data);
 
     // 束縛された会話の承認モード（agent だけ）。引けなければ policy が弱い側に倒す
     const sessionId = principal.by === 'agent' && principal.sessionId ? principal.sessionId : null;
