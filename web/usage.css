@@ -152,10 +152,10 @@
 .usage-other-agents{margin-top:16px}
 .usage-other-agents > summary{min-height:44px;align-content:center;cursor:pointer;color:var(--ink-blue)}
 .conversation-auto-toggle{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:16px;padding:0;width:100%;background:transparent;color:var(--ink);text-align:left;font:inherit;cursor:pointer}
-.conversation-switch{width:32px;height:20px;margin-left:auto;flex:none;background:var(--surface-3);border-radius:var(--r-pill);padding:3px}
-.conversation-switch::before{content:"";display:block;width:14px;height:14px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.conversation-switch{width:32px;height:20px;margin-left:auto;flex:none;background:var(--fill-off);color:var(--on-fill);border-radius:var(--r-pill);padding:3px}
+.conversation-switch::before{content:"";display:block;width:14px;height:14px;border-radius:50%;background:var(--surface-paper)}
 .conversation-auto-toggle[aria-checked=true] .conversation-switch{background:var(--fill-primary);color:var(--on-fill)}
-.conversation-auto-toggle[aria-checked=true] .conversation-switch::before{color:var(--on-fill);background:currentColor;transform:translateX(12px)}
+.conversation-auto-toggle[aria-checked=true] .conversation-switch::before{background:currentColor;transform:translateX(12px)}
 @keyframes conversation-sheet-in{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.conversation-sheet{animation:none}}
 @media(max-width:700px){
