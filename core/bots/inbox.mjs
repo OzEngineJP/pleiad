@@ -66,6 +66,11 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
     file,
     load: () => serial(async () => { await load(); }),
     add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, heardTo, reaction }) => mutate((data) => {
+      if (inner?.wakeKeys?.length) {
+        const queued = data.items.find(item => item.sessionId === sessionId &&
+          inner.wakeKeys.every(key => item.inner?.wakeKeys?.includes(key)));
+        if (queued) return clone(queued);
+      }
       const at = now();
       const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(heard && heardTo ? { heardTo } : {}), ...(reaction ? { reaction } : {}), status: 'pending', at, updatedAt: at };
       data.items.push(item);

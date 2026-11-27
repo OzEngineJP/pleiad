@@ -127,7 +127,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
   const isHuman = (author) => author?.kind === 'human';
   const rejected = (reason, detail) => new MemoryError('MEMORY_REJECTED', reason, detail);
   /** 約束は人でなければ記憶に書かない。会話に ToDo があれば ToDo へ、無ければ気がかりへ置くよう断る（ctx.hasTodos は core/ops/memory.mjs が付ける） */
-  const promiseRefusal = (ctx) => rejected(ctx?.hasTodos ? 'promiseTodo' : 'promiseLoop');
+  const promiseRefusal = () => rejected('promiseTodo');
 
   /** 外から来た作業場所の形をそろえて検査する（\ は / へ・末尾の / は落とす。形が合わなければ MEMORY_REJECTED）。空は「無し」（null） */
   const placeOf = (value) => {
@@ -258,7 +258,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
-      if (!human && kind === 'promise' && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);   // 書かない（保存もしない）。ToDo か気がかりへ
+      if (!human && kind === 'promise') throw promiseRefusal();
       const placement = await newPlacement({ tier, workspace }, human, ctx);
       const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
@@ -283,7 +283,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       // 直した結果が約束になる（今が約束のままの直しも含む）なら、人でなければ書かない。保存だけへ寄せる直し（段だけ archive）は通す
       const resultKind = kind === undefined ? old.kind : kind;
       const onlyArchiving = tier === 'archive' && [text, why, sources, kind, weight, status, workspace].every((v) => v === undefined);
-      if (!human && resultKind === 'promise' && !onlyArchiving && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);
+      if (!human && resultKind === 'promise' && !onlyArchiving) throw promiseRefusal();
       const placement = await editedPlacement({ tier, workspace }, old, ctx);
       const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;

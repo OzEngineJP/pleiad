@@ -59,7 +59,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
 import { authorKey, channelEnvelope, channelThreadEnvelope, channelEventRows, turnContextEnvelope, innerEnvelope } from '../channels/types.mjs';
-import { innerTail, WORK_NOTES_VERSION } from '../brain/inner.mjs';
+import { todoContext, WORK_NOTES_VERSION } from '../brain/inner.mjs';
 import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createResting } from './resting.mjs';
@@ -1089,12 +1089,14 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
         if (sb.personaKey && sb.personaKey !== rec.personaKey) notes = [turnContextEnvelope(agentT(turn.agentLocale ?? meta.agentLocale ?? locale(), 'channel.personaUpdated', { persona: text })), ...notes];
       }
     } catch (e) { log('could not check the persona of a conversation:', errText(e)); }
-    // 思考の流れの末尾と気がかり（自分の下書き。呼ばれたときも続きから始める。ADR 0126）。引き継ぎのターンは本文に入っているので重ねない
-    if (rec.pulseBot && !rec.inner && (sb.kind === 'thread' || sb.kind === 'dm')) {
+    if (!rec.inner && host.todos) {
       try {
-        const text = innerTail({ locale: turn.agentLocale ?? locale(), now: now(), stream: brain.tail(bot.id, 30), loops: brain.loops(bot.id, 'open') });
-        if (text) notes = [...notes, innerEnvelope({ kind: 'tail', at: stamp(now()) }, text)];
-      } catch (e) { log('could not build the inner tail:', errText(e)); }
+        const { items } = host.todos.list({ id: sessionId });
+        const { text, versions } = todoContext({ items, previous: sb.snapshotDue ? {} : sb.todoVersions,
+          wrap: body => innerEnvelope({ kind: 'tail', at: stamp(now()) }, body) });
+        rec.todoVersions = versions;
+        if (text) notes = [...notes, text];
+      } catch (e) { log('could not build the ToDo context:', errText(e)); }
     }
     // チャンネルの「ここでの決まり」（memo）。渡すのは会話の始まり・圧縮や巻き戻しの後（snapshotDue）と、決まりが変わったときだけ
     if (channelId && POST_KINDS.has(sb.kind)) {
@@ -1219,6 +1221,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       ...(rec.cursor ? { postCursor: rec.cursor } : {}),
       ...(rec.personaKey ? { personaKey: rec.personaKey } : {}),
       ...(rec.memoKey !== undefined ? { memoKey: rec.memoKey } : {}),
+      ...(rec.todoVersions ? { todoVersions: rec.compactedDuring ? {} : rec.todoVersions } : {}),
     }));
     const marked = rec.itemIds.length ? inbox.mark(rec.itemIds, 'sent').catch((e) => log('could not record a delivered event:', errText(e))) : Promise.resolve();
     rec.marked = marked;
@@ -1471,7 +1474,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
   async function onCompacted(sessionId) {
     const rec = active.get(sessionId);
     if (rec) rec.compactedDuring = true;
-    await updateSidecar(sessionId, (sb) => ({ ...sb, snapshotDue: true, delivered: [] }));
+    await updateSidecar(sessionId, (sb) => ({ ...sb, snapshotDue: true, delivered: [], todoVersions: {} }));
   }
 
   async function onTurnEnd(turn, { outcome, interrupted, onPostSaved } = {}) {
@@ -1641,7 +1644,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * inbox に積んでふつうの道に乗せる。承認・強い bot の確認・［止める］はそのまま効き、走っているターンには途中送信しない。
    * 止めたスレッド・その bot の会話でなくなったものは断る。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }（resting・closed は待てば起こせる）
    */
-  async function wakeReserved({ botId, sessionId, channelId, threadId = null, why = '', text, taint = null } = {}) {
+  async function wakeReserved({ botId, sessionId, channelId, threadId = null, why = '', text, taint = null, wakeKeys } = {}) {
     if (!await allowed()) return { woken: false, reason: 'botDisabled' };
     if (closed) return { ok: false, reason: 'closed' };
     const bot = await getBot(botId);
@@ -1650,7 +1653,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     if (!sessionId || (await sidecarOf(sessionId))?.botId !== botId) return { ok: false, reason: 'nosession' };
     if (threadId && (stoppedKeys.has(threadKeyOf(channelId, threadId)) || (await threadStopped(channelId, threadId)))) return { ok: false, reason: 'stopped' };
     if (host.updating?.()) return { ok: false, reason: 'updating' };
-    await inbox.add({ sessionId, channelId, threadId, botId, postId: null, inner: { kind: 'wake', workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq: null, taint } });
+    await inbox.add({ sessionId, channelId, threadId, botId, postId: null, inner: { kind: 'wake', workNotesVersion: WORK_NOTES_VERSION, why: oneLine(why, 300), text: String(text ?? '').slice(0, 6000), actSeq: null, taint, wakeKeys } });
     await pump(sessionId);
     return { ok: true, sessionId, channelId, threadId };
   }

@@ -364,25 +364,24 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
   }
 
   // mayWrite: 各書き込みの直前に確かめる（OFF→ON が短時間にあっても、OFF 前の世代の AI 結果を書かない）
-  async function writeCandidates(candidates, items, response, existing, onlyBot = null, mayWrite = async () => true, nightlyOrganizer = false) {
+  async function writeCandidates(candidates, items, response, existing, onlyBot = null, mayWrite = async () => true) {
     const author = { kind: 'bot', botId: LEARNER_ID };
     const sessions = {
       read: async (id) => messagesOf(knownRows.get(id) ?? { id, backend: (await host.store.get(id)).backend }),
       get: async (id) => ({ row: knownRows.get(id) ?? await host.store.get(id) }),
     };
     const ctx = { sessions, botOfSession: async (id) => (await host.store.get(id)).bot ?? null,
-      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}`, userWriteLimit: CANDIDATES_PER_CALL, nightlyOrganizer };
+      sessionId: response.sessionId ?? `learn-${crypto.randomUUID()}`, userWriteLimit: CANDIDATES_PER_CALL };
     let changed = 0;
     for (const candidate of candidates.slice(0, CANDIDATES_PER_CALL)) {
       if (!candidate || !['add', 'edit', 'replace'].includes(candidate.action)) continue;
-      if (candidate.kind === 'promise' && (!nightlyOrganizer || !isMemoryStatus(candidate.status))) continue;
+      if (candidate.kind === 'promise') continue;
       const refs = [...new Set(Array.isArray(candidate.sourceIndexes) ? candidate.sourceIndexes : [])].filter((n) => Number.isInteger(n) && items[n]).slice(0, 8);
       if (!refs.length || typeof candidate.text !== 'string') continue;
       const sources = [...refs.map((n) => sourceOf(items[n])), ...refs.flatMap((n) => items[n].aiContext ? [sourceOf(items[n].aiContext)] : [])].slice(0, 8);
       const layer = candidate.layer === 'user' ? 'user' : candidate.layer;
       if (onlyBot && layer !== onlyBot) continue;
-      if (candidate.kind === 'promise' && layer !== 'user' &&
-        !refs.some((n) => items[n].botId === layer || items[n].botIds?.includes(layer))) continue;
+
       // 組み込みの bot（bot なし）の層は作らない（ADR 0157）
       const layerBot = layer === 'user' ? null : await bots.get({ botId: layer }).catch(() => null);
       if (layer !== 'user' && (!layerBot || layerBot.plain)) continue;
@@ -396,12 +395,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
       try {
         const old = existing.find((e) => e.id === candidate.id);
         const humanWritten = old?.by?.kind === 'human' || old?.origBy?.kind === 'human';
-        if (old?.kind === 'promise' && old.layer === layer && candidate.kind === 'promise') {
-          const current = await memory.get({ id: old.id });
-          if (!current || current.updatedAt !== old.updatedAt || current.status !== old.status
-            || current.status === candidate.status || !(await mayWrite())) continue;
-          await memory.edit({ id: old.id, status: candidate.status }, author, ctx);
-        } else if (old && old.layer === layer && !humanWritten) {
+        if (old?.kind === 'promise') continue;
+        if (old && old.layer === layer && !humanWritten) {
           await memory.edit({ id: old.id, text: candidate.text, why: candidate.why, sources, ...tags }, author, ctx);
         } else {
           const added = await memory.write({ layer, text: candidate.text, why: candidate.why, sources, ...tags }, author, ctx);
@@ -464,8 +459,8 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
     const tierRule = tierBudget.left > 0
       ? `You may also re-select the tier of the existing memories shown: add "tiers":[{"id":"existing memory id","tier":"always|workspace|archive","reason":"under 80 characters"}] to the JSON. always = useful in every conversation; workspace = useful only in the workspace it was made in; archive = outdated, resolved or superseded, kept only for search. A memory with tier null is not sorted yet. Change a tier only with a clear reason, never for a human-written memory, and return at most ${tierBudget.left} tier changes. Do not choose a workspace; the code decides it.\n`
       : '';
-    const head = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"promise|stop|decision|share|pref|note","weight":1,"status":"open|done|dropped (promise only)","sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
-      `Remember durable preferences, rules, corrections and reasons for decisions. Also keep specific work the human agreed to track. Use promise with status open for agreed ongoing work, done for confirmed completion, or dropped for explicit cancellation. Never infer completion or cancellation from silence or elapsed time. Change an existing promise by id using the numbered human evidence. Omit status for other kinds. Return at most ${CANDIDATES_PER_CALL} memories, the most durable ones. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
+    const head = `<pleiad-memory-learn>\nYou are Pleiad's private memory organizer. Return only JSON: {"memories":[{"action":"add|edit|replace","layer":"user|bot id","text":"...","why":"...","kind":"stop|decision|share|pref|note","weight":1,"sourceIndexes":[0],"id":"existing memory id for edit/replace"}]}.\n` +
+      `Remember durable preferences, rules, corrections and reasons for decisions. Save only statements explicitly intended to apply beyond the current conversation or task. Leave work commitments, deadlines, and decisions for the current task. Return at most ${CANDIDATES_PER_CALL} memories, the most durable ones. Use only the numbered human statements. An aiContext is available only when the human explicitly adopted the preceding assistant answer; you may use that answer with its human adoption. Never infer a memory from unadopted AI output, webhook or web text. Keep each memory under 300 characters. Choose user for preferences shared by all bots, bot id only for role-specific rules. Skip repeats. Edit an AI-written memory when it is superseded; for a human-written memory add a replacement.\n` +
       `Give each memory a kind: stop (something the human told us to stop or not to do again), decision (an agreed choice and its reason), share (who does what), pref (a preference or correction), note (anything else). When a statement repeats an existing memory, edit that memory (when AI-written) instead of adding a new one. The existing memories shown are a selection, not all of them; most archived memories are not shown.\n` +
       tierRule;
     const statements = `Human statements: ${JSON.stringify(items.map((item, index) => ({ index, ...item, text: clip(item.text) })))}\n</pleiad-memory-learn>`;
@@ -475,13 +470,13 @@ export function createMemoryLearner({ dataDir, channels, bots, memory, brain = n
     const concernPrompt = concerns.length
       ? `Do not add a separate memory for an existing concern. If a numbered human statement explicitly resolves or cancels a matching concern, include "concerns":[{"botId":"...","id":"...","status":"resolved|dropped","sourceIndexes":[0]}].\nConcerns: ${JSON.stringify(concerns.map(({ id, botId, text }) => ({ id, botId, text })))}\n`
       : '';
-    const picked = selectNightlyCandidates(await memory.list(), { workspaces, layers, includePromises: true,
+    const picked = selectNightlyCandidates(await memory.list(), { workspaces, layers,
       budget: nightlyMemoryBudget(estimateTokens(head + concernPrompt + statements)) });
     const prompt = `${head}${concernPrompt}Existing memories: ${JSON.stringify(picked.entries.map(nightlyItemOf))}\n${statements}`;
     if (!(await mayWrite())) return { changed: 0, retiered: 0 };   // memory.list の await 中に OFF/停止/世代替わりがあり得るので、ask の直前に確かめ直す
     const response = ask ? await ask(prompt, prefs) : await askBackend(prompt, prefs, mayWrite);
     const answer = parseAnswer(typeof response === 'string' ? response : response.text);
-    let changed = await writeCandidates(answer.memories, items, response, picked.entries, null, mayWrite, true);
+    let changed = await writeCandidates(answer.memories, items, response, picked.entries, null, mayWrite);
     for (const change of (Array.isArray(answer.concerns) ? answer.concerns : []).slice(0, concerns.length)) {
       if (!['resolved', 'dropped'].includes(change?.status) || !Array.isArray(change.sourceIndexes)) continue;
       const loop = concerns.find((l) => l.id === change.id && l.botId === change.botId);

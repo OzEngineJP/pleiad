@@ -586,6 +586,7 @@ export function brainTable(db) {
       return removed;
     },
     clearStream(botId) { return Number(prepared(db, 'DELETE FROM brain_stream WHERE bot_id = ?').run(botId).changes); },
+    legacyLoops() { return prepared(db, 'SELECT * FROM brain_loops ORDER BY updated_at, bot_id, id').all().map(loopRow); },
     loops(botId, status = null) {
       const rows = status
         ? prepared(db, 'SELECT bot_id, id, status, updated_at, data FROM brain_loops WHERE bot_id = ? AND status = ? ORDER BY updated_at').all(botId, status)
@@ -613,6 +614,7 @@ export function wakeTable(db) {
   ensureLateTables(db);
   const row = (r) => ({ ...JSON.parse(r.data), id: r.id, botId: r.bot_id, status: r.status, at: r.at });
   return {
+    legacyWakes() { return prepared(db, 'SELECT * FROM brain_wakes ORDER BY at, id').all().map(row); },
     get(id) { const r = prepared(db, 'SELECT id, bot_id, status, at, data FROM brain_wakes WHERE id = ?').get(id); return r ? row(r) : null; },
     put(id, botId, status, at, data) {
       prepared(db, 'INSERT INTO brain_wakes (id, bot_id, status, at, data) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET status = excluded.status, at = excluded.at, data = excluded.data').run(id, botId, status, at, jsonOf(data));
@@ -694,6 +696,19 @@ const todoRow = r => ({ id: r.id, text: r.text, status: r.status, order: r.ord, 
 export function todoTable(db) {
   ensureLateTables(db);
   return {
+    concernSession(botId, source) {
+      const rows = prepared(db, `SELECT session_id FROM session_fields WHERE field = 'bot'
+        AND json_extract(value, '$.botId') = ? AND json_extract(value, '$.channelId') = ?
+        AND json_extract(value, '$.threadId') IS ? AND json_extract(value, '$.kind') IN ('thread', 'dm') LIMIT 2`)
+        .all(botId, source.channelId, source.threadId ?? null);
+      return rows.length === 1 ? rows[0].session_id : null;
+    },
+    followUps(type, botId = null) {
+      const rows = botId == null
+        ? prepared(db, "SELECT * FROM todos WHERE json_extract(external, '$.followUp.type') = ?").all(type)
+        : prepared(db, "SELECT * FROM todos WHERE json_extract(external, '$.followUp.type') = ? AND json_extract(external, '$.followUp.botId') = ?").all(type, botId);
+      return rows.map(r => ({ ...todoRow(r), scope: { kind: r.scope_kind, id: r.scope_id } }));
+    },
     /** 持ち主の項目を並び順に */
     list(kind, id) { return prepared(db, 'SELECT * FROM todos WHERE scope_kind = ? AND scope_id = ? ORDER BY ord, created_at').all(kind, id).map(todoRow); },
     linkedSessions() {

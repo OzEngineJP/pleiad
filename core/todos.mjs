@@ -78,6 +78,7 @@ const cleanText = text => {
 };
 function setDetails(item, input) {
   const details = { ...item.external };
+  if (input.followUp !== undefined) details.followUp = input.followUp;
   if (input.assignee !== undefined) details.assignee = input.assignee ? cleanText(input.assignee) : null;
   if (input.humanWaiting !== undefined) details.humanWaiting = input.humanWaiting === true;
   if (input.taskId !== undefined && input.taskId !== (details.taskId ?? null)) {
@@ -116,6 +117,7 @@ function view(items) {
   return items.map(t => ({ id: t.id, text: t.text, status: t.status, waiting: waitingOf(t, byId), after: t.after.filter(id => byId.has(id)),
     assignee: t.external?.assignee ?? null, humanWaiting: Boolean(t.external?.humanWaiting || t.external?.taskWaiting),
     taskId: t.external?.taskId ?? null, taskIssue: taskProblems.has(t.external?.taskStatus) ? t.external.taskStatus : null,
+    ...(t.external?.followUp ? { followUp: t.external.followUp } : {}),
     links: t.links, order: t.order, by: t.by ?? null, updatedBy: t.updatedBy ?? null, createdAt: t.createdAt ?? null, updatedAt: t.updatedAt ?? null }));
 }
 

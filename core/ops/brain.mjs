@@ -89,8 +89,11 @@ export const brainOps = [
     handler: async (ctx, { botId, text, wakeOn, due }) => {
       const { bot, sb } = await target(ctx, botId);
       const now = Date.now();
-      const { applied } = ctx.brain.applyLoops(bot.id, [{ op: 'add', text, wakeOn: parseWakeOn(wakeOn, now), due: parseTime(due, now) }], { taint: sb?.taint ?? null, sources: concernSources(sb, ctx.actor?.sessionId) });
-      for (const a of applied) ctx.brain.append(bot.id, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint: sb?.taint ?? null });
+      const sessionId = sb ? ctx.actor?.sessionId : null;
+      const { applied } = ctx.brain.applyLoops(bot.id, [{ op: 'add', text, wakeOn: parseWakeOn(wakeOn, now), due: parseTime(due, now) }], {
+        taint: sb?.taint ?? null, sources: concernSources(sb, sessionId), sessionId,
+        author: ctx.principal?.by === 'human' ? { kind: 'human' } : undefined,
+      });
       return { id: applied[0]?.id ?? null, applied };
     },
   }),
@@ -111,7 +114,6 @@ export const brainOps = [
       const { bot, sb } = await target(ctx, botId);
       const { applied } = ctx.brain.applyLoops(bot.id, [{ op: status === 'dropped' ? 'drop' : 'resolve', id }], { taint: sb?.taint ?? null });
       if (!applied.length) throw new OpError('NOT_FOUND', agentT(ctx.locale, 'ops.errors.NOT_FOUND', { id }));
-      for (const a of applied) ctx.brain.append(bot.id, { kind: 'loop', text: agentT(ctx.locale, `brain.loop.${a.op}`, { text: a.text }), refs: [a.id] });
       return { id, status };
     },
   }),

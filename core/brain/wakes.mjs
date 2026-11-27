@@ -25,12 +25,12 @@
 import crypto from 'node:crypto';
 import { agentT } from '../i18n.mjs';
 import { openData } from '../data-schema.mjs';
-import { wakeTable } from '../db.mjs';
+import { followUpTable } from './follow-ups.mjs';
 import { whenOf } from './inner.mjs';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
-export const WAKE_NOTE_MAX = 500;
+export const WAKE_NOTE_MAX = 200;
 export const WAKE_PENDING_MAX = 20;
 export const WAKE_MIN_LEAD_MS = MIN;
 export const WAKE_MAX_AHEAD_MS = 30 * DAY;
@@ -44,7 +44,6 @@ export const WAKE_LATE_MS = 2 * MIN;
 
 const log = (...a) => console.error('  wakes:', ...a);
 const errText = (e) => String(e?.message ?? e);
-const clip = (s, n) => [...String(s ?? '').replace(/\r\n/g, '\n').trim()].slice(0, n).join('');
 const taintOf = (v) => (v === 'webhook' || v === 'web' ? v : null);
 /** 起こせなかったときに、閉じずに待たせる理由（時間が経てば起こせる） */
 const TRANSIENT = new Set(['resting', 'closed']);
@@ -58,7 +57,7 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
   let timer = null;
   let closed = true;
   let running = null;
-  const open = () => { if (!table) { handle = openData(dataDir); table = wakeTable(handle.db); } return table; };
+  const open = () => { if (!table) { handle = openData(dataDir); table = followUpTable(handle.db, now); } return table; };
   const changed = (botId) => { try { emit({ type: 'brainChanged', botId }); } catch { /* 画面への知らせの失敗で保存を戻さない */ } };
   const save = (w) => { const { id, botId, status, at, ...data } = w; open().put(id, botId, status, at, data); return w; };
 
@@ -70,7 +69,9 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
       throw new WakeError('WAKE_TIME', { min: Math.round(WAKE_MIN_LEAD_MS / MIN), maxDays: Math.round(WAKE_MAX_AHEAD_MS / DAY) });
     }
     if (t.countPending(botId) >= WAKE_PENDING_MAX) throw new WakeError('WAKE_LIMIT', { max: WAKE_PENDING_MAX });
-    const wake = save({ id: `w${crypto.randomBytes(4).toString('hex')}`, botId, status: 'pending', at, note: clip(note, WAKE_NOTE_MAX), sessionId, channelId, threadId: threadId ?? null, createdAt: current, ...(taintOf(taint) ? { taint: taintOf(taint) } : {}) });
+    const text = String(note ?? '').replace(/\s+/g, ' ').trim();
+    if ([...text].length > WAKE_NOTE_MAX) throw new WakeError('INVALID', { detail: `note exceeds ${WAKE_NOTE_MAX} characters` });
+    const wake = save({ id: `w${crypto.randomBytes(4).toString('hex')}`, botId, status: 'pending', at, note: text, sessionId, channelId, threadId: threadId ?? null, createdAt: current, ...(taintOf(taint) ? { taint: taintOf(taint) } : {}) });
     t.prune(current - WAKE_KEEP_MS);
     changed(botId);
     arm();
@@ -124,7 +125,8 @@ export function createWakes({ dataDir, channels, bots, dispatch, enablement, clo
     const at = now();
     const result = await dispatch.wakeReserved({
       botId: bot.id, sessionId: head.sessionId, channelId: head.channelId, threadId: head.threadId ?? null,
-      why: list.map((w) => w.note).filter(Boolean).join(' / '), text: wakeText(list, at), taint: list.find((w) => w.taint)?.taint ?? null,
+      wakeKeys: list.map(wake => `${wake.id}:${wake.at}`),
+      text: wakeText(list, at), taint: list.find((w) => w.taint)?.taint ?? null,
     }).catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) {
       const reason = result?.reason ?? 'failed';

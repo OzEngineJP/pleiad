@@ -9232,7 +9232,7 @@ worktreeSweepSoon();
 // bot・Channels・ルーティン。保持役からターンを付け直す前に組み立てる
 function makeBotHost() {
   return createBotHost({
-    store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox,
+    store, dataDir: store.dataDir, usageStore, sessionSearch, runtime, outbox, todos: sessionTodos,
     createConversation, runTurn, noticeTarget, noticeBlocked: id => noticeBlocked(id), abortSessions, emitGlobal,
     updating: () => updateGate.locked,
     reserveBotStart: () => updateGate.locked ? null : updateGate.enter(),

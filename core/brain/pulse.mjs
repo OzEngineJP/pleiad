@@ -230,8 +230,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     // 投稿は人・他の bot のどちらでもよい（bot が外から来た文を読んで書いた投稿には、その taint が載る）
     const cleanTrigger = events.some((e) => !e.taint && (e.authorKind === 'human' || e.authorKind === 'bot')) || Boolean(verdict.loopId && !loops.find((l) => l.id === verdict.loopId)?.taint);
     const taint = taintedInput ? (events.find((e) => e.taint)?.taint ?? loops.find((l) => l.taint)?.taint ?? 'web') : null;
-    const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, stream: brain.tail(bot.id, 40), loops,
-      related: await relatedOf(bot, events), minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
+    const prompt = beatPrompt({ bot, locale: locale(), now: at, gate: verdict, drives, events: seen, loops,
+      minMin: Math.round(floorMs / 60_000), maxMin: Math.round(PULSE_CEIL_MS / 60_000) });
     let answered;
     if (!current()) return skipped;
     try {
@@ -255,15 +255,14 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
 
     // ⑦ 返事を当てはめる: 流れ・気がかり・次に起きる時刻
     let seq = null;
-    if (parsed.thought) seq = brain.append(bot.id, { kind: 'think', text: parsed.thought, refs: parsed.refs, taint, tokens, meta: rowMeta }).seq;
-    else if (parsed.do === 'none' || !parsed.thought) seq = brain.append(bot.id, { kind: 'quiet', tokens, meta: { ...rowMeta, by: 'model' } }).seq;
+    if (parsed.thought && !parsed.loops.length && !parsed.handoff) seq = brain.append(bot.id, { kind: 'think', text: parsed.thought, refs: parsed.refs, taint, tokens, meta: rowMeta }).seq;
+    else seq = brain.append(bot.id, { kind: 'quiet', tokens, meta: { ...rowMeta, by: 'model' } }).seq;
     if (parsed.loops.length) {
       const loopOps = parsed.loops.map((op) => {
         const event = op.sourcePostId && seen.find((e) => e.postId === op.sourcePostId);
         return event ? { ...op, sources: [{ kind: 'post', channelId: event.channelId, threadId: event.threadId, postId: event.postId }] } : op;
       });
-      const { applied } = brain.applyLoops(bot.id, loopOps, { taint, workNotesVersion: WORK_NOTES_VERSION });
-      for (const a of applied) brain.append(bot.id, { kind: 'loop', text: agentT(locale(), `brain.loop.${a.op}`, { text: a.text }), refs: [a.id], taint, meta: { workNotesVersion: WORK_NOTES_VERSION } });
+      brain.applyLoops(bot.id, loopOps, { taint, workNotesVersion: WORK_NOTES_VERSION });
     }
     const reservedAt = parsed.wakeAt ? at + clampMs(parsed.wakeAt, at) : null;
     const sleepAt = parsed.do === 'sleep' ? at + Math.min(PULSE_CEIL_MS, Math.max(every * 3, 30 * 60_000)) : null;
@@ -271,7 +270,8 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     brain.setState(bot.id, { ...common, cursorAt: cursorTo, nextAt, reservedAt: reservedAt ?? sleepAt, sinceMuse: 0, failures: 0 });
 
     // ⑧ 賢いモデルへの引き継ぎ（確かめる・話す）
-    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at });
+    if (parsed.do === 'act' && parsed.handoff) await handOff(bot, parsed, { taint, taintOnly: taintedInput && !cleanTrigger, at,
+      loops: loops.filter(loop => loop.id === verdict.loopId) });
     return { botId, ran: true, gate: verdict, did: parsed.do, seq };
   }
 
@@ -291,19 +291,10 @@ export function createPulse({ dataDir, brain, channels, bots, host, dispatch, me
     return { botId: bot.id, ran: true, did: 'stopped', error: message };
   }
 
-  async function relatedOf(bot, events) {
-    if (!memory?.search || !events.length) return [];
-    try {
-      const hits = await memory.search({ query: events.map((e) => e.text).join(' ').slice(0, 200), layers: ['user', bot.id], limit: 3 });
-      return (hits ?? []).map((h) => h.text);
-    } catch { return []; }
-  }
-
-  async function handOff(bot, parsed, { taint, taintOnly, at }) {
+  async function handOff(bot, parsed, { taint, taintOnly, at, loops }) {
     const l = locale();
-    const stream = brain.tail(bot.id, 20);
-    const act = brain.append(bot.id, { kind: 'act', text: parsed.handoff.why, refs: parsed.refs, taint, meta: { workNotesVersion: WORK_NOTES_VERSION, where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
-    const text = handoffText({ locale: l, now: at, why: parsed.handoff.why, stream, loops: brain.loops(bot.id, 'open'), taintOnly });
+    const act = brain.append(bot.id, { kind: 'act', refs: parsed.refs, taint, meta: { workNotesVersion: WORK_NOTES_VERSION, where: parsed.handoff.where ?? null, ...(taintOnly ? { taintOnly: true } : {}) } });
+    const text = handoffText({ locale: l, now: at, why: parsed.handoff.why, loops, taintOnly });
     const result = await dispatch.handoff({ botId: bot.id, why: parsed.handoff.why, where: parsed.handoff.where ?? null, text, actSeq: act.seq, taint })
       .catch((e) => ({ ok: false, reason: errText(e) }));
     if (!result?.ok) brain.append(bot.id, { kind: 'result', text: agentT(l, 'brain.line.handoffFailed', { reason: result?.reason ?? '' }), refs: [String(act.seq)], taint });
