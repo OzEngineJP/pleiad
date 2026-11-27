@@ -1,24 +1,20 @@
-// 記憶の一覧（bot のページの右。ADR 0110・docs/channels.md「記憶」）。2 層: あなたについて（全 bot 共通）と、この bot だけ。
-// 各行に本文と出どころ（押すとその投稿・会話へ）と［直す］［忘れる］。凝った編集画面は作らず、その場で書き換える。
-// 忘れたら 12 秒の「元に戻す」の帯（memory.forget は墓石を残すので、戻すのは memory.unforget）。
-// 操作はすべて memory.* の op を host.invoke で呼ぶ。更新は memoryChanged（呼び出し側が refresh する）。
-// 頭の「毎晩の整理: …」は設定 › bot への導線（host.openMemory。長い状態の 1 行は設定側へ移した。docs/design-system.md「設定 › bot」）。
-// 各行に種類の札（約束・やめたこと…）と、薄れた記憶（会話の始まりには渡さないが、探せば出る）の印。
-// i18n-dynamic: channels:memory.route.
-// i18n-dynamic: channels:memory.kind.
-// i18n-dynamic: channels:memory.tier.
-// 各行に段（いつも・この作業場所で・保存だけ。未振り分けも）の札と、直すときに段と作業場所を変える欄（memory.edit の tier / workspace）。
-//
-//   createMemoryList(host, { lookup, openSource }) → { el, route, setBot(bot), refresh(layer?), layers() }
-//     route … 「毎晩の整理: …」の導線ボタン（bot のページの見出しへ置く。memory.learnStatus から短い状態を出す）
-//     lookup() … { channels: Map<id, Channel>, bots: Map<id, Bot>, sessions: Map<id, session> }（出どころの字に使う）
-//     openSource(target) … 出どころを開く（{ channelId, threadId?, postId? } か { sessionId }）
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
 import { sourceView } from './bot-model.mjs';
 import { botIcon } from './bot-icon.mjs';
-import { learnEnabledOf, learnRouteView } from '../memory-model.mjs';
+// i18n-dynamic: channels:memory.tier.
+// i18n-dynamic: channels:memory.folder.
+const FOLDERS = ['open', 'decision', 'pref', 'share', 'note', 'done', 'stop'];
+const PAGE_SIZE = 4;
+const folderOf = (entry) => {
+  if (entry.kind === 'stop' || entry.status === 'dropped') return 'stop';
+  if (entry.status === 'done') return 'done';
+  if (entry.status === 'open') return 'open';
+  return FOLDERS.includes(entry.kind) ? entry.kind : 'note';
+};
+const searchText = (text) => text.normalize('NFKC').toLocaleLowerCase();
+let nextListId = 0;
 
 export const UNDO_MS = 12000;
 const FADE_MS = 240;
@@ -43,7 +39,42 @@ export function createMemoryList(host, { lookup, openSource }) {
     focusEdit: false,
     seq: {},         // 層ごとの読み込みの番号
   };
-  const groups = {};
+  let scope = 'own';
+  let detail = null;
+  let query = '';
+  let opened = new Set(['open']);
+  const limits = new Map();
+  const listId = ++nextListId;
+  const core = el('div', 'memcore');
+  const controls = el('div', 'mem-controls');
+  const select = el('select', 'mem-control');
+  select.setAttribute('aria-label', t('channels:memory.scopeLabel'));
+  for (const key of ['own', 'user']) {
+    const option = el('option', null, key === 'own' ? t('channels:memory.scopeOwn') : t('channels:memory.scopeUser'));
+    option.value = key;
+    select.append(option);
+  }
+  select.onchange = () => {
+    scope = select.value;
+    detail = null;
+    opened = new Set(['open']);
+    limits.clear();
+    stopEditing();
+  };
+  const search = el('input', 'mem-control');
+  search.type = 'search';
+  search.placeholder = t('channels:memory.search');
+  search.setAttribute('aria-label', search.placeholder);
+  search.oninput = () => {
+    query = searchText(search.value.trim());
+    for (const key of FOLDERS) opened.delete(`search:${key}`);
+    detail = null;
+    limits.clear();
+    stopEditing();
+  };
+  const results = el('p', 'mem-results');
+  results.setAttribute('role', 'status');
+  controls.append(select, search);
   const undo = el('div', 'mem-undo');
   undo.hidden = true;
   undo.setAttribute('role', 'status');
@@ -51,25 +82,7 @@ export function createMemoryList(host, { lookup, openSource }) {
   const note = el('p', 'mem-err');
   note.setAttribute('role', 'alert');
   note.hidden = true;
-  // 記憶の見出しの右へ置く導線（押すと設定 › bot）。短い状態だけ出す
-  const route = el('button', 'mem-route');
-  route.type = 'button';
-  route.hidden = true;
-  route.onclick = () => host.openMemory?.();
-  let learnSeq = 0;
-
-  for (const key of ['user', 'own']) {
-    const head = el('div', 'memh');
-    const title = el('b');
-    const meta = el('span');
-    head.append(title, meta);
-    const core = el('div', 'memcore');
-    core.dataset.layer = key;
-    core.setAttribute('aria-label', '');
-    groups[key] = { head, title, meta, core };
-  }
-  root.append(groups.user.head, groups.user.core, groups.own.head, groups.own.core, note, undo);
-  groups.own.head.classList.add('second');
+  root.append(controls, results, core, note, undo);
 
   const layerId = (key) => (key === 'user' ? 'user' : S.bot?.id);
   const keyOf = (layer) => (layer === 'user' ? 'user' : layer === S.bot?.id ? 'own' : null);
@@ -77,6 +90,11 @@ export function createMemoryList(host, { lookup, openSource }) {
   const showError = (text) => { note.textContent = text; note.hidden = !text; };
 
   // ---------------------------------------------------------------- 描画
+  function sourceLabel(source, view) {
+    const where = view.where.name;
+    return [...new Set([where, source.threadTitle].filter(Boolean))].join(' › ') || t('channels:memory.source.none');
+  }
+
   function sourceNode(entry) {
     const box = el('span', 'src');
     const sources = Array.isArray(entry.sources) ? entry.sources : [];
@@ -86,11 +104,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       box.textContent = entry.by?.kind === 'human' ? t('channels:memory.source.written') : t('channels:memory.source.none');
     } else {
       const v = sourceView(first, lookup());
-      const where = v.where.type === 'dm' ? t('channels:memory.source.dm', { name: v.where.name })
-        : v.where.type === 'chat' ? (v.where.name ? t('channels:memory.source.chat', { title: v.where.name }) : t('channels:memory.source.chatGone'))
-        : v.where.name ? `#${v.where.name}` : t('channels:memory.source.channelGone');
-      const when = v.date ?? t('channels:memory.source.today');
-      const text = t('channels:memory.source.line', { where, when });
+      const text = sourceLabel(first, v);
       const image = v.where.type === 'dm' ? botIcon(v.where, 'src-bot-icon') : null;
       if (v.target) {
         const link = el('button', 'src-link', text);
@@ -156,8 +170,6 @@ export function createMemoryList(host, { lookup, openSource }) {
     row.dataset.id = entry.id;
     const tx = el('span', 'tx');
     const acts = el('span', 'acts2');
-    const learnedToday = entry.by?.kind === 'bot' && entry.by.botId === 'b_learner' && entry.origBy?.kind !== 'human'
-      && entry.updatedAt && new Date(entry.updatedAt).toDateString() === new Date().toDateString();
     if (S.editing === entry.id) {
       row.classList.add('editing');
       const input = el('input', 'fin memedit');
@@ -186,22 +198,52 @@ export function createMemoryList(host, { lookup, openSource }) {
         queueMicrotask(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); });
       }
     } else {
-      const textLine = el('span', 'tx-text');
-      textLine.append(tierNode(entry), ' ');
-      if (entry.kind) {
-        const kindKey = entry.kind === 'promise' && entry.status === 'done' ? 'promiseDone' : entry.kind;
-        textLine.append(el('span', 'mem-kind', t(`channels:memory.kind.${kindKey}`)), ' ');
+      const toggle = el('button', 'mem-record');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-expanded', String(detail === entry.id));
+      toggle.append(el('span', 'tx-text', entry.text));
+      const source = entry.sources?.find((s) => s.kind === 'post' || s.kind === 'message');
+      toggle.append(el('span', 'mem-origin', source ? sourceLabel(source, sourceView(source, lookup()))
+        : t(entry.by?.kind === 'human' ? 'channels:memory.source.written' : 'channels:memory.source.none')));
+      toggle.onclick = () => {
+        detail = detail === entry.id ? null : entry.id;
+        paint({ row: entry.id });
+      };
+      tx.append(toggle);
+      if (detail !== entry.id) {
+        row.append(tx);
+        return row;
       }
-      textLine.append(entry.text);
-      if (entry.faded) {
-        row.classList.add('faded');
-        const faded = el('span', 'src-more mem-faded', t('channels:memory.faded'));
-        faded.title = t('channels:memory.fadedTitle');
-        textLine.append(faded);
-      }
-      tx.append(textLine);
-      if (learnedToday) tx.append(el('span', 'src-more mem-new', t('channels:memory.new')));
       tx.append(sourceNode(entry));
+      if (entry.concern) {
+        const { id, due, wakeOn } = entry.concern;
+        const date = (at) => new Date(at).toLocaleString();
+        const wake = [wakeOn?.thread, wakeOn?.word, wakeOn?.at ? date(wakeOn.at) : null].filter(Boolean).join(' · ');
+        if (wake) tx.append(el('span', 'mem-origin', t('channels:bot.brain.loops.wake', { wake })));
+        if (due) tx.append(el('span', 'mem-origin', t('channels:bot.brain.loops.due', { due: date(due) })));
+        if (entry.status === 'open') {
+          const stop = el('button', 'btn', t('channels:memory.stopTracking'));
+          stop.type = 'button';
+          stop.onclick = async () => {
+            stop.disabled = true;
+            try {
+              await host.invoke('brain.loopResolve', { botId: entry.layer, id, status: 'dropped' });
+              if (S.bot?.id === entry.layer) {
+                opened.add('stop');
+                await load(key);
+                paint({ row: entry.id });
+              }
+            } catch (error) {
+              stop.disabled = false;
+              showError(message(error));
+            }
+          };
+          tx.append(stop);
+        }
+        row.append(tx);
+        return row;
+      }
+      tx.append(tierNode(entry));
       const fix = el('button', 'btn forget', t('channels:memory.edit'));
       fix.type = 'button';
       fix.dataset.act = 'edit';
@@ -212,47 +254,97 @@ export function createMemoryList(host, { lookup, openSource }) {
       gone.dataset.act = 'forget';
       gone.setAttribute('aria-label', t('channels:memory.forgetAria', { text: entry.text }));
       gone.onclick = () => forget(key, entry, row);
+      if (entry.kind === 'promise' && entry.status === 'open') {
+        const stop = el('button', 'btn', t('channels:memory.stopTracking'));
+        stop.type = 'button';
+        stop.onclick = async () => {
+          stop.disabled = true;
+          try {
+            await host.invoke('memory.edit', { id: entry.id, status: 'dropped' });
+            opened.add('stop');
+            await load(key);
+            paint({ row: entry.id });
+          } catch (error) {
+            stop.disabled = false;
+            showError(message(error));
+          }
+        };
+        tx.append(stop);
+      }
       acts.append(fix, gone);
     }
     row.append(tx, acts);
     return row;
   }
 
-  function paintGroup(key) {
-    const g = groups[key];
-    const s = S[key];
-    const name = S.bot?.name ?? '';
-    g.title.textContent = key === 'user' ? t('channels:memory.user.title') : t('channels:memory.own.title', { name });
-    const n = s.entries?.length ?? 0;
-    g.meta.textContent = key === 'user' ? t('channels:memory.user.meta', { n }) : t('channels:memory.own.meta', { n });
-    g.core.setAttribute('aria-label', g.title.textContent);
-    if (s.entries == null) {
-      g.core.replaceChildren(el('div', 'mem-empty', s.error || t('channels:memory.loading')));
+  function paint({ folder, row } = {}) {
+    const focused = document.activeElement;
+    if (core.contains(focused)) {
+      folder ??= focused.closest('.mem-folder-toggle')?.dataset.folder;
+      row ??= focused.closest('.mem-record')?.closest('.mem')?.dataset.id;
+    }
+    const state = S[scope];
+    results.hidden = !query;
+    if (state.entries == null || state.error) {
+      results.hidden = true;
+      core.replaceChildren(el('div', 'mem-empty', state.error || t('channels:memory.loading')));
       return;
     }
-    if (!s.entries.length) { g.core.replaceChildren(el('div', 'mem-empty', t('channels:memory.empty'))); return; }
-    const sorted = [...s.entries].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    g.core.replaceChildren(...sorted.map((e) => rowNode(key, e)));
-  }
-
-  function paint() { paintGroup('user'); paintGroup('own'); }
-
-  // ---------------------------------------------------------------- 「毎晩の整理: …」の導線（設定 › bot へ）
-  function paintRoute(status) {
-    const view = learnRouteView(status, { enabled: learnEnabledOf(status, host.state?.prefs) });
-    route.hidden = false;
-    route.textContent = t(`channels:memory.route.${view.key}`, view.params);
-    route.classList.toggle('warn', view.key === 'failed');
-  }
-
-  async function loadLearn() {
-    const seq = ++learnSeq;
-    try {
-      const status = await host.invoke('memory.learnStatus', {});
-      if (seq === learnSeq) paintRoute(status);
-    } catch {
-      if (seq === learnSeq) paintRoute(null);   // 様子が読めなくても記憶の一覧は使える（導線は出す）
+    const buckets = new Map(FOLDERS.map((key) => [key, []]));
+    const sorted = [...state.entries].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    let count = 0;
+    for (const entry of sorted) {
+      const key = folderOf(entry);
+      const sourceNames = (entry.sources ?? []).map((source) => sourceLabel(source, sourceView(source, lookup())));
+      if (query && !searchText([entry.text, ...sourceNames, t(`channels:memory.folder.${key}`)].join(' ')).includes(query)) continue;
+      buckets.get(key).push(entry);
+      count++;
     }
+    results.textContent = t('channels:memory.count', { n: count });
+    const nodes = [];
+    for (const [key, entries] of buckets) {
+      if (query && !entries.length) continue;
+      const section = el('section', 'mem-folder');
+      const button = el('button', 'mem-folder-toggle');
+      button.type = 'button';
+      button.dataset.folder = key;
+      const expanded = query ? !opened.has(`search:${key}`) : opened.has(key);
+      const records = el('div', 'mem-records');
+      records.id = `mem-folder-${listId}-${key}`;
+      records.hidden = !expanded;
+      button.setAttribute('aria-controls', records.id);
+      button.setAttribute('aria-expanded', String(expanded));
+      const pocket = el('span', 'mem-pocket');
+      pocket.setAttribute('aria-hidden', 'true');
+      pocket.append(el('span', 'mem-sheet'));
+      button.append(pocket, el('span', null, t(`channels:memory.folder.${key}`)),
+        el('span', 'mem-count', t('channels:memory.count', { n: entries.length })));
+      button.onclick = () => {
+        const expandedKey = query ? `search:${key}` : key;
+        if (opened.has(expandedKey)) opened.delete(expandedKey);
+        else opened.add(expandedKey);
+        paint({ folder: key });
+      };
+      if (expanded) {
+        const limit = limits.get(key) ?? PAGE_SIZE;
+        records.append(...entries.slice(0, limit).map((entry) => rowNode(scope, entry)));
+        if (!entries.length) records.append(el('p', 'mem-empty', t('channels:memory.empty')));
+        if (entries.length > limit) {
+          const more = el('button', 'btn link mem-more', t('channels:memory.more', { n: entries.length - limit }));
+          more.type = 'button';
+          more.onclick = () => {
+            limits.set(key, limit + PAGE_SIZE);
+            paint({ row: entries[limit].id });
+          };
+          records.append(more);
+        }
+      }
+      section.append(button, records);
+      nodes.push(section);
+    }
+    core.replaceChildren(...nodes);
+    if (folder) core.querySelector(`[data-folder="${folder}"]`)?.focus();
+    if (row) core.querySelector(`[data-id="${CSS.escape(row)}"] .mem-record`)?.focus();
   }
 
   // ---------------------------------------------------------------- 読み込み
@@ -271,11 +363,11 @@ export function createMemoryList(host, { lookup, openSource }) {
       if (stale()) return;
       S[key] = { entries: S[key].entries, error: t('channels:memory.loadFailed', { error: message(e) }) };
     }
-    paintGroup(key);
+    if (scope === key) paint();
   }
 
   // ---------------------------------------------------------------- 直す・忘れる
-  function stopEditing() { S.editing = null; S.draft = ''; S.draftTier = ''; S.draftWs = ''; paint(); }
+  function stopEditing() { const row = S.editing; S.editing = null; S.draft = ''; S.draftTier = ''; S.draftWs = ''; paint({ row }); }
 
   /** 本文・段・作業場所のうち、今の行から変わるものだけを memory.edit へ送る（無ければ何も送らず閉じる） */
   async function saveEdit(key, entry, raw) {
@@ -289,7 +381,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     if (!Object.keys(args).length) { stopEditing(); return; }
     try {
       const done = await host.invoke('memory.edit', { id: entry.id, ...args });
-      S.editing = null;
+      if (S.editing === entry.id) S.editing = null;
       S.draft = '';
       S.draftTier = '';
       S.draftWs = '';
@@ -349,7 +441,6 @@ export function createMemoryList(host, { lookup, openSource }) {
 
   return {
     el: root,
-    route,
     /** 見せる bot を替える（null で空に）。層の写しは読み直す */
     setBot(bot) {
       if (S.bot?.id === bot?.id) {
@@ -357,6 +448,11 @@ export function createMemoryList(host, { lookup, openSource }) {
         return;
       }
       S.bot = bot ?? null;
+      scope = select.value = 'own';
+      detail = null;
+      search.value = query = '';
+      opened = new Set(['open']);
+      limits.clear();
       S.user = { entries: null, error: '' };
       S.own = { entries: null, error: '' };
       S.editing = null;
@@ -366,8 +462,7 @@ export function createMemoryList(host, { lookup, openSource }) {
       clearUndo();
       showError('');
       paint();
-      if (bot) { load('user'); load('own'); loadLearn(); }
-      else { learnSeq++; route.hidden = true; }
+      if (bot) { load('user'); load('own'); }
     },
     /** 層を読み直す（memoryChanged）。layer を省けば両方。直している間は本文を上書きしないよう、描き直しは直し終えてから */
     refresh(layer) {
@@ -375,7 +470,6 @@ export function createMemoryList(host, { lookup, openSource }) {
       const key = layer == null ? null : keyOf(layer);
       if (layer != null && !key) return;
       for (const k of key ? [key] : ['user', 'own']) load(k);
-      loadLearn();
     },
     /** 出どころの字に使う外の写し（チャンネル・bot・会話）が変わった */
     repaint: paint,

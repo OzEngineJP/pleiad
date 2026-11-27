@@ -11,6 +11,7 @@
 // 引数の "app-server" は無視する。
 import process from "node:process";
 import path from "node:path";
+import { splitLeadingNotes } from "../../core/system-messages.mjs";
 import { lines as rl, jsonl, policyRejection, spawnRejection } from "./codex-rollout.mjs";
 
 const NL = String.fromCharCode(10);
@@ -772,7 +773,7 @@ async function handle(method, params) {
       if (params?.cwd) t.cwd = params.cwd;
       const turnId = `tn_${++seq}`;
       const text = (params?.input ?? []).filter((i) => i?.type === "text").map((i) => i.text).join("");
-      const bareText = text.replace(/^<pleiad-turn-context>[\s\S]*?<\/pleiad-turn-context>/, "");
+      const bareText = splitLeadingNotes([{ role: "user", text }]).find((message) => message.role === "user")?.text ?? "";
       // folded: `!` のターンが閉じる前に来た。本物はこの発言を `!` のターンに入れ、返答しないまま閉じる（codex-cli 0.156.1）
       record({ method, threadId: t.id, provider: t.provider ?? null, model: t.model ?? null, effort: params?.effort ?? null, ephemeral: Boolean(t.ephemeral), developerInstructions: t.developerInstructions ?? null, hooks: t.hooksConfig ?? null,
         computer: t.computer ? { ...t.computer, http_headers: Object.keys(t.computer.http_headers ?? {}) } : null, bundledComputerUse: t.bundledComputerUse ?? {}, ...(t.shellTurn ? { folded: true } : {}) });
@@ -801,7 +802,7 @@ async function handle(method, params) {
         : text.startsWith("bgterm") ? runBgTermTurn(t, turnId, text)
         : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
         : text.startsWith("computer:") ? runComputerTurn(t, turnId, text)
-        // bot の会話は先頭に <pleiad-turn-context> が付くので、それを除いた本文で見る
+        // bot の会話は、先頭の文脈の包みを外した本文で見る
         : bareText.startsWith("agents:") ? runComputerTurn(t, turnId, bareText, { prefix: "agents:", server: "ply_agents", target: t.agents })
         : /images:\d+/.test(text) ? runImagesTurn(t, turnId, text)
         : runTurn(t, turnId, text);

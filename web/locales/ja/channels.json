@@ -227,7 +227,6 @@
     "send": {
       "label": "他の会話に送る",
       "targets": "送れる会話",
-      "empty": "送れる会話はまだありません。",
       "shown": "あなたが示した会話",
       "created": "この bot が作った会話",
       "manual": "設定で追加した会話",
@@ -235,50 +234,18 @@
       "removeLabel": "「{{title}}」を送れる会話から外す"
     },
     "fold": {
-      "on": "オン",
-      "off": "オフ",
       "none": "なし",
-      "count": "{{n}} 件",
-      "pulseOff": "心拍 オフ",
-      "pulseOn": "心拍 {{n}} 分"
+      "count": "{{n}} 件"
     },
     "memory": {
+      "open": "記憶を見る",
       "title": "記憶"
     },
     "brain": {
-      "title": "活動メモ",
-      "record": "モデルの出力の記録",
-      "pulse": {
-        "label": "心拍",
-        "every": "心拍の間隔",
-        "minutes": "{{n}} 分",
-        "off": "止まっています（呼ばれたときだけ動きます）"
-      },
-      "status": {
-        "next": "次は {{time}} ごろ",
-        "last": "前回 {{time}}",
-        "never": "まだ動いていません",
-        "paused": "眠らせています",
-        "running": "考えています…",
-        "home": "家のチャンネル: #{{name}}",
-        "noHome": "家のチャンネルがありません（この bot をチャンネルに入れてください）"
-      },
-      "actions": {
-        "sleep": "眠らせる",
-        "wake": "起こす",
-        "beat": "今すぐ 1 回",
-        "clear": "流れを消す",
-        "clearConfirm": "この bot の活動メモと気がかりを全部消します。よろしいですか？"
-      },
-      "drives": { "title": "欲求（コードで計算した数値）", "curiosity": "好奇心", "anxiety": "不安", "loneliness": "人恋しさ", "fatigue": "疲れ" },
-      "loops": { "title": "気がかり（やりかけ）", "empty": "いまはありません", "wake": "起こす条件: {{wake}}", "due": "期限 {{due}}", "taint": "外から来た文を含む", "resolve": "手放す" },
-      "stream": { "title": "最近の流れ", "empty": "まだ何もありません", "quiet": "静か", "quietMany": "静か ×{{n}}", "why": "理由: {{reason}}", "tokens": "{{n}} トークン", "taint": "外から来た文を含む", "total": "全 {{n}} 行" },
-      "kind": { "think": "考えた", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
-      "reason": {
-        "paused": "眠らせている", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件", "reserved": "予約した時刻",
-        "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない", "internalUnavailable": "心拍のエージェントが内部呼び出しに対応していない"
-      },
-      "failed": "操作できませんでした: {{error}}"
+      "activity": "自発的な活動",
+      "activityInterval": "活動の確認間隔",
+      "intervalMin": "{{n}} 分",
+      "loops": { "wake": "再確認条件 {{wake}}", "due": "期限 {{due}}" }
     },
     "state": {
       "working": "作業中",
@@ -294,25 +261,14 @@
     "removed": "この bot は削除されました"
   },
   "memory": {
-    "route": {
-      "open": "毎晩の整理 ›",
-      "off": "毎晩の整理: オフ ›",
-      "running": "毎晩の整理: 整理中 ›",
-      "failed": "毎晩の整理: 失敗 ›",
-      "next": "毎晩の整理: 次は {{at}} ›"
-    },
-    "new": "新しく覚えた",
-    "faded": "薄れた",
-    "fadedTitle": "古くなって弱くなった記憶です。会話の始まりには渡しませんが、探せば出ます（消えてはいません）",
-    "kind": {
-      "stop": "やめたこと",
-      "promise": "約束",
-      "promiseDone": "約束・済み",
-      "decision": "決めたこと",
-      "share": "分担",
-      "pref": "好み",
-      "note": "メモ"
-    },
+    "scopeLabel": "記憶の範囲",
+    "scopeOwn": "この bot の全スレッド",
+    "scopeUser": "全 bot 共通",
+    "search": "記憶を検索",
+    "count": "{{n}} 件",
+    "more": "さらに表示（残り {{n}} 件）",
+    "stopTracking": "この件を追うのをやめる",
+    "folder": {"open": "やりかけ", "decision": "決めたこと", "pref": "好み", "share": "分担", "note": "メモ", "done": "完了", "stop": "やめたこと"},
     "tier": {
       "none": "渡す場面は未定",
       "always": "毎回渡す",
@@ -322,44 +278,11 @@
     "tierLabel": "渡す範囲",
     "workspaceLabel": "作業場所",
     "workspacePlaceholder": "/ 区切りの場所（例: D:/dev/app）",
-    "learn": {
-      "label": "夜の整理",
-      "running": "整理しています",
-      "ran": "前回 {{when}} · {{n}} 件書き足しました",
-      "ranNone": "前回 {{when}} · 書き足したものはありませんでした",
-      "retiered": "渡す場面を決め直した {{n}} 件",
-      "never": "まだ一度も整理していません",
-      "more": "読みきれなかった発言は次の回に回します",
-      "deferred": "作業中だった会話 {{n}} 件は次の回に回します",
-      "failed": "失敗した（{{error}}）",
-      "skipped": "予定を {{n}} 回飛ばした（{{reason}}）",
-      "reason": {
-        "off": "毎晩の整理がオフ",
-        "halted": "失敗の後で止めた",
-        "paused": "止めていた",
-        "failed": "失敗の後の待ち"
-      },
-      "paused": "止めている",
-      "next": "次は {{when}}"
-    },
-    "user": {
-      "title": "あなたについて",
-      "meta": "全 bot 共通 · {{n}} 件"
-    },
-    "own": {
-      "title": "{{name}} だけ",
-      "meta": "{{n}} 件"
-    },
     "loading": "読み込んでいます…",
     "empty": "まだ無い",
     "loadFailed": "記憶を読み込めませんでした: {{error}}",
     "source": {
-      "line": "{{where}} · {{when}} のあなたの発言",
       "today": "今日",
-      "dm": "DM（{{name}}）",
-      "chat": "チャット『{{title}}』",
-      "chatGone": "チャットの会話",
-      "channelGone": "チャンネル",
       "written": "あなたが書いた",
       "none": "出どころの記録なし",
       "open": "元の発言を開く",

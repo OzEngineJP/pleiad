@@ -12,7 +12,7 @@
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の Bypass・Codex の Bypass・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
 //   他の会話に送る … スイッチ（既定 ON）。bots.update の sendToOthers
-// 右に思考の流れ（brain-panel.mjs。心拍の入り切り・欲求・気がかり。ADR 0126）、記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
+// 右に記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
 // 認証・1 日の上限・長い注記は出さない（接続先は、どれで動くかを選ぶ行だけ。登録・トークン・資格情報・互換の接続先は設定の各エージェントの「接続先」）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
@@ -26,7 +26,6 @@ import { panel, renderMode, folderBrowser, isDanger, resolvedModel, connShown } 
 import { compatModelLabel } from '../compat-models.mjs';
 import { createMemoryList } from './memory-list.mjs';
 import { botIcon, BOT_COLOR_COUNT } from './bot-icon.mjs';
-import { createBrainPanel } from './brain-panel.mjs';
 import { foldRow } from './fold-row.mjs';
 import * as M from './bot-model.mjs';
 
@@ -252,20 +251,64 @@ export function createBotPage(host) {
       else navigate({ kind: 'channel', id: target.channelId, ...(target.threadId ? { threadId: target.threadId } : {}), ...(target.postId ? { postId: target.postId } : {}) });
     },
   });
-  // 思考の流れ（モデルの出力の記録）。心拍の ON・間隔は bots.update の pulse なので、ここの保存の列に乗せる
-  const brain = createBrainPanel(host, { update: (patch) => update(patch) });
-  // 触る頻度の低い 3 つ（他の会話に送る・ルーティン・活動メモ）は 1 つのカードの畳んだ 3 行にする。右に今の値だけを出し、説明文は置かない（ADR 0358）。
-  // ルーティンの行は routine-sheet.mjs が #botRoutinesSlot へ差し込む（2 番目）
-  const foldSend = foldRow({ id: 'botSendFold', title: t('channels:bot.send.label') });
-  foldSend.body.append(sendRow, sendTargets);
   const routinesSlot = el('div', 'bp-frow-slot');
   routinesSlot.id = 'botRoutinesSlot';
-  const foldBrain = foldRow({ id: 'botBrainFold', title: t('channels:bot.brain.title') });
-  foldBrain.body.append(brain.el);
+  const activity = el('button', 'bp-sw');
+  activity.type = 'button';
+  activity.setAttribute('role', 'switch');
+  const activityName = t('channels:bot.brain.activity');
+  activity.setAttribute('aria-label', activityName);
+  const activityRow = el('div', 'bp-kvr bp-activity');
+  activityRow.append(el('span', 'k', activityName), activity);
+  const every = el('select', 'mem-control');
+  const intervalName = t('channels:bot.brain.activityInterval');
+  every.setAttribute('aria-label', intervalName);
+  const intervalRow = el('div', 'bp-kvr bp-activity');
+  intervalRow.append(el('span', 'k', intervalName), every);
+  const openMemory = el('button', 'btn link', t('channels:bot.memory.open'));
+  openMemory.type = 'button';
+  openMemory.onclick = () => { memHead.focus({ preventScroll: true }); memHead.scrollIntoView({ block: 'start' }); };
   const foldBlk = el('div', 'bp-blk bp-folds');
-  foldBlk.append(foldSend.el, routinesSlot, foldBrain.el);
+  foldBlk.append(sendRow, sendTargets, activityRow, intervalRow, openMemory, routinesSlot);
+  let activitySeq = 0;
+  let paused = null;
+  function paintActivity() {
+    const pulse = S.bot?.pulse;
+    activity.disabled = !pulse || paused == null;
+    activity.setAttribute('aria-checked', String(pulse?.on === true && paused === false));
+    const value = pulse?.everyMin ?? 10;
+    const minutes = [...new Set([5, 10, 15, 30, 60, value])].sort((a, b) => a - b);
+    every.replaceChildren(...minutes.map((n) => {
+      const option = el('option', null, t('channels:bot.brain.intervalMin', { n }));
+      option.value = String(n);
+      return option;
+    }));
+    every.value = String(value);
+  }
+  async function loadActivity() {
+    if (!S.bot || S.bot.plain) return;
+    const botId = S.bot.id;
+    const seq = ++activitySeq;
+    try {
+      const value = await host.invoke('brain.view', { botId, limit: 1 });
+      if (seq === activitySeq && S.bot?.id === botId) { paused = Boolean(value.status?.paused); paintActivity(); }
+    } catch { /* 設定を読めない間は操作を止める */ }
+  }
+  every.onchange = () => update({ pulse: { everyMin: Number(every.value) } });
+  activity.onclick = async () => {
+    const botId = S.bot?.id;
+    if (!botId || activity.disabled) return;
+    const on = activity.getAttribute('aria-checked') !== 'true';
+    activity.disabled = true;
+    if (!on || !S.bot.pulse.on) await update({ pulse: { on } });
+    if (on && paused && S.bot?.id === botId && S.bot.pulse.on) {
+      try { await host.invoke('brain.pause', { botId, paused: false }); }
+      catch (error) { setError(t('channels:bot.saveFailed', { error: message(error) })); }
+    }
+    if (S.bot?.id === botId) await loadActivity();
+  };
   const memHead = el('h4', null, t('channels:bot.memory.title'));
-  memHead.append(memory.route);   // 「毎晩の整理: …」= 設定 › bot への導線（memory-list.mjs が短い状態を出す）
+  memHead.tabIndex = -1;
   const memBlk = el('div', 'bp-blk bp-memory');
   memBlk.append(memHead, memory.el);
 
@@ -564,13 +607,13 @@ export function createBotPage(host) {
     const cur = vm();
     if (!cur) return;
     sw.setAttribute('aria-checked', String(cur.sendToOthers !== false));
-    foldSend.setValue(cur.sendToOthers !== false ? t('channels:bot.fold.on') : t('channels:bot.fold.off'));
-    const pulse = cur.pulse;
-    foldBrain.setValue(pulse?.on ? t('channels:bot.fold.pulseOn', { n: pulse.everyMin ?? 10 }) : t('channels:bot.fold.pulseOff'));
-    sendTargets.replaceChildren(el('h3', 'bp-send-title', t('channels:bot.send.targets')));
+    paintActivity();
+    sendTargets.replaceChildren();
+    show(sendTargets, Boolean(cur.sendTargets?.length));
+    if (!cur.sendTargets?.length) return;
+    sendTargets.append(el('h3', 'bp-send-title', t('channels:bot.send.targets')));
     const details = new Map((cur.sendTargetDetails ?? []).map((row) => [row.sessionId, row]));
-    if (!cur.sendTargets?.length) sendTargets.append(el('p', 'bp-nt', t('channels:bot.send.empty')));
-    for (const id of cur.sendTargets ?? []) {
+    for (const id of cur.sendTargets) {
       const detail = details.get(id);
       const title = detail?.title || id;
       const row = el('div', 'bp-send-target');
@@ -614,13 +657,13 @@ export function createBotPage(host) {
     show(head, !S.gone && !creating);
     show(nameIn, !S.gone && !creating);
     show(moreBtn, !S.gone && !creating && !S.bot?.plain);
-    if (creating) { memory.setBot(null); brain.setBot(null); paintOb(); return; }
+    if (creating) { memory.setBot(null); paused = null; paintOb(); return; }
     const cur = vm();
     if (cur && document.activeElement !== persona) persona.value = cur.persona ?? '';
     growPersona();
     paintRun();
     memory.setBot(S.bot ?? null);
-    brain.setBot(S.bot ?? null);
+    loadActivity();
   }
 
   const growPersona = () => {
@@ -874,6 +917,7 @@ export function createBotPage(host) {
     routingStatus.textContent = '';
     paintRouting();
     for (const d of root.querySelectorAll('details.bp-frow')) d.open = false;   // 畳んだ行は開き直すたびに閉じる
+    if (S.id !== id) { paused = null; activitySeq++; }
     S.id = id;
     S.gone = false;
     S.v = null;
@@ -931,7 +975,9 @@ export function createBotPage(host) {
       if (view?.kind !== 'bot' || !view.id) { this.hide(); return; }
       root.hidden = false;
       placeInTop();
-      open(view.id);
+      open(view.id).then(() => {
+        if (view.memory && !root.hidden && S.id === view.id) openMemory.click();
+      });
     },
     hide() {
       takeFromTop();
@@ -944,7 +990,8 @@ export function createBotPage(host) {
       paintRouting();
       S.draft = null;
       memory.setBot(null);
-      brain.setBot(null);
+      paused = null;
+      activitySeq++;
     },
     onEvent(ev) {
       switch (ev?.type) {
@@ -956,7 +1003,10 @@ export function createBotPage(host) {
           if (!root.hidden) memory.refresh(ev.layer);
           return;
         case 'brainChanged':
-          if (!root.hidden && ev.botId === S.id) brain.refresh();
+          if (!root.hidden && ev.botId === S.id) {
+            loadActivity();
+            if (ev.loopsChanged) memory.refresh(ev.botId);
+          }
           return;
         case 'channelsChanged':
           if (!root.hidden) loadChannels();

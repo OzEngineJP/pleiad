@@ -218,14 +218,14 @@ export default async function (t) {
         const w = world('none', { episodes: { recent: async () => { requested++; return '<pleiad-bot-recent>前の話</pleiad-bot-recent>'; }, onTurnEnd: () => {} },
           memoryNotes: ['<pleiad-memory-core>核</pleiad-memory-core>', '<pleiad-turn-context>末尾</pleiad-turn-context>'] });
         const first = await w.d.turnExtras(w.turn);
-        t.ok('申し送りは核の後・今のターンの文脈の前に置く', first.notes.filter((n) => n.includes('<pleiad-bot-recent>')).length === 1 && first.notes[0].includes('核') && first.notes[1].includes('前の話') && first.notes[2].includes('末尾'), JSON.stringify(first.notes));
+        t.ok('前のスレッドの申し送りを作らず、既存の記憶と今の文脈を渡す', requested === 0
+          && first.notes.length === 2 && first.notes[0].includes('核') && first.notes[1].includes('末尾'), JSON.stringify(first.notes));
         w.d.onTurnEvent(w.turn, { type: 'text.delta', text: '返事' });
         await w.d.onTurnEnd(w.turn, { outcome: 'ok' });
-        await tick();
-        t.ok('入力が渡ったときだけ申し送りの済んだ印を残す', w.sessions.s1.bot.recentDelivered === true);
         await w.d.onCompacted('s1');
         const later = await w.d.turnExtras(w.turn);
-        t.ok('圧縮の後も申し送りを繰り返さない', !later.notes.some((n) => n.includes('<pleiad-bot-recent>')) && requested === 1, JSON.stringify({ notes: later.notes, requested }));
+        t.ok('ターンの終了と圧縮の後も申し送りの取得・保存を行わない', requested === 0
+          && w.sessions.s1.bot.recentDelivered === undefined && !later.notes.some((n) => n.includes('<pleiad-bot-recent>')));
       }
       // 記憶の作業場所（段 2 単位 3）: ターンの cwd（無ければ保存済みの会話の cwd）を memory.turnContext へ渡す。どちらも無ければ null
       {
@@ -1100,6 +1100,7 @@ export default async function (t) {
 
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake', persona: '調べ物が得意' });
     const lynx = await call('bots.create', { name: 'Lynx', icon: '🐺', backend: 'fake' });
+    await call('bots.update', { botId: lynx.id, pulse: { on: false } });
     const dev = await call('channels.create', { name: 'dev', purpose: 'テスト' });
     const read = (channelId, threadId) => call('channels.read', { channelId, ...(threadId ? { threadId } : {}) });
     const botPost = (r, bot, state) => r.posts.filter((p) => p.turn?.botId === bot.id && (!state || p.state === state));

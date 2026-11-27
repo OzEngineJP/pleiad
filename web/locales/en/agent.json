@@ -1877,7 +1877,7 @@
         "folderAccess": "rw (can write; default) or ro (read only).",
         "sendToOthers": "Whether the bot may send messages to other conversations.",
         "sendTargets": "All conversation ids the bot may send to (replaces the list).",
-        "pulse": "Heartbeat settings (only the fields you pass change). on defaults to false. When an AI asks to turn it on or make it more frequent, it needs approval (the bot then acts by itself).",
+        "pulse": "Heartbeat settings (only the fields you pass change). on defaults to true. When an AI asks to turn it on or make it more frequent, it needs approval (the bot then acts by itself).",
         "pulseOn": "Turn the heartbeat on (true) or off (false).",
         "pulseEveryMin": "The default heartbeat interval in minutes (5-60, default 10).",
         "pulseBackend": "The backend of the cheap model the heartbeat calls (empty = the same as the memory organizer).",
@@ -2222,7 +2222,6 @@
     "memoryLearnAt": "Local time for automatic memory organization (HH:MM).",
     "memoryLearnPaused": "Pause automatic memory organization (the older stop flag; memoryAutoLearn takes precedence when set).",
     "memoryAutoLearn": "Whether automatic memory organization runs (reading conversations at a set time and writing memories) (true / false, default false). Toggling does not change the memories themselves.",
-    "memoryEpisodeSummary": "Whether quiet bot conversations are summarized and handed off (true / false, default false). Only applies while automatic organization is on.",
     "composer": {
       "historyRecall": "Whether pressing Up at the start of the message box recalls sent messages (true / false).",
       "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Only honored by agents that can produce it (capability promptSuggestions); where Pleiad generates it after the turn, making it spends a little usage."

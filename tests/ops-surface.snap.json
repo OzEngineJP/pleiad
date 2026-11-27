@@ -3394,7 +3394,7 @@
         }
       },
       "legacyCommand": null,
-      "input": "b4124fc241a9"
+      "input": "715548c2fdd6"
     },
     {
       "id": "memory.forget",
@@ -3576,7 +3576,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "e77f1a2c1c42"
+      "input": "79bea192237a"
     },
     {
       "id": "notifications.count",
@@ -5866,15 +5866,6 @@
       ]
     },
     {
-      "key": "memoryEpisodeSummary",
-      "risk": "write",
-      "riskOf": false,
-      "writable": true,
-      "prefKeys": [
-        "memoryEpisodeSummary"
-      ]
-    },
-    {
       "key": "memoryLearnAt",
       "risk": "write",
       "riskOf": false,
@@ -6121,13 +6112,6 @@
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "memoryAutoLearn": {
-      "human": "write=allow",
-      "agent-unbound": "write=allow",
-      "agent-bound-ask": "write=allow",
-      "agent-bound-never-full": "write=allow",
-      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
-    },
-    "memoryEpisodeSummary": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",

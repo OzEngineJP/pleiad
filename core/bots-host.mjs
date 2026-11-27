@@ -40,8 +40,7 @@ import { randomUUID } from 'node:crypto';
 import { createChannelService } from './channels/service.mjs';
 import { createBotService } from './bots/service.mjs';
 import { createMemoryService } from './memory/service.mjs';
-import { createMemoryLearner, episodeSummaryAllowedAt } from './memory/learn.mjs';
-import { createEpisodes } from './memory/episodes.mjs';
+import { createMemoryLearner } from './memory/learn.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
 import { createRoutineService } from './routines/service.mjs';
 import { clock as routinesClock } from './routines/clock.mjs';
@@ -78,7 +77,6 @@ export function createBotHost(deps) {
   // ---- channels（S1）
   // 気がかりの「起こしてほしい条件」に当たる投稿は、心拍を早める（pulse は下で作る。投稿が来る頃には出来ている）
   const noteBrain = (post, channel) => { try { pulse?.onPosted(post, channel); } catch (e) { console.error('  pulse:', String(e?.message ?? e)); } };
-  const noteEpisode = (post) => { try { episodes.onPosted(post); } catch (e) { console.error('  memory episode:', String(e?.message ?? e)); } };
   const readOnly = () => new OpError('READ_ONLY', agentT(deps.currentLocale?.() ?? 'ja', 'server:session.deletedBotReadOnly'));
   const withPost = async (args, author, fn) => {
     const channel = await channels.get({ channelId: args.channelId });
@@ -103,9 +101,9 @@ export function createBotHost(deps) {
     // 組み込みの bot（plain。チャンネルのスレッドの「bot なし」）は名前で呼べない（@ の候補・一時チャットの宛先に入れない。ADR 0157）
     dir: path.join(dataDir, 'channels'), emit, listBots: async () => (await bots.list()).filter((b) => !b.plain),
     hooks: { withPost,
-      posted: async (...args) => withPost(args[0], args[0].author, async () => { noteEpisode(args[0]); noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); }),
-      edited: async (...args) => { noteEpisode(args[0]); return bots.noteShown(...args); },
-      removed: noteEpisode, reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
+      posted: async (...args) => withPost(args[0], args[0].author, async () => { noteBrain(args[0], args[1]); await bots.noteShown(...args); return dispatch.onPosted(...args); }),
+      edited: (...args) => bots.noteShown(...args),
+      reacted: lazy(() => dispatch.onReacted), stopThread: lazy(() => dispatch.stopThread), botPost: lazy(() => dispatch.claimPost) },
   });
   // ---- 頭の中（思考の流れ・気がかり。ADR 0126）
   const brain = createBrainStore({ dataDir, emit });
@@ -116,11 +114,8 @@ export function createBotHost(deps) {
   const bots = createBotService({ dataDir, channels, host, emit });
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, channels, emit, withLayer: (layer, fn) => layer === 'user' ? fn() : bots.withActivity(layer, fn), localeOf: () => deps.currentLocale?.() ?? 'ja' });
-  let learner;
-  const episodes = createEpisodes({ channels, bots, summarize: (args) => learner.summarizeEpisode(args), localeOf: () => deps.currentLocale?.() ?? 'ja',
-    enabled: async (latestAt = null) => !learner.isHalted() && episodeSummaryAllowedAt(await store.getPrefs(), latestAt) });
   // ---- dispatch（S4）
-  const dispatch = createDispatcher({ channels, bots, memory, episodes, brain, host, emit });
+  const dispatch = createDispatcher({ channels, bots, memory, brain, host, emit });
   host.refuseBotRemoval = async botId => {
     if (await dispatch.deletionBlocked(botId)) throw new OpError('CANNOT_DELETE', agentT(deps.currentLocale?.() ?? 'ja', 'server:session.deleteQueued'));
   };
@@ -129,8 +124,8 @@ export function createBotHost(deps) {
   // ---- routines（R1）
   const routines = createRoutineService({ dataDir, channels, bots, dispatch, host, emit, clock: routinesClock });
   // ---- memory learner（L1。利用者のルーティン一覧には置かない）
-  learner = createMemoryLearner({ dataDir, channels, bots, memory, host, clock: routinesClock });
-  // ---- 心拍（bot ごとの設定で既定は OFF。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS・AGENT_HOST_PULSE_EVERY_MS は開発中の確かめ用で、間隔の下限・確かめる間隔・既定の間隔を縮める。docs/dev-verification.md）
+  const learner = createMemoryLearner({ dataDir, channels, bots, memory, brain, host, clock: routinesClock });
+  // ---- 心拍（bot ごとの設定で未設定なら ON。AGENT_HOST_PULSE_FLOOR_MS・AGENT_HOST_PULSE_TICK_MS・AGENT_HOST_PULSE_EVERY_MS は開発中の確かめ用で、間隔の下限・確かめる間隔・既定の間隔を縮める。docs/dev-verification.md）
   pulse = createPulse({ dataDir, brain, channels, bots, host, dispatch, memory, clock: routinesClock,
     ...(Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) > 0 ? { floorMs: Number(process.env.AGENT_HOST_PULSE_FLOOR_MS) } : {}),
     ...(Number(process.env.AGENT_HOST_PULSE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENT_HOST_PULSE_TICK_MS) } : {}),
@@ -154,7 +149,7 @@ export function createBotHost(deps) {
     }
   };
 
-  const services = [channels, bots, memory, dispatch, routines, webhook, learner, episodes, pulse, wakes];
+  const services = [channels, bots, memory, dispatch, routines, webhook, learner, pulse, wakes];
   // つなぎ目は、bot の側の失敗でターン・承認・起動を巻き込まない
   const guard = (name, fn, fallback) => (...args) => {
     const fail = (err) => { console.error(`  bot host: ${name} に失敗:`, String(err?.message ?? err)); return fallback; };

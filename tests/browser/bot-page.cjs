@@ -6,7 +6,6 @@
 //   Antigravity（承認モードは 5 つ。ADR 0365）・全部自動ではフォルダーを「すべてのフォルダー」で非活性（Codex の全部自動は限れるので活性のまま）、
 //   記憶の直す・忘れる・元に戻す・出どころ、360 幅で横にはみ出さない。
 //   作ると、その bot の DM が開いて入力欄に焦点がある（ADR 0358）。DM の見出しの名前から bot のページへ行ける。
-//   畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて、右に今の値だけを出し、長い説明文と「今週」は無い。
 async page => {
   // run-code は Node のモジュールも process も使えない。このリポジトリの絶対パスを書いてから実行する（フォルダーを足す確認に使う）
   const ROOT = 'C:/path/to/ply';
@@ -87,11 +86,13 @@ async page => {
   check(await page.locator('#botView .bp-av .bp-av-edit[aria-hidden="true"]').count() === 1 && await page.locator('#botView .bp-av button').count() === 0, '鉛筆は常時表示する飾りで、アバターが単一のボタン');
   check(await page.locator('#botName').inputValue() === 'Owl' && await page.locator('#botView .bp-folders').isVisible() && await page.locator('#botView .bp-memory').isVisible(), 'DM の見出しから開く bot のページには、フォルダーと記憶がある');
   check(await page.locator('#botView .bp-usage').count() === 0 && !(await page.locator('#botView').innerText()).includes('今週'), 'bot 専用の使用量（今週）は出さない（ADR 0357）');
-  // 畳んだ 3 行: 閉じていて、右に今の値。長い説明文は無い
-  const frows = await page.locator('#botView .bp-folds details.bp-frow').evaluateAll(n => n.map(d => ({ id: d.id, open: d.open, title: d.querySelector('.bp-frow-t').textContent, value: d.querySelector('.bp-frow-v').textContent })));
-  check(frows.map(r => r.id).join() === 'botSendFold,botRoutines,botBrainFold' && frows.every(r => !r.open && r.value), `畳んだ 3 行（他の会話に送る・ルーティン・活動メモ）は閉じていて右に値がある (${JSON.stringify(frows)})`);
-  check(frows[0].value === 'オン' && /^(なし|\d+ 件)$/.test(frows[1].value) && frows[2].value.includes('心拍'), `右の値は今の状態だけ (${frows.map(r => r.value).join(' / ')})`);
-  check(await page.locator('#botView .bp-folds').evaluate(n => n.querySelectorAll('details:not([open]) .bp-frow-body').length === 3 && [...n.querySelectorAll('.bp-frow-body')].every(b => !b.checkVisibility())), '畳んだ行の中身（説明文を含む）は閉じている間は見えない');
+  const activity = page.getByRole('switch', { name: '自発的な活動' });
+  await activity.waitFor();
+  check(await activity.getAttribute('aria-checked') === 'true', '自発的な活動は設定にあり、未設定ではオン');
+  const folders = page.locator('#botView .mem-folder-toggle');
+  check(await folders.count() === 7 && await folders.first().getAttribute('aria-expanded') === 'true', '記憶は 7 フォルダーで、やりかけが初めから開いている');
+  await folders.nth(1).press('Space');
+  check(await folders.nth(1).getAttribute('aria-expanded') === 'true', 'Space で決めたことを開く');
   await shot('02-created');
 
   // ---- 設定の変更: 名前・人格・アイコン・モデル・エフォート・他の会話に送る
@@ -127,20 +128,14 @@ async page => {
   await waitBot('Owl2', b => b.effort === level, 'エフォートを選ぶと保存される');
   // 保存の後に面が描き直されて、棒のフォーカスが外れていることがある。面の中の棒へ押して確かに Esc を届ける（1 段目の Esc で閉じる）
   await slider.press('Escape');
-  // 他の会話に送るは畳んだ行の中。行を開くと入り切りが出て、右の値は今の状態に追従する
-  const sendFold = page.locator('#botSendFold');
-  check(await page.locator('#botSendSwitch').isHidden(), '他の会話に送るの入り切りは、行を開くまで見えない');
-  await sendFold.locator('summary').click();
   const sw = page.locator('#botSendSwitch');
   check(await sw.isVisible() && await sw.getAttribute('aria-checked') === 'true', '他の会話に送るは既定で ON');
   await sw.click();
   await waitBot('Owl2', b => b.sendToOthers === false, '他の会話に送るを切ると保存される');
-  await page.waitForFunction(() => document.querySelector('#botSendFold .bp-frow-v')?.textContent === 'オフ');
-  check(true, '切ると行の右の値が「オフ」に替わる');
+  await page.waitForFunction(() => document.querySelector('#botSendSwitch')?.getAttribute('aria-checked') === 'false');
   await sw.click();
   await waitBot('Owl2', b => b.sendToOthers === true, '入れ直すと戻る');
-  await page.waitForFunction(() => document.querySelector('#botSendFold .bp-frow-v')?.textContent === 'オン');
-  await sendFold.locator('summary').click();
+  await page.waitForFunction(() => document.querySelector('#botSendSwitch')?.getAttribute('aria-checked') === 'true');
 
   // ---- フォルダー: 足す・読み取りにする・外す
   await page.locator('#botAddFolder').click();
@@ -177,51 +172,59 @@ async page => {
   const post = await call('channels.post', { channelId: dm, text: 'ベンチマークは 3 回の中央値で比べて' });
   const botId = (await botOf('Owl2')).id;
   await call('memory.write', { layer: botId, text: 'ベンチマークは 3 回の中央値で比べる', sources: [{ kind: 'post', channelId: dm, postId: post.id, quote: '3 回の中央値で比べて' }] });
-  await call('memory.write', { layer: 'user', text: 'です・ます調で短く' });
-  await page.waitForSelector('#botView .memcore[data-layer="own"] .mem');
-  await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');
-  const headsText = await page.locator('#botView .bp-memory .memh').allInnerTexts();
-  check(headsText[0].includes('あなたについて') && headsText[0].includes('全 bot 共通 · 1 件') && headsText[1].includes('Owl2 だけ'), '記憶は 2 層（あなたについて・この bot だけ）で、件数が出る');
-  const own = page.locator('#botView .memcore[data-layer="own"] .mem');
-  check((await own.locator('.src').innerText()).includes('Owl2') && (await own.locator('.src').innerText()).includes('今日'), '出どころを出す（DM・日付）');
-  check(await page.locator('#botView .memcore[data-layer="user"] .mem .src').innerText() === 'あなたが書いた', '出どころの記録が無い記憶は「あなたが書いた」');
+  await call('memory.write', { layer: 'user', text: 'です・ます調で短く', kind: 'pref' });
+  const panel = page.locator('#botView .bp-memory');
+  const scope = panel.locator('select.mem-control');
+  const note = panel.locator('[data-folder="note"]');
+  const pref = panel.locator('[data-folder="pref"]');
+  const own = panel.locator('.mem').filter({ hasText: 'ベンチマーク' });
+  const shared = panel.locator('.mem').filter({ hasText: 'です・ます調で短く' });
+  const openNote = async () => { if (await note.getAttribute('aria-expanded') !== 'true') await note.click(); };
+  await openNote();
+  await own.waitFor();
+  check((await own.locator('.mem-origin').innerText()).includes('ベンチマーク'), '記憶の行に元のスレッド名が出る');
+  await scope.selectOption('user');
+  if (await pref.getAttribute('aria-expanded') !== 'true') await pref.click();
+  await shared.waitFor();
+  check(await shared.locator('.mem-origin').innerText() === 'あなたが書いた', '全 bot 共通に切り替えると出どころの無い記憶を読める');
+  await scope.selectOption('own');
+  await openNote();
+  await own.locator('.mem-record').click();
   await shot('04-memory');
   await page.evaluate(() => { window.__shown = null; document.addEventListener('channels:show', e => { window.__shown = e.detail; }); });
   await own.locator('.src-link').click();
-  check(await page.evaluate(() => window.__shown?.id) === dm, '出どころを押すとその投稿のあるチャンネルへ（channels:show）');
-  await botPage((await botOf('Owl2')).id);
-  await page.waitForSelector('#botView .memcore[data-layer="own"] .mem');
-  // 直す
-  await own.hover();
+  check(await page.evaluate(() => window.__shown?.id) === dm, '出どころを押すとその投稿へ移動する');
+  await botPage(botId);
+  await openNote();
+  await own.locator('.mem-record').click();
   await own.locator('[data-act="edit"]').click();
-  await page.locator('#botView .memedit').fill('ベンチマークは 5 回の中央値で比べる');
+  await panel.locator('.memedit').fill('ベンチマークは 5 回の中央値で比べる');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.querySelector('#botView .memcore[data-layer="own"] .tx-text')?.textContent.includes('5 回'));
+  await panel.getByText('ベンチマークは 5 回の中央値で比べる', { exact: true }).waitFor();
   const listed = await call('memory.list', { layer: botId });
-  check(listed.length === 1 && listed[0].text.includes('5 回') && listed[0].id, '直すと本文が書き換わる（memory.edit）');
-  check(await own.locator('.src').innerText().then(s => s.includes('Owl2')), '直しても出どころは残る');
-  // Esc でやめる
+  check(listed.length === 1 && listed[0].text.includes('5 回') && listed[0].sources.length === 1, '直すと本文が変わり、出どころは残る');
+  if (await own.locator('.mem-record').getAttribute('aria-expanded') !== 'true') await own.locator('.mem-record').click();
   await own.locator('[data-act="edit"]').click();
-  await page.locator('#botView .memedit').fill('捨てる字');
+  await panel.locator('.memedit').fill('捨てる字');
   await page.keyboard.press('Escape');
-  check(await page.locator('#botView .memedit').count() === 0 && (await own.innerText()).includes('5 回'), 'Esc で直すのをやめる');
-  // 忘れる → 元に戻す
+  check(await panel.locator('.memedit').count() === 0 && (await own.innerText()).includes('5 回'), 'Esc で直すのをやめる');
   await own.locator('[data-act="forget"]').click();
-  await page.waitForSelector('#botView .mem-undo:not([hidden])');
-  check((await call('memory.list', { layer: botId })).length === 0 && await page.locator('#botView .memcore[data-layer="own"] .mem').count() === 0, '忘れると一覧から消える（memory.forget）');
+  await panel.locator('.mem-undo:not([hidden])').waitFor();
+  check((await call('memory.list', { layer: botId })).length === 0 && await own.count() === 0, '忘れると一覧から消える');
   await shot('05-forgotten');
-  await page.locator('#botView .mem-undo .btn').click();
-  await page.waitForSelector('#botView .memcore[data-layer="own"] .mem');
+  await panel.locator('.mem-undo .btn').click();
+  await own.waitFor();
   const back = await call('memory.list', { layer: botId });
-  check(back.length === 1 && back[0].text.includes('5 回') && back[0].sources.length === 1, '元に戻すと出どころごと戻る（memory.unforget）');
-  // あなたについて も忘れる（共通の層）
-  await page.locator('#botView .memcore[data-layer="user"] .mem [data-act="forget"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('#botView .memcore[data-layer="user"] .mem').length === 0);
-  check((await call('memory.list', { layer: 'user' })).length === 0, '共通の層の記憶も忘れられる');
-  // 別の端末の変更（memoryChanged）で一覧が更新される
-  await call('memory.write', { layer: 'user', text: '金曜に本番へ出さない' });
-  await page.waitForSelector('#botView .memcore[data-layer="user"] .mem');
-  check(true, '別の経路で書いた記憶が一覧に現れる（memoryChanged）');
+  check(back.length === 1 && back[0].sources.length === 1, '元に戻すと出どころごと戻る');
+  await scope.selectOption('user');
+  if (await pref.getAttribute('aria-expanded') !== 'true') await pref.click();
+  await shared.locator('.mem-record').click();
+  await shared.locator('[data-act="forget"]').click();
+  await shared.waitFor({ state: 'detached' });
+  check((await call('memory.list', { layer: 'user' })).length === 0, '共通の記憶も忘れられる');
+  await call('memory.write', { layer: 'user', text: '金曜に本番へ出さない', kind: 'pref' });
+  await panel.getByText('金曜に本番へ出さない', { exact: true }).waitFor();
+  check(true, '別の経路で書いた記憶が一覧に現れる');
 
   // ---- Antigravity: 承認モードは 5 つ（ACP。ADR 0365）。「1 つだけ」の 1 行は出ない。全部自動（yolo）ではフォルダーは「すべてのフォルダー」
   await makeBot('Kit');

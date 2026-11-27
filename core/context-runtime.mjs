@@ -11,6 +11,7 @@ import { mcpOffBlockedByLinks, nativeMcpOffMode } from './backends/mcp-off-home.
 import { DOC_AGENT_TRAITS, docToolRequirements } from './backends/context-capabilities.mjs';
 import { resolveDocForAgent } from './context-doc-matrix.mjs';
 import { resolveEffectiveDocSource as resolveDocSource } from './context-agents.mjs';
+import { MCP_STARTUP_TIMEOUT_SEC } from './ply-mcp.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply')
@@ -561,11 +562,11 @@ export function mcpTransportConfig(item, cwd, env = process.env) {
   for (const [k,e] of Object.entries(v.env_http_headers ?? {})) { if (!env[e]) throw configError(t('context.runtime.mcpEnvMissing', { name: item.name, key: e })); headers[k] = env[e]; }
   if (v.bearer_token_env_var) { if (!env[v.bearer_token_env_var]) throw configError(t('context.runtime.mcpAuthEnvMissing', { name: item.name })); headers.Authorization = `Bearer ${env[v.bearer_token_env_var]}`; }
   const command = expand(v.command), url = expand(v.url ?? v.baseUrl);
-  const timeout = v.timeoutMs ?? v.startup_timeout_ms ?? (v.startup_timeout_sec ?? 20) * 1000;
+  const timeout = v.timeoutMs ?? v.startup_timeout_ms ?? (v.startup_timeout_sec ?? MCP_STARTUP_TIMEOUT_SEC) * 1000;
   if (!Number.isFinite(timeout) || timeout <= 0) throw configError(t('context.runtime.mcpTimeoutInvalid', { name: item.name }));
   const inherited = source === 'codex' ? { ...getDefaultEnvironment(), ...Object.fromEntries((v.env_vars ?? []).filter(k => env[k] !== undefined).map(k => [k, env[k]])) } : env;
   if (command) return { type: 'stdio', command, args: (v.args ?? []).map(expand), cwd: v.cwd ? path.resolve(cwd, expand(v.cwd)) : cwd,
-    env: { ...inherited, ...Object.fromEntries(Object.entries(v.env ?? {}).map(([k,s]) => [k,expand(s)])) }, timeout: Math.min(60000, timeout) };
+    env: { ...inherited, ...Object.fromEntries(Object.entries(v.env ?? {}).map(([k,s]) => [k,expand(s)])) }, timeout: Math.min(MCP_STARTUP_TIMEOUT_SEC * 1000, timeout) };
   if (!url || !/^https?:\/\//.test(url)) throw configError(t('context.runtime.mcpUrlInvalid', { name: item.name }));
-  return { type: (v.type ?? v.transport) === 'sse' ? 'sse' : 'http', url, headers, timeout: Math.min(60000, timeout) };
+  return { type: (v.type ?? v.transport) === 'sse' ? 'sse' : 'http', url, headers, timeout: Math.min(MCP_STARTUP_TIMEOUT_SEC * 1000, timeout) };
 }

@@ -184,7 +184,8 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     let entry = lease.entry;
     if (entry.retired) {
       const next = await acquire(entry.item, entry.resolved, user, false, { lazy: false });
-      // 古い側の users は退役済みのまま残る（close は users を見ない）。release は今の entry を放す
+      // 退役した古い側を放す（起動の失敗を呼び出しのたびにやり直しても、古い entry を溜めない）。release は今の entry を放す
+      void Promise.resolve(release(entry, user)).catch(() => {});
       lease.entry = next.entry; lease.result = next.result;
       return { entry: next.entry, result: next.result };
     }

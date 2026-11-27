@@ -1,3 +1,4 @@
+import { concernSources } from '../brain/store.mjs';
 // i18n-dynamic: agent:brain.loop.
 // bot の頭の中（思考の流れ・気がかり・心拍。ADR 0126）の操作（`brain.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。
 // handler は `ctx.brain`（core/brain/store.mjs）と `ctx.pulse`（core/brain/pulse.mjs）を呼ぶ（core/bots-host.mjs の BotHost.opsDeps）。直のツール（mcp: 'direct'）は足さない。
@@ -88,7 +89,7 @@ export const brainOps = [
     handler: async (ctx, { botId, text, wakeOn, due }) => {
       const { bot, sb } = await target(ctx, botId);
       const now = Date.now();
-      const { applied } = ctx.brain.applyLoops(bot.id, [{ op: 'add', text, wakeOn: parseWakeOn(wakeOn, now), due: parseTime(due, now) }], { taint: sb?.taint ?? null });
+      const { applied } = ctx.brain.applyLoops(bot.id, [{ op: 'add', text, wakeOn: parseWakeOn(wakeOn, now), due: parseTime(due, now) }], { taint: sb?.taint ?? null, sources: concernSources(sb, ctx.actor?.sessionId) });
       for (const a of applied) ctx.brain.append(bot.id, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint: sb?.taint ?? null });
       return { id: applied[0]?.id ?? null, applied };
     },

@@ -1876,7 +1876,7 @@
         "folderAccess": "rw（書ける・既定）か ro（読むだけ）。",
         "sendToOthers": "他の会話へメッセージを送ってよいか。",
         "sendTargets": "送ってよい会話の id の全部（置き換え）。",
-        "pulse": "心拍の設定（渡した欄だけ変わる）。on は既定 false。入れる・間隔を縮めるのは AI が頼むと承認が要る（bot が自分で動くようになる）。",
+        "pulse": "心拍の設定（渡した欄だけ変わる）。on は既定 true。入れる・間隔を縮めるのは AI が頼むと承認が要る（bot が自分で動くようになる）。",
         "pulseOn": "心拍を入れる（true）・止める（false）。",
         "pulseEveryMin": "心拍の既定の間隔（分。5〜60。既定 10）。",
         "pulseBackend": "心拍で呼ぶ安いモデルのバックエンド（空なら記憶の整理と同じ）。",
@@ -1947,13 +1947,13 @@
         "id": "予約の id（brain.wakeList の id）。"
       },
       "pause": {
-        "summary": "bot の心拍を止める（眠らせる）・再開する。再開を AI が頼むときは承認が要る。",
+        "summary": "bot の自発的な活動を停止・再開する。再開を AI が頼むときは承認が要る。",
         "botId": "bot の id。",
-        "paused": "true で眠らせる、false で起こす。",
+        "paused": "true で停止、false で再開。",
         "reason": "理由（承認カードに出る）。"
       },
       "beat": {
-        "summary": "bot の心拍を今すぐ 1 回流す。ふるいは通すが、眠らせた bot は越えない。AI が頼むときは承認が要る。",
+        "summary": "bot の心拍を今すぐ 1 回流す。ふるいは通すが、停止した bot は越えない。AI が頼むときは承認が要る。",
         "botId": "bot の id。",
         "reason": "理由（承認カードに出る）。"
       },
@@ -2156,7 +2156,7 @@
   "brain": {
     "kind": { "think": "メモ", "quiet": "静か", "act": "頼んだ", "result": "結果", "loop": "気がかり", "dream": "夢", "summary": "要約" },
     "reason": {
-      "paused": "眠らせている", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件",
+      "paused": "自発的な活動を停止中", "nothing": "変化なし", "forced": "手動", "loop": "気がかりの条件",
       "reserved": "予約した時刻", "human": "新しい投稿", "drive": "欲求", "muse": "ぼんやりの番", "error": "失敗", "noHome": "家のチャンネルがない"
     },
     "inner": {
@@ -2221,7 +2221,6 @@
     "memoryLearnAt": "記憶の整理を始める現地時刻（HH:MM）。",
     "memoryLearnPaused": "記憶の自動整理を止める（旧来の止め方。memoryAutoLearn があればそちらが優先）。",
     "memoryAutoLearn": "記憶の自動整理（決まった時刻に会話を読み直して記憶へ写す）を動かすか（true / false。既定は false。入切で記憶そのものは変わらない）。",
-    "memoryEpisodeSummary": "bot との静まった会話を要約して次へ引き継ぐか（true / false。自動整理が動いている間だけ効く。既定は false）。",
     "composer": {
       "historyRecall": "入力欄の先頭で ↑ を押すと、送信済みのメッセージを呼び出すか（true / false）。",
       "suggestions": "返答の後、空の入力欄に次のメッセージの候補を出すか（true / false）。候補を出せるエージェント（能力の印 promptSuggestions）の会話だけに効く。Pleiad がターンの後に作る分は、候補を作るのに使用量を少し使う。"

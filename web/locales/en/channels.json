@@ -230,7 +230,6 @@
     "send": {
       "label": "Send to other chats",
       "targets": "Conversations this bot can send to",
-      "empty": "No conversations yet.",
       "shown": "Shown by you",
       "created": "Created by this bot",
       "manual": "Added in settings",
@@ -238,50 +237,18 @@
       "removeLabel": "Remove {{title}} from send targets"
     },
     "fold": {
-      "on": "On",
-      "off": "Off",
       "none": "None",
-      "count": "{{n}}",
-      "pulseOff": "Heartbeat off",
-      "pulseOn": "Heartbeat {{n}} min"
+      "count": "{{n}}"
     },
     "memory": {
+      "open": "View memories",
       "title": "Memory"
     },
     "brain": {
-      "title": "Activity notes",
-      "record": "a record of model output",
-      "pulse": {
-        "label": "Heartbeat",
-        "every": "Heartbeat interval",
-        "minutes": "{{n}} min",
-        "off": "Off (the bot only runs when called)"
-      },
-      "status": {
-        "next": "Next around {{time}}",
-        "last": "Last {{time}}",
-        "never": "Has not run yet",
-        "paused": "Put to sleep",
-        "running": "Thinking…",
-        "home": "Home channel: #{{name}}",
-        "noHome": "No home channel (add this bot to a channel)"
-      },
-      "actions": {
-        "sleep": "Put to sleep",
-        "wake": "Wake",
-        "beat": "Beat now",
-        "clear": "Clear the stream",
-        "clearConfirm": "This deletes all of this bot's activity notes and concerns. Continue?"
-      },
-      "drives": { "title": "Drives (numbers computed by code)", "curiosity": "Curiosity", "anxiety": "Anxiety", "loneliness": "Loneliness", "fatigue": "Fatigue" },
-      "loops": { "title": "Concerns (unfinished business)", "empty": "None right now", "wake": "wake on: {{wake}}", "due": "due {{due}}", "taint": "includes text from outside", "resolve": "Drop" },
-      "stream": { "title": "Recent stream", "empty": "Nothing yet", "quiet": "Quiet", "quietMany": "Quiet ×{{n}}", "why": "reason: {{reason}}", "tokens": "{{n}} tokens", "taint": "includes text from outside", "total": "{{n}} rows in all" },
-      "kind": { "think": "Thought", "quiet": "Quiet", "act": "Asked", "result": "Result", "loop": "Concern", "dream": "Dream", "summary": "Summary" },
-      "reason": {
-        "paused": "put to sleep", "nothing": "no change", "forced": "manual", "loop": "a concern's condition", "reserved": "reserved time",
-        "human": "new post", "drive": "a drive", "muse": "musing turn", "error": "failed", "noHome": "no home channel", "internalUnavailable": "the pulse agent does not support isolated internal calls"
-      },
-      "failed": "Could not do that: {{error}}"
+      "activity": "Proactive activity",
+      "activityInterval": "Activity check interval",
+      "intervalMin": "{{n}} min",
+      "loops": { "wake": "Check again when {{wake}}", "due": "Due {{due}}" }
     },
     "state": {
       "working": "Working",
@@ -297,25 +264,14 @@
     "removed": "This bot was deleted"
   },
   "memory": {
-    "route": {
-      "open": "Nightly organizing ›",
-      "off": "Nightly organizing: off ›",
-      "running": "Nightly organizing: running ›",
-      "failed": "Nightly organizing: failed ›",
-      "next": "Nightly organizing: next {{at}} ›"
-    },
-    "new": "Newly learned",
-    "faded": "Faded",
-    "fadedTitle": "An old memory that has grown weak. It is no longer given at the start of a conversation, but a search still finds it (it is not deleted)",
-    "kind": {
-      "stop": "Stopped",
-      "promise": "Promise",
-      "promiseDone": "Promise, kept",
-      "decision": "Decision",
-      "share": "Who does what",
-      "pref": "Preference",
-      "note": "Note"
-    },
+    "scopeLabel": "Memory scope",
+    "scopeOwn": "All threads for this bot",
+    "scopeUser": "Shared by all bots",
+    "search": "Search memories",
+    "count": "{{n}}",
+    "more": "Show more ({{n}} remaining)",
+    "stopTracking": "Stop tracking this item",
+    "folder": {"open": "In progress", "decision": "Decisions", "pref": "Preferences", "share": "Responsibilities", "note": "Notes", "done": "Completed", "stop": "Dropped"},
     "tier": {
       "none": "Not decided yet",
       "always": "Every time",
@@ -325,44 +281,11 @@
     "tierLabel": "Given when",
     "workspaceLabel": "Workspace",
     "workspacePlaceholder": "Slash-separated place (e.g. D:/dev/app)",
-    "learn": {
-      "label": "Nightly organizing",
-      "running": "organizing now",
-      "ran": "Last: {{when}} · added {{n}}",
-      "ranNone": "Last: {{when}} · nothing new added",
-      "retiered": "re-decided when to give {{n}}",
-      "never": "Hasn't run yet",
-      "more": "Messages it couldn't finish reading are left for the next run",
-      "deferred": "{{n}} busy conversations are left for the next run",
-      "failed": "failed ({{error}})",
-      "skipped": "skipped {{n}} scheduled runs ({{reason}})",
-      "reason": {
-        "off": "nightly organizing off",
-        "halted": "stopped after failures",
-        "paused": "paused",
-        "failed": "waiting after a failure"
-      },
-      "paused": "paused",
-      "next": "next at {{when}}"
-    },
-    "user": {
-      "title": "About you",
-      "meta": "shared by all bots · {{n}}"
-    },
-    "own": {
-      "title": "Only {{name}}",
-      "meta": "{{n}}"
-    },
     "loading": "Loading…",
     "empty": "Nothing yet",
     "loadFailed": "Couldn’t load memory: {{error}}",
     "source": {
-      "line": "{{where}} · you, {{when}}",
       "today": "today",
-      "dm": "DM ({{name}})",
-      "chat": "Chats “{{title}}”",
-      "chatGone": "Chats",
-      "channelGone": "a channel",
       "written": "Written by you",
       "none": "No record of where it came from",
       "open": "Open the original message",

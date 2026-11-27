@@ -66,7 +66,7 @@ const num = (v, d) => (Number.isFinite(v) ? v : d);
 export function normalizePulse(raw) {
   const p = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const every = Math.round(num(p.everyMin, PULSE_DEFAULT_MINUTES));
-  return { on: p.on === true, everyMin: Math.min(PULSE_MAX_MINUTES, Math.max(PULSE_MIN_MINUTES, every)), backend: str(p.backend), model: str(p.model), channelId: str(p.channelId) };
+  return { on: p.on !== false, everyMin: Math.min(PULSE_MAX_MINUTES, Math.max(PULSE_MIN_MINUTES, every)), backend: str(p.backend), model: str(p.model), channelId: str(p.channelId) };
 }
 
 /** フォルダーの並び（先頭が既定の作業場所）。パスの重複（区切り・末尾の / ・Windows の大小）は先のものを残す */

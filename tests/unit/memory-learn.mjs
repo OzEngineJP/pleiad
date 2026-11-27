@@ -113,7 +113,7 @@ try {
   assert.equal((await restarted.runNow()).read, 0, '再起動後も保存したカーソルから再開する');
   assert.equal(calls, 5, '再起動後に同じ発言でエージェントを呼び直さない');
   restarted.close();
-  // ADR 0363: 夜の整理は約束（kind=promise）の候補を黙って捨てる。保存だけ（archive）の記憶は材料（Existing memories）に入れない
+  // 夜の整理は状態の分かる約束だけを書く。保存だけ（archive）の通常の記憶は材料（Existing memories）に入れない
   await memory.write({ layer: 'user', text: '保存だけに置いた古い記憶 ZZARCHIVEDZZ', tier: 'archive' }, { kind: 'human' }, {});
   await channels.post({ channelId: channel.id, text: '見積もりは来週の月曜までに出します。見出しに飾りは付けないでほしい。' }, { kind: 'human' });
   const prompts = [];
@@ -124,6 +124,7 @@ try {
     return { text: JSON.stringify({ memories: [
       { action: 'add', layer: 'user', kind: 'promise', text: '見積もりを来週の月曜までに出す約束です', sourceIndexes: [index] },
       { action: 'add', layer: 'user', kind: 'pref', text: '見出しに飾りは付けない（好み）', sourceIndexes: [index] },
+      { action: 'add', layer: 'user', kind: 'promise', status: 'open', text: '見積もりは来週の月曜までに提出する', sourceIndexes: [index] },
     ] }), usage: null, callId: `call-promise-${prompts.length}` };
   };
   const beforePromise = (await memory.list({ layer: 'user' })).length;
@@ -131,11 +132,25 @@ try {
   const afterPromise = await memory.list({ layer: 'user' });
   assert.equal(prompts.length, 1, '人の新しい発言があれば夜の整理が 1 回走る');
   assert.ok(!prompts[0].includes('ZZARCHIVEDZZ'), '保存だけ（archive）の記憶は夜の整理の材料に入れない');
-  assert.ok(!afterPromise.some((e) => e.kind === 'promise'), '約束の候補は記憶に書かない');
-  assert.equal(promised.changed, 1, '約束を除いた候補だけ書く');
-  assert.equal(afterPromise.length, beforePromise + 1);
+  const promises = afterPromise.filter((entry) => entry.kind === 'promise');
+  assert.equal(promises.length, 1, '状態が不明な約束の候補は書かない');
+  assert.equal(promises[0].status, 'open', '明示された約束はやりかけに置く');
+  assert.equal(promised.changed, 2);
+  assert.equal(afterPromise.length, beforePromise + 2);
   assert.ok(afterPromise.some((e) => e.text.includes('見出しに飾りは付けない')), '約束でない候補は書く');
-  assert.ok(prompts[0].includes('Never use kind promise'), '夜の整理の指示に約束を使わないと書く');
+  assert.ok(prompts[0].includes('Never infer completion or cancellation from silence or elapsed time'), '約束の完了・取りやめには明示の根拠を求める');
+  await channels.post({ channelId: channel.id, text: '見積もりは提出しました。' }, { kind: 'human' });
+  host.internalCall = async ({ prompt }) => {
+    assert.ok(prompt.includes(promises[0].id), '次回の整理にもやりかけの約束が渡る');
+    return { text: JSON.stringify({ memories: [
+      { action: 'edit', id: promises[0].id, layer: 'user', kind: 'promise', status: 'done', text: '見積もりを提出した', sourceIndexes: [0] },
+    ] }), usage: null, callId: 'call-promise-done' };
+  };
+  assert.equal((await learner.runNow()).changed, 1);
+  const fulfilled = await memory.get({ id: promises[0].id });
+  assert.equal(fulfilled.status, 'done');
+  assert.equal(fulfilled.text, promises[0].text, '振り分けでは既存の本文を保つ');
+
   // 内部呼出しの上限時間切れは「止めた（OFF）」ではなく失敗。理由付きの停止（halted）へ回す（Issue #180）
   await runFake(chat, '覚えて: 時間切れの確認用に新しい文があります。');
   side.set(chat, { ...side.get(chat), lastModified: Date.now() + 5000 });

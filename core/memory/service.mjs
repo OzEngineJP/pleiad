@@ -258,7 +258,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       needLayer(layer);
       await catchUp();
       const human = isHuman(author);
-      if (!human && kind === 'promise') throw promiseRefusal(ctx);   // 書かない（保存もしない）。ToDo か気がかりへ
+      if (!human && kind === 'promise' && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);   // 書かない（保存もしない）。ToDo か気がかりへ
       const placement = await newPlacement({ tier, workspace }, human, ctx);
       const budget = ensureBudget(layer, author, ctx);
       const clean = checkText(text, { human, isTombstoned: store.isTombstoned, fingerprint: fingerprintOf });
@@ -283,7 +283,7 @@ export function createMemoryService({ dataDir, channels = null, emit = () => {},
       // 直した結果が約束になる（今が約束のままの直しも含む）なら、人でなければ書かない。保存だけへ寄せる直し（段だけ archive）は通す
       const resultKind = kind === undefined ? old.kind : kind;
       const onlyArchiving = tier === 'archive' && [text, why, sources, kind, weight, status, workspace].every((v) => v === undefined);
-      if (!human && resultKind === 'promise' && !onlyArchiving) throw promiseRefusal(ctx);
+      if (!human && resultKind === 'promise' && !onlyArchiving && !ctx.nightlyOrganizer) throw promiseRefusal(ctx);
       const placement = await editedPlacement({ tier, workspace }, old, ctx);
       const placing = tier != null || workspace !== undefined;
       const changing = text !== undefined && oneLine(text) !== old.text;

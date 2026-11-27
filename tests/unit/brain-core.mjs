@@ -179,7 +179,10 @@ export default async function (t) {
     t.ok(`流れ: 追記のたびに、新しい ${STREAM_KEEP_MAX} 行より古い行を落とす（件数が際限なく増えない）`, brain.count('b_3') <= STREAM_KEEP_MAX + 50 && brain.count('b_3') >= STREAM_KEEP_MAX, String(brain.count('b_3')));
     clock += 31 * 24 * HOUR;
     for (let i = 0; i < 50; i++) brain.append('b_1', { kind: 'quiet' });
-    t.ok('流れ: 30 日より古い行と、30 日より前に閉じた気がかりは消える', brain.list('b_1', { limit: 500 }).every((r) => r.at > now + 30 * 24 * HOUR - 1) && brain.loops('b_1', 'resolved').length === 0);
+    t.ok('流れ: 30 日より古い行は消える', brain.list('b_1', { limit: 500 }).every((r) => r.at > now + 30 * 24 * HOUR - 1));
+    t.ok('気がかり: 30 日より前に完了・取りやめにしたものも記憶として残る',
+      brain.loops('b_1', 'resolved').some((loop) => loop.id === 'mine' && loop.due === now + HOUR)
+      && brain.loops('b_1', 'dropped').length === 3);
 
     t.ok('消す: 流れと気がかりを消し、状態は残す', (() => { const r = brain.clear('b_1'); return r.stream > 0 && r.loops > 0 && brain.count('b_1') === 0 && brain.loops('b_1').length === 0 && brain.state('b_1').paused === true; })());
     brain.close();
