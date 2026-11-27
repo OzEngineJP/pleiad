@@ -97,7 +97,7 @@ import { overlaySessions, revertFailed, currentRows } from './pending-sidebar.mj
 import { createMoveLanes, settleAll } from './sidebar-moves.mjs';
 import { vocabKey, vocabReady, defaultModelOf, modelsRequest, createEffortsLoader, createEffortsView } from './composer-vocab.mjs';
 import { createAuxSlot, beginAux, settleAux, clearAux, auxState, auxData } from './composer-aux.mjs';
-import { behindOfTasks, liveTasksOf } from './work-status.mjs';
+import { behindOfTasks, liveTasksOf, threadActivity } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
@@ -5621,10 +5621,13 @@ function renderSessions() {
   const unreadIds = new Set(listed.filter(s => readCompletions.hasUnread(s)).map(s => s.id));
   // bot のスレッド（channels.threads の索引）。会話に似た行にして、走っている・あなた待ち・未読の印は会話と同じ集合で渡す
   const runningIds = new Set(state.runningIds), waitingIds = new Set(state.waitingIds);
+  const bgWaiting = new Map(state.bgWaiting);
   const threadRows = (state.threadIndex?.threads ?? []).map((th) => {
     const id = `thread:${th.channelId}:${th.threadId}`;
-    if (th.state === 'working' || Object.values(th.live ?? {}).includes('working')) runningIds.add(id);
-    if (th.state === 'waiting' || Object.values(th.live ?? {}).includes('waiting')) waitingIds.add(id);
+    const activity = threadActivity(th, state);
+    if (activity.running) runningIds.add(id);
+    else if (activity.behind) bgWaiting.set(id, activity.behind);
+    if (activity.waiting) waitingIds.add(id);
     if (th.unread) unreadIds.add(id);
     return { id, thread: { channelId: th.channelId, threadId: th.threadId, ...(th.branchOf ? { branch: true } : {}) }, bot: { botId: th.bots?.[0] ?? null, channelId: th.channelId, threadId: th.threadId, kind: 'thread' },
       title: th.title, status: th.status ?? '', lastModified: th.lastAt };
@@ -5647,7 +5650,7 @@ function renderSessions() {
     chromeWaitIds: state.chromeWaitIds,
     answerWaitIds: state.answerWaitIds,
     threads: threadRows,
-    bgWaiting: state.bgWaiting,
+    bgWaiting,
     unreadIds,
     // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
     interrupted: new Map(listed.filter(isInterrupted).map(s => [s.id, { ...s.interrupted, unread: interruptUnread(s, readCompletions.readAt(s.id)) }])),

@@ -473,8 +473,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const glyph = el("span", "one-mark");
     const behind = last.bgWaiting.get(s.id);
     if (last.waitingIds.has(s.id)) { const m = el("span", "wait only", ""); m.setAttribute("role", "img"); m.setAttribute("aria-label", waitingLabel(s.id)); glyph.append(m); }
-    else if (last.runningIds.has(s.id)) glyph.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
-    else if (last.unreadIds.has(s.id)) glyph.append(unreadMark());
+    if (behind || last.runningIds.has(s.id)) glyph.append(behind ? satMark(behind, t("activity.behindCount", { count: behind })) : runMark(t("activity.turnRunning")));
+    if (!glyph.childNodes.length && last.unreadIds.has(s.id)) glyph.append(unreadMark());
     const title = el("span", "row-t", titleOf(s) || t("session.untitled"));
     const when = el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified));
     r.append(glyph, title, when);
@@ -526,6 +526,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (isCollapsed) {
       if (rows.some((s) => last.waitingIds.has(s.id))) head.append(approvalMark(1));
       else if (rows.some((s) => last.runningIds.has(s.id))) head.append(runMark(t("sidebar.somethingRunning")));
+      else if (rows.some((s) => last.bgWaiting.has(s.id))) {
+        const count = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
+        head.append(satMark(count, t("activity.behindCount", { count })));
+      }
       else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
     }
     if (onAdd) {
