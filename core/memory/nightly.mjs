@@ -45,8 +45,8 @@ export const nightlyMemoryBudget = (otherTokens) => Math.max(0, Math.min(NIGHTLY
  *   budget … 記憶の合計の上限（トークン。既定は 12,000）。alwaysBudget … 「いつも」へ使う分（既定は配るときの枠）
  * 返りは { entries（渡す記憶。「いつも」が先）, tokens（見積もり）, omitted（候補にあって渡さなかった数）, total（保存だけ・約束を除いた全部の数） }
  */
-export function selectNightlyCandidates(entries, { workspaces = [], layers = null, budget = NIGHTLY_MEMORY_TOKENS, alwaysBudget = CORE_ALWAYS_TOKENS } = {}) {
-  const live = entries.filter((e) => e.tier !== 'archive' && e.kind !== 'promise');
+export function selectNightlyCandidates(entries, { workspaces = [], layers = null, budget = NIGHTLY_MEMORY_TOKENS, alwaysBudget = CORE_ALWAYS_TOKENS, includePromises = false } = {}) {
+  const live = entries.filter((e) => e.kind === 'promise' ? includePromises && e.status === 'open' : e.tier !== 'archive');
   const here = (e) => workspaces.some((w) => sameWorkspace(e.workspace, w));
   const inLayer = (e) => !layers || layers.includes(e.layer);
   const cost = (e) => estimateTokens(JSON.stringify(nightlyItemOf(e))) + 3;
@@ -62,7 +62,7 @@ export function selectNightlyCandidates(entries, { workspaces = [], layers = nul
     return { picked, used };
   };
   const always = take(live.filter((e) => inLayer(e) && e.tier === 'always'), Math.min(alwaysBudget, budget));
-  const related = take(live.filter((e) => inLayer(e) && (e.tier === 'workspace' ? here(e) : !e.tier && (!e.workspace || here(e)))), Math.max(0, budget - always.used));
+  const related = take(live.filter((e) => inLayer(e) && (e.kind === 'promise' ? !e.workspace || here(e) : e.tier === 'workspace' ? here(e) : !e.tier && (!e.workspace || here(e)))), Math.max(0, budget - always.used));
   const picked = [...always.picked, ...related.picked];
   return { entries: picked, tokens: always.used + related.used, omitted: live.length - picked.length, total: live.length };
 }

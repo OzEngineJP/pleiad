@@ -76,7 +76,8 @@ export function parseBeat(raw, { now = Date.now() } = {}) {
     const text = clip(l.text, LOOP_TEXT_MAX);
     if (l.op === 'add' && !text) continue;
     if (l.op !== 'add' && !id) continue;
-    loops.push({ op: l.op, ...(id ? { id } : {}), ...(text ? { text } : {}), ...(l.wakeOn !== undefined ? { wakeOn: parseWakeOn(l.wakeOn, now) } : {}), ...(l.due !== undefined ? { due: parseTime(l.due, now) } : {}) });
+    const sourcePostId = typeof l.sourcePostId === 'string' && /^[\w-]{1,80}$/.test(l.sourcePostId) ? l.sourcePostId : null;
+    loops.push({ op: l.op, ...(sourcePostId ? { sourcePostId } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}), ...(l.wakeOn !== undefined ? { wakeOn: parseWakeOn(l.wakeOn, now) } : {}), ...(l.due !== undefined ? { due: parseTime(l.due, now) } : {}) });
   }
   const minutes = Number(o.wakeInMin);
   const wakeAt = Number.isFinite(minutes) && minutes > 0 ? now + minutes * 60_000 : parseTime(o.wakeAt, now);

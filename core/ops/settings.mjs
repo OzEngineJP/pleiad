@@ -120,9 +120,6 @@ export const settings = [
         await ctx.writes.pref('memoryAutoLearn', false);
       }
     } }),
-  defineSetting({ key: 'memoryEpisodeSummary', summary: S('memoryEpisodeSummary'), risk: 'write', riskReason: `Whether quiet bot conversations are summarized and handed off. Only runs while memoryAutoLearn is on. ${WRITE_ABOUT}`,
-    prefKeys: ['memoryEpisodeSummary'], schema: z.boolean(), default: false, read: fromPrefs('memoryEpisodeSummary'),
-    ...plainPref('memoryEpisodeSummary', (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'memoryEpisodeSummary: boolean'); return v; }) }),
   defineSetting({ key: 'model', summary: S('model'), risk: 'write', riskReason: `The default model for new conversations. ${PICK_ABOUT}`,
     schema: z.string(), default: '', read: fromPrefs('model'), ...plainPref('model', knownValue('model')) }),
   defineSetting({ key: 'effort', summary: S('effort'), risk: 'write', riskReason: `The default thinking depth for new conversations. ${PICK_ABOUT}`,

@@ -18,7 +18,7 @@ export default async function (t) {
   let clock = new Date(2026, 9, 4, 12, 0, 0).getTime();
   const now = () => clock;
   const bot = { id: 'b_sora', name: 'ソラ', icon: '🦊', persona: '', backend: 'fake', model: '', pulse: normalizePulse({ on: true, everyMin: 10 }) };
-  const idle = { id: 'b_idle', name: 'ネム', icon: '🐱', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
+  const idle = { id: 'b_idle', name: 'ネム', icon: '🐱', persona: '', backend: 'fake', model: '', pulse: normalizePulse({ on: false }) };
   const kai = { id: 'b_kai', name: 'カイ', icon: '🐻', persona: '', backend: 'fake', model: '', pulse: normalizePulse(null) };
   const bots = { list: async () => [bot, idle, kai], get: async ({ botId }) => [bot, idle, kai].find((b) => b.id === botId) ?? null };
   const channels = createChannelService({ dir: path.join(dir, 'channels'), now, listBots: bots.list });

@@ -1,3 +1,5 @@
+import { concernSources } from '../brain/store.mjs';
+import { threadTitle } from '../channels/threads.mjs';
 // bot の記憶（S3。ADR 0110）の操作（`memory.*`）。操作の一覧の正本（docs/design.md「操作の一覧」）。id・危険度・口・引数と返りの形の契約は docs/channels.md「操作」。
 // handler は `ctx.memory`（core/memory/service.mjs。core/bots-host.mjs の BotHost.opsDeps）を呼ぶ。直のツール（mcp: 'direct'）は足さない（tests/unit/ops-surface.mjs の T4）。
 //
@@ -32,6 +34,7 @@ const entryOut = z.object({
   sources: z.array(z.unknown()), at: z.number(), updatedAt: z.number(), by: z.unknown(), origBy: z.unknown().optional(),
   kind: z.enum(MEMORY_KINDS).optional(), weight: z.number().int().optional(), status: z.enum(MEMORY_STATUSES).optional(),
   tier: z.enum(MEMORY_TIERS).optional(), workspace: z.string().optional(),
+  concern: z.object({ id: z.string(), wakeOn: z.unknown(), due: z.number().nullable() }).optional(),
   strength: z.number().optional(), faded: z.boolean().optional(),
 });
 const tagInputs = (id) => ({
@@ -153,8 +156,9 @@ async function redirectPromise(ctx, who, err, text) {
   const toLoop = async () => {
     if (!who.botId || !ctx.brain?.applyLoops) return null;
     if (ctx.brain.loops(who.botId, 'open').some((loop) => loop.text === note)) return 'promiseLoopAdded';
-    const taint = (await ctx.botOfSession?.(who.sessionId))?.taint ?? null;
-    const { applied } = ctx.brain.applyLoops(who.botId, [{ op: 'add', text: note }], { taint });
+    const session = await ctx.botOfSession?.(who.sessionId);
+    const taint = session?.taint ?? null;
+    const { applied } = ctx.brain.applyLoops(who.botId, [{ op: 'add', text: note }], { taint, sources: concernSources(session, who.sessionId) });
     if (!applied.length) return null;
     for (const a of applied) ctx.brain.append(who.botId, { kind: 'loop', text: agentT(ctx.locale, 'brain.loop.add', { text: a.text }), refs: [a.id], taint });
     return 'promiseLoopAdded';
@@ -178,7 +182,35 @@ export const memoryOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['memory', 'list'], positional: ['layer'] } },
     handler: async (ctx, { layer }) => {
       const who = await whoIs(ctx, { write: false });
-      return ctx.memory.list({ layer: layerOf(ctx, who, layer) });
+      const name = layerOf(ctx, who, layer);
+      const entries = await ctx.memory.list({ layer: name });
+      if (who.author?.kind !== 'human') return entries;
+      const concerns = name === USER_LAYER ? [] : (ctx.brain?.loops(name, null) ?? []).map((loop) => ({
+        id: 'concern:' + loop.id, layer: name, text: loop.text, sources: loop.sources ?? [],
+        at: loop.createdAt ?? loop.updatedAt, updatedAt: loop.updatedAt, by: { kind: 'bot', botId: name },
+        status: ({ open: 'open', resolved: 'done', dropped: 'dropped' })[loop.status],
+        concern: { id: loop.id, wakeOn: loop.wakeOn ?? null, due: loop.due ?? null },
+      }));
+      const titles = new Map();
+      async function withTitle(source) {
+        if (!ctx.channels || !source?.channelId || !(source.threadId || source.postId)) return source;
+        const { channelId } = source;
+        const threadId = source.threadId ?? source.postId;
+        const key = JSON.stringify([channelId, threadId]);
+        if (!titles.has(key)) {
+          titles.set(key, (async () => {
+            const thread = await ctx.channels.threads.get(channelId, threadId);
+            if (thread?.title) return thread.title;
+            const post = await ctx.channels.getPost({ channelId, postId: threadId });
+            return threadTitle(post?.text);
+          })().catch(() => ''));
+        }
+        const title = await titles.get(key);
+        return title ? { ...source, threadId, threadTitle: title } : source;
+      }
+      return Promise.all([...entries, ...concerns].map(async (entry) => ({
+        ...entry, sources: await Promise.all(entry.sources.map(withTitle)),
+      })));
     },
   }),
 

@@ -124,7 +124,7 @@ const threadKeyOf = (channelId, threadId) => (threadId ? `${channelId}/${threadI
 const log = (...a) => console.error('  dispatch:', ...a);
 const errText = (e) => String(e?.message ?? e);
 
-export function createDispatcher({ channels, bots, memory, episodes, brain = null, host, emit = () => {}, now = Date.now } = {}) {
+export function createDispatcher({ channels, bots, memory, brain = null, host, emit = () => {}, now = Date.now } = {}) {
   const inbox = createInboxStore({ dir: channels?.dir ?? path.join(host?.dataDir ?? '.', 'channels'), now });
   const addInbox = inbox.add;
   inbox.add = args => bots.withActivity ? bots.withActivity(args.botId, () => addInbox(args)) : addInbox(args);
@@ -625,7 +625,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       const parent = await sidecarOf(child.parent);
       const sb = { ...(parent ?? {}), botId, kind: 'thread', channelId, threadId: root.id, postCursor: child.cursor ? idMap.get(child.cursor) ?? null : null,
         snapshotDue: true, delivered: [] };
-      delete sb.recentDelivered;
       await host.store.setSessionData(child.sessionId, 'bot', sb, { durable: true });
     }
     if (Object.keys(children).length) await channels.threads.update(channelId, root.id, { sessions: Object.fromEntries(Object.entries(children).map(([botId, c]) => [botId, c.sessionId])) });
@@ -682,7 +681,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       await host.rewindSession({ sessionId: plan.sessionId, beforeMessageId: plan.cut, stopRunning });
       await updateSidecar(plan.sessionId, (sb) => {
         const next = { ...sb, postCursor: cursor, snapshotDue: true, delivered: [] };
-        delete next.memoKey; delete next.personaKey; delete next.recentDelivered;
+        delete next.memoKey; delete next.personaKey;
         return next;
       });
     }
@@ -1035,13 +1034,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         notes = tail.notes ?? [];
       } catch (e) { log('could not build the turn tail:', errText(e)); }
     }
-    if (sb.kind === 'thread' && !sb.recentDelivered && !bot.plain) {
-      try {
-        const recent = await episodes?.recent(bot.id, channelId, rec.threadId, turn.agentLocale);
-        if (recent) notes.splice(notes[0]?.startsWith('<pleiad-memory-core>') ? 1 : 0, 0, recent);
-        rec.recentAttempted = true;
-      } catch (e) { log('could not build the recent-thread handoff:', errText(e)); }
-    }
     // 指示が会話の始めにしか効かないエージェント（traits.instructionsAtStart。Antigravity は、会話を続けるときに人格（エージェント定義）を
     // 渡し直しても、最初の指示のまま動く。実機の確認。2026-10-03）。
     // 人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す（会話の始めに渡した人格はこれに置き換わる）。
@@ -1180,7 +1172,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     updateSidecar(rec.sessionId, (sb) => ({
       ...sb,
       ...(tail ? { memRev: tail.memRev, delivered: rec.compactedDuring ? [] : tail.delivered, snapshotDue: rec.compactedDuring ? true : tail.snapshotDue } : {}),
-      ...(rec.recentAttempted ? { recentDelivered: true } : {}),
       ...(rec.cursor ? { postCursor: rec.cursor } : {}),
       ...(rec.personaKey ? { personaKey: rec.personaKey } : {}),
       ...(rec.memoKey !== undefined ? { memoKey: rec.memoKey } : {}),
@@ -1488,10 +1479,6 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     if (outcome === 'ok') {
       const bot = await getBot(rec.botId).catch(() => null);
       if (bot) resting.clear(bot);
-    }
-    if (rec.kind === 'thread' && rec.threadId) {
-      try { episodes?.onTurnEnd(rec.channelId, rec.threadId); }
-      catch (e) { log('could not schedule the thread episode:', errText(e)); }
     }
     // 返事の中の @ で、次の bot を起こす（止められたスレッドは起こさない）
     if (woke) {

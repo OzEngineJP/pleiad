@@ -8,7 +8,7 @@
 const DAY = 86_400_000;
 
 export const MEMORY_KINDS = Object.freeze(['stop', 'promise', 'decision', 'share', 'pref', 'note']);
-export const MEMORY_STATUSES = Object.freeze(['open', 'done']);
+export const MEMORY_STATUSES = Object.freeze(['open', 'done', 'dropped']);
 export const WEIGHT_MIN = 1;
 export const WEIGHT_MAX = 3;
 /** 種類が無い・AI の行の重みの既定 */
@@ -44,7 +44,7 @@ export function weightOf(entry) {
 /** 半減期（日）。Infinity は薄れない */
 export function halfLifeOf(entry) {
   if (isHumanLine(entry)) return Infinity;
-  if (entry?.kind === 'promise' && entry.status === 'done') return PROMISE_DONE_DAYS;
+  if (entry?.kind === 'promise' && ['done', 'dropped'].includes(entry.status)) return PROMISE_DONE_DAYS;
   return kindInfo(entry).halfLifeDays;
 }
 

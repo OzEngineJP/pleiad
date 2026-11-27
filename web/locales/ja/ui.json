@@ -80,47 +80,14 @@
     },
     "memory": {
       "title": "記憶",
-      "autoLearn": "毎晩、会話から覚え直す",
-      "learnAt": "時刻",
-      "autoLearnNote": "あなたの発言を読み、bot が次から知っておくとよいことを書き足します。どの話のときに渡すかも、毎晩少しずつ決め直します",
-      "episodeSummary": "スレッドの話を、次のスレッドへ引き継ぐ",
-      "episodeSummaryNote": "静かになったスレッドを短くまとめ、同じ bot の次のスレッドの最初に渡します",
+      "autoLearn": "毎晩、記憶を整理する",
+      "learnAt": "整理する時刻",
       "status": {
-        "off": "オフ",
-        "offSub": "覚えている記憶はそのまま使います",
-        "offSubUntiered": "覚えている記憶はそのまま使います。渡す場面が決まっていない {{n}} 件は、関係する話のときだけ渡します",
-        "running": "整理しています",
-        "authWait": "ログインを待っています",
-        "authWaitSub": "{{agent}} にログインすると再開します",
-        "authWaitStoppedSub": "{{agent}} にログインしたあと「もう一度」で再開します",
-        "unconfirmed": "接続状態は未確認",
-        "unconfirmedSub": "{{agent}} に繋がっているか、確かめていません",
-        "halted": "止まっています",
-        "haltedSub": "認証などの問題か再試行の上限で、自動の再試行をやめました",
-        "failed": "失敗しました",
-        "retryAt": "{{when}} に再試行",
-        "waiting": "オン",
-        "moreDeferred": "読みきれなかった発言と、作業中だった会話 {{n}} 件は次の回に回します",
-        "loadFailed": "状態を読み込めませんでした"
-      },
-      "sort": {
-        "untiered": "渡す場面が決まっていない記憶 {{n}} 件",
-        "none": "渡す場面が決まっていない記憶はありません",
-        "nightly": "毎晩 {{perNight}} 件ずつ決めます（あと {{nights}} 晩ほど）",
-        "placed": "決めた {{n}} 件: 毎回渡す {{always}} · このフォルダーのときだけ {{workspace}} · 渡さない {{archive}}",
-        "running": "いま決めています",
-        "failed": "前の晩はうまくいきませんでした。次の晩に続きから決めます",
-        "undone": "取り消しました（戻した {{restored}} 件 · 人が変えていたので残した {{kept}} 件）。毎晩の整理を入れ直すまで、決め直しません"
+        "organizeFailed": "記憶を整理できませんでした。"
       },
       "act": {
-        "now": "今すぐ整理",
-        "retry": "もう一度",
+        "retry": "再試行",
         "login": "ログイン",
-        "check": "接続を確認",
-        "undo": "決めた分を取り消す",
-        "skipped": "毎晩の整理がオフなので走りませんでした",
-        "skippedRunning": "いま整理を走らせています",
-        "failed": "操作できませんでした",
         "saveFailed": "保存できませんでした"
       },
       "bots": "記憶を見る"

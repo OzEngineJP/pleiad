@@ -31,7 +31,9 @@ export default async function (t) {
       const bots = createBotService({ dataDir: path.join(tmp, 'plain'), channels: null });
       await bots.start();
       const bot = await bots.create({ name: 'Owl', backend: 'fake' }, { kind: 'human' });
-      t.ok('新しい bot の心拍は止まっている（on: false・10 分・安いモデルも家のチャンネルも空）', JSON.stringify(bot.pulse) === JSON.stringify({ on: false, everyMin: 10, backend: '', model: '', channelId: '' }));
+      t.ok('新しい bot の自発的な活動は既定 ON（10 分・モデルと送信先は未設定）', JSON.stringify(bot.pulse) === JSON.stringify({ on: true, everyMin: 10, backend: '', model: '', channelId: '' }));
+      await bots.update({ botId: bot.id, pulse: { on: false } }, { kind: 'human' });
+      t.ok('保存した OFF は維持する', (await bots.get({ botId: bot.id })).pulse.on === false);
       const on = await bots.planUpdate({ botId: bot.id, pulse: { on: true } });
       t.ok('心拍を入れるのは広げる向き（AI が頼むと承認が要る）', on.loosens === true && on.reasons.includes('pulse') && on.rows[0].path === 'pulse' && on.next.pulse.on === true);
       await bots.update({ botId: bot.id, pulse: { on: true, everyMin: 30 } }, { kind: 'human' });
@@ -94,6 +96,8 @@ export default async function (t) {
     const view = (botId) => call('brain.view', { botId, limit: 100 });
 
     // ---- ① 設定
+    t.ok('未設定の bot の自発的な活動はオン', owl.pulse.on === true && lynx.pulse.on === true);
+    await call('bots.update', { botId: lynx.id, pulse: { on: false } });
     const onBot = await call('bots.update', { botId: owl.id, pulse: { on: true } });
     t.ok('画面（人）から心拍を入れる。Lynx は止めたまま', onBot.pulse.on === true && (await call('bots.get', { botId: lynx.id })).pulse.on === false);
     const v0 = await view(owl.id);
@@ -108,6 +112,9 @@ export default async function (t) {
     const think = v1.stream.find((r) => r.kind === 'think');
     t.ok('思考の流れに 1 行（独り言・使ったトークン・内部呼出しの id）。気がかりが開く（起こす条件つき）', think.text.includes('資料が気になる') && think.tokens.input > 0 && typeof think.meta.call === 'string' && v1.loops.length === 1 && v1.loops[0].id === 'doc' && v1.loops[0].wakeOn.word === '資料');
     t.ok('画面へ brainChanged が出る', c.since(m1).some((e) => e.type === 'brainChanged' && e.botId === owl.id));
+    const memories = () => call('memory.list', { layer: owl.id });
+    const active = (await memories()).find((entry) => entry.concern?.id === 'doc');
+    t.ok('記憶の一覧に再確認条件を保った気がかりがある', active?.status === 'open' && active.concern.wakeOn?.word === '資料');
     // 新経路は host 会話を作らない。会話一覧に pulse の行は無く、journal（internal.calls）と usage（internalTask）に残る
     const hidden = (await c.cmd('listSessions')).filter((s) => s.bot?.kind === 'pulse');
     t.ok('安いモデルのために host の隠れた会話を作らない（一覧に pulse が無い）', hidden.length === 0, JSON.stringify(hidden.map((s) => s.id)));

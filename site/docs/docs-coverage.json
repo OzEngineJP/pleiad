@@ -111,7 +111,6 @@
     "setting:launchAtLogin": "reference/settings",
     "setting:locale": "reference/settings",
     "setting:memoryAutoLearn": "memory",
-    "setting:memoryEpisodeSummary": "memory",
     "setting:memoryLearnAt": "memory",
     "setting:memoryLearnBackend": "reference/settings",
     "setting:memoryLearnPaused": "reference/settings",
