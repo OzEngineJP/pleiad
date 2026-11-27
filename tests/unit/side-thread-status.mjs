@@ -184,8 +184,15 @@ export default async function (t) {
         t.ok('スレッドの行の状態アイコンに名前がある', !!find(channel, n => n.classList.contains('row-status') && n.getAttribute('aria-label') === 'A'));
       }
       const order = root.children.map(n => n.dataset.sec ?? n.dataset.sideKey);
-      t.ok('bot の面: ルーティン・Bots・「チャンネル ＋」・チャンネルの順（ADR 0362）', prefs.filter ? true : order.join() === 'routines,bots-head,channels,chsec:a,chsec:z', order.join());
-      t.ok('フィルター中はルーティンと「チャンネル ＋」を隠す', prefs.filter ? !root.children.includes(routinesSec) && !root.children.includes(channelsSec) : root.children.includes(routinesSec) && root.children.includes(channelsSec));
+      t.ok('bot の面: ルーティン・チャンネル・Bots の順', order.join() === (prefs.filter ? 'section:channels,section:bots' : 'routines,section:channels,section:bots'), order.join());
+      t.ok('フィルター中はルーティンとチャンネルの追加欄を隠す', prefs.filter ? !root.contains(routinesSec) && !root.contains(channelsSec) : root.contains(routinesSec) && root.contains(channelsSec));
+      if (!prefs.filter) {
+        const group = find(root, n => n.dataset.sideKey === 'section:channels');
+        const body = group.children[1];
+        t.ok('チャンネルと追加の行をチャンネル見出しの中に置く', body.children.includes(channel) && body.children.at(-1).textContent.includes('チャンネルを追加'));
+        group.children[0].treeExpand(false);
+        t.ok('チャンネル見出しを畳める', find(root, n => n.dataset.sideKey === 'section:channels').children[0].getAttribute('aria-expanded') === 'false');
+      }
       t.ok('状態の絞り込みでは空のチャンネルを出さない', !prefs.filter || !find(root, n => n.dataset.sideKey === 'chsec:z'));
     } finally { d.restore(); }
   }

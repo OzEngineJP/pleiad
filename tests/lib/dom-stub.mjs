@@ -68,6 +68,12 @@ export class N {
   replaceChildren(...n) { this._text = null; this._html = null; this.children = []; this.append(...n); }
   prepend(...n) { for (const c of n.reverse()) { c.parent = this; this.children.unshift(c); } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
+  replaceWith(node) {
+    if (!this.parent || node === this) return;
+    this.parent.insertBefore(node, this);
+    this.remove();
+    this.parent = null;
+  }
   // web/side.mjs の reconcile（並び替え）が使う。すでに別の親に居る node は取り込んで動かす
   insertBefore(node, ref) {
     if (node?.parent) node.parent.children = node.parent.children.filter((c) => c !== node);

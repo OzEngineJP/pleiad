@@ -122,23 +122,25 @@ async (page, { url = page.url() } = {}) => {
   await page.evaluate(async id => { await window.__sidebarCmd('resolvePermission', { id, allow: false }); await window.__sidebarAsk; }, permission.id);
   await waitFor(() => !document.querySelector('#notifBell .bell-badge .mark'));
   check(true, 'answering the approval removes the waiting diamond');
-  // The bot face: routines → 「Bots ＋」 → one row per bot (20px face, name, state) → 「チャンネル ＋」 → channels by name.
+  // The bot face: routines → channels by name → Bots, with a create row at the end of each list.
   await page.locator('#faceChannels').click();
   await page.locator('#groups .botsec').first().waitFor();
   check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true' && await page.locator('#groups [data-side-key^="group:"]').count() === 0, 'the bot face hides the status folders of the チャット face');
   const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
-  const firstBot = order.findIndex(k => k?.startsWith('chsec:bot:'));
-  check(order[0] === 'routines' && order[1] === 'bots-head' && firstBot === 2 && order.indexOf('channels') > firstBot, 'routines, Bots, bot rows, then channels (ADR 0362)');
+  check(order.join('/') === 'routines/section:channels/section:bots', 'routines, channels, then Bots');
+  const footers = await page.locator('#groups > .side-list > .rows > .side-add-row:last-child').evaluateAll(ns => ns.map(n => n.dataset.key));
+  check(footers.join('/') === 'add:routine/add:channel/add:bot', 'every group ends with its create row');
   const faces = await page.locator('#groups .botsec-head .bot-face-av').evaluateAll(ns => ns.map(n => [n.getBoundingClientRect().width, n.getBoundingClientRect().height]));
   check(faces.length > 0 && faces.every(([w, h]) => w === 20 && h === 20), 'bot rows show a 20px face');
-  const names = await page.locator('#groups > .chsec:not(.botsec):not([data-sec]) > .grp-head .chsec-name').allTextContents();
+  const names = await page.locator('#groups .thread-channel > .grp-head .chsec-name').allTextContents();
   check(names.join() === [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join(), 'channels are sorted by name');
-  const channel = page.locator('#groups > .chsec:not(.botsec):not([data-sec])').first();
+  const channel = page.locator('#groups .thread-channel').first();
   check(await channel.locator('.row[data-thread]').count() > 0 && await channel.locator('.row.more').count() === 0, 'channels show every thread without an N more row');
   const thread = channel.locator('.row[data-thread]').first();
-  check(await thread.getAttribute('draggable') !== 'true' && await thread.locator('.row-status[aria-label]').count() === 1, 'channel rows have status icons and do not drag');
+  check(await thread.getAttribute('draggable') === 'true' && await thread.locator('.one-mark').count() === 1, 'channel threads have a status column and can be dragged into folders');
+  await thread.hover();
   await thread.click({ button: 'right' });
-  await page.getByText('状態を変更', { exact: true }).waitFor();
+  await page.getByRole('menuitem', { name: /^移動/ }).waitFor();
   await page.keyboard.press('Escape');
   check(true, 'thread status is available from its menu');
   await page.locator('#faceChats').click();

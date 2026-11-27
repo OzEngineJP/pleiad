@@ -2,10 +2,8 @@
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7434・トークン sidebar-create）を開いてから実行する。
 // 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288・0362）:
 //   「チャンネル ＋」の ＋ で名前の欄が出て、Enter で本物の channels.create が作り、木に出てそのチャンネルが開く・同じ名前は欄の下に理由が出て字が残る・Esc で閉じて ＋ へ戻る・
-//   見出しの文字を押しても欄が出る・打った名前は絞り込みを掛けて外しても残る・欄の中でも Ctrl+Shift+O が効く・
-//   木のキーボードで「チャンネル」の見出しに来て Enter でも欄が出る・
-//   新しいチャットの「書く」（#newSession。切り替えの行の右）は両方の面で触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める。
-//   bot の面で押すとチャットの面に移って始める（11）・
+//   見出しを押すか Enter で一覧を開閉し、末尾の追加行からも作る。
+//   チャットの一覧の先頭と Ctrl+Shift+O（macOS は ⌘⇧O）から新しく始める。bot の面では近道でチャットの面へ移る。
 //   どちらも絞り込みの条件（エージェントが 1 つ・状態・作業場所）を newSession に引き継ぐ・入力中の字（IME の変換中）では始めない。
 async page => {
   const URL = 'http://127.0.0.1:7434/?token=sidebar-create';
@@ -42,13 +40,17 @@ async page => {
   await page.locator('#closeOnboarding').click({ timeout: 2000 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
   // 「チャンネル ＋」は bot の面、新しいチャットの ＋ はチャットの面にある（ADR 0362）
-  const face = async which => { await page.locator(which === 'bot' ? '#faceChannels' : '#faceChats').click(); };
+  const face = async which => {
+    const selector = which === 'bot' ? '#faceChannels' : '#faceChats';
+    await page.locator(selector).click();
+    await page.locator(`${selector}[aria-pressed="true"]`).waitFor({ state: 'attached' });
+  };
   await face('bot');
-  await page.locator('#csChannelsLabel').waitFor();
+  const label = page.locator('#groups [data-key="section:channels"]');
+  await label.waitFor();
   const sent = command => page.evaluate(c => window.__sent.filter(m => m.command === c || m.args?.op === c), command);
 
   // ---- チャンネルを作る: ＋ → 名前 → Enter
-  const label = page.locator('#csChannelsLabel');
   const add = label.locator('.cs-add');
   check(await add.evaluate(n => getComputedStyle(n).opacity) === '1', '「チャンネル ＋」の ＋ は触れなくても見える');
   await add.click();
@@ -59,7 +61,7 @@ async page => {
   const name = 'plan' + String(Date.now()).slice(-5);
   await input.fill(name);
   await input.press('Enter');
-  const heading = page.locator('#groups > .chsec > .grp-head .chsec-name', { hasText: name });
+  const heading = page.locator('#groups .thread-channel > .grp-head .chsec-name', { hasText: name });
   await heading.waitFor();
   check((await sent('channels.create')).some(m => m.args.args?.name === name), 'Enter で channels.create に名前を渡す');
   check(await page.locator('#groups .cs-new').count() === 0, '作ると欄は閉じる');
@@ -84,21 +86,29 @@ async page => {
   await page.keyboard.press('Home');
   for (let i = 0; i < 40; i++) {
     const key = await page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key);
-    if (key === 'c:new-channel') break;
+    if (key === 'section:channels') break;
     await page.keyboard.press('ArrowDown');
   }
-  check(await page.evaluate(() => document.getElementById('groups').getAttribute('aria-activedescendant')) === 'csChannelsLabel', '木の ↓ で「チャンネル」の見出しに来る');
+  check(await page.locator('#groups .is-active').getAttribute('data-key') === 'section:channels', '木の ↓ で「チャンネル」の見出しに来る');
+  await page.keyboard.press('Enter');
+  check(await label.getAttribute('aria-expanded') === 'false', '見出しで Enter を押すと一覧を畳む');
+  await page.keyboard.press('ArrowRight');
+  check(await label.getAttribute('aria-expanded') === 'true', '見出しで右矢印を押すと一覧を開く');
+  for (let i = 0; i < 40 && await page.locator('#groups .is-active').getAttribute('data-key') !== 'add:channel'; i++) {
+    await page.keyboard.press('ArrowDown');
+  }
+  check(await page.locator('#groups .is-active').getAttribute('data-key') === 'add:channel', '一覧の末尾の「チャンネルを追加」へ移動する');
   await page.keyboard.press('Enter');
   await input.waitFor();
-  check(await input.evaluate(n => n === document.activeElement), '見出しで Enter を押しても名前の欄が出る');
+  check(await input.evaluate(n => n === document.activeElement), '「チャンネルを追加」で Enter を押しても名前の欄が出る');
   await input.press('Escape');
 
   // ---- 新しいチャット: 見出しの ＋ と Ctrl+Shift+O。どちらも絞り込みを引き継ぐ
   await face('chat');
   const newChat = page.locator('#newSession');
   await page.mouse.move(900, 400);
-  const shownNew = await page.waitForFunction(() => { const n = document.getElementById('newSession'); return n?.closest('.side-face-row') && getComputedStyle(n).opacity === '1'; }, null, { timeout: 2000 }).then(() => true, () => false);
-  check(shownNew, '新しいチャットの「書く」は切り替えの行の右にあり、触れなくても見える（11）');
+  check(await newChat.isVisible() && await newChat.evaluate(n => Boolean(n.compareDocumentPosition(document.getElementById('groups')) & Node.DOCUMENT_POSITION_FOLLOWING)), '「新規チャット」は一覧の先頭にあり、触れなくても見える');
+  check(await page.locator('.qbox #filterBtn').isVisible(), '絞り込みボタンは検索欄の中にある');
   check(await newChat.getAttribute('aria-keyshortcuts') === 'Control+Shift+O' && (await newChat.getAttribute('title')).includes('Ctrl+Shift+O'), '＋ の名前に近道 Ctrl+Shift+O が出る');
   check(await page.locator('#sidebar header #newSession').count() === 0, '頭の行にはもう ＋ が無い');
   const waitNew = async (before) => {
@@ -122,11 +132,16 @@ async page => {
   await page.waitForTimeout(400);
   check((await sent('newSession')).length === before, '変換中の Ctrl+Shift+O では始めない');
 
-  // 「チャンネル」の見出しは文字を押しても欄が出る。打った名前は絞り込みを掛けて外しても残り、欄の中でも Ctrl+Shift+O は効く
+  // 見出しの文字は一覧を開閉する。打った名前は絞り込みを掛けて外しても残り、欄の中でも Ctrl+Shift+O は効く
   await face('bot');
-  await label.locator('.cs-label-t').click();
+  await label.waitFor();
+  const names = await page.locator('#groups > .side-list > .side-list-head > .grp-name').allTextContents();
+  check(names.join('/') === 'ルーティン/チャンネル/Bots', 'ルーティン、チャンネル、Bots の順に並ぶ');
+  await label.locator('.grp-name').click();
+  check(await label.getAttribute('aria-expanded') === 'false', '見出しの文字を押すと一覧を閉じる');
+  await add.click();
   await input.waitFor();
-  check(await input.evaluate(n => n === document.activeElement), '「チャンネル」の見出しの文字を押しても名前の欄が出る');
+  check(await label.getAttribute('aria-expanded') === 'true' && await input.evaluate(n => n === document.activeElement), '閉じていても見出しの＋で一覧を開き、名前を入力できる');
   await input.fill('draft-x');
   await page.locator('#filterBtn').click();
   await page.locator('#filterPop [data-backend="fake"]').click();
@@ -153,19 +168,21 @@ async page => {
   before = (await sent('newSession')).length;
   await page.locator('#newSession').click();
   args = await waitNew(before);
-  check(args.backend === 'fake' && args.status === '進行中' && args.cwd === home, '見出しの ＋ は絞り込みのエージェント・状態・作業場所を引き継ぐ');
+  check(args.backend === 'fake' && args.status === '進行中' && args.cwd === home, '新規チャットの行は絞り込みのエージェント・状態・作業場所を引き継ぐ');
   before = (await sent('newSession')).length;
   await page.locator('#groups').focus();
   await page.keyboard.press('Control+Shift+O');
   args = await waitNew(before);
   check(args.backend === 'fake' && args.status === '進行中' && args.cwd === home, 'Ctrl+Shift+O も同じく引き継ぐ');
-  // 11: bot の面で押すと、チャットの面に移って新しいチャットを始める
+  // bot の面では近道でチャットの面に移って新しいチャットを始める
   await face('bot');
   check(await page.locator('#faceChannels').getAttribute('aria-pressed') === 'true', 'the bot face is shown before the new-chat press');
   before = (await sent('newSession')).length;
-  await page.locator('#newSession').click();
+  await newChat.waitFor({ state: 'hidden' });
+  check(!await newChat.isVisible() && await page.locator('#fchips .fchip').count() === 3, 'bot の面には新規チャットの行がなく、絞り込みの条件は残る');
+  await page.keyboard.press('Control+Shift+O');
   args = await waitNew(before);
-  check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true' && args.backend === 'fake', 'on the bot face, the new-chat button moves to the チャット face and starts a chat');
+  check(await page.locator('#faceChats').getAttribute('aria-pressed') === 'true' && args.backend === 'fake', 'bot の面でも近道でチャット面に移って新規チャットが始まる');
   await shot('03-filtered');
   await page.evaluate(() => localStorage.removeItem('agent-host-side'));
 
@@ -173,11 +190,11 @@ async page => {
   await page.setViewportSize({ width: 360, height: 760 });
   await page.reload();
   await page.locator('#closeOnboarding').click({ timeout: 1000 }).catch(() => {});
-  const drawer = async () => { if (!await page.locator('#sideFace').isVisible()) await page.locator('#openSidebar:visible, #chOpenSidebar:visible').first().click(); };
-  await drawer();
+  const drawer = async (opener) => { if (!await page.locator('#sideFace').isVisible()) await page.locator(opener).click(); };
+  await drawer('#openSidebar');
   await face('bot');
-  await drawer();
-  await page.locator('#csChannelsLabel').waitFor({ state: 'visible' });
+  await drawer('#chOpenSidebar');
+  await label.waitFor({ state: 'visible' });
   check(await page.evaluate(() => { const s = document.getElementById('sidebar'); const f = document.getElementById('sideFace'); return s.scrollWidth <= s.clientWidth + 1 && f.scrollWidth <= f.clientWidth + 1; }), '360 幅でも脇と面の切り替えが横にはみ出さない');
   await shot('04-360');
   return { passed: true, results };
