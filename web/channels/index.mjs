@@ -61,10 +61,12 @@ export function setupChannels(host) {
   parts.push(sidebar);
 
   // W2 チャンネルの流れ
-  parts.push(createFeed(host));
+  const feed = createFeed(host);
+  parts.push(feed);
 
   // W3 スレッドと空間モデル（流れの板を #chDeck へ移すので、流れの後に置く）
-  parts.push(createThread(host));
+  const thread = createThread(host);
+  parts.push(thread);
 
   // W4 bot のページ（show({ kind: 'bot', id })。id が 'new' なら作る画面）
   parts.push(createBotPage(host));
@@ -105,6 +107,7 @@ export function setupChannels(host) {
   document.getElementById('chOpenSidebar')?.addEventListener('click', () => host.openSidebar());
 
   const api = {
+    completionScope: () => thread.completionScope?.() ?? feed.completionScope?.() ?? null,
     /** 出来事を部品へ渡す。この画面の出来事なら true（client.mjs の onEvent はそこで終わる） */
     onEvent(ev, replay = false) {
       each('onEvent', ev, replay);

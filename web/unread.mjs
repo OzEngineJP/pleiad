@@ -7,6 +7,8 @@ export const READ_STORE = "agent-host-read-completions";
 
 const valid = (id, at) => typeof id === "string" && id !== "" && Number.isFinite(at) && at > 0;
 
+export const isUnreadCompletion = (completedAt, readAt = 0) => Number.isFinite(completedAt) && completedAt > readAt;
+
 /**
  * @param {object} o
  * @param {Storage} [o.storage] 旧版の確認済みを読む（移したら消す）
@@ -67,7 +69,7 @@ export function createReadCompletions({ storage, send } = {}) {
       return read.get(id) ?? 0;
     },
     hasUnread(session) {
-      return Number.isFinite(session.completedAt) && session.completedAt > (read.get(session.id) ?? 0);
+      return isUnreadCompletion(session.completedAt, read.get(session.id));
     },
   };
 }

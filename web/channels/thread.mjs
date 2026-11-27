@@ -33,6 +33,7 @@ import { createBackgroundChip } from '../background-chip.mjs';
 import { createToolSource, turnWindows, logInWindow, signatureOf, toolNodes } from './thread-tools.mjs';
 import { retrySource, retryFailed } from './retry.mjs';
 import { createThreadStream } from './thread-stream.mjs';
+import { shownReadPosition } from './read-position.mjs';
 
 const PAGE = 50;
 const NEAR_BOTTOM = 80;
@@ -249,14 +250,16 @@ export function createThread(host) {
   let readTimer = null, readSent = 0;
   const watching = () => document.body.classList.contains('channels') && deck.state !== 'feed' && document.visibilityState !== 'hidden';
   function markRead() {
+    host.completionPresenceChanged?.();
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
-      const last = S.posts.at(-1);
-      if (!S.threadId || !S.ready || !last?.threadId || !watching() || !nearBottom() || last.at <= readSent) return;
+      if (!S.threadId || !S.ready || !watching() || !nearBottom()) return;
+      const at = shownReadPosition(S.posts.slice(1));
+      if (at <= readSent) return;
       const { channelId, threadId, seq } = S;
-      readSent = last.at;
-      host.invoke('channels.markRead', { channelId, threadId, at: last.at }).catch(() => {
-        if (S.seq === seq && readSent === last.at) readSent = 0;
+      readSent = at;
+      host.invoke('channels.markRead', { channelId, threadId, at }).catch(() => {
+        if (S.seq === seq && readSent === at) readSent = 0;
       });
     }, 300);
   }
@@ -957,6 +960,7 @@ export function createThread(host) {
     openMenu(p, pt.x, pt.y, node, pt.alignRight);
   });
   log.addEventListener('scroll', () => {
+    host.completionPresenceChanged?.();
     if (nearBottom()) markRead();
     if (log.scrollTop < 120) loadOlder();
   });
@@ -1173,6 +1177,10 @@ export function createThread(host) {
   }
 
   return {
+    completionScope() {
+      return S.ready && S.threadId && watching() && nearBottom()
+        ? { channelId: S.channelId, threadId: S.threadId, shownAt: shownReadPosition(S.posts) } : null;
+    },
     openThread: open,
     show(view) {
       if (view?.kind !== 'channel') { if (S.threadId) close(); return; }

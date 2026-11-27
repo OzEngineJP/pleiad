@@ -60,7 +60,7 @@ export default function (t) {
 
   // ---- 配線（文字列で）
   const index = read('web/channels/index.mjs');
-  t.ok('部品の一覧に流れが入っている', /parts\.push\(createFeed\(host\)\)/.test(index) && /from '\.\/feed\.mjs'/.test(index));
+  t.ok('部品の一覧に流れが入っている', /const feed = createFeed\(host\);\s+parts\.push\(feed\)/.test(index) && /from '\.\/feed\.mjs'/.test(index));
   t.ok('スレッドを開く口（host.openThread）を足し、部品の openThread へ配る', /host\.openThread \?\?=/.test(index) && /each\('openThread'/.test(index));
   t.ok('どこからでも開ける入口（channels:show）がある', /addEventListener\('channels:show'/.test(index));
   const feed = read('web/channels/feed.mjs');

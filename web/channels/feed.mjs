@@ -2,6 +2,7 @@
 // #channelsBody の中に section#chFeed.ch-feed を作る: 投稿の列（.ch-log）と入力欄（#chFeedComposer）。見出し（# 名前・目的・メンバー・⋯）は
 // メインの頭（#channelsView > .top）に出す。読み書きはすべて channels.* の操作を invoke で呼ぶ（新しい WS コマンドは足さない）。
 // 出来事 channelPost・channelReaction・channelThread・channelRead・channelsChanged・botsChanged で、その場で描き直す。
+import { shownReadPosition } from './read-position.mjs';
 //
 // 部品の口（web/channels/index.mjs）: show({ kind: 'channel', id, threadId? })・hide()・onEvent(ev)。
 // 合成の投稿には、会話に記録の無い操作（リアクション・編集・削除）を出さない。
@@ -333,15 +334,19 @@ export function createFeed(host) {
 
   // ---------------------------------------------------------------- 既読
   let readTimer = null;
-  const active = () => !root.hidden && document.body.classList.contains('channels') && document.visibilityState !== 'hidden';
+  const active = () => !root.hidden && !root.inert && (root.closest('#chDeck')?.dataset.deck ?? 'feed') === 'feed'
+    && document.body.classList.contains('channels') && document.visibilityState !== 'hidden';
   function markRead() {
+    host.completionPresenceChanged?.();
     clearTimeout(readTimer);
     readTimer = setTimeout(() => {
-      const last = S.posts.at(-1);
       const channelId = S.id;
-      if (!channelId || !last || !active() || !nearBottom() || last.at <= S.readSent) return;
-      S.readSent = last.at;
-      host.invoke('channels.markRead', { channelId, at: last.at }).catch(() => { S.readSent = 0; });
+      if (!channelId || !S.ready || !active() || !nearBottom()) return;
+      const at = shownReadPosition(S.posts);
+      if (at <= S.readSent) return;
+      const seq = S.seq;
+      S.readSent = at;
+      host.invoke('channels.markRead', { channelId, at }).catch(() => { if (S.seq === seq && S.readSent === at) S.readSent = 0; });
     }, 300);
   }
   document.addEventListener('visibilitychange', () => { if (active()) markRead(); });
@@ -417,6 +422,7 @@ export function createFeed(host) {
   });
   jump.onclick = () => { toBottom(); markRead(); };
   log.addEventListener('scroll', () => {
+    host.completionPresenceChanged?.();
     if (nearBottom()) { jump.hidden = true; markRead(); }
     if (log.scrollTop < 120) loadOlder();
   });
@@ -469,6 +475,7 @@ export function createFeed(host) {
     if (op === 'delete') Object.assign(cur, p, { deletedAt: p.deletedAt ?? Date.now() });
     else Object.assign(cur, p);
     repaint(p.id);
+    if (p.completedAt) markRead();
   }
 
   function onChannelsChanged(ev) {
@@ -515,6 +522,9 @@ export function createFeed(host) {
   }
 
   return {
+    completionScope() {
+      return S.ready && S.id && active() && nearBottom() ? { channelId: S.id, shownAt: shownReadPosition(S.posts) } : null;
+    },
     show(view) {
       if (view?.kind !== 'channel' || !view.id) { this.hide(); return; }
       const same = S.id === view.id && S.ready;

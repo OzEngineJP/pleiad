@@ -35,6 +35,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   author: Author, text: string,
  *   mentions: string[],                                   // 投稿の時点で解いた botId と 'you'（あとで名前が変わっても壊れない）
  *   at: number, editedAt?: number, deletedAt?: number,
+ *   completedAt?: number,                                 // 返信の投稿後、待っていた作業を含めて bot のターンが正常に完了した時刻
  *   state?: 'working'|'waiting'|'done'|'checking'|'failed'|'stopped'|'skipped',  // bot のターンの投稿・ルーティンの実行の根だけ
  *   turn?: { botId: string, sessionId: string },          // bot のターンの投稿（会話を開く → の行き先）
  *   presents?: object[],                                  // そのターンの提示（可視化・添付）の写し。描き方は web/render.mjs の renderPresent
@@ -50,7 +51,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
 
 /** チャンネルの .jsonl の 1 行（読むときに畳む）
  * @typedef {{ op: 'post', post: Post }
- *          | { op: 'edit', id: string, text?: string, state?: Post['state'], presents?: object[], taint?: 'webhook', at: number }
+ *          | { op: 'edit', id: string, text?: string, state?: Post['state'], presents?: object[], taint?: 'webhook', completedAt?: number, at: number }
  *          | { op: 'delete', id: string, at: number }
  *          | { op: 'react', id: string, emoji: string, by: Author, on: boolean, at: number }} ChannelOp */
 

@@ -44,6 +44,7 @@ export function foldOp(posts, op) {
     }
     if (op.taint === 'webhook') post.taint = op.taint;
     if (op.state !== undefined) post.state = op.state;
+    if (post.turn && Number.isFinite(op.completedAt)) post.completedAt = Math.max(post.completedAt ?? 0, op.completedAt);
     if (op.failedWithBody === true && post.turn) post.failedWithBody = true;
     if (typeof op.failure === 'string' && post.turn) post.failure = op.failure;
     if (op.presents !== undefined) post.presents = op.presents;

@@ -31,7 +31,7 @@ export function botState(bot, { sessions = [], runningIds = new Set(), waitingId
  */
 export function tabDots({ channels = [], botStates = [], chats = {}, channelThreadsUnread = false }) {
   const live = channels.filter((c) => !c.archivedAt);
-  const channelsDot = botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark'
+  const channelsDot = chats.channelThreadsWaiting || botStates.includes('waiting') || live.some((c) => (c.mentions ?? 0) > 0) ? 'mark'
     : channelThreadsUnread || live.some((c) => !c.home && (c.unread ?? 0) > 0) ? 'unread' : null;
   const chatsDot = chats.waiting ? 'mark' : chats.unread ? 'unread' : null;
   return { chats: chatsDot, channels: channelsDot };

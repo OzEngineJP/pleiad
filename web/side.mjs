@@ -561,13 +561,22 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     };
   }
 
-  function threadGroupMark(rows) {
-    if (rows.some(s => last.waitingIds.has(s.id))) return approvalMark(1);
-    if (rows.some(s => last.runningIds.has(s.id))) return runMark(t("sidebar.somethingRunning"));
-    const count = rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
-    if (count) return satMark(count, t("activity.behindCount", { count }));
+  function threadAttention(rows, directUnread = 0) {
+    return {
+      waiting: rows.some(s => last.waitingIds.has(s.id)),
+      running: rows.some(s => last.runningIds.has(s.id)),
+      children: rows.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0),
+      unread: directUnread > 0 || rows.some(s => last.unreadIds.has(s.id)),
+    };
+  }
+
+  function threadGroupMark(rows, directUnread) {
+    const { waiting, running, children, unread } = threadAttention(rows, directUnread);
+    if (waiting) return approvalMark(1);
+    if (running) return runMark(t("sidebar.somethingRunning"));
+    if (children) return satMark(children, t("activity.behindCount", { count: children }));
+    if (unread) return unreadMark();
     if (rows.some(s => s.stopped)) return warnMark(interruptLabel(null));
-    if (rows.some(s => last.unreadIds.has(s.id))) return unreadMark();
     return null;
   }
 
@@ -649,7 +658,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return { wrapper, panel };
     }
 
-    function header({ cls, id, level, closed, toggle, open, menu, glyph, label, members }) {
+    function header({ cls, id, level, closed, toggle, open, menu, glyph, label, members, directUnread = 0 }) {
       const node = el('div', `grp-head channel-thread-face ${cls}`);
       treeItem(node, id, level, { expanded: !closed, open, expand: toggle, menu });
       const title = el('span', level === 1 ? 'grp-name chsec-name' : 'grp-name', label);
@@ -660,11 +669,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         count.textContent = String(members.length);
         count.setAttribute('aria-label', t('channels:side.threadCount', { count: members.length }));
       }
-      if (closed) {
-        const status = threadGroupMark(members);
-        if (status) mark.append(status);
-        node.classList.toggle('sel', members.some(s => s.id === last.currentId));
-      }
+      const status = threadGroupMark(closed ? members : [], directUnread);
+      if (status) mark.append(status);
+      if (closed) node.classList.toggle('sel', members.some(s => s.id === last.currentId));
       node.append(glyph, title, mark, count);
       node.setAttribute('aria-label', spoken([title, ...mark.children, count]));
       if (menu) {
@@ -726,7 +733,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const heading = header({ cls: 'chsec-head', id: `c:${key}`, level: 1, closed, toggle,
       open: () => onOpenChannel ? onOpenChannel(key) : toggle(closed),
       menu: onThreadFolderMenu && ((x, y) => onThreadFolderMenu({ channel, onOpenChannel, onNewInChannel }, x, y)),
-      glyph, label: name, members: rows });
+      glyph, label: name, members: rows, directUnread: closed ? channel.unread : channel.directUnread });
     dropTarget(heading, key, drag => drag.kind === 'thread', () => ({
       action: 'moveThread', folderId: ROOT_FOLDER, beforeId: groups.get(ROOT_FOLDER)[0]?.thread.threadId,
     }), { insert: 'after' });
@@ -795,13 +802,16 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const label = el("span", "grp-name chsec-name", b.name);
     head.append(av, label);
     const state = directory.stateOf(b);
-    const waiting = state === "waiting" || rows.some((s) => last.waitingIds.has(s.id));
-    const working = state === "working" || rows.some((s) => last.runningIds.has(s.id));
+    const direct = directory.channels.get(b.dmChannelId);
+    const attention = threadAttention(rows, direct?.unread);
+    const waiting = state === "waiting" || attention.waiting;
+    const working = state === "working" || attention.running;
     // i18n-dynamic: channels:side.botState.
     if (waiting) head.append(approvalMark(1));
     else if (working) head.append(runMark(t("channels:side.botState.working")));
+    else if (attention.children) head.append(satMark(attention.children, t("activity.behindCount", { count: attention.children })));
+    else if (attention.unread) head.append(unreadMark());
     else if (state === "resting") head.append(el("span", "row-when", t("channels:side.botState.resting")));
-    else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
     head.setAttribute("aria-label", spoken([label, ...[...head.children].filter((c) => c.tagName !== "BUTTON" && c !== label && c !== av)]));
     head.onclick = go;
     if (directory.botMenu) {
@@ -1986,13 +1996,16 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       // bot の会話（DM・ルーティンの待ち）は bot の面の印（web/channels/sidebar.mjs の botState）が受け持つ
       const mine = homeRowsOf();
       const unread = (s) => last.unreadIds.has(s.id);
+      const channelThreads = last.threads.filter((s) => {
+        const channel = directory.channels.get(s.thread.channelId);
+        return channel && !channel.archivedAt && !channel.home;
+      });
+      const channelAttention = threadAttention(channelThreads);
       return {
         waiting: mine.some((s) => last.waitingIds.has(s.id)),
         unread: mine.some(unread),
-        channelThreadsUnread: last.threads.some((s) => {
-          const channel = directory.channels.get(s.thread.channelId);
-          return channel && !channel.archivedAt && !channel.home && unread(s);
-        }),
+        channelThreadsUnread: channelAttention.unread,
+        channelThreadsWaiting: channelAttention.waiting,
       };
     },
     /** チャンネルと bot の一覧（bot の会話の行の印・検索のチャンネル名）。Channels の脇が読むたびに渡す */

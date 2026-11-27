@@ -76,6 +76,25 @@ export default async function (t) {
     const later = await post(a, '新しい返信', roots[1], BOT);
     t.ok('読んだ後の返信は未読', Boolean(later) && (await service.threadIndex({ channelId: a, all: true })).threads.find((x) => x.threadId === roots[1]).unread === true);
 
+    const sessionId = 's_completion';
+    const turn = { botId: BOT.botId, sessionId };
+    const reply = await service.post({ channelId: a, threadId: roots[0], text: '途中の返信', turn, state: 'working' }, BOT);
+    const direct = await service.post({ channelId: a, text: 'チャンネル直下の投稿' }, BOT);
+    const unread = async (threadId) => (await service.threadIndex({ channelId: a, all: true })).threads.find(row => row.threadId === threadId).unread;
+    await service.markRead({ channelId: a, threadId: roots[0], at: reply.at });
+    t.ok('途中の返信を読み、別スレッドとチャンネル直下の未読を残す',
+      !await unread(roots[0]) && await unread(roots[1]) && (await service.list()).find(c => c.id === a).directUnread === 1);
+    await service.edit({ channelId: a, postId: reply.id, state: 'done' }, BOT);
+    const completedAt = ++clock;
+    const saved = await service.completePost({ channelId: a, postId: reply.id, sessionId, completedAt });
+    t.ok('投稿時刻はそのまま、先に読んで離れた返信は完了時刻で再び未読になる',
+      saved.at === reply.at && saved.completedAt === completedAt && await unread(roots[0]));
+    await service.markRead({ channelId: a, threadId: roots[0], at: completedAt });
+    t.ok('完了を表示したスレッドだけ既読になる',
+      !await unread(roots[0]) && await unread(roots[1]) && (await service.list()).find(c => c.id === a).directUnread === 1);
+    await service.markRead({ channelId: a, at: direct.at });
+    await service.withdraw({ channelId: a, postIds: [direct.id] });
+
     const organize = (action, args = {}, work) => service.organizeThreads({ channelId: a, action, ...args }, work);
     const ordered = async (channel) => {
       const { threads } = await service.threadIndex({ channelId: a, all: true });

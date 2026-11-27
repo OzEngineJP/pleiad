@@ -54,6 +54,7 @@
 // 失敗は ChannelError（code と params）。ops が OpError に直す（辞書 agent:ops.errors.<code>）。
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isUnreadCompletion } from '../../web/unread.mjs';
 import { EMOJI_RE } from '../../web/emoji.mjs';
 import { ARCHIVE_FOLDER, ROOT_FOLDER, threadGroups } from '../../web/channels/thread-folders.mjs';
 import { behindOfTasks, liveTasksOf } from '../../web/work-status.mjs';
@@ -273,14 +274,18 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const threadReads = new Map(threads.map((th) => [`${th.channelId}\n${th.threadId}`, th.readAt ?? 0]));
       return Promise.all(channels.map(async (channel) => {
         const read = { readAt: 0, mentionAt: 0, ...reads[channel.id] };
-        let unread = 0, mentions = 0;
+        let unread = 0, directUnread = 0, mentions = 0;
         for (const p of await store.snapshot(channel.id)) {
           if (p.deletedAt || p.author?.kind === 'human') continue;
           const replyReadAt = p.threadId ? Math.max(read.legacyThreadReadAt ?? read.readAt, threadReads.get(`${channel.id}\n${p.threadId}`) ?? 0) : null;
-          if (p.at > (replyReadAt ?? read.readAt)) unread++;
+          const seen = replyReadAt ?? read.readAt;
+          if (p.at > seen || isUnreadCompletion(p.completedAt, seen)) {
+            unread++;
+            if (!p.threadId) directUnread++;
+          }
           if (p.at > (replyReadAt ?? read.mentionAt) && p.mentions?.includes('you')) mentions++;
         }
-        return { ...shown(channel), unread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
+        return { ...shown(channel), unread, directUnread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
       }));
     },
     async hasBotHistory(builtInIds) {
@@ -345,6 +350,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           const r = replies.get(p.threadId) ?? { count: 0, lastAt: 0, mentions: 0 };
           r.count++;
           r.lastAt = Math.max(r.lastAt, p.at);
+          r.completedAt = Math.max(r.completedAt ?? 0, p.completedAt ?? 0);
           replies.set(p.threadId, r);
         }
         const channelRead = reads[channel.id]?.legacyThreadReadAt ?? reads[channel.id]?.readAt ?? 0;
@@ -358,7 +364,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
           const readAt = Math.max(channelRead, th?.readAt ?? 0);
           rows.push({
             channelId: channel.id, threadId: root.id, title: th?.title || threadTitle(root.text), rootAt: root.at, lastAt, count: r?.count ?? 0,
-            unread: lastAt > readAt && (r?.lastAt ?? 0) > readAt, state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
+            unread: (r?.lastAt ?? 0) > readAt || isUnreadCompletion(r?.completedAt, readAt), state: th?.state ?? 'idle', ...(th?.live ? { live: clone(th.live) } : {}),
             ...(th?.status ? { status: th.status } : {}), bots: Object.keys(th?.sessions ?? {}), ...(th?.origin ? { origin: clone(th.origin) } : {}),
             ...(th?.stopped ? { stopped: true } : {}),
             // 分けたスレッド（枝）の元・bot ごとの会話（脇の行の「枝」の札・作業フォルダーのコピー）
@@ -664,6 +670,21 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         Promise.resolve().then(async () => hooks.reacted?.(clone(saved), clone(await need(channelId)), change)).catch((e) => console.error('  channels: reacted の後処理に失敗:', String(e?.message ?? e)));
       }
       return { reactions: saved.reactions };
+    },
+
+    async completePost({ channelId, postId, sessionId, completedAt }) {
+      const post = await needPost(channelId, postId);
+      if (post.deletedAt || post.turn?.sessionId !== sessionId) return null;
+      const saved = await store.append(channelId, { op: 'edit', id: postId, completedAt, at: completedAt });
+      if (saved) emit({ type: 'channelPost', op: 'edit', channelId, post: saved });
+      return saved;
+    },
+
+    async readPosition({ channelId, threadId }) {
+      const read = await store.readState(channelId);
+      if (!threadId) return read.readAt;
+      const thread = await threadStore.get(channelId, threadId);
+      return Math.max(read.legacyThreadReadAt ?? read.readAt, thread?.readAt ?? 0);
     },
 
     async markRead({ channelId, threadId, at }) {
