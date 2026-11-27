@@ -10,7 +10,7 @@
 //   read        読むだけ
 //   write       Pleiad の状態を変える（題・状態・圧縮の閾値など）
 //   guarded     関所を緩める・権限を広げる・取り返しがつかない（MCP の登録・Hooks・computer use の許可・接続先の削除など）
-//   human-only  下の HUMAN_ONLY の 5 つだけ（承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング）。agent には出さない
+//   human-only  下の HUMAN_ONLY の 5 つだけ（AI の稼働と承認・秘密の値・アカウント・接続先の既定・リモートのペアリング）。agent には出さない
 //               Pleiad の機能はほかは全部 agent も使える。5 つに当たらない操作を human-only にしない（ADR 0094。tests/lint-ops.mjs が落とす）
 //
 // agent の guarded は、束縛された会話の承認モード（core/modes.mjs の軸）で決める。
@@ -32,7 +32,8 @@ export const DECISIONS = ['allow', 'ask', 'deny', 'hidden'];
  */
 export const HUMAN_ONLY = Object.freeze({
   // 承認モード。AI が自分の関所を緩められると承認フローが意味を失う（design.md §8.5）。承認カードへの応答も同じ。bot の承認モード（bots.setMode。ADR 0109）も
-  mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
+  // bot の全体スイッチも人が決める。bot が実行中に全体を止めると、自分の応答を待つことになる。
+  mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode', 'botEnabled'], ops: ['bots.setMode'] },
   // 秘密の値を入れる・消す・認可する・割り当てる（API キー: 入れる・差し替える・消す・通話と自動選択に使うキーを選ぶ・移行の案内の答え。互換の接続先のキー・MCP の OAuth。古い口の委譲の自動選択・通話のキー）。秘密情報と変数（ADR 0217）: 人の項目の秘密の値・パスワードを入れる・差し替える・.env の取り込み・入力のカードへの答え
   secrets: { commands: ['setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret', 'secrets.save', 'secrets.import', 'secrets.answerRequest'] },
   // アカウント（契約・課金の主体）。一覧も含む。契約の主体として、提供元の規約に同意する操作（Claude Agent SDK の取得）もここ。

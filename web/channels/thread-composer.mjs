@@ -281,6 +281,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
     wakeButton.disabled = true;
     say('');
     try {
+      if (host.botEnablement && !await host.botEnablement.request(input)) return;
+      if ((draftKey ?? '') !== owner) return;
       await onSend({ ...body, ...(confirmedWake ? { confirmedWake } : {}), clientId, ...(at ? { at } : {}) });
       attempts.delete(owner);
       clearSent(owner, version);

@@ -9,7 +9,7 @@ const TABS = ['chats', 'channels'];
 // 読み上げの名前（キーは直書きで持つ。i18n-lint が使われているかを見るため）
 const waitingLabel = (name) => (name === 'chats' ? t('channels:side.face.waitingChats') : t('channels:side.face.waitingChannels'));
 
-export function createSideTabs({ onChange = () => {} } = {}) {
+export function createSideTabs({ onChange = () => {}, beforeSelect } = {}) {
   const root = document.documentElement;
   const side = document.getElementById('channelsSide');
   const view = document.getElementById('channelsView');
@@ -86,7 +86,11 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     }
   }
 
-  for (const b of faceButtons) b.addEventListener('click', () => set(b.dataset.face));
+  for (const b of faceButtons) b.addEventListener('click', async () => {
+    const next = b.dataset.face;
+    if (next === 'channels' && beforeSelect && !await beforeSelect(b)) return;
+    set(next);
+  });
   // 新しい会話（web/client.mjs の onNew）・会話を開く・設定は Chats の側の操作で、それぞれが set('chats') で戻す
   paint();
 

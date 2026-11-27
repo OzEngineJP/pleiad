@@ -24,6 +24,7 @@ export default async function (t) {
     c = await open({ port: server.port, token: server.token });
     const call = (op, args) => c.cmd('invoke', { op, args });
     const fails = async (op, args) => { try { await call(op, args); return false; } catch { return true; } };
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev', members: [owl.id] });
     const read = (threadId) => call('channels.read', { channelId: dev.id, threadId });

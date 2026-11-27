@@ -112,6 +112,7 @@ export default async function (t) {
     t.ok('不正な引数（limit 0・filter 違い）は INVALID で断る', await call('notifications.list', { limit: 0 }).then(() => false, () => true) && await call('notifications.list', { filter: 'x' }).then(() => false, () => true));
 
     // ---- @あなた（bot の返信）。スレッドの既読で既読
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev', members: [owl.id] });
     from = host.mark();

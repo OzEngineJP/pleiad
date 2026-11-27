@@ -41,6 +41,7 @@ export default async function (t) {
     const input = { agent: 'codex', name: '偽の Responses', preset: 'custom', baseUrl: `${api.url}/v1`, authMode: 'bearer', key: KEY, roles: { main: MODEL } };
     const checked = await c.cmd('compatEndpointCheck', { input });
     const { id } = await c.cmd('compatEndpointSave', { input, receipt: checked.receipt });
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'codex' });
     t.ok('作ったばかりの bot は公式（endpoint は空）', owl.endpoint === '' && owl.account === '', JSON.stringify(owl));
     const unknown = await rejects(call('bots.setAccount', { botId: owl.id, account: '', endpoint: 'ply_ep_unknown' }));

@@ -25,7 +25,7 @@ const TIERS = ['always', 'workspace', 'archive'];
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const message = (e) => (e && typeof e === 'object' && 'message' in e ? e.message : String(e));
 
-export function createMemoryList(host, { lookup, openSource }) {
+export function createMemoryList(host, { lookup, openSource, userOnly = false }) {
   const root = el('div', 'mem-wrap');
   const S = {
     bot: null,
@@ -39,7 +39,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     focusEdit: false,
     seq: {},         // 層ごとの読み込みの番号
   };
-  let scope = 'own';
+  let scope = userOnly ? 'user' : 'own';
   let detail = null;
   let query = '';
   let opened = new Set(['open']);
@@ -74,7 +74,8 @@ export function createMemoryList(host, { lookup, openSource }) {
   };
   const results = el('p', 'mem-results');
   results.setAttribute('role', 'status');
-  controls.append(select, search);
+  if (!userOnly) controls.append(select);
+  controls.append(search);
   const undo = el('div', 'mem-undo');
   undo.hidden = true;
   undo.setAttribute('role', 'status');
@@ -439,6 +440,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     undoTimer = setTimeout(clearUndo, UNDO_MS);
   }
 
+  if (userOnly) void load('user');
   return {
     el: root,
     /** 見せる bot を替える（null で空に）。層の写しは読み直す */
@@ -466,6 +468,7 @@ export function createMemoryList(host, { lookup, openSource }) {
     },
     /** 層を読み直す（memoryChanged）。layer を省けば両方。直している間は本文を上書きしないよう、描き直しは直し終えてから */
     refresh(layer) {
+      if (userOnly) { if (layer == null || layer === 'user') load('user'); return; }
       if (!S.bot) return;
       const key = layer == null ? null : keyOf(layer);
       if (layer != null && !key) return;

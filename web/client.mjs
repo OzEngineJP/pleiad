@@ -42,6 +42,7 @@ import { usableReport, listKind } from "./agent-usable.mjs";
 import { setupNoAgent } from "./no-agent.mjs";
 import { createRecheck } from "./agent-recheck.mjs";
 import { setupMemorySettings } from "./memory-settings.mjs";
+import { createBotEnablement } from "./bot-enablement.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
@@ -3395,6 +3396,7 @@ function hasFailedOutbox() {
 function syncOutboxRows(messages) { mainView.syncOutboxRows(messages); }
 
 function onEvent(ev, replay = false) {
+  if (ev.type === 'botEnablementChanged') { memorySettings?.refresh(); return; }
   if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport', 'tab:downloads'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
   // 開いているファイルが変わった・ページの port が替わった（ADR 0295 の 6・8）。画面の中のタブは browser-unify がページへ届ける
   if (ev.type === 'page:changed') { loadBrowserUnify().then(ui => ui.onEvent(ev)).catch(() => {}); return; }
@@ -5516,6 +5518,9 @@ const side = createSide({
     return id == null || id === pendingNewSession?.id ? startNew(state.draft) : openFromSearch(id, jump);
   },
   onOpenChannel: (channelId) => viewAddress.go({ channelId }),
+  onNewBot: async (anchor) => {
+    if (await botEnablement.request(anchor)) viewAddress.go({ kind: 'bot', id: 'new' });
+  },
   // チャンネルの見出しの ＋: 流れを開いて、流れの入力欄（新しいスレッドを書く所）へ
   onNewInChannel: (channelId) => {
     viewAddress.go({ channelId });
@@ -8807,8 +8812,11 @@ const viewAddress = createViewAddress({ storage: localStorage,
   openChannels: (detail) => document.dispatchEvent(new CustomEvent('channels:show', { detail })) });
 // 通話モード（承認済み 2026-10-06。web/voice/、docs/voice-call.md）。部品を差し込む口は 1 か所ずつ: Chats の会話はこの下の voiceUi.mount、スレッドは web/channels/thread.mjs
 const voiceUi = setupVoice({ token, invoke: async (op, args = {}) => cmd('invoke', { op, args }), openSettings: () => { onboarding.open('voice'); voiceSettings.load(); }, available: () => state.voice === true });
+const botEnablement = createBotEnablement((op, args) => cmd('invoke', { op, args }));
 // bot・Channels・ルーティンの画面（web/channels/index.mjs。docs/channels.md「画面の口」）。client.mjs が持つのはこの 1 つの口だけ
 const channelsUi = setupChannels({
+  botEnablement,
+  lastBotView: () => viewAddress.lastBot,
   voice: voiceUi,
   cmd: (command, args) => cmd(command, args),
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
@@ -11740,6 +11748,7 @@ const agentRecheck = createRecheck({
 });
 // 設定 › bot（web/memory-settings.mjs。毎晩の整理の入切・時刻・引き継ぎと、状態・明示操作・bot ごとの記憶への入口。［ログイン］はエージェント設定へ移す）
 memorySettings = setupMemorySettings({
+  botEnablement,
   cmd: (command, args) => cmd(command, args),
   invoke: (op, args = {}) => cmd('invoke', { op, args }),
   getPrefs: () => state.prefs,
@@ -11747,6 +11756,12 @@ memorySettings = setupMemorySettings({
   setAuth: (id, st) => { if (id) { state.auth.set(id, st); renderAuth(); } },
   // 設定を閉じて、その bot のページへ（記憶の欄がそこにある）
   openBot: (id) => { onboarding.close(); document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id, memory: true } })); },
+  memoryDirectory: () => ({ sessions: state.sessions }),
+  openSource: (target) => {
+    onboarding.close();
+    if (target.sessionId) viewAddress.go(target);
+    else document.dispatchEvent(new CustomEvent('channels:show', { detail: { ...target, kind: 'channel', id: target.channelId } }));
+  },
   // 記憶の整理に使うエージェント（memoryLearnBackend は心拍と共用。core の learn.mjs と同じ解決順: 空なら会話の既定、それも無ければ先頭。
   // 明示の id が残って消えた（stale）ときは core もそこで失敗するので、別のエージェントの認証を当てない = null）
   learnBackend: () => {

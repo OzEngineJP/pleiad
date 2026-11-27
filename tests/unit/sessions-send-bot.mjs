@@ -120,6 +120,7 @@ async function integration(t) {
   try {
     const invoke = async (op, args) => c.cmd('invoke', { op, args });
     const target = await c.runTurn({ prompt: 'echo:target', cwd: ROOT, backend: 'fake', mode: 'default' });
+    await invoke('settings.set', { key: 'botEnabled', value: true });
     const made = await invoke('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const bot = made;
     const from = c.mark();

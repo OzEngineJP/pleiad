@@ -410,6 +410,7 @@ export const channelOps = [
     output: z.unknown(),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'post'], positional: ['channelId', 'text'] } },
     handler: async (ctx, { state, threadId, attachments, confirmedWake, to, clientId, ...input }) => {
+      await ctx.botEnablement?.requireEnabled();
       const author = await authorOf(ctx);
       const args = await homeArgs(ctx, input, { make: author.kind === 'human' });
       if (!args) throw notFound(ctx, input.channelId);
@@ -434,6 +435,7 @@ export const channelOps = [
         if (channel.kind === 'channel' && !channel.home) {
           const outside = [...new Set(mentions)].filter((id) => !['you', 'here', 'everyone'].includes(id) && !(channel.members ?? []).includes(id));
           if (outside.length) {
+            await ctx.botEnablement?.requireEnabled();
             // メンバーの上限などで足せなくても、投稿は通す（@ の宛先はメンバーでなくても解ける）
             try {
               await run(ctx, () => ctx.channels.update({ channelId: channel.id, members: [...(channel.members ?? []), ...outside] }, author));
@@ -480,6 +482,7 @@ export const channelOps = [
     output: z.unknown(),
     // 起こす bot の動くモードを見せる（承認カード）。bot が無ければここで断る（承認のあとに変わったら聞き直す: before にモードを入れる）
     riskOf: async (ctx, args) => {
+      await ctx.botEnablement?.requireEnabled();
       if (!(await ctx.bots.approvalOf({ botId: args.botId }))) throw new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: args.botId }));
       return 'guarded';
     },
@@ -493,7 +496,7 @@ export const channelOps = [
       };
     },
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'wake'], positional: ['channelId', 'postId', 'botId'] } },
-    handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return { ...(await ctx.wake({ channelId: args.channelId, postId: args.postId, botId: args.botId })), botId: args.botId }; }),
+    handler: async (ctx, args) => run(ctx, async () => { await ctx.botEnablement?.requireEnabled(); await refuseHidden(ctx); return { ...(await ctx.wake({ channelId: args.channelId, postId: args.postId, botId: args.botId })), botId: args.botId }; }),
   }),
   defineOp({
     id: 'channels.edit', summary: D('edit', 'summary'), risk: 'write',
@@ -504,6 +507,7 @@ export const channelOps = [
     handler: async (ctx, args) => run(ctx, async () => {
       const author = await ownPost(ctx, args);
       const sb = author.kind === 'bot' ? await boundBot(ctx) : null;
+      if (author.kind === 'bot') await ctx.botEnablement?.requireEnabled();
       return ctx.channels.edit({ ...args, ...(sb?.taint ? { taint: sb.taint } : {}) }, author);
     }),
   }),

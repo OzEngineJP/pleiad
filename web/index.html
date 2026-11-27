@@ -333,15 +333,17 @@
         <!-- bot（docs/design-system.md「設定 › bot」。記憶の毎晩の整理。ページの内部名は memory のまま。中身の状態・操作は web/memory-settings.mjs。
              「会話の区切りで、記録から組み立て直す」は記憶と関係なく全会話の設定なので、自動圧縮のページにある） -->
         <section id="memoryPanel" data-i18n-aria-label="settings.nav.memory" hidden>
-          <h3 data-i18n="settings.memory.title"></h3>
-          <div class="mp-feature">
+          <div class="rm-switch"><label class="rm-switch-label" for="botEnabled" data-i18n="settings.memory.botEnabled"></label><button type="button" class="cx-sw" id="botEnabled" role="switch" data-i18n-aria-label="settings.memory.botEnabled" disabled></button></div>
+          <p class="mp-note" id="botEnableSaved" role="status" aria-live="polite"></p>
+          <h3 id="memoryHeading" data-i18n="settings.memory.title" hidden></h3>
+          <div class="mp-feature" id="memoryOptions" hidden>
             <div class="rm-switch"><label class="rm-switch-label" for="memoryAutoLearn" data-i18n="settings.memory.autoLearn"></label><button type="button" class="cx-sw" id="memoryAutoLearn" role="switch" data-i18n-aria-label="settings.memory.autoLearn"></button></div>
             <div class="rm-switch learn-dep"><label class="rm-switch-label" for="memoryLearnAt" data-i18n="settings.memory.learnAt"></label><input type="time" class="mem-time" id="memoryLearnAt" data-i18n-aria-label="settings.memory.learnAt"></div>
             <div class="mem-status" id="memoryLearnStatus" role="status" aria-live="polite"></div><div class="mem-actions" id="memoryLearnActions"></div>
             <p class="mp-note" id="memoryLearnSaved" role="status" aria-live="polite"></p>
             <!-- 記憶を持つ bot ごとの入口（押すと、その bot のページの記憶の欄へ）。bot が無ければ出さない -->
-            <div class="mem-bots" id="memoryBots" hidden><span data-i18n="settings.memory.bots"></span><span class="mem-bot-list" id="memoryBotsList"></span></div>
           </div>
+          <div class="mem-bots" id="memoryBots" hidden><span data-i18n="settings.memory.bots"></span><span class="mem-bot-list" id="memoryBotsList"></span></div>
         </section>
         <section id="apiKeysPanel" data-i18n-aria-label="settings.nav.apiKeys" hidden></section>
         <section id="setupPanel" data-i18n-aria-label="settings.nav.agents">
@@ -512,6 +514,15 @@
         <div class="work-composer-slot" id="workComposerSlot"></div>
       </section>
     </div>
+  </dialog>
+
+  <dialog id="botEnableDialog" class="bot-enable-dialog" aria-labelledby="botEnableTitle">
+    <h2 id="botEnableTitle" data-i18n="settings.memory.enableTitle"></h2>
+    <p id="botEnableError" role="status"></p>
+    <form method="dialog" class="rm-dialog-actions">
+      <button id="botEnableCancel" class="btn" value="cancel" data-i18n="settings.memory.cancel"></button>
+      <button id="botEnableConfirm" type="button" class="btn btn-primary" data-i18n="settings.memory.enable"></button>
+    </form>
   </dialog>
 
   <!-- 接続の状態の読み上げ（画面の外。切れた・戻った・案内・確かめた結果を 1 回ずつ）。web/connection-status.mjs -->

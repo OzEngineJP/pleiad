@@ -31,6 +31,7 @@ async page => {
   const open = detail => page.evaluate(d => document.dispatchEvent(new CustomEvent('channels:show', { detail: d })), detail);
 
   // ---- 種: bot 1 体・チャンネルとスレッド・その bot の DM
+  await call('settings.set', { key: 'botEnabled', value: true });
   const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake', persona: '調べ物が得意' });
   const ch = await call('channels.create', { name: 'mpu-ci', purpose: 'リリースの CI を見張る', members: [owl.id] });
   const root = await call('channels.post', { channelId: ch.id, text: '@Owl ok' });

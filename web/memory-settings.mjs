@@ -1,13 +1,18 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { botIcon } from './channels/bot-icon.mjs';
+import { createMemoryList } from './channels/memory-list.mjs';
 import { learnEnabledOf, authOutOf } from './memory-model.mjs';
 
 const POLL_MS = 2000;
 
-export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, learnBackend, onLogin, openBot }) {
+export function setupMemorySettings({ cmd, invoke, botEnablement, getPrefs, getAuth, learnBackend, onLogin, openBot, openSource, memoryDirectory }) {
   const $ = (id) => document.getElementById(id);
   const autoSw = $('memoryAutoLearn');
+  const botSw = $('botEnabled');
+  const memoryHeading = $('memoryHeading');
+  const memoryOptions = $('memoryOptions');
+  const enableSaved = $('botEnableSaved');
   const timeIn = $('memoryLearnAt');
   const deps = [...$('memoryPanel').querySelectorAll('.learn-dep')];   // 毎晩の整理が OFF の間は薄くして押せなくする行（時刻）
   const statusBox = $('memoryLearnStatus');
@@ -20,6 +25,34 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, learnBacke
   let seq = 0;             // 読み直しの番号（遅い返事を捨てる）
   let timer = null;        // 走っている間の読み直し
   let busy = false;        // 再試行を動かしている間
+  let enabled;
+  let settingBusy = false;
+  let settingsSeq = 0;
+  let retry;
+  let common;
+  let commonView;
+
+  const paintEnablement = () => {
+    if (typeof enabled === 'boolean') botSw.setAttribute('aria-checked', String(enabled));
+    botSw.disabled = settingBusy || typeof enabled !== 'boolean';
+    memoryOptions.hidden = enabled !== true;
+    memoryHeading.hidden = enabled !== true && botsBox.hidden;
+  };
+
+  botSw.onclick = async () => {
+    settingBusy = true;
+    paintEnablement();
+    enableSaved.textContent = '';
+    try {
+      enabled = await botEnablement.write(!enabled);
+      await refresh();
+    } catch {
+      enableSaved.textContent = t('settings.memory.act.saveFailed');
+    } finally {
+      settingBusy = false;
+      paintEnablement();
+    }
+  };
 
   const note = (text) => { saved.textContent = text; };
 
@@ -91,14 +124,31 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, learnBacke
 
   /** 記憶を持つ bot への入口（押すと、その bot のページの記憶の欄へ）。bot が 1 つも無ければ出さない */
   function paintBots() {
-    botsBox.hidden = bots.length === 0;
-    botsList.replaceChildren(...bots.map((bot) => {
+    const showCommon = common && (!enabled || !bots.length);
+    botsBox.hidden = bots.length === 0 && !showCommon;
+    const buttons = bots.map((bot) => {
       const chip = el('button', 'mem-bot');
       chip.type = 'button';
       chip.append(botIcon(bot, 'bot-row-icon'), el('span', null, `${bot.name} ›`));
       chip.onclick = () => openBot?.(bot.id);
       return chip;
-    }));
+    });
+    if (showCommon) {
+      const chip = el('button', 'mem-bot', t('channels:memory.scopeUser'));
+      chip.type = 'button';
+      chip.onclick = () => {
+        if (!commonView) {
+          commonView = createMemoryList({ invoke }, { userOnly: true, lookup: memoryDirectory, openSource });
+          botsBox.after(commonView.el);
+        } else {
+          commonView.el.hidden = !commonView.el.hidden;
+          if (!commonView.el.hidden) commonView.refresh('user');
+        }
+      };
+      buttons.push(chip);
+    } else if (commonView) commonView.el.hidden = true;
+    botsList.replaceChildren(...buttons);
+    paintEnablement();
   }
 
   async function refreshState() {
@@ -110,9 +160,30 @@ export function setupMemorySettings({ cmd, invoke, getPrefs, getAuth, learnBacke
   }
 
   async function refresh() {
+    clearTimeout(retry);
+    const mine = ++settingsSeq;
     paintSwitches();
-    invoke('bots.list', {}).then((list) => { bots = (list?.bots ?? []).filter((b) => !b.plain); paintBots(); }, () => {});
-    await refreshState();
+    try {
+      const on = await botEnablement.read();
+      if (mine !== settingsSeq) return;
+      enabled = on;
+      paintEnablement();
+      if (enabled) void refreshState();
+      else { clearTimeout(timer); seq++; }
+      const directory = await invoke('bots.list', {});
+      const all = (directory?.bots ?? []).filter((bot) => !bot.plain);
+      const [hasCommon, displayed] = await Promise.all([
+        invoke('memory.list', { layer: 'user' }).then(entries => entries.length > 0),
+        on ? all : Promise.all(all.map(bot => invoke('memory.list', { layer: bot.id }).then(entries =>
+          entries.length > 0 ? bot : null))).then(values => values.filter(Boolean)),
+      ]);
+      if (mine !== settingsSeq) return;
+      common = hasCommon;
+      bots = hasCommon && all.length && displayed.length === 0 ? all : displayed;
+      paintBots();
+    } catch {
+      if (mine === settingsSeq && !$('memoryPanel').hidden) retry = setTimeout(refresh, POLL_MS);
+    }
   }
 
   return { refresh };

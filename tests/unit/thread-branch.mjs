@@ -37,6 +37,7 @@ export default async function (t) {
     server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: path.join(tmp, 'data'), timeoutMs: 60_000 });
     c = await open({ port: server.port, token: server.token });
     const call = (op, args) => c.cmd('invoke', { op, args });
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const dev = await call('channels.create', { name: 'dev', members: [owl.id] });
     const read = (threadId) => call('channels.read', { channelId: dev.id, threadId });

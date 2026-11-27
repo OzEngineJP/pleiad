@@ -79,6 +79,10 @@
       "refresh": "Refresh"
     },
     "memory": {
+      "botEnabled": "Turn on bots",
+      "enableTitle": "Turn on bots?",
+      "enable": "Turn on",
+      "cancel": "Cancel",
       "title": "Memory",
       "autoLearn": "Organize memories every night",
       "learnAt": "Organization time",

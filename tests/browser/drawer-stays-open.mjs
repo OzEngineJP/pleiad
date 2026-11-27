@@ -36,6 +36,7 @@ try {
   const invoke = (op, args) => ws.cmd('invoke', { op, args });
   // 一時チャットの同じ状態（状態なし）に 12 件
   for (let i = 1; i <= CHATS; i++) await ws.runTurn({ backend: 'fake', cwd: work, prompt: `echo:会話 ${i}` });
+  await invoke('settings.set', { key: 'botEnabled', value: true });
   const channel = await invoke('channels.create', { name: 'dev' });
   // 脇に出るスレッドは返信のある根（core/channels/service.mjs の threadIndex）
   for (let i = 1; i <= THREADS; i++) {

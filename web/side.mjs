@@ -152,7 +152,7 @@ function loadRecentSearches() {
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
                              onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true,
-                             onOpenChannel, onNewInChannel, channelExtras = () => [] }) {
+                             onOpenChannel, onNewInChannel, onNewBot, channelExtras = () => [] }) {
   const $ = (id) => document.getElementById(id);
   const root = $("groups");
   const prefs = loadPrefs();
@@ -552,7 +552,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const sec = keyed(el("section", "grp botsec-top"), "bots-head", true);
     sec.setAttribute("role", "none");
     const head = el("div", "cs-label");
-    const make = () => document.dispatchEvent(new CustomEvent("channels:show", { detail: { kind: "bot", id: "new" } }));
+    const make = () => onNewBot
+      ? onNewBot(head)
+      : document.dispatchEvent(new CustomEvent("channels:show", { detail: { kind: "bot", id: "new" } }));
     treeItem(head, "c:new-bot", 1, { open: make });
     head.setAttribute("aria-label", `${t("channels:side.sections.bots")}, ${t("channels:side.newBot")}`);
     head.onclick = make;

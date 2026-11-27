@@ -2201,6 +2201,8 @@
     "dryRunNote": "This is a trial run of a routine. Do not post to any channel; answer in this conversation with what you would do and the result (you are running in a read-only mode)."
   },
   "settings": {
+    "botEnabled": "Turn bot features on or off.",
+    "botDisabled": "Turn on bot features to continue.",
     "account": "Default connection per agent for new chats (a registered account; human only)",
     "locale": "Display language (auto follows the OS).",
     "plus": "Shown-once state for Pleiad Plus screens (dismissed notices).",

@@ -345,6 +345,7 @@ export default async function (t) {
     try {
       const call = (op, args) => c.cmd('invoke', { op, args });
       const m0 = c.mark();
+      await call('settings.set', { key: 'botEnabled', value: true });
       const ch = await call('channels.create', { name: 'e2e', purpose: 'サーバー越し' });
       t.ok('画面の invoke: チャンネルを作ると channelsChanged が全接続へ（sessionId なし）', ch.name === 'e2e'
         && c.since(m0).some((e) => e.type === 'channelsChanged' && e.channel?.id === ch.id && !e.sessionId));

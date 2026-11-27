@@ -125,6 +125,10 @@ const log = (...a) => console.error('  dispatch:', ...a);
 const errText = (e) => String(e?.message ?? e);
 
 export function createDispatcher({ channels, bots, memory, brain = null, host, emit = () => {}, now = Date.now } = {}) {
+  const enablement = host.botEnablement;
+  const allowed = () => enablement?.allowed() ?? true;
+  const mayFinish = (rec) => !enablement || enablement.finishing(rec.sessionId)
+    || (enablement.enabled() && rec.generation === enablement.generation());
   const inbox = createInboxStore({ dir: channels?.dir ?? path.join(host?.dataDir ?? '.', 'channels'), now });
   const addInbox = inbox.add;
   inbox.add = args => bots.withActivity ? bots.withActivity(args.botId, () => addInbox(args)) : addInbox(args);
@@ -398,6 +402,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * extra: ops の channels.post が渡す。hold = 起こさない bot（承認の channels.wake に回した）・checked = 強さの確認は済み・origin = 起こして新しくできるスレッドの元
    */
   async function route(post, channel, extra = {}) {
+    if (!await allowed()) return;
     try {
       if (closed || !post || post.deletedAt || !channel) return;
       const kind = post.author?.kind;
@@ -504,6 +509,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * 返りは { woken: true } か { woken: false, reason: 'notFound' | 'notMentioned' | 'stopped' | 'archived' }
    */
   async function wakePost({ channelId, postId, botId }) {
+    if (!await allowed()) return { woken: false, reason: 'botDisabled' };
     if (closed) return { woken: false, reason: 'closed' };
     const channel = await channels.get({ channelId }).catch(() => null);
     const post = channel ? await channels.getPost({ channelId, postId }).catch(() => null) : null;
@@ -530,6 +536,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     return run;
   }
   async function reacted(post, channel, { emoji, on, by } = {}) {
+    if (!await allowed()) return;
     try {
       if (closed || !post || post.deletedAt || !channel || post.author?.kind !== 'bot' || !emoji || !by) return;
       const botId = post.author.botId;
@@ -744,6 +751,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
   }
 
   async function wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo }) {
+    if (!await allowed()) return;
     const bot = await getBot(botId);
     if (!bot) return null;
     // 使用量の上限で休憩中なら配らない（解除の後にもう一度呼んでもらう）。その場所で初めてなら知らせる（聞こえただけの投稿では知らせない）
@@ -780,13 +788,13 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
   }
 
   async function pumpOnce(sessionId) {
-    if (closed) return;
+    if (closed || !await allowed()) return;
     const pending = await inbox.list({ sessionId, status: 'pending' });
     if (!pending.length) { updateDeferred.delete(sessionId); return; }
     // 止めたスレッドの出来事は捨てる
     const live = [];
     const dropped = [];
-    for (const item of pending) (await threadStopped(item.channelId, item.threadId) ? dropped : live).push(item);
+    for (const item of pending) ((enablement && item.at < enablement.since()) || await threadStopped(item.channelId, item.threadId) ? dropped : live).push(item);
     if (dropped.length) await inbox.remove(dropped.map((i) => i.id));
     // 起こさないリアクション（reaction.quiet）だけなら配らない。次に起きたときに一緒に渡す
     if (!live.some((i) => !i.reaction?.quiet)) { updateDeferred.delete(sessionId); return; }
@@ -824,13 +832,19 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       }
       // 人がこのスレッドへ投稿した（聞こえただけでない）: 今の投稿をそこまでで確定し、続きは人の投稿の下の新しい投稿に出す（ADR 0117 の追記）。
       // 読まれる前に書かれた文も新しい投稿に入るよう、渡す前に区切る。前の投稿の @ は、確定したそのときに解く（返事の終わりを待たない）
-      if (humanPostIn(group, built.triggers) && rec.threadId && rec.channelId === channel.id && (rec.threadId ?? null) === (group[0].threadId ?? null)) {
+      const manual = humanPostIn(group, built.triggers);
+      if (manual && rec.threadId && rec.channelId === channel.id && (rec.threadId ?? null) === (group[0].threadId ?? null)) {
         const woke = await splitPost(rec).catch((e) => { log('could not split the turn post:', errText(e)); return null; });
         // 待たずに起こす（呼び合いが同時に起きても、この会話の配りが相手の配りを待って止まらない）
         if (woke) Promise.resolve().then(() => route(woke, channel)).catch((e) => log('could not handle an @ in a reply:', errText(e)));
       }
       let accepted = false;
-      try { accepted = await target.control.steer(message); }
+      try {
+        if (await allowed() && enablement?.enabled() !== false && rec.generation === enablement?.generation()) {
+          if (manual) enablement?.promote(sessionId);
+          accepted = await target.control.steer(message);
+        }
+      }
       catch (e) {
         liveSteers.delete(message.id);
         await inbox.mark(ids, 'unknown', { error: errText(e) });   // 結果不明。自動では送り直さない（ADR 0057 と同じ）
@@ -866,6 +880,8 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
 
   /** 新しいターンで渡す */
   async function startTurn(sessionId, items) {
+    if (!await allowed()) return;
+    const generation = enablement?.generation();
     const sb = await sidecarOf(sessionId);
     const channel = sb ? await channels.get({ channelId: items[0].channelId }).catch(() => null) : null;
     if (!channel || channel.archivedAt) {
@@ -887,7 +903,10 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       refreshThread(channel.id, threadId);
       const key = threadKeyOf(channel.id, threadId);
       // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
-      Promise.resolve(host.runTurn({ sessionId, prompt: built.prompt }, () => {}, { internal: true, canStart: () => !(key && stoppedKeys.has(key)) }))
+      Promise.resolve(host.runTurn({ sessionId, prompt: built.prompt }, () => {}, {
+        internal: true, manualBot: humanPostIn(items, built.triggers),
+        canStart: () => generation === enablement?.generation() && !(key && stoppedKeys.has(key)),
+      }))
         .then((result) => notStarted(sessionId, ids, result), (err) => notStarted(sessionId, ids, 'error', err));
     } catch (e) {
       updateDeferred.delete(sessionId);
@@ -998,7 +1017,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     if (old && !old.ended) await abandon(old);
     const channelId = sb.channelId ?? (sb.kind === 'dm' ? bot.dmChannelId : null);
     const rec = {
-      sessionId, botId: bot.id, kind: sb.kind, channelId, threadId: sb.threadId ?? null, taint: sb.taint ?? pre?.inner?.taint ?? undefined, postId: null, postReady: null,
+      sessionId, generation: enablement?.generation(), botId: bot.id, kind: sb.kind, channelId, threadId: sb.threadId ?? null, taint: sb.taint ?? pre?.inner?.taint ?? undefined, postId: null, postReady: null,
       // 自分の心拍から起きたターン（inner: 結果の行の印）と、心拍が動いている bot か（呼ばれたターンの後にも流れへ 1 行足す。ADR 0126）
       inner: pre?.inner ?? null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
@@ -1099,6 +1118,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const post = (page.posts ?? []).findLast(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id && !p.deletedAt && ['working', 'waiting'].includes(p.state)) ?? null;
     const rec = {
       sessionId, botId: bot.id, kind: sb.kind, routineId: sb.routineId, channelId, threadId, taint: sb.taint ?? undefined,
+      generation: enablement?.generation(),
       postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
       inner: null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
@@ -1351,7 +1371,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
   }
 
   async function flush(rec) {
-    if (!rec.dirty || rec.ended || !rec.postId) return;
+    if (!rec.dirty || rec.ended || !rec.postId || !mayFinish(rec)) return;
     rec.dirty = false;
     rec.lastFlush = now();
     // 短い断片しかない間は「…」を保ち、終わりにはその断片も全て残す。
@@ -1366,6 +1386,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     }
     if (rec.state !== rec.postedState) patch.state = rec.state;
     if (patch.text === undefined && patch.state === undefined) return;
+    if (!mayFinish(rec)) return;
     await channels.edit(patch, botAuthor(rec.botId));
     if (patch.text !== undefined) rec.lastWritten = patch.text;
     if (patch.state !== undefined) rec.postedState = patch.state;
@@ -1443,6 +1464,11 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       clearTimeout(rec.timer);
       rec.timer = null;
       await rec.chain.catch(() => {});
+      if (!mayFinish(rec)) {
+        if (rec.postId) await channels.edit({ channelId: rec.channelId, postId: rec.postId, state: 'stopped' }, botAuthor(rec.botId));
+        if (rec.itemIds.length) await inbox.remove(rec.itemIds);
+        return;
+      }
       const ok = outcome === 'ok';
       const state = ok ? 'done' : outcome === 'error' && !interrupted ? 'failed' : 'stopped';
       if (state === 'failed' && !rec.committed && rec.error && POST_KINDS.has(rec.kind)) {
@@ -1526,6 +1552,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * 休憩中・止めたスレッド・DM が引けないときは断る（お知らせは出さない）。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }
    */
   async function handoff({ botId, why = '', where = null, text, actSeq = null, taint = null } = {}) {
+    if (!await allowed()) return { woken: false, reason: 'botDisabled' };
     if (closed) return { ok: false, reason: 'closed' };
     const bot = await getBot(botId);
     if (!bot) return { ok: false, reason: 'no such bot' };
@@ -1556,6 +1583,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * 止めたスレッド・その bot の会話でなくなったものは断る。返りは { ok: true, sessionId, channelId, threadId } | { ok: false, reason }（resting・closed は待てば起こせる）
    */
   async function wakeReserved({ botId, sessionId, channelId, threadId = null, why = '', text, taint = null } = {}) {
+    if (!await allowed()) return { woken: false, reason: 'botDisabled' };
     if (closed) return { ok: false, reason: 'closed' };
     const bot = await getBot(botId);
     if (!bot) return { ok: false, reason: 'nobot' };
@@ -1587,6 +1615,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * 回数・使用量の上限は置かない（ADR 0357）
    */
   async function returnReply(rec, reply, woke) {
+    if (!await allowed()) return;
     if (closed || rec.stopped || !reply?.text?.trim()) return;
     const channel = await channels.get({ channelId: rec.channelId }).catch(() => null);
     if (!channel || channel.archivedAt) return;
@@ -1615,6 +1644,10 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const none = { woke: null, reply: null };
     const current = await channels.getPost({ channelId: rec.channelId, postId: rec.postId }).catch(() => null);
     if (!current || current.deletedAt) return none;
+    if (!mayFinish(rec)) {
+      await channels.edit({ channelId: rec.channelId, postId: rec.postId, state: 'stopped' }, botAuthor(rec.botId));
+      return none;
+    }
     const bodyByBot = rec.filled || (current.text !== PLACEHOLDER && current.text !== rec.lastWritten);
     // channels.post で明示的に書いた本文も残し、assistant の文章をその後ろに置く。
     if (rec.spoke && bodyByBot && text) text = postText(`${current.text}\n\n${text}`);

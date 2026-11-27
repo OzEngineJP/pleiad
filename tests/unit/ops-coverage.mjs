@@ -33,12 +33,13 @@ export default async function (t) {
 
   // ---- human-only は 5 つだけ（ADR 0094）
   const humanOnlyListed = Object.entries(baseline.commands).filter(([, k]) => k === 'human-only').map(([n]) => n).sort();
-  t.ok('human-only は 5 つ（承認モード・秘密の値・アカウント・接続先の既定・リモートのペアリング）で、除外表の human-only はその一覧とちょうど同じ',
+  t.ok('human-only は 5 つ（AI の稼働と承認・秘密の値・アカウント・接続先の既定・リモートのペアリング）で、除外表の human-only はその一覧とちょうど同じ',
     Object.keys(HUMAN_ONLY).join() === 'mode,secrets,accounts,endpointDefault,remotePairing' && JSON.stringify(humanOnlyListed) === JSON.stringify([...HUMAN_ONLY_COMMANDS].sort()), humanOnlyListed.join(' '));
   t.ok('5 つの一覧: アカウントの一覧（claudeAccounts）・端末の一覧（remoteDevices）・外に開く設定（setRemoteSettings）も human-only',
     ['claudeAccounts', 'remoteDevices', 'setRemoteSettings', 'compatEndpointDefault', 'mcpAuthStart', 'authLogin'].every((n) => baseline.commands[n] === 'human-only'));
-  t.ok('human-only の設定は承認モードの既定（mode）と既定のアカウント（claudeAccount）だけ',
-    registry.settings.filter((x) => x.risk === 'human-only').map((x) => x.key).sort().join() === [...HUMAN_ONLY_SETTINGS].sort().join() && HUMAN_ONLY_SETTINGS.size === 3);
+  t.ok('human-only の設定は承認モードの既定・bot の全体スイッチ・既定のアカウント',
+    registry.settings.filter((x) => x.risk === 'human-only').map((x) => x.key).sort().join() === [...HUMAN_ONLY_SETTINGS].sort().join()
+      && [...HUMAN_ONLY_SETTINGS].sort().join() === 'account,botEnabled,claudeAccount,mode');
   t.ok('実物の操作の human-only は、WS のコマンドを持たない承認モード・bot のアカウント・秘密の操作（bots.setMode・bots.setAccount（ADR 0224）・routines.rotateSecret・秘密情報と変数の secrets.save・secrets.import・secrets.answerRequest。ADR 0217）だけ（検査用の probe.* を除く）',
     registry.ops.filter((op) => op.risk === 'human-only' && !op.id.startsWith('probe.')).map((op) => op.id).sort().join() === [...HUMAN_ONLY_OPS].sort().join() && HUMAN_ONLY_OPS.size === 14 && HUMAN_ONLY.mode.ops.includes('bots.setMode')
       && HUMAN_ONLY.accounts.ops.includes('bots.setAccount'));

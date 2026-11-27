@@ -124,6 +124,7 @@ export default async function (t) {
     t.ok('終了の確認に送信予定の件数と次の時刻が載る', running.scheduled.send === 2 && Number.isFinite(running.scheduled.nextSendAt) && running.scheduled.held === 0, JSON.stringify(running.scheduled));
 
     // ---- スレッドへの返信の予定（channels.schedulePost。kind 'post'。ADR 0157）と、clientId で二重に投稿しない
+    await op('settings.set', { key: 'botEnabled', value: true });
     const ch = await op('channels.create', { name: 'sched-post' });
     const root = await op('channels.post', { channelId: ch.id, text: '根' });
     const once = await op('channels.post', { channelId: ch.id, threadId: root.id, text: '一度だけ', clientId: 'client-0000001' });
@@ -143,6 +144,18 @@ export default async function (t) {
     await op('channels.schedulePost', { channelId: ch.id, threadId: root.id, text: '今すぐの返信', at: Date.now() + 5 * HOUR, clientId: 'client-0000004' });
     await op('sessions.sendScheduledNow', { id: 'post:client-0000004' });
     t.ok('返信の予定も「今すぐ送る」で投稿できる', (await replies()).some((p) => p.text === '今すぐの返信'));
+
+    const skipped = await op('channels.schedulePost', {
+      channelId: ch.id, threadId: root.id, text: '停止中に時刻が来た返信', at: Date.now() + 1500, clientId: 'client-0000005',
+    });
+    await op('settings.set', { key: 'botEnabled', value: false });
+    const isHeld = async () => (await op('sessions.schedules', {})).some(row => row.id === skipped.id && row.held === 'botDisabled');
+    t.ok('bot がオフの間に時刻が来た返信は保留する', await until(isHeld));
+    c.close(); await server.stop();
+    server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
+    c = await open({ port: server.port, token: server.token });
+    await op('settings.set', { key: 'botEnabled', value: true });
+    t.ok('再起動してオンに戻しても保留した返信を送らない', await isHeld() && !(await replies()).some(p => p.text === '停止中に時刻が来た返信'));
   } finally {
     c.close(); await server.stop();
     if (path.resolve(scratch).startsWith(path.resolve(os.tmpdir()) + path.sep)) await fs.rm(scratch, { recursive: true, force: true });

@@ -79,6 +79,7 @@ export default async function (t) {
   try {
     await setClock(time + 30_000);
     await boot();
+    await call('settings.set', { key: 'botEnabled', value: true });
     const owl = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const channel = await call('channels.create', { name: 'updates', members: [owl.id] });
     const read = threadId => call('channels.read', { channelId: channel.id, ...(threadId ? { threadId } : {}) });

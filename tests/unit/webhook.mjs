@@ -115,6 +115,7 @@ export default async function (t) {
     app = await startServer({ dataDir: path.join(dir, 'app'), env: { AGENT_HOST_BACKENDS: 'fake' } });
     client = await open({ port: app.port, token: app.token });
     const call = (op, args) => client.cmd('invoke', { op, args });
+    await call('settings.set', { key: 'botEnabled', value: true });
     const bot = await call('bots.create', { name: 'Owl', icon: '🦉', backend: 'fake' });
     const channel = await call('channels.create', { name: 'webhooks' });
     const routine = await call('routines.create', { name: 'echo:webhook', prompt: 'Summarize the data.', botId: bot.id, channelId: channel.id, trigger: { kind: 'webhook' } });

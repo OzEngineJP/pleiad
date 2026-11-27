@@ -403,6 +403,12 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .mem-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .mem-bots{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:var(--fs-s);color:var(--ink-weak)}
 .mem-bots[hidden]{display:none}
+#memoryHeading{margin-top:24px}
+#memoryOptions[hidden],#botEnableSaved:empty,#botEnableError:empty{display:none}
+.bot-enable-dialog{width:min(322px,calc(100vw - 32px));padding:var(--sp-5);border:0;border-radius:var(--r-l);background:var(--surface-paper);color:var(--ink)}
+.bot-enable-dialog::backdrop{background:var(--surface-veil)}
+.bot-enable-dialog h2{margin:0;font-size:var(--fs-l)}
+@media (max-width:480px){.bot-enable-dialog{padding:var(--sp-4)}}
 .mem-bot-list{display:contents}
 .mem-bot{display:inline-flex;align-items:center;gap:6px;min-height:var(--hit,30px);padding:0 10px 0 6px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink);font:600 var(--fs-s)/1 var(--font);cursor:pointer}
 .mem-bot:hover{background:var(--surface-3)}

@@ -1,7 +1,7 @@
 // Durable acceptance is separate from execution. A lost backend acknowledgement
 // is never retried automatically: the original may already have been consumed.
 import { t } from './i18n.mjs';
-export function createMessageQueue({ store, active, start, changed, delivered, applyReserved = null, prepare = null }) {
+export function createMessageQueue({ store, active, start, changed, delivered, applyReserved = null, prepare = null, discard = null }) {
   const locks = new Map();
   const workers = new Map();
   const steering = new Map();
@@ -47,6 +47,10 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
       if (!item || item.status !== 'queued') {
         // 先頭が保留・失敗・結果不明なら、後ろの送信待ちは順序を守ってそれを待つ
         return setWait(id, items.some(m => m.status === 'queued') ? { reason: 'order' } : null);
+      }
+      if (discard && await discard(id, item)) {
+        await update(id, item.id, { status: 'cancelled' }, 'queued');
+        continue;
       }
       let turn = await active(id, item);
       if (turn?.blocked) return setWait(id, turn.wait ?? { reason: 'turn' });
@@ -94,6 +98,10 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
       if (turn) {
         const delivery = (async () => {
           try {
+            if (discard && await discard(id, item)) {
+              await update(id, item.id, { status: 'cancelled' }, 'sending');
+              return true;
+            }
             const accepted = await turn.steer(item);
             if (!accepted) {
               waits.set(id, { reason: 'turn' });
@@ -115,6 +123,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
         let ready;
         const started = new Promise(resolve => { ready = resolve; });
         let accepted = false;
+        let discarded = false;
         const task = Promise.resolve().then(() => start({ ...args, sessionId: id, messageId: item.id, at: item.at }, async () => {
           waits.delete(id);
           const patch = starting ? { status: 'sending', dispatch: 'initial' } : { status: 'sent' };
@@ -124,6 +133,10 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
           return true;
         }));
         task.then(outcome => {
+          if (outcome === 'discarded') {
+            discarded = true;
+            return update(id, item.id, { status: 'cancelled' }, starting ? 'queued' : 'sending');
+          }
           // Nothing was delivered (the agent was busy with a turn Pleiad did not start).
           // Back to the queue; that turn's end kicks the queue again.
           if (outcome === 'requeue') {
@@ -139,7 +152,7 @@ export function createMessageQueue({ store, active, start, changed, delivered, a
           connectorsError: e?.connectorsError ?? null,
         }, accepted && !starting ? 'sent' : starting && !accepted ? 'queued' : 'sending')).finally(() => {
           ready();
-          if (accepted) kick(id).catch(() => {});
+          if (accepted || discarded) kick(id).catch(() => {});
         }).catch(() => {});
         await started;
         return;

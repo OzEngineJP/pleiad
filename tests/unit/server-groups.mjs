@@ -73,6 +73,7 @@ export default async function (t) {
 
     // ---- チャンネルのスレッドの状態も同じ器に数える（脇の「状態」の並べ方。channels.setThreadStatus） ----
     const invoke = (op, args = {}) => c.cmd("invoke", { op, args });
+    await invoke("settings.set", { key: "botEnabled", value: true });
     const ch = await invoke("channels.create", { name: "groups-thread" });
     const rootPost = await invoke("channels.post", { channelId: ch.id, text: "根" });
     await invoke("channels.post", { channelId: ch.id, threadId: rootPost.id, text: "返信" });

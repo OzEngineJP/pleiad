@@ -262,7 +262,8 @@ export function createSidebar(host, getTabs) {
   routineStore.subscribe(() => paintRoutines());
 
   // ---------------------------------------------------------------- チャンネルを作る（＋ → その場の名前の欄）
-  function startCreate() {
+  async function startCreate() {
+    if (host.botEnablement && !await host.botEnablement.request(chan.label)) return;
     S.creating = true;
     S.createError = '';
     paintCreate();
@@ -372,11 +373,28 @@ export function createSidebar(host, getTabs) {
 
   // bot の面で、まだ何も開いていない: 最初の bot の DM、bot が 0 なら初めての bot の段（ADR 0362）
   let wantDefault = false;
-  function openDefault() {
+  async function openDefault({ refresh = false } = {}) {
+    if (refresh) await load();
     if (!S.loaded) { wantDefault = true; return; }
     wantDefault = false;
     const first = S.bots.find((b) => !b.plain);
-    navigate(!first ? { kind: 'bot', id: 'new' } : first.dmChannelId ? { kind: 'channel', id: first.dmChannelId } : { kind: 'bot', id: first.id });
+    const channel = S.channels.find(c => c.kind === 'channel' && !c.home && !c.archivedAt)
+      ?? S.channels.find(c => c.kind === 'channel' && !c.home);
+    navigate(first?.dmChannelId ? { kind: 'channel', id: first.dmChannelId }
+      : channel ? { kind: 'channel', id: channel.id }
+        : first ? { kind: 'bot', id: first.id } : { kind: 'bot', id: 'new' });
+  }
+
+  async function validView(view) {
+    if (!view || view.id === 'new') return false;
+    try {
+      if (view.kind === 'bot') return Boolean(await host.invoke('bots.get', { botId: view.id }));
+      if (view.kind === 'routine') return Boolean(await host.invoke('routines.get', { routineId: view.id }));
+      if (view.kind !== 'channel' || !await host.invoke('channels.get', { channelId: view.id })) return false;
+      if (!view.threadId) return true;
+      const thread = await host.invoke('channels.read', { channelId: view.id, threadId: view.threadId, limit: 1 });
+      return Boolean(thread?.posts?.length);
+    } catch { return false; }
   }
 
   const RELOAD_ON = new Set(['channelsChanged', 'channelPost', 'channelRead', 'channelThread', 'botsChanged']);
@@ -389,7 +407,7 @@ export function createSidebar(host, getTabs) {
     hide() { S.view = null; paint(); },
     sideTabChanged(tab) { side?.setFace?.(tab); paintDots(); if (S.stale) load(); },
     /** bot の面へ切り替えたが、その面で開いたものが無い（web/channels/index.mjs） */
-    openDefault,
+    openDefault, validView,
     /** ルーティンの見出しを開く（閉じたレールの時計から。中身は次の描き直しで出る） */
     openRoutines() { setRoutinesOpen(true); },
   };

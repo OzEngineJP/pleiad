@@ -275,6 +275,18 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         return { ...shown(channel), unread, mentions, threadsWorking: threads.filter((t) => t.channelId === channel.id && t.state === 'working').length };
       }));
     },
+    async hasBotHistory(builtInIds) {
+      const channels = await store.channels();
+      if (channels.some(channel => channel.kind === 'channel' && !channel.home)) return true;
+      const builtIn = new Set(builtInIds);
+      const isUserBot = (id) => id && !builtIn.has(id) && !['you', 'here', 'everyone'].includes(id);
+      for (const channel of channels.filter(channel => channel.home)) {
+        const posts = await store.snapshot(channel.id);
+        if (posts.some(post => isUserBot(post.turn?.botId) || isUserBot(post.author?.botId) ||
+          isUserBot(post.to) || post.mentions?.some(isUserBot))) return true;
+      }
+      return false;
+    },
     get: async ({ channelId }) => shown(await need(channelId)),
     async getPost({ channelId, postId }) {
       await need(channelId);
@@ -390,11 +402,13 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
 
     async create({ name, purpose = '', cwd = null, members = [] }, _author) {
+      await hooks.requireEnabled?.();
       const n = normalizeChannelName(name);
       if (typeof purpose !== 'string' || purpose.length > LIMITS.purpose) throw invalid(`purpose is longer than ${LIMITS.purpose} characters`);
       const ids = validateMembers(members);
       await checkMembers(ids);
       await checkNameFree(n);
+      await hooks.requireEnabled?.();
       const t = now();
       return saveChannel({ id: newId('channel', t), kind: 'channel', name: n, purpose, cwd: checkCwd(cwd), members: ids, memo: '', createdAt: t, lastPostAt: t });
     },
@@ -432,6 +446,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     },
 
     async post({ channelId, threadId = null, text, new: forceNew = false, state, presents, attachments, turn, taint, routine, mentions, hold, origin, bySession, to, clientId, failure }, author) {
+      await hooks.requirePost?.({ turn }, author);
       if (!isAuthor(author)) throw invalid('author is invalid');
       const channel = await need(channelId);
       if (channel.archivedAt) throw new ChannelError('CHANNEL_ARCHIVED', { id: channel.id });
@@ -454,6 +469,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         if (root.threadId !== null) throw invalid('threadId must be the id of a post in the channel flow (a thread root)');
       }
       const resolved = mentions ?? await resolveMentions(text, author);
+      await hooks.requirePost?.({ turn }, author);
 
       // bot がターンの中で書く: 返事をターンの投稿に入れるかは、その会話のターンを持つ dispatch が決める（最初の 1 件だけ。ADR 0117）。
       // hook が決めないときも、投稿元の会話が分かれば別の会話の作業中の投稿には触れない
@@ -476,6 +492,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       // 一時チャットで宛先に選んだ bot は、メンバーに足す（@ の候補・流れの頭の並びに出る）
       if (channel.home && to && !(channel.members ?? []).includes(to)) {
         if (!(await bots()).some((b) => b.id === to)) throw invalid('to must be a bot id');
+        await hooks.requirePost?.({ turn }, author);
         await patchChannel(channelId, (c) => ({ ...c, members: [...(c.members ?? []), to] }));
       }
       const post = {
@@ -484,6 +501,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
         ...(files.length ? { attachments: files } : {}), reactions: {}, ...(taint ? { taint } : {}), ...(routine ? { routine: clone(routine) } : {}), proxy: null,
         ...(to ? { to } : {}), ...(clientId ? { clientId } : {}),
       };
+      await hooks.requirePost?.({ turn }, author);
       const saved = await store.append(channelId, { op: 'post', post });
       const updated = await store.updateChannel(channelId, (c) => ({ ...c, lastPostAt: Math.max(c.lastPostAt ?? 0, at) })) ?? channel;
       emit({ type: 'channelPost', channelId, op: 'add', post: saved });
@@ -580,6 +598,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const post = await needPost(channelId, postId);
       if (post.deletedAt) throw new ChannelError('POST_NOT_FOUND', { id: String(postId) });
       if (on && !post.reactions[emoji] && Object.keys(post.reactions).length >= LIMITS.reactionKinds) throw invalid(`a post can have at most ${LIMITS.reactionKinds} kinds of reactions`);
+      await hooks.requireEnabled?.();
       const saved = await store.append(channelId, { op: 'react', id: postId, emoji, by: clone(author), on: Boolean(on), at: now() });
       emit({ type: 'channelReaction', channelId, postId, reactions: saved.reactions });
       if (saved.author?.kind === 'bot') {

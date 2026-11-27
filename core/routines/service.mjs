@@ -70,10 +70,13 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
   const secrets = createSecretStore({ file: path.join(dataDir ?? '', 'webhook-secrets.json'), cipher: defaultCipher() });
   const timers = new Map();       // routineId → { handle, at }
   let closed = true;
+  let retryStart;
   const locale = () => host?.currentLocale?.() ?? 'ja';
 
-  const baselineOf = (r) => Math.max(r.armedAt ?? r.createdAt ?? 0, r.last?.at ?? 0);
-  const withNext = (r) => ({ ...r, nextAt: r.paused || !isTimed(r.trigger) ? null : nextFireAt(r.trigger, baselineOf(r)) });
+  const gate = host?.botEnablement;
+  const enabled = () => gate?.enabled() ?? true;
+  const baselineOf = (r) => Math.max(r.armedAt ?? r.createdAt ?? 0, r.last?.at ?? 0, gate?.since() ?? 0);
+  const withNext = (r) => ({ ...r, nextAt: !enabled() || r.paused || !isTimed(r.trigger) ? null : nextFireAt(r.trigger, baselineOf(r)) });
   const send = (event) => { try { emit(event); } catch (e) { log('emit failed:', errText(e)); } };
   const changed = (r) => send({ type: 'routinesChanged', routine: withNext(r) });
 
@@ -145,7 +148,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
 
   function arm(routineId) {
     disarm(routineId);
-    if (closed) return;
+    if (closed || !enabled()) return;
     const r = store.get(routineId);
     if (!r || r.paused || !isTimed(r.trigger)) return;
     const at = nextFireAt(r.trigger, baselineOf(r));
@@ -156,12 +159,12 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
   }
 
   function onTimer(routineId, at) {
-    if (closed) return;
+    if (closed || !enabled() || at < (gate?.since() ?? 0)) return;
     const r = store.get(routineId);
     if (!r || r.paused || !isTimed(r.trigger)) return;
     if (clk.now() < at) { arm(routineId); return; }    // 長い待ちの途中・時計のずれ。もう一度予約する
     store.update(routineId, (cur) => ({ ...cur, armedAt: clk.now() }))
-      .then((cur) => { arm(routineId); changed(cur); return runner.run(cur, { source: 'schedule' }); })
+      .then((cur) => { arm(routineId); changed(cur); if (at >= (gate?.since() ?? 0)) return runner.run(cur, { source: 'schedule' }); })
       .catch((e) => log(`could not run ${r.name}:`, errText(e)));
   }
 
@@ -186,6 +189,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
   }
 
   async function planCreate(input = {}) {
+    await gate?.requireEnabled();
     const bot = await needBot(input.botId);
     const mode = await resolveMode(bot, input.mode);
     const entry = modesOf(bot)?.[mode];
@@ -247,9 +251,10 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
   // ------------------------------------------------------------ イベント
 
   async function fireEvent(on, sessionId) {
-    if (closed || !sessionId) return;
+    if (closed || !sessionId || !await (gate?.allowed() ?? true)) return;
+    const generation = gate?.generation();
     const meta = await host?.store?.get?.(sessionId).catch(() => null);
-    if (!meta || meta.delegation || fromBotSide(meta.bot)) return;
+    if (!meta || meta.delegation || fromBotSide(meta.bot) || generation !== gate?.generation()) return;
     for (const r of matchingRoutines(store.list(), { on, sessionId })) {
       runner.run(r, { source: 'event', note: eventNote(on, meta.title) }).catch((e) => log(`could not run ${r.name}:`, errText(e)));
     }
@@ -277,6 +282,16 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
       closed = false;
       runner.open();
       if (!await service.recover()) return;
+      try { await gate?.load(); }
+      catch {
+        if (!closed) retryStart = clk.setTimer(() => {
+          retryStart = null;
+          if (!closed) void service.start();
+        }, 5000);
+        return;
+      }
+      if (closed || !enabled()) return;
+      const generation = gate?.generation();
       const missed = [];
       for (const r of store.list()) {
         if (r.paused || !isTimed(r.trigger)) continue;
@@ -288,14 +303,20 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
         try {
           const cur = await store.update(id, (r) => ({ ...r, armedAt: clk.now() }));
           arm(id);
-          runner.run(cur, { source: 'missed', missed: true }).catch((e) => log(`could not run ${cur.name} (missed):`, errText(e)));
+          if (generation === gate?.generation()) runner.run(cur, { source: 'missed', missed: true }).catch((e) => log(`could not run ${cur.name} (missed):`, errText(e)));
         } catch (e) { log('could not start a missed routine:', errText(e)); }
       }
       for (const r of store.list()) if (!timers.has(r.id)) arm(r.id);
     },
 
+    rearm() {
+      for (const r of store.list()) { arm(r.id); changed(r); }
+    },
+
     stop() {
       closed = true;
+      if (retryStart != null) clk.clearTimer(retryStart);
+      retryStart = null;
       for (const id of [...timers.keys()]) disarm(id);
       runner.stop();
     },
@@ -307,6 +328,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
     planUpdate,
 
     async create(input, author) {
+      await gate?.requireEnabled();
       const name = String(input?.name ?? '');
       const problem = nameProblem(name) ?? promptProblem(input?.prompt) ?? (input?.approvalTimeoutMin === undefined ? null : timeoutProblem(input.approvalTimeoutMin));
       if (problem) throw invalid(problem);
@@ -315,6 +337,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
       const channel = await needChannel(input?.channelId);
       const mode = await resolveMode(bot, input?.mode);
       const t = clk.now();
+      await gate?.requireEnabled();
       const routine = await store.put({
         id: newId('routine', t), name: name.trim(), botId: bot.id, channelId: channel.id, prompt: input.prompt, trigger, mode,
         approvalTimeoutMin: input.approvalTimeoutMin ?? APPROVAL_TIMEOUT_DEFAULT_MIN, paused: input.paused === true,
@@ -365,6 +388,7 @@ export function createRoutineService({ dataDir, channels, bots, dispatch, host, 
     },
 
     async run({ routineId, dryRun = false }, _author) {
+      await gate?.requireEnabled();
       const r = need(routineId);
       if (dryRun) {
         try { return { postId: null, ...(await runner.dryRun(r)), dryRun: true }; }

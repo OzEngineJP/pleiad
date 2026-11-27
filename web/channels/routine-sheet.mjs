@@ -637,6 +637,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
 
   async function save() {
     if (busy || !valid()) return;
+    if (!D.id && host.botEnablement && !await host.botEnablement.request(saveBtn)) return;
     setBusy(true);
     try {
       const wasTrial = tempCreated;
@@ -662,6 +663,7 @@ function buildSheet({ host, store, routine, bots, channels, channelId, botId, do
 
   async function tryRun() {
     if (busy || !valid()) return;
+    if (host.botEnablement && !await host.botEnablement.request(document.activeElement)) return;
     setBusy(true);
     tried = true;
     res.replaceChildren(runMark(t('channels:feed.state.working')), document.createTextNode(t('channels:routines.try.running')));

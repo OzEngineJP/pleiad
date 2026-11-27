@@ -238,6 +238,7 @@ export default async function (t) {
     t.ok('ply_task_send: アカウントの一覧にないモデルへの変更も予約できる', true);
 
     // 5. bot（bots.create / bots.setAccount / bots.update）のサーバー経路
+    await c.cmd('invoke', { op: 'settings.set', args: { key: 'botEnabled', value: true } });
     const b = await c.cmd('invoke', { op: 'bots.create', args: { name: 'MythosBot', backend: 'claude' } });
     await c.cmd('invoke', { op: 'bots.setAccount', args: { botId: b.id, account: plainId } });
     let plainBotRejected = false;
