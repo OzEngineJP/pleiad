@@ -1,7 +1,17 @@
-import { behindOfTasks, liveTasksOf } from '../../web/work-status.mjs';
+import { behindOfTasks, liveTasksOf, threadActivity } from '../../web/work-status.mjs';
 export const name = 'work-status';
 export const title = '端末の待ち受けをAIの結果待ちとして表示しない';
 export default function (t) {
+  const thread = { sessions: { a: 'reply', b: 'child', c: 'child' } };
+  const work = { runningIds: new Set(['reply']), waitingIds: new Set(['child']), bgWaiting: new Map([['child', 2]]) };
+  const active = threadActivity(thread, work);
+  t.ok('複数の bot の会話を照合し、同じ会話の子は一度だけ数える', active.running && active.waiting && active.behind === 2);
+  work.runningIds.clear();
+  work.waitingIds.clear();
+  const behind = threadActivity(thread, work);
+  t.ok('応答が終わっても子が動いていると件数を残す', !behind.running && !behind.waiting && behind.behind === 2);
+  work.bgWaiting.clear();
+  t.ok('子が終わると印の件数が消える', !threadActivity(thread, work).behind);
   const terminal = { kind: 'terminal' }, agent = { kind: 'agent' };
   t.ok('端末だけなら衛星と作業時間を出さない', behindOfTasks([terminal]) === null);
   t.ok('端末とシェルだけでも完了扱い', behindOfTasks([terminal, { kind: 'shell' }]) === null);

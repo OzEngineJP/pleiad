@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
 import { createSide } from '../../web/side.mjs';
+import { threadActivity } from '../../web/work-status.mjs';
 import { sessionTitle } from '../../core/bots/sessions.mjs';
 
 export const name = 'side-thread-status';
@@ -272,7 +273,7 @@ export default async function (t) {
       Promise, setTimeout,
     });
     vm.runInContext(cut('const threadOfRow =', '\n\nconst side = createSide'), context);
-    vm.runInContext(cut('function setThreadStatusOf', '\n\n/** スレッドの行のメニュー'), context);
+    vm.runInContext(cut('function setThreadStatusOf', '\n\nfunction organizeThreads'), context);
     let code = cut('onSetStatus: (id, status)', 'onSetIcon:');
     code = code.slice(code.indexOf(':') + 1).trim().replace(/,\s*$/, '');
     const onSetStatus = vm.runInContext(`(${code})`, context);
@@ -341,6 +342,7 @@ export default async function (t) {
     const shown = [];
     const context = vm.createContext({
       side: { statusChoices: () => ['A', '残した器'] },
+      threadActivity, state: {},
       showMenu: (x, y, items) => shown.push(items),
       viewAddress: { go: () => {} }, threadCwd: () => null, copy: () => {}, setThreadStatusOf: () => {},
       t: (key) => key,

@@ -57,33 +57,88 @@
 .botsec-head.sel{background:var(--surface-paper);border-radius:var(--r-m)}
 
 /* ---- 置き場所の木（一時チャットの状態の見出し・チャンネルの最近のスレッド） */
-.grp.chsec:not(.collapsed):not(.no-threads){margin-bottom:10px}
-.grp.chsec > .grp-head{min-height:30px;padding-bottom:2px}
-.chsec .grp .grp-head{padding-left:0}
-.chsec > .rows{gap:6px}
-.chsec > .rows > .grp > .grp-head{min-height:26px;padding-bottom:2px}
 .row-status{flex:none;display:inline-grid;place-items:center;width:14px;color:var(--ink-weak);font-size:var(--fs-xs)}
 .row-status .i{width:14px;height:14px}
-.chsec-head{gap:6px}
-.chsec-chev{display:inline-grid;place-items:center;width:16px;height:18px;padding:0;background:transparent;cursor:pointer;flex:none}
-.chsec-chev .fam-chev{margin:0;transform:rotate(90deg)}
-.chsec.collapsed .chsec-chev .fam-chev{transform:none}
 .chsec-ic{flex:none;width:14px;display:inline-grid;place-items:center;color:var(--ink-weak)}
 .chsec-ic .i{width:14px;height:14px}
-.chsec-name{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chsec-name.unread{font-weight:700;color:var(--ink-strong)}
-.chsec-head .mc{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);font:600 var(--fs-xs)/18px var(--font-mono);text-align:center;color:var(--ink-strong)}
 #groups .row.one{display:flex;align-items:center;gap:7px;padding-top:6px;padding-bottom:6px;font-size:13px;contain-intrinsic-size:auto 32px}
 #groups .row.one .one-mark{flex:none;width:12px;display:inline-grid;place-items:center}
 #groups .row.one .row-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #groups .row.one .row-when{flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
 #groups .row.one .av.xs{flex:none}
 
+/* チャンネルの全行で面と右の列を共有する。 */
+#groups .thread-channel{--thread-height:32px;--thread-menu:24px;--thread-time:38px;--thread-mark:22px;--thread-indent:10px;margin-inline:-2px}
+#groups .thread-channel > .rows,#groups .channel-thread-folder > .rows{padding:0;gap:2px}
+#groups .thread-channel:not(.collapsed){margin-bottom:8px}
+#groups .thread-channel > .rows,#groups .channel-thread-folder:not(.collapsed) > .rows{margin-top:2px}
+#groups .channel-archive-head{margin-top:6px}
+#groups .thread-channel :is(.channel-thread-face,.row.one.channel-thread-row){
+  display:grid;grid-template-columns:var(--thread-glyph,) minmax(0,1fr) var(--thread-mark) var(--thread-time) var(--thread-menu);
+  align-items:center;column-gap:4px;position:relative;box-sizing:border-box;min-height:0;height:var(--thread-height);
+  padding:0 8px 0 calc(8px + var(--thread-depth,0px));border-radius:var(--r-s);color:var(--ink);
+  font-size:var(--thread-font,12px);font-weight:400;content-visibility:visible;
+}
+#groups .thread-channel .channel-thread-face{--thread-glyph:14px;--thread-font:14px}
+#groups .thread-channel .chsec-head{--thread-font:15px}
+#groups .thread-channel .channel-folder-head{--thread-depth:var(--thread-indent);cursor:pointer}
+#groups .thread-channel .channel-thread-row{--thread-depth:calc(18px + var(--thread-indent))}
+#groups .thread-channel .channel-thread-row[data-folder-depth="1"]{--thread-depth:calc(18px + var(--thread-indent) * 2)}
+#groups .channel-thread-face .grp-name{font:inherit;padding:0}
+#groups .thread-channel .chsec-head .grp-name{font-weight:680}
+#groups .thread-channel .channel-archive-head .grp-name{color:var(--ink-weak)}
+#groups .thread-channel [data-thread-copy]{z-index:2;pointer-events:none;margin:0}
+@media (hover:hover){
+  #groups .thread-channel :is(.channel-thread-face,.channel-thread-row):hover{background:var(--surface-hover)}
+}
+#groups .thread-channel :is(.sel,.dragging,[data-thread-drop="inside"],[data-thread-drop="rejected"]){background:var(--surface-paper)}
+#groups .thread-channel .row-when{text-align:right;white-space:nowrap;font:var(--fs-xs) var(--font);color:var(--ink-weak)}
+#groups .thread-channel :is(.channel-thread-mark,.row.one .one-mark){display:flex;align-items:center;justify-content:center;width:100%;gap:2px}
+#groups .thread-channel .row-more{width:var(--thread-menu);height:var(--thread-height);min-width:0;margin:0;visibility:hidden}
+#groups .thread-channel :is(:hover,:focus-within,.sel,.is-active) > .row-more,
+#groups .thread-channel .row-more[aria-expanded="true"]{visibility:visible}
+.thread-channel .chsec-chev{display:inline-grid;place-items:center;width:14px;height:100%;padding:0;background:transparent;cursor:pointer;color:var(--ink-weak)}
+.thread-channel .chsec-chev > *{grid-area:1/1;transition:opacity 120ms cubic-bezier(.2,.7,.2,1),transform 240ms cubic-bezier(.2,.7,.2,1)}
+.thread-channel .chsec-chev .fam-chev{margin:0;opacity:0;transform:rotate(90deg)}
+.thread-channel .chsec-head[aria-expanded="false"] .chsec-chev .fam-chev{transform:none}
+.thread-channel .chsec-head:is(:hover,:focus-within,.is-active) .fam-chev{opacity:1}
+.thread-channel .chsec-head:is(:hover,:focus-within,.is-active) .chsec-ic{opacity:0}
+.thread-channel .chsec-chev .fam-chev,.thread-channel .chsec-chev .chsec-ic{pointer-events:none}
+.channel-folder-icon{width:16px;height:16px;overflow:visible;fill:none;stroke:currentColor;color:var(--ink-weak)}
+.channel-folder-icon .paper-back{fill:var(--surface-3)}
+.channel-folder-icon .paper-front{fill:var(--surface-0);transform-origin:50% 84%}
+.channel-folder-icon .paper-slip{fill:var(--surface-paper);opacity:0;transform:translateY(3px)}
+.channel-folder-icon :is(.paper-front,.paper-slip,.archive-lid){transition:transform 160ms cubic-bezier(.2,.7,.2,1),opacity 160ms cubic-bezier(.2,.7,.2,1)}
+.channel-folder-head:is([aria-expanded="true"],[data-thread-drop="inside"]) .paper-slip{opacity:1;transform:translateY(-2px)}
+.channel-folder-head:is([aria-expanded="true"],[data-thread-drop="inside"]) .paper-front{transform:scaleY(.72) skewX(-7deg)}
+.channel-archive-head:is([aria-expanded="true"],[data-thread-drop="inside"]) .archive-lid{transform:translateY(-2px)}
+.thread-channel [data-thread-drop="rejected"]{cursor:not-allowed;background-image:repeating-linear-gradient(135deg,transparent 0 5px,var(--surface-3) 5px 7px)}
+.thread-channel :is([data-thread-drop="before"],[data-thread-drop="after"])::after{
+  content:"";position:absolute;inset-inline:8px;height:2px;border-radius:1px;background:linear-gradient(var(--line-blue),var(--line-blue));
+  pointer-events:none;transform-origin:left;animation:thread-insert 120ms cubic-bezier(.2,.7,.2,1);
+}
+.thread-channel [data-thread-drop="before"]::after{top:0}
+.thread-channel [data-thread-drop="after"]::after{bottom:0}
+@keyframes thread-insert{from{transform:scaleX(.2)}}
+@media (max-width:700px),(pointer:coarse){
+  #groups .thread-channel{--thread-height:44px;--thread-menu:44px}
+  #groups .thread-channel .channel-thread-face{--thread-font:15px}
+  #groups .thread-channel .chsec-head{--thread-font:17px}
+  #groups .thread-channel .channel-thread-row{--thread-font:14px}
+}
+@media (hover:none){
+  .chsec-head .chsec-chev .fam-chev{opacity:1}
+  .chsec-head .chsec-chev .chsec-ic{opacity:0}
+  #groups .thread-channel .row-more{visibility:visible}
+}
+@media (prefers-reduced-motion:reduce){
+  #groups .thread-channel :is(.channel-thread-face,.channel-thread-row,.channel-folder-icon *, .chsec-chev > *){transition:none}
+  #groups .thread-channel [data-thread-drop]::after{animation:none}
+}
+
 /* ---- ルーティンの見出しと「チャンネル ＋」の置き場（#channelsSide）。節は #groups の木に入るので、置き場そのものは出さない */
 .channels-side{display:none}
 .cs-sec .empty{padding:4px 10px}
-/* スレッドの無いチャンネル・まだ無いルーティンは開くものが無いので、畳む印を出さない（場所だけ残して名前の頭を揃える） */
-.chsec.no-threads .chsec-chev{visibility:hidden}
 /* 見出しの ＋ のうち、触れなくても見せるもの（一時チャットの「新しいチャット」） */
 .grp-add.always{opacity:1}
 
