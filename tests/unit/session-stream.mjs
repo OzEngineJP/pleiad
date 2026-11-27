@@ -230,7 +230,8 @@ export default async function (t) {
     sessionSearch: { ingest: () => true },
     reply: (ok, data) => data, streamSequence: 3,
   });
-  const loading = vm.runInContext(`(async () => { ${loadCase} })()`, serverContext);
+  const placeBotStartFailures = cutFunction(serverSource, "placeBotStartFailures");
+  const loading = vm.runInContext(`${placeBotStartFailures}\n(async () => { ${loadCase} })()`, serverContext);
   await new Promise(setImmediate);
   turn.stream.events.push(event("末尾", 2), { type: "turnEnd", sessionId: "target", streamSeq: 3 });
   turns.delete("target");
