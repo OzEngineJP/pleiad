@@ -1,4 +1,5 @@
 import { dismissPopup } from './dismiss-popup.mjs';
+import { createTodoTabs } from './session-todo-tabs.mjs';
 // 会話の ToDo のパネル（承認済み 2026-11-19。モック temporary/mockups/session-todo.html の createTodo・createFrame を移したもの。ADR 0342）。
 // - 頭の ToDo の入口（PC）・⋮ のメニュー（700px 以下）から開く。PC は浮く面、狭い画面は下からのシート。大きく表示できる
 // - 普段は見るだけ（完了の印は押せない）。鉛筆で編集の状態へ入り、「編集を終了」か Esc で戻る
@@ -143,11 +144,26 @@ export function createSessionTodo(o) {
   const addInput = el('input', 'field');
   addInput.type = 'text'; addInput.placeholder = t('todo.add'); addInput.setAttribute('aria-label', t('todo.add')); addInput.autocomplete = 'off';
   addForm.append(addInput); addClip.append(addForm); addWrap.append(addClip);
-  root.append(grab, head, stage, addWrap);
+  const nativeStatus = el('p', 'td-tab-state td-native-status');
+  nativeStatus.setAttribute('role', 'status');
+  nativeStatus.hidden = true;
+  stage.prepend(nativeStatus);
+  const invoke = async (op, args = {}) => {
+    const response = await o.cmd('invoke', { op, args });
+    return response?.result ?? response;
+  };
+  const tabs = createTodoTabs({ invoke, stage, addWrap, showNative,
+    openLink: o.openLink, login: () => o.cmd('plusLogin') });
+  root.append(grab, head, tabs.bar, tabs.panel, tabs.chooser);
   root.dataset.mode = 'view';
 
   /* ---- 状態 ---- */
   const S = { session: null, rev: -1, items: [], flow: false, view: 'auto', expand: false, L: null, loading: 0 };
+  let conversationId = null, conversationRev = -1, conversationStats = { done: 0, n: 0 }, boardActive = false;
+  const listScope = key => key?.startsWith('list:');
+  const nativeCall = (verb, key, args = {}) => listScope(key)
+    ? invoke(`todoLists.${verb}`, { listId: key.slice(5), ...args })
+    : invoke(`todos.${verb}`, { sessionId: key, ...args });
   const badges = new Map();       // id → { text, backend }（AI が変えた印。パネルを閉じるまで）
   const unseen = new Set();       // 閉じている間に AI が変えた id（開いたときに光らせる）
   /**
@@ -589,12 +605,13 @@ export function createSessionTodo(o) {
     const lab = t('todo.links.count', { n });
     p.badge.title = lab; p.badge.setAttribute('aria-label', lab);
   }
-  function stats() { return { done: S.items.filter((i) => i.status === 'done').length, n: S.items.length }; }
+  function stats(items = S.items) { return { done: items.filter((i) => i.status === 'done').length, n: items.length }; }
+  const entryUnseen = () => S.session === conversationId ? unseen.size : kept.get(conversationId)?.unseen.size ?? 0;
   function entryLabel() {
-    const st = stats();
+    const st = conversationStats;
     const base = st.n ? t('todo.entryCount', { done: st.done, total: st.n }) : t('todo.entry');
     // 点だけでは読み上げに伝わらない。閉じている間の AI の変更は名前にも足す
-    return unseen.size && !isOpen ? `${base} · ${t('todo.unseen')}` : base;
+    return entryUnseen() && !isOpen ? `${base} · ${t('todo.unseen')}` : base;
   }
   function refresh(anim, how) {
     for (const it of S.items) {
@@ -603,9 +620,13 @@ export function createSessionTodo(o) {
     }
     for (const [id, node] of els) if (!byId(id)) { els.delete(id); node.style.transition = 'opacity 120ms'; node.style.opacity = '0'; node.style.pointerEvents = 'none'; setTimeout(() => node.remove(), 130); }
     const st = stats();
-    countEl.textContent = st.n ? `${st.done}/${st.n}` : '';
+    const unavailable = listScope(S.session) && S.rev < 0;
+    countEl.textContent = !boardActive && st.n ? `${st.done}/${st.n}` : '';
     emptyEl.hidden = st.n > 0;
-    seg.hidden = st.n === 0;
+    seg.hidden = boardActive || st.n === 0;
+    editBtn.hidden = boardActive || unavailable;
+    body.hidden = unavailable;
+    nativeStatus.hidden = !unavailable;
     for (const b of seg.children) { const on = (b.dataset.v === 'flow') === flowView(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }
     if (isOpen) apply(anim, how);
     const label = entryLabel();
@@ -615,7 +636,7 @@ export function createSessionTodo(o) {
   function flash(id) {
     const node = els.get(id);
     if (!node) return;
-    if (!isOpen || root.offsetWidth === 0) { unseen.add(id); return; }
+    if (!isOpen || boardActive || root.offsetWidth === 0) { unseen.add(id); return; }
     node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash');
     setTimeout(() => node.classList.remove('flash'), 1250);
   }
@@ -624,6 +645,7 @@ export function createSessionTodo(o) {
   function setItems(list, rev) {
     S.items = [...list].sort((a, b) => a.order - b.order);
     S.rev = rev;
+    if (S.session === conversationId) updateConversationStats(S.items, rev);
     if (!S.items.length) S.view = 'auto';
     S.flow = isFlowGraph(S.items);
     for (const id of [...badges.keys()]) if (!byId(id)) badges.delete(id);
@@ -634,8 +656,7 @@ export function createSessionTodo(o) {
     if (!sid || busy.has(sid)) return null;
     busy.add(sid);
     try {
-      const res = await o.cmd('invoke', { op, args: { sessionId: sid, ...args, ifRev: rev } });
-      const out = res?.result ?? res;
+      const out = await nativeCall(op.split('.')[1], sid, { ...args, ifRev: rev });
       if (S.session !== sid || !out?.items) return out;
       for (const id of touched) badges.delete(id);
       if (out.rev > S.rev) setItems(out.items, out.rev);
@@ -653,12 +674,19 @@ export function createSessionTodo(o) {
     if (!sid) return;
     const token = ++S.loading;
     try {
-      const res = await o.cmd('invoke', { op: 'todos.list', args: { sessionId: sid } });
-      const out = res?.result ?? res;
+      const out = await nativeCall('list', sid);
       if (S.session !== sid || token !== S.loading || !out?.items || out.rev < S.rev) return;
       setItems(out.items, out.rev);
       refresh(isOpen ? undefined : false);
-    } catch { /* 読めなければ今の並びのまま */ }
+      if (isOpen && !boardActive) flashUnseen();
+      return true;
+    } catch {
+      if (S.session === sid && token === S.loading && listScope(sid)) {
+        nativeStatus.textContent = t('todoTabs.listFailed');
+        refresh(false);
+      }
+      return false;
+    }
   }
   async function setStatus(it, status) { await send('todos.update', { items: [{ id: it.id, status }] }, [it.id]); refresh(); }
   async function renameItem(it, text) { await send('todos.update', { items: [{ id: it.id, text }] }, [it.id]); refresh(true, spr().snappy); }
@@ -979,8 +1007,7 @@ export function createSessionTodo(o) {
     // 開いたときに、ファイル・フォルダーが今あるかを確かめる（無ければ「見つかりません」にして押せなくする）
     if (it.links.some((l) => l.kind !== 'url')) {
       try {
-        const res = await o.cmd('invoke', { op: 'todos.checkLinks', args: { sessionId: S.session, id: it.id } });
-        const out = res?.result ?? res;
+        const out = await nativeCall('checkLinks', S.session, { id: it.id });
         if (menu !== m) return;
         for (const x of out?.links ?? []) if (!x.exists) missing.add(x.id);
         if (missing.size) { draw(); place(m, btn); }
@@ -992,6 +1019,7 @@ export function createSessionTodo(o) {
     opener: () => entry.offsetWidth ? entry : o.moreButton,
     close, outside: () => !isMax,
     escape: () => {
+      if (tabs.closeChooser()) return false;
       if (menu) { const button = menu._btn; closeMenu(); button?.focus({ preventScroll: true }); }
       else if (rename) rename(false);
       else if (edit) { setEdit(false); editBtn.focus({ preventScroll: true }); }
@@ -1095,9 +1123,12 @@ export function createSessionTodo(o) {
     maxBtn.title = l; maxBtn.setAttribute('aria-label', l);
   }
   setMaxButton();
+  function flashUnseen() {
+    for (const id of [...unseen]) { unseen.delete(id); flash(id); }
+  }
   function shown() {
     flowCamera = null; V.mode = 'home'; apply(false);
-    for (const id of [...unseen]) { unseen.delete(id); flash(id); }
+    flashUnseen();
     if (!flowView()) {
       const it = S.items.find((i) => i.status === 'doing'), r = it && S.L?.R.get(it.id);
       if (r && S.L.H > body.clientHeight) body.scrollTop = Math.max(0, r.y - 60);
@@ -1105,24 +1136,25 @@ export function createSessionTodo(o) {
   }
   function paintDot() {
     const dot = entry.querySelector('.entry-dot');
-    if (dot) dot.hidden = !unseen.size || isOpen;
+    if (dot) dot.hidden = !entryUnseen() || isOpen;
     const label = entryLabel();
     entry.setAttribute('aria-label', label); entry.title = label;
     o.onChange?.();
   }
   function open() {
-    if (isOpen || !S.session) return;
+    if (isOpen || !conversationId) return;
     isOpen = true;
     placeTop();
     root.hidden = false; root.classList.remove('out'); root.classList.add('in');
     entry.setAttribute('aria-expanded', 'true'); entry.classList.add('on');
     if (narrow.matches) veil.classList.add('on');
-    shown(); paintDot();
+    if (!boardActive) shown();
+    paintDot(); tabs.refresh();
     (edit ? editBtn : closeBtn).focus({ preventScroll: true });
   }
   function close() {
     if (!isOpen) return;
-    isOpen = false; expandedText = null; closeMenu();
+    isOpen = false; expandedText = null; closeMenu(); tabs.closeChooser(false);
     if (rename) rename(true);
     if (isMax) { isMax = false; root.classList.remove('max'); setMaxButton(); }
     veil.classList.remove('on'); root.classList.remove('in'); root.classList.add('out');
@@ -1205,20 +1237,54 @@ export function createSessionTodo(o) {
     stackEls.clear();
     canvas._h = canvas._w = null; Object.assign(V, { x: 0, y: 0, z: 1, mode: 'home' });
   }
-  async function load(sessionId) {
-    if (S.session === sessionId) return;
+  function updateConversationStats(items, rev) {
+    if (rev < conversationRev) return;
+    conversationRev = rev;
+    conversationStats = stats(items);
+  }
+  function showNative(id, board) {
+    closeMenu();
+    if (edit) setEdit(false, false, false);
+    boardActive = board;
+    stage.hidden = addWrap.hidden = board;
+    if (board) { refresh(false); return; }
+    return loadScope(id ? `list:${id}` : conversationId);
+  }
+  async function loadScope(sessionId) {
+    if (S.session === sessionId) { refresh(false); return sessionId ? reload() : false; }
     // 離れる会話の印は覚えておく（開いて見た印は close が消している）
     if (S.session && (badges.size || unseen.size)) Object.assign(keptOf(S.session), { badges: new Map(badges), unseen: new Set(unseen), rev: S.rev });
     else if (S.session) kept.delete(S.session);
     clearView();
     S.session = sessionId || null;
+    nativeStatus.textContent = t('todoTabs.loading');
     const back = S.session ? kept.get(S.session) : null;
     if (back) { for (const [id, b] of back.badges) badges.set(id, b); for (const id of back.unseen) unseen.add(id); kept.delete(S.session); }
-    entry.hidden = !S.session;
-    if (!S.session) { close(); refresh(false); paintDot(); return; }
+    if (!S.session) { refresh(false); paintDot(); return false; }
     refresh(false);
-    await reload();
+    const ok = await reload();
     paintDot();
+    return ok;
+  }
+  function load(id) {
+    if (conversationId === id) return;
+    conversationId = id;
+    conversationRev = -1;
+    conversationStats = stats([]);
+    entry.hidden = !id;
+    if (!id) close();
+    return tabs.load(id, isOpen);
+  }
+  function reconnected() {
+    if (isOpen) tabs.refresh();
+    if (S.session === conversationId) return reload();
+    const sid = conversationId;
+    if (sid) void nativeCall('list', sid).then(out => {
+      if (conversationId !== sid) return;
+      updateConversationStats(out.items, out.rev);
+      paintDot();
+    }).catch(() => {});
+    return reload();
   }
   function reset() { load(null); }
   /** 表示していない会話に届いた変更。AI の変更の印を覚え、人の変更なら印を外す（開いたときの一覧は読み直す） */
@@ -1243,8 +1309,17 @@ export function createSessionTodo(o) {
     if (!into.badges.size && !into.unseen.size) kept.delete(ev.sessionId);
   }
   function onEvent(ev) {
+    if (ev?.type === 'plusStatus') { tabs.plusStatus(ev.status, isOpen); return; }
+    if (ev?.type === 'todoListChanged') {
+      if (S.session === `list:${ev.listId}` && ev.rev > S.rev) void reload();
+      return;
+    }
     if (ev?.type !== 'todosChanged') return;
-    if (ev.sessionId !== S.session) { keepHidden(ev); return; }
+    if (ev.sessionId !== S.session) {
+      keepHidden(ev);
+      if (ev.sessionId === conversationId) { updateConversationStats(ev.items ?? [], ev.rev); paintDot(); }
+      return;
+    }
     if (!(ev.rev > S.rev)) return;
     const before = new Map(S.items.map((i) => [i.id, i]));
     setItems(ev.items ?? [], ev.rev);
@@ -1271,10 +1346,10 @@ export function createSessionTodo(o) {
   }
 
   return {
-    load, reset, reconnected: reload, onEvent, open, close, isOpen: () => isOpen,
+    load, reset, reconnected, onEvent, open, close, isOpen: () => isOpen,
     toggle: () => (isOpen ? close() : open()),
-    stats, label: entryLabel,
-    hasUnseen: () => unseen.size > 0 && !isOpen,
-    sessionId: () => S.session,
+    stats: () => conversationStats, label: entryLabel,
+    hasUnseen: () => entryUnseen() > 0 && !isOpen,
+    sessionId: () => conversationId,
   };
 }

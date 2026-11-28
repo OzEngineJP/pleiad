@@ -153,3 +153,49 @@ export const todoOps = [
     },
   }),
 ];
+
+const listId = z.uuid();
+const namedList = z.object({ id: listId, name: z.string() });
+const uiOnly = { ui: true, mcp: false, cli: false };
+const listWriteReason = 'Edits a local standalone ToDo list from the human interface.';
+
+export const todoListOps = [
+  defineOp({
+    id: 'todoLists.catalog', summary: 'agent:ops.todoLists.catalog.summary', risk: 'read',
+    input: z.object({}), output: z.object({ lists: z.array(namedList) }), surfaces: uiOnly,
+    handler: ctx => ({ lists: ctx.todos.lists() }),
+  }),
+  defineOp({
+    id: 'todoLists.create', summary: 'agent:ops.todoLists.create.summary', risk: 'write', riskReason: listWriteReason,
+    input: z.object({ name: z.string().trim().min(1).max(80) }), output: namedList, surfaces: uiOnly,
+    handler: (ctx, { name }) => ctx.todos.createList(name),
+  }),
+  ...todoOps.map(({ id, risk, input, output }) => {
+    const verb = id.split('.')[1];
+    const opId = `todoLists.${verb}`;
+    const args = input.omit({ sessionId: true }).extend({ listId });
+    const response = verb === 'checkLinks' ? output : listOut.omit({ sessionId: true }).extend({ name: z.string() });
+    return defineOp({
+      id: opId, summary: `agent:ops.${opId}.summary`, risk, riskReason: listWriteReason,
+      input: ['add', 'update'].includes(verb) ? args.extend({
+        items: z.array(input.shape.items.element.omit({ taskId: true })).min(1).max(TODO_ITEMS_MAX),
+      }) : args,
+      output: response, surfaces: uiOnly,
+      handler: (ctx, { listId: id, items, ifRev, ...rest }) => {
+        const name = ctx.todos.listName(id);
+        if (name === undefined) throw new OpError('TODO_LIST_NOT_FOUND', 'ToDo list not found');
+        const scope = { kind: 'list', id };
+        const by = { kind: 'user' };
+        try {
+          switch (verb) {
+            case 'list': return { name, ...ctx.todos.list(scope) };
+            case 'add': return { name, ...ctx.todos.add(scope, { ...rest, entries: items, ifRev, by }) };
+            case 'update': return { name, ...ctx.todos.update(scope, { changes: items, ifRev, by }) };
+            case 'remove': return { name, ...ctx.todos.remove(scope, { ...rest, changes: items ?? [], ifRev, by }) };
+            case 'checkLinks': return ctx.todos.checkLinks(scope, rest);
+          }
+        } catch (error) { throw opError(ctx, error); }
+      },
+    });
+  }),
+];

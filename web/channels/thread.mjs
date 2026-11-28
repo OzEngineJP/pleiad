@@ -1097,6 +1097,8 @@ export function createThread(host) {
       paintPendingPerms();
     },
     todosChanged: (ev) => todo?.onEvent(ev),
+    todoListChanged: (ev) => todo?.onEvent(ev),
+    plusStatus: (ev) => todo?.onEvent(ev),
     channelsChanged(ev) {
       if (!S.channelId) return;
       if (ev.removed === S.channelId) { close(); return; }

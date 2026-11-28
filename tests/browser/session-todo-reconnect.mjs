@@ -59,14 +59,16 @@ try {
     }, sessionId);
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
-    await page.goto(url);
+    const target = new URL(url);
+    target.searchParams.set('open', sessionId);
+    await page.goto(target.href);
     return page;
   }
 
   const desktop = await openChat(await browser.newContext({ viewport: { width: 1280, height: 900 } }),
     `http://127.0.0.1:${host.port}/?token=${host.token}`);
   await desktop.locator('#todoEntry').click();
-  await desktop.locator('.todo-pop .td-item:not(.td-meas)').getByText(task, { exact: true }).waitFor();
+  await desktop.locator('body > main > .todo-pop .td-item:not(.td-meas)').getByText(task, { exact: true }).waitFor();
   console.log('PC ToDo passed');
 
   const mobileContext = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
@@ -94,7 +96,7 @@ try {
   const mobile = await openChat(mobileContext, proxy.url);
   await mobile.locator('#sessionMore').click();
   await mobile.getByRole('menuitem', { name: /ToDo/ }).click();
-  const panel = mobile.locator('.todo-pop');
+  const panel = mobile.locator('body > main > .todo-pop');
   const items = panel.locator('.td-item:not(.td-meas)');
   await panel.getByText('ToDo はありません', { exact: true }).waitFor();
   function within(promise, failure) {

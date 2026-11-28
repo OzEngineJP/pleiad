@@ -3441,7 +3441,7 @@ function onEvent(ev, replay = false) {
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
   if (channelsUi.onEvent(ev, replay)) return;
   if (ev.type === 'notificationsChanged') { notificationInbox.onEvent(ev); return; }
-  if (ev.type === 'todosChanged') { sessionTodo.onEvent(ev); return; }
+  if (ev.type === 'todosChanged' || ev.type === 'todoListChanged') { sessionTodo.onEvent(ev); return; }
   if (ev.type?.startsWith('shell.')) return onShellEvent(ev);
   if (ev.type === 'completionReady') {
     completionNotifications.completed(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
@@ -3538,6 +3538,7 @@ function onEvent(ev, replay = false) {
   }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
   if (ev.type === 'plusStatus') {
+    sessionTodo.onEvent(ev);
     plusSettings.event(ev); remoteSettings.event(ev); paintSideFoot();
     if (state.backends.some(b => b.id === openConnAgent && b.defaultConnectionLabel)) renderAuth();
     return;

@@ -508,6 +508,8 @@ export function createFeed(host) {
       composer.refresh();
     },
     todosChanged: (ev) => todo?.onEvent(ev),
+    todoListChanged: (ev) => todo?.onEvent(ev),
+    plusStatus: (ev) => todo?.onEvent(ev),
   };
 
   /** 流れの投稿へ送って、一瞬（1.2 秒）だけ強調する（通知の一覧から。動きを減らす設定では滑らせず、明滅もしない） */

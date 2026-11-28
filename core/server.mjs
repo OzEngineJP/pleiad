@@ -166,6 +166,7 @@ import { createNotifications } from './notifications.mjs';
 import { normalizeEditingState } from '../web/md-editing-state.mjs';
 import { createDrafts } from './drafts.mjs';
 import { createTodos } from './todos.mjs';
+import { createTodoBoards } from './plus/todo-boards.mjs';
 import { todoContext } from './brain/inner.mjs';
 import { createNotificationSources } from './notification-sources.mjs';
 import { createNotifySettings } from './notify/settings.mjs';
@@ -1128,8 +1129,12 @@ const inbox = createNotifications({ dataDir: store.dataDir, emit: event => emitG
 // スレッドの入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
 const threadDrafts = createDrafts({ dataDir: store.dataDir });
 // 会話の ToDo（ADR 0342）。書いたら全部の画面へ配る（開いている会話の ToDo のパネル・入口の未読の点）
+const todoBoards = createTodoBoards(plusSession);
 const sessionTodos = createTodos({ dataDir: store.dataDir, taskOf: id => agentTasks?.todoState(id),
-  onChange: ({ scope, rev, items, changed, by }) => { if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by }); } });
+  onChange: ({ scope, rev, items, changed, by }) => {
+    if (scope.kind === 'session') emitGlobal({ type: 'todosChanged', sessionId: scope.id, rev, items, changed, by });
+    if (scope.kind === 'list') emitGlobal({ type: 'todoListChanged', listId: scope.id, rev });
+  } });
 const inboxSources = createNotificationSources({
   // 最初から既読で載せるのは、その会話を描き終えて見ている画面があるときだけ（読み込みに失敗した画面には映っていない。ADR 0347 第 3 段）
   inbox, store, viewing: sessionId => notifyPresence.showing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
@@ -3738,6 +3743,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   "notificationsChanged",
   // 会話の ToDo（ADR 0342）。会話の一覧の行は変わらない
   "todosChanged",
+  "todoListChanged",
   // 会話の Chrome のプロフィールが替わった（core/chrome/profile-choice.mjs）。一覧の行は変わらない
   "chromeProfile",
 ]);
@@ -7506,6 +7512,7 @@ function opsDeps(lng = currentLocale()) {
     // 入力欄の書きかけのサーバーの写し（drafts.*。ADR 0157 の F35）
     drafts: threadDrafts,
     todos: sessionTodos,
+    todoBoards,
     memoryTodoSessions: async botId => Object.entries(await store.getAll())
       .filter(([, row]) => !row.unsent && !row.deletedBot && !isInternalConversationMeta(row)
         && (row.bot?.botId ?? null) === botId)

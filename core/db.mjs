@@ -203,6 +203,10 @@ CREATE TABLE IF NOT EXISTS todo_scopes (
   rev INTEGER NOT NULL,
   PRIMARY KEY (scope_kind, scope_id)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS todo_lists (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL
+) WITHOUT ROWID;
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -696,6 +700,9 @@ const todoRow = r => ({ id: r.id, text: r.text, status: r.status, order: r.ord, 
 export function todoTable(db) {
   ensureLateTables(db);
   return {
+    lists() { return prepared(db, 'SELECT id, name FROM todo_lists ORDER BY name COLLATE NOCASE, id').all(); },
+    listName(id) { return prepared(db, 'SELECT name FROM todo_lists WHERE id = ?').get(id)?.name; },
+    createList(id, name) { prepared(db, 'INSERT INTO todo_lists (id, name) VALUES (?, ?)').run(id, name); },
     concernSession(botId, source) {
       const rows = prepared(db, `SELECT session_id FROM session_fields WHERE field = 'bot'
         AND json_extract(value, '$.botId') = ? AND json_extract(value, '$.channelId') = ?
