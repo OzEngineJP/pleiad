@@ -705,8 +705,27 @@
     "required": "required"
   },
   "ops": {
-    "todoLists": {"catalog":{"summary":"List standalone to-do lists"},"create":{"summary":"Create a standalone to-do list"},"list":{"summary":"Read a standalone to-do list"},"add":{"summary":"Add items to a standalone to-do list"},"update":{"summary":"Update items in a standalone to-do list"},"remove":{"summary":"Remove items from a standalone to-do list"},"checkLinks":{"summary":"Check links in a standalone to-do list"}},
-    "todoBoards": {"catalog":{"summary":"List available Plus boards"},"read":{"summary":"Read a Plus board"}},
+    "todoLists": {
+      "catalog": {"summary": "List standalone to-do lists"},
+      "create": {"summary": "Create a standalone to-do list", "name": "Name of the new to-do list (1–80 characters)."},
+      "list": {"summary": "Read the items in a standalone to-do list", "listId": "Id of the to-do list to read. Find it in todoLists.catalog."},
+      "add": {"summary": "Add items to a standalone to-do list", "listId": "Id of the to-do list to add items to.", "items": "Array of items to add. Set text for each item."},
+      "update": {"summary": "Update items in a standalone to-do list", "listId": "Id of the to-do list whose items to update.", "items": "Array of items to update. Set the id and only the fields to change for each item."},
+      "remove": {"summary": "Remove items from a standalone to-do list", "listId": "Id of the to-do list to remove items from."},
+      "checkLinks": {"summary": "Check whether the files and folders linked from an item in a standalone to-do list still exist", "listId": "Id of the to-do list containing the item."},
+      "ifRev": "The rev from todoLists.list. If the list changed since, the call is refused with TODO_CONFLICT."
+    },
+    "todoBoards": {
+      "catalog": {"summary": "List available Plus boards"},
+      "read": {
+        "summary": "Read the columns and rows of a Plus board. Find the board ids in todoBoards.catalog.",
+        "tenantId": "Id of the tenant that contains the board.",
+        "workspaceId": "Id of the workspace that contains the board.",
+        "databaseId": "Id of the board's database.",
+        "viewId": "Id of the board's view.",
+        "offset": "Position of the first row to read. Defaults to 0. For the next page, pass nextOffset from the previous result."
+      }
+    },
     "plus": {
       "status": {
         "summary": "Pleiad Plus state (availability, signed-in, account, reachability). Never returns tokens, email, or uid.",

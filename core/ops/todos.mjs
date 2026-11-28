@@ -167,18 +167,22 @@ export const todoListOps = [
   }),
   defineOp({
     id: 'todoLists.create', summary: 'agent:ops.todoLists.create.summary', risk: 'write', riskReason: listWriteReason,
-    input: z.object({ name: z.string().trim().min(1).max(80) }), output: namedList, surfaces: uiOnly,
+    input: z.object({ name: z.string().trim().min(1).max(80).describe('agent:ops.todoLists.create.name') }), output: namedList, surfaces: uiOnly,
     handler: (ctx, { name }) => ctx.todos.createList(name),
   }),
   ...todoOps.map(({ id, risk, input, output }) => {
     const verb = id.split('.')[1];
     const opId = `todoLists.${verb}`;
-    const args = input.omit({ sessionId: true }).extend({ listId });
+    const description = key => `agent:ops.${opId}.${key}`;
+    const args = input.omit({ sessionId: true }).extend({
+      listId: listId.describe(description('listId')),
+      ...('ifRev' in input.shape && { ifRev: input.shape.ifRev.describe('agent:ops.todoLists.ifRev') }),
+    });
     const response = verb === 'checkLinks' ? output : listOut.omit({ sessionId: true }).extend({ name: z.string() });
     return defineOp({
-      id: opId, summary: `agent:ops.${opId}.summary`, risk, riskReason: listWriteReason,
+      id: opId, summary: description('summary'), risk, riskReason: listWriteReason,
       input: ['add', 'update'].includes(verb) ? args.extend({
-        items: z.array(input.shape.items.element.omit({ taskId: true })).min(1).max(TODO_ITEMS_MAX),
+        items: z.array(input.shape.items.element.omit({ taskId: true })).min(1).max(TODO_ITEMS_MAX).describe(description('items')),
       }) : args,
       output: response, surfaces: uiOnly,
       handler: (ctx, { listId: id, items, ifRev, ...rest }) => {

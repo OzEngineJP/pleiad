@@ -55,7 +55,13 @@ export const todoBoardOps = [
   }),
   defineOp({
     id: 'todoBoards.read', summary: 'agent:ops.todoBoards.read.summary', risk: 'read',
-    input: ref.extend({ offset: z.number().int().min(0).max(2147483647).default(0) }), output: board,
+    input: ref.extend({
+      tenantId: ref.shape.tenantId.describe('agent:ops.todoBoards.read.tenantId'),
+      workspaceId: ref.shape.workspaceId.describe('agent:ops.todoBoards.read.workspaceId'),
+      databaseId: ref.shape.databaseId.describe('agent:ops.todoBoards.read.databaseId'),
+      viewId: ref.shape.viewId.describe('agent:ops.todoBoards.read.viewId'),
+      offset: z.number().int().min(0).max(2147483647).default(0).describe('agent:ops.todoBoards.read.offset'),
+    }), output: board,
     surfaces: { ui: true, mcp: false, cli: false },
     handler: (ctx, args) => ctx.todoBoards.board(args),
   }),

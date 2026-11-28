@@ -22,6 +22,11 @@
 :root{
   --ink-brand:#000000;
   --ink-antigravity:#1a73e8;
+  /* ChatGPT のサインインボタンは両テーマで同じ配色を使う。 */
+  --surface-chatgpt-sign-in:#ffffff;
+  --surface-chatgpt-sign-in-hover:#eeeeee;
+  --ink-chatgpt-sign-in:#111111;
+  --line-chatgpt-sign-in:#767676;
   /* -- 面（surface）。参考画像の地 #dcdee8 を白側へ寄せた階調。会話は白、脇は薄いグレー -- */
   --surface-paper:#ffffff;    /* 会話の地。一番長く見る場所なので白。コントラスト優先 */
   --surface-0:#eceef4;        /* 脇のパネル（セッション一覧）の地 */

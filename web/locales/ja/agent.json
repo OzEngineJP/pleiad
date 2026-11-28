@@ -704,8 +704,27 @@
     "required": "必須"
   },
   "ops": {
-    "todoLists": {"catalog":{"summary":"独立した ToDo リストの一覧を表示"},"create":{"summary":"独立した ToDo リストを作成"},"list":{"summary":"独立した ToDo リストの項目を表示"},"add":{"summary":"独立した ToDo リストに項目を追加"},"update":{"summary":"独立した ToDo リストの項目を変更"},"remove":{"summary":"独立した ToDo リストの項目を削除"},"checkLinks":{"summary":"独立した ToDo リストの成果物を確認"}},
-    "todoBoards": {"catalog":{"summary":"Plus のボードの一覧を表示"},"read":{"summary":"Plus のボードを表示"}},
+    "todoLists": {
+      "catalog": {"summary": "独立した ToDo リストの一覧を表示"},
+      "create": {"summary": "独立した ToDo リストを作成", "name": "新しい ToDo リストの名前（1〜80 文字）"},
+      "list": {"summary": "独立した ToDo リストの項目を表示", "listId": "読む ToDo リストの id。todoLists.catalog で確認できる。"},
+      "add": {"summary": "独立した ToDo リストに項目を追加", "listId": "項目を追加する ToDo リストの id", "items": "追加する項目の配列。各項目に text を指定する。"},
+      "update": {"summary": "独立した ToDo リストの項目を変更", "listId": "項目を変更する ToDo リストの id", "items": "変更する項目の配列。各項目に id と変更する欄だけを指定する。"},
+      "remove": {"summary": "独立した ToDo リストの項目を削除", "listId": "項目を削除する ToDo リストの id"},
+      "checkLinks": {"summary": "独立した ToDo リストの項目に付けたファイル・フォルダーがあるか確かめる", "listId": "項目が入っている ToDo リストの id"},
+      "ifRev": "todoLists.list で読んだ rev。その後にリストが変わっていたら TODO_CONFLICT で止まる。"
+    },
+    "todoBoards": {
+      "catalog": {"summary": "Plus のボードの一覧を表示"},
+      "read": {
+        "summary": "Plus のボードの列と行を読む。ボードの id は todoBoards.catalog で確認できる。",
+        "tenantId": "ボードが属するテナントの id",
+        "workspaceId": "ボードが属するワークスペースの id",
+        "databaseId": "ボードのデータベースの id",
+        "viewId": "ボードのビューの id",
+        "offset": "読み始める行の位置。最初は 0（既定値）。次のページには前の結果の nextOffset を渡す。"
+      }
+    },
     "plus": {
       "status": {
         "summary": "Pleiad Plus の状態（利用可否・ログイン中か・アカウント・サーバーへの到達）。トークン・メールアドレス・uid は返さない。",

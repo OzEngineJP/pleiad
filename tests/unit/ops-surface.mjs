@@ -145,6 +145,19 @@ export default async function (t) {
   const EMAIL = 'someone@example.invalid';
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）
   const secret = { token: MARKER, apiKey: MARKER, authorization: MARKER };
+  const todoList = { id: 'dad381b6-6cd4-4256-9ac4-a8aa08a97d80', name: 'Release' };
+  const todoBoardRef = {
+    tenantId: 'df49fbb5-40b4-4f6a-893e-f86b79290639',
+    workspaceId: '713f58e2-0092-4ef2-9cd4-8219413d7bc3',
+    databaseId: '411f2320-ee1d-4abe-aaf7-36dc154de3c5',
+    viewId: '78c364ee-97c4-4140-9145-747a81fcff73',
+  };
+  const todoLink = { id: 'link_1', kind: 'file', path: 'draft.md' };
+  const todoItem = {
+    id: 'todo_1', text: '下書きを作る', status: 'todo', waiting: false, after: [], links: [{ ...todoLink, ...secret }],
+    assignee: null, humanWaiting: false, taskId: null, taskIssue: null,
+    order: 1, by: { kind: 'user' }, updatedBy: null, createdAt: 1, updatedAt: 1, ...secret,
+  };
   const deps = {
     chrome: { status: () => ({ state: 'connected', reason: null, dialog: false, product: 'Chrome' }), windows: () => [],
       downloads: { list: () => [{ id: 'd1', state: 'completed', name: 'a.zip', receivedBytes: 1, totalBytes: 1, path: 'C:/x/a.zip', pageUrl: 'https://a.example/', startedAt: 'a', ...secret }], wait: async () => {}, stop: async () => ({ stopped: false }) } },
@@ -239,9 +252,21 @@ export default async function (t) {
     // 必須の引数がある操作は下の samples にも足す。足したパッケージの区画以外は触らない
     // 入力欄の書きかけのサーバーの写し（drafts.*）
     drafts: { load: () => ({ text: 'こんにちは', at: 1 }), save: () => ({ saved: true, at: 1 }) },
-    // 会話の ToDo（todos.*）。成果物のリンクのパスは画面に出す値なので、本文に目印を入れずに形だけ
-    todos: { list: () => ({ rev: 1, items: [{ id: 'todo_1', text: '下書きを作る', status: 'todo', waiting: false, after: [], links: [], order: 1, by: { kind: 'user' }, updatedBy: null, createdAt: 1, updatedAt: 1 }] }),
-      checkLinks: () => ({ links: [] }) },
+    todos: {
+      list: () => ({ rev: 1, items: [todoItem], ...secret }),
+      checkLinks: () => ({ links: [{ id: todoLink.id, exists: true, ...secret }], ...secret }),
+      lists: () => [{ ...todoList, ...secret }],
+      listName: (id) => id === todoList.id ? todoList.name : undefined,
+    },
+    todoBoards: {
+      catalog: async () => ({ boards: [{ ...todoBoardRef, title: 'Release', viewName: 'Tasks', workspaceName: 'Pleiad', ...secret }], ...secret }),
+      board: async () => ({
+        title: 'Release', viewName: 'Tasks', url: 'https://example.invalid/board',
+        columns: [{ id: '85692624-7d16-4213-ba03-a2f606d417f0', label: 'To do', ...secret }],
+        conversation: true, nextOffset: null,
+        rows: [{ title: 'Draft', columnId: null, conversationStates: ['not_started'], ...secret }], ...secret,
+      }),
+    },
     channels: {     // S1
       list: async () => [{ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', unread: 0, mentions: 0, threadsWorking: 0, ...secret }],
       get: async () => ({ id: 'c_000000000aaaaaa', kind: 'channel', name: 'general', ...secret }),
@@ -310,6 +335,8 @@ export default async function (t) {
     'channels.pending': [{ channelId: 'c_000000000aaaaaa', threadId: 'p_000000000aaaaaa' }],
     'drafts.load': [{ key: 'thread:c_000000000aaaaaa:p_000000000aaaaaa' }],
     'todos.list': [{ sessionId: 's1' }], 'todos.checkLinks': [{ sessionId: 's1', id: 'todo_1' }],
+    'todoLists.list': [{ listId: todoList.id }], 'todoLists.checkLinks': [{ listId: todoList.id, id: todoItem.id }],
+    'todoBoards.read': [todoBoardRef],
     'memory.list': [{ layer: 'user' }], 'memory.search': [{ query: 'PR' }],
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],
