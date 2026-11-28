@@ -1,6 +1,6 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
-import { chevRightIcon, panelIcon } from './icons.mjs';
+import { chevRightIcon, openInBrowserIcon, panelIcon } from './icons.mjs';
 
 const storageKey = 'pleiad.todoTabs';
 const conversation = { type: 'conversation', key: 'conversation' };
@@ -36,6 +36,10 @@ export function createTodoTabs({ invoke, showNative, stage, addWrap, openLink, l
   const rail = el('div', 'td-tabrail');
   rail.setAttribute('role', 'tablist');
   rail.setAttribute('aria-label', label('lists'));
+  const pinned = el('div', 'td-tab');
+  const strip = el('div', 'td-tabstrip');
+  strip.setAttribute('role', 'presentation');
+  rail.append(pinned, strip);
   const panel = el('div', 'td-tab-panel');
   panel.id = panelId;
   panel.setAttribute('role', 'tabpanel');
@@ -79,9 +83,10 @@ export function createTodoTabs({ invoke, showNative, stage, addWrap, openLink, l
 
   function drawTabs() {
     const { tabKey, tabClose } = document.activeElement?.dataset ?? {};
-    rail.replaceChildren(...tabs().map((ref, index) => {
+    const scrollable = [];
+    tabs().forEach((ref, index) => {
       const selected = active.key === ref.key;
-      const row = el('div', 'td-tab');
+      const row = ref === conversation ? pinned : el('div', 'td-tab');
       row.setAttribute('role', 'presentation');
       row.dataset.selected = String(selected);
       const tabName = nameOf(ref);
@@ -94,7 +99,7 @@ export function createTodoTabs({ invoke, showNative, stage, addWrap, openLink, l
       tab.setAttribute('aria-selected', String(selected));
       tab.setAttribute('aria-controls', panelId);
       tab.tabIndex = selected ? 0 : -1;
-      row.append(tab);
+      row.replaceChildren(tab);
       if (ref !== conversation) {
         const close = button('td-tab-close', '×', () => remove(ref));
         close.title = t('todoTabs.closeNamed', { name: tabName });
@@ -102,19 +107,21 @@ export function createTodoTabs({ invoke, showNative, stage, addWrap, openLink, l
         close.tabIndex = selected ? 0 : -1;
         close.dataset.tabClose = ref.key;
         row.append(close);
+        scrollable.push(row);
       }
-      return row;
-    }));
+    });
+    strip.replaceChildren(...scrollable);
     all.hidden = tabRefs.length === 0;
     panel.setAttribute('aria-labelledby', activeButton().id);
     const previousClose = tabClose && rail.querySelector(`[data-tab-close="${CSS.escape(tabClose)}"]`);
     if (requestFocus || tabKey || tabClose) (requestFocus ? activeButton() : previousClose || activeButton()).focus({ preventScroll: true });
     requestFocus = false;
     const selected = activeButton().parentElement;
-    const bounds = rail.getBoundingClientRect();
+    if (selected === pinned) return;
+    const bounds = strip.getBoundingClientRect();
     const tabBounds = selected.getBoundingClientRect();
-    if (tabBounds.right > bounds.right) rail.scrollLeft += tabBounds.right - bounds.right;
-    if (tabBounds.left < bounds.left) rail.scrollLeft -= bounds.left - tabBounds.left;
+    if (tabBounds.left < bounds.left) strip.scrollLeft -= Math.ceil(bounds.left - tabBounds.left);
+    else if (tabBounds.right > bounds.right) strip.scrollLeft += Math.ceil(tabBounds.right - bounds.right);
   }
   rail.onkeydown = event => {
     const current = tabs().findIndex(ref => ref.key === event.target.dataset.tabKey);
@@ -379,7 +386,9 @@ export function createTodoTabs({ invoke, showNative, stage, addWrap, openLink, l
     const toolbar = el('div', 'td-board-head');
     const metadata = titles.get(active.key);
     toolbar.append(el('span', 'td-tab-state', boardInfo({ ...metadata, viewName })));
-    toolbar.append(button('td-board-link', label('openPlus'), () => openLink?.({ kind: 'url', url })));
+    const open = button('td-board-link', label('openPlus'), () => openLink?.({ kind: 'url', url }));
+    open.insertAdjacentHTML('beforeend', openInBrowserIcon);
+    toolbar.append(open);
     const groups = new Map(columns.map(column => [column.id, { name: column.label, rows: [] }]));
     const unset = { name: label('unset'), rows: [] };
     for (const row of rows) (groups.get(row.columnId) ?? unset).rows.push(row);

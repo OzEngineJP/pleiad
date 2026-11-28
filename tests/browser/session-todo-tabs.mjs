@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startFakePlus } from '../lib/fake-plus.mjs';
 import { startServer, waitForTestHolders } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { openInBrowserIcon } from '../../web/icons.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || (process.platform === 'win32'
@@ -101,6 +102,20 @@ try {
     page.on('pageerror', error => console.error(error.message));
     await page.goto('http://127.0.0.1:' + host.port + '/?token=' + host.token + '&open=' + sessionId);
     const panel = await showPanel(page, width);
+    const tablist = panel.getByRole('tablist');
+    const pinnedTab = tablist.getByRole('tab', { name: 'この会話', exact: true });
+    const strip = tablist.locator('.td-tabstrip');
+    const selected = tablist.getByRole('tab', { selected: true });
+    async function assertSelectedInStrip() {
+      const fits = await strip.evaluate(el => {
+        const tab = el.querySelector('[aria-selected="true"]');
+        if (!tab) return false;
+        const row = tab.parentElement.getBoundingClientRect();
+        const bounds = el.getBoundingClientRect();
+        return row.left >= bounds.left - 0.5 && row.right <= bounds.right + 0.5;
+      });
+      assert.equal(fits, true, 'the selected tab and its close button fit after the pinned tab');
+    }
     const add = panel.getByRole('button', { name: 'タブを追加', exact: true });
     const option = name => panel.locator('.td-tab-chooser').getByRole('button', { name, exact: true });
     const boardOption = () => panel.locator('.td-tab-chooser').getByRole('button', { name: /^公開プロジェクト/ });
@@ -158,10 +173,20 @@ try {
     assert.deepEqual(await panel.locator('.td-board-group h3').allTextContents(), ['未着手', '進行中', '完了']);
     assert.equal(await panel.getByRole('button', { name: '編集', exact: true }).count(), 0);
     assert.equal(await panel.getByRole('button', { name: 'ToDo を追加' }).count(), 0);
+    assert.ok(await strip.evaluate(el => el.scrollLeft > 0), 'the new board tab scrolls into view');
+    await assertSelectedInStrip();
+    const openPlus = panel.getByRole('button', { name: 'Plus で開く', exact: true });
+    assert.equal(await openPlus.locator('svg').evaluate((icon, markup) => {
+      const template = document.createElement('template');
+      template.innerHTML = markup;
+      return icon.isEqualNode(template.content.firstElementChild);
+    }, openInBrowserIcon), true);
+    const { width: iconWidth, height: iconHeight } = await openPlus.locator('svg').boundingBox();
+    assert.deepEqual([iconWidth, iconHeight], [14, 14]);
     await screenshot(page, 'impl-board-' + width + '-' + theme);
     if (width === 1280 && theme === 'light') {
       const popup = page.waitForEvent('popup');
-      await panel.getByRole('button', { name: /Plus で開く/ }).click();
+      await openPlus.click();
       const opened = await popup;
       await opened.waitForURL(destination);
       await opened.close();
@@ -175,15 +200,34 @@ try {
     await screenshot(page, 'impl-picker-' + width + '-' + theme);
     await page.keyboard.press('Escape');
     assert.equal(await add.evaluate(el => el === document.activeElement), true);
-    const tablist = panel.getByRole('tablist');
-    assert.equal(await tablist.getByRole('tab').first().innerText(), 'この会話');
-    const selected = tablist.getByRole('tab', { selected: true });
+    assert.match(await tablist.ariaSnapshot(), /tablist[^\n]*\n  - tab "この会話"/);
     await selected.press('Home');
-    await panel.getByRole('tab', { name: 'この会話', selected: true }).waitFor();
+    assert.equal(await pinnedTab.getAttribute('aria-selected'), 'true');
+    const pinnedLeft = (await pinnedTab.boundingBox()).x;
+    const clipsFirstTab = await strip.evaluate(el => {
+      el.scrollLeft = el.firstElementChild.getBoundingClientRect().width / 2;
+      const edge = el.getBoundingClientRect().left;
+      const first = el.firstElementChild.getBoundingClientRect();
+      return first.left < edge && first.right > edge;
+    });
+    assert.equal(clipsFirstTab, true);
+    assert.equal((await pinnedTab.boundingBox()).x, pinnedLeft);
+    assert.equal(await pinnedTab.evaluate(tab => {
+      const rect = tab.getBoundingClientRect();
+      return document.elementFromPoint(rect.right - 1, rect.top + rect.height / 2) === tab;
+    }), true, 'the scrolling tab is clipped behind the pinned tab');
+    await pinnedTab.press('ArrowRight');
+    assert.equal(await selected.innerText(), '来週の準備メモ');
+    await assertSelectedInStrip();
+    await selected.press('ArrowLeft');
+    assert.equal(await pinnedTab.getAttribute('aria-selected'), 'true');
+    await pinnedTab.press('ArrowLeft');
+    await panel.locator('.td-board-group').first().waitFor();
+    assert.equal(await selected.innerText(), title);
+    await assertSelectedInStrip();
     await selected.press('End');
     await panel.locator('.td-board-group').first().waitFor();
     if (width === 360) {
-      assert.equal(await tablist.evaluate(el => el.scrollWidth > el.clientWidth), true);
       const allTabs = panel.getByRole('button', { name: 'タブの一覧' });
       await allTabs.click();
       await screenshot(page, 'impl-all-tabs-' + width + '-' + theme);
@@ -192,6 +236,7 @@ try {
       assert.equal(await tablist.getByRole('tab', { name: '来週の準備メモ', exact: true }).count(), 0);
       await panel.locator('.td-tab-chooser').getByRole('button', { name: /^今週の確認/ }).click();
       await panel.getByText('今週の確認の項目', { exact: true }).filter({ visible: true }).waitFor();
+      await assertSelectedInStrip();
     } else {
       plus.state.proxy[boardPath] = { status: 403, body: { error: { code: 'forbidden' } } };
       await selected.click();
