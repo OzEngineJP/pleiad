@@ -843,7 +843,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     actions.append(deny, approve);
     dialog.replaceChildren(kind, title, ...(meta ? [el('p', 'rm-dialog-meta', meta)] : []), codeLabel, code,
       el('p', 'rm-dialog-hint', t('settings.remote.approve.hint')), el('p', 'rm-dialog-hint', `⚠ ${t('settings.remote.fullAccess')}`), state, actions);
-    if (!dialog.open) dialog.showModal();
+    dialog.showModal();
     deny.focus();   // 既定の居場所は「拒否」（Enter の押し間違いで許可しない）
   }
   async function decide(request, yes, state) {

@@ -2918,6 +2918,7 @@
     "noReply": "サーバーから返事がありません"
   },
   "dialog": {
+    "closeWithEscape": "閉じる（Esc）",
     "onboarding": {
       "title": "Pleiad へようこそ",
       "subtitle": "使用するエージェントと作業ディレクトリを選んで、最初の会話を始めましょう。",

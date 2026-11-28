@@ -656,6 +656,7 @@ const SUITES = [
   './unit/connection-status.mjs',
   // 作業のダイアログの一覧の開け閉め（web/work-side.mjs）: 自動で畳む範囲・会話の最小幅・開き直す条件・◆・フォーカス
   './unit/work-side.mjs',
+  './unit/modal-title-bar.mjs',
   // 子の会話のモーダルの中断ボタン（web/work-stop.mjs）: 出す条件・ホストの子は中断だけ・ネイティブ／ホストの孫には出さない
   './unit/work-stop.mjs',
   // 新しい会話を作っている間に書いた字が消えない・作成中の送信の予約・読み込み失敗で欄が戻る（client.mjs を vm で流す）

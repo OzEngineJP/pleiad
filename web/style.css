@@ -541,8 +541,18 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop body > main{--paper-tl:var(--r-l);--paper-tr:0px;border-radius:var(--paper-tl) var(--paper-tr) 0 0}
 :root.desktop body:is(.file-preview-open,.file-preview-leaving) > main{--paper-tr:0px}
 /* 帯は脇と同じ面のまま。閉じても左の 52px にレールが残るので、帯・紙の角は開いているときと同じにする。
-   --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る */
-.titlebar{--bar-end:var(--surface-0)}
+   --surface-bar-end は帯の右端の色。modal-title-bar.mjs が幕の色を重ねて OS に送る */
+.titlebar{--surface-bar-end:var(--surface-0)}
+.modal-title-colors{position:absolute;visibility:hidden;pointer-events:none;background-color:var(--surface-bar-end);color:var(--ink)}
+.modal-title-colors.animate{transition:background-color var(--dur) var(--ease-out),color var(--dur) var(--ease-out)}
+
+/* Keep the modal in the top layer while its veil fades. The desktop caption
+   reads the same interpolated background-color in modal-title-bar.mjs. */
+:root[data-modal-title-bar] dialog::backdrop{transition:background-color var(--dur) var(--ease-out)}
+dialog[data-veil-closing]::backdrop{background-color:transparent!important}
+@starting-style{
+  :root[data-modal-title-bar] dialog::backdrop{background-color:transparent!important}
+}
 :root.desktop #sidebar header{height:var(--bar-h);padding:0 8px 0 12px;-webkit-app-region:drag}
 /* 帯の中・帯に掛かる押せるものは no-drag にしないと押せない（P の印・レール・Plus の丸・見出しのボタン） */
 :root.desktop #sidebar :is(header button,.side-pm,.side-avb,.side-rail button){-webkit-app-region:no-drag}
@@ -567,7 +577,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
    押すと接続の情報の面が上向きに開く。つながっていない間だけ、行の右に弱い字で状態を添える。
    畳んだレールでは ⇄ を設定の上に、700px 以下ではタイトルの下の行に「· ⇄ ホスト名」（.host-sub。モバイル版の殻と同じ置き方）。
    見分けはこの印と、OS の窓タイトル（Pleiad — リモート: ホスト名）・タスクバーの重ねアイコンで行う（desktop/remote-windows.cjs）。
-   帯の地と記号の色は、ローカルと同じく paintTitleBar が .titlebar の --bar-end と --ink を読んで OS へ送る */
+   帯の地と記号の色は、ローカルと同じく modal-title-bar.mjs が OS へ送る */
 .remote-badge,.remote-pop{display:none}
 /* 「⇄ リモート: ホスト名」の形（脇のいちばん下の行・モバイル版の殻の pill で共有。位置はそれぞれの規則が決める） */
 :root.remote .remote-badge{align-items:center;gap:6px;border:0;border-radius:var(--r-pill);background:transparent;
@@ -878,7 +888,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .att-list-handle{display:none}
 .att-list-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .att-list-head h3{margin:0;font-size:var(--fs-l);font-weight:600}
-.att-list-close{font-size:var(--fs-s);padding:3px 10px}
 .att-list-row{display:flex;align-items:flex-start;gap:12px;padding:10px 0;min-width:0}
 .att-list-thumb,.att-list-file{flex:none;width:48px;height:48px;border-radius:var(--r-s);background:var(--surface-1)}
 .att-list-thumb{object-fit:cover}
@@ -905,7 +914,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cl-titles{min-width:0}
 .cl-head h3{margin:0;font-size:var(--fs-l);font-weight:600}
 .cl-sub{display:block;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cl-close{font-size:var(--fs-s);padding:3px 10px;flex:none}
 .cl-empty{margin:16px 0 4px;font-size:var(--fs-s);color:var(--ink-weak)}
 .cl-row{padding:10px 0;min-width:0}
 .cl-row+.cl-row{margin-top:2px}
@@ -1901,6 +1909,7 @@ main.dropping #log{background:var(--surface-1)}
 #workDialog::backdrop{background:var(--surface-veil)}
 #workDialog>header{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 18px;flex:none}
 #workDialog>header strong{font-size:var(--fs-s);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#workDialog>header [data-close]{flex:none}
 .work-count{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--ink-weak)}
 .work-split{flex:1;display:flex;min-height:0}
 /* 右の欄をダイアログの中に載せている間（web/file-preview.mjs の mount。ADR 0315）。欄の部品はメインと同じで、置き場の幅だけがここで決まる。
@@ -2079,6 +2088,8 @@ main.dropping #log{background:var(--surface-1)}
 }
 @media (max-width:700px){
   #workDialog{width:100vw;height:100dvh;border-radius:0}
+  #workDialog>header{padding-right:8px}
+  #workDialog>header [data-close]{width:var(--hit);height:var(--hit)}
   .work-side,.work-list{width:100%}
   .work-split:not(.showing) .work-detail{display:none}
   .work-split.showing .work-side{display:none}
@@ -2370,7 +2381,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #logFrame > #log{padding-bottom:calc(12px + var(--composer-h,0px))}
   /* デスクトップ版の紙の角: 脇は重なるだけなので、紙の左上は窓の縁に接する */
   :root.desktop body:not(.settings) > main{--paper-tl:0px}
-  :root.desktop body:not(.settings,.file-preview-open,.file-preview-leaving) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
+  :root.desktop body:not(.settings,.file-preview-open,.file-preview-leaving) > .titlebar{background:var(--surface-paper);--surface-bar-end:var(--surface-paper)}
   /* 浮く面は画面の幅に収める */
   #filterPop{width:min(250px,calc(100% - 24px))}
   #iconPop{width:min(312px,calc(100vw - 16px))}

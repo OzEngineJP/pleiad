@@ -5,6 +5,7 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { savedReason } from './saved-text.mjs';
 import { fallbackName } from './delegation-routing-view.mjs';
+import { closeIcon } from './icons.mjs';
 
 // i18n-dynamic: changeLog.field.
 // i18n-dynamic: changeLog.by.
@@ -43,10 +44,11 @@ export function openChangeLog({ title, changes, anchor = null }) {
   const heading = el('h3', null, t('changeLog.title'));
   heading.id = titleId;
   const sub = el('span', 'cl-sub', title);
-  const closeButton = el('button', 'btn btn-quiet cl-close');
+  const closeButton = el('button', 'btn btn-icon');
   closeButton.type = 'button';
-  closeButton.append(el('span', null, t('changeLog.close')), el('span', null, '×'));
-  closeButton.lastChild.setAttribute('aria-hidden', 'true');
+  closeButton.innerHTML = closeIcon;
+  closeButton.setAttribute('aria-label', t('changeLog.close'));
+  closeButton.title = t('dialog.closeWithEscape');
   const titles = el('div', 'cl-titles');
   titles.append(heading, sub);
   head.append(titles, closeButton);
