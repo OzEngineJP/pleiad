@@ -222,6 +222,8 @@ import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, accountUnavailableBackend,
 } from "./backends/index.mjs";
+import { chatGptConnections } from './backends/pleiad-agent.mjs';
+import { chatGptEndpoint } from './backends/pleiad-agent-chatgpt.mjs';
 import { assertBackendAllowed, backendAllowed, managedBackendIds } from './backends/host-policy.mjs';
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
@@ -778,7 +780,7 @@ const apiKeys = createApiKeys({
   log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
   onChange: change => apiKeysChanged(change),
 });
-const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys, managed: Boolean(managedBackendIds) });
+const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys, managed: Boolean(managedBackendIds), chatGpt: chatGptConnections });
 // 秘密情報と変数（設定 › 秘密情報と変数。core/secrets.mjs、ADR 0217）。登録しただけでは渡さず、使い道（環境変数・サイトでの入力）を選んだものだけを使う。
 // 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
 const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
@@ -9593,10 +9595,16 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const accountBackend = (reserved && getBackend(reserved.backend)) || backend;
   // 互換の接続先（'' = 公式）。削除済み・確認に失敗している・キーを読めないものを選んでいる会話は、ここで止める
   // （黙って公式で走らせない。アカウントと同じ扱い）。新しい会話は、設定で「既定にする」を押した接続先（無ければ公式）
+  if (managedBackendIds && chatGptEndpoint(reserved?.endpoint ?? args?.endpoint ??
+      (sessionId ? (await store.get(sessionId)).compatEndpoint : ''))) throw new Error(t('chatgpt.localOnly'));
   const endpointId = !endpointCapable(accountBackend) ? ''
     : reserved?.endpoint !== undefined ? reserved.endpoint
     : sessionId ? (await store.get(sessionId)).compatEndpoint ?? ''
     : typeof args?.endpoint === 'string' ? args.endpoint : await compatEndpoints.defaultFor(accountBackend.id);
+  if (chatGptEndpoint(endpointId) && (delegated || (sessionId && (await store.get(sessionId)).bot) ||
+      hooks.internal || (hooks.compact && hooks.compact !== 'manual'))) {
+    throw new Error(t('chatgpt.foregroundOnly'));
+  }
   const endpoint = endpointId ? await compatEndpoints.resolve(endpointId, accountBackend.id) : null;
   const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
   // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
@@ -11075,6 +11083,7 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
     const gist = suggestionGist(messages);
     if (!gist || signal.aborted) return null;
     const saved = await store.get(id);
+    if (chatGptEndpoint(saved.compatEndpoint)) return null;
     const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
     if (saved.compatEndpoint && !endpoint) return null;
     // 共通の内部呼出しで回す（usage は internalTask 欄付きで記録される。kind 'suggest'）
@@ -12113,6 +12122,20 @@ wss.on("connection", (ws, req) => {
         // 互換の接続先（core/compat-endpoints.mjs）。キーは返さない。確認の失敗は例外ではなく { ok: false, error, lines } で返す（理由の行を画面に出すため）
         case 'compatEndpoints':
           return await viaOp('endpoints.list');
+        case 'chatGptConnection': {
+          if (managedBackendIds) return reply(false, t('chatgpt.localOnly'), 'host_only');
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          ws.once('close', abort);
+          try {
+            const { action, id, consent } = args ?? {};
+            const result = await chatGptConnections.command(action, { id, consent }, controller.signal);
+            if (action !== 'status' && action !== 'cancel') emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+            return reply(true, result);
+          } finally {
+            ws.off('close', abort);
+          }
+        }
         case 'compatEndpointCheck': {
           assertBackendAllowed(msg.args?.input?.agent);
           try { return reply(true, await compatEndpoints.check(msg.args?.input, { id: msg.args?.id ?? null })); }

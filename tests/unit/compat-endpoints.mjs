@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createCompatEndpoints, claudeCompatEnv, claudeCompatVars, codexCompatThread, codexProviderId, writeClaudeFlagSettings,
   sweepClaudeFlagSettings, normalizeUrl, EndpointError, CheckError, NO_KEY, delegatedEndpoint } from '../../core/compat-endpoints.mjs';
+import { createChatGptConnections, chatGptEndpoint } from '../../core/backends/pleiad-agent-chatgpt.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { startFakeCompatApi } from '../lib/fake-compat-api.mjs';
 
@@ -18,6 +19,34 @@ const OTHER = 'sk-compat-' + 'o'.repeat(24);
 async function rejects(fn) { try { await fn(); return null; } catch (e) { return e; } }
 
 export default async function (t) {
+  const account = { id: 'fixture-registration', connected: false, planEnabled: true, limited: false, models: [] };
+  let modelChecks = 0;
+  const bridge = createChatGptConnections(async () => ({
+    chatGptSession: {
+      status: async () => ({ accounts: [account], legacy: true }),
+      login: async () => { account.connected = true; return { ...account, firstSignIn: true }; },
+      resumeUsage: async () => { account.limited = false; },
+      logout: async () => { account.connected = false; return { revoked: false }; },
+    },
+    listChatGptModels: async () => { modelChecks++; account.models = [{ id: 'fixture-model' }]; },
+  }));
+  const initial = await bridge.command('status', {});
+  const { endpointId } = initial.accounts[0];
+  t.ok('ChatGPT の旧方式の案内を返す', initial.legacy && chatGptEndpoint(endpointId));
+  t.ok('ChatGPT の未ログインの接続先は選べない', !(await bridge.list())[0].ready);
+  const loggedIn = await bridge.command('login', { consent: true });
+  t.ok('ChatGPT のログイン後にモデルを取得する', loggedIn.firstSignIn && modelChecks === 1);
+  const [row] = await bridge.list();
+  t.ok('ChatGPT の一覧に登録 ID を出さない', row.id === endpointId && row.ready && !JSON.stringify(row).includes(account.id));
+  t.ok('ChatGPT の実行時に登録とモデルを解決する', (await bridge.resolve(endpointId)).registration === account.id);
+  account.limited = true;
+  t.ok('ChatGPT の利用上限に達した接続先は使えない', !(await bridge.list())[0].ready && Boolean(await rejects(() => bridge.resolve(endpointId))));
+  await bridge.command('resume', { id: account.id });
+  t.ok('ChatGPT の再開後は同じ接続先を使える', (await bridge.list())[0].ready);
+  const loggedOut = await bridge.command('logout', { id: account.id });
+  t.ok('ChatGPT の解除後は使えず、失効を確認できなかった場合に案内する',
+    loggedOut.note === 'chatgpt.revokeUnconfirmed' && !(await bridge.list())[0].ready);
+
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-compat-'));
   const api = await startFakeCompatApi({ keys: [KEY], auth: 'bearer' });
   try {

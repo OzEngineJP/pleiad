@@ -9,6 +9,7 @@ import { dataDir, get, setSessionData } from '../store.mjs';
 import { t } from '../i18n.mjs';
 import { editableField, hostTools, interactionQuestions } from './pleiad-agent-tools.mjs';
 import { managedBackendIds } from './host-policy.mjs';
+import { createChatGptConnections } from './pleiad-agent-chatgpt.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from './agent-marks.mjs';
 import { docStopsNative } from './context-capabilities.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
@@ -29,6 +30,14 @@ function cliPath() {
 
 function adapter(cli, module) {
   return import(pathToFileURL(path.join(path.dirname(cli), 'adapters', 'stdio', module + '.mjs')).href);
+}
+
+export const chatGptConnections = createChatGptConnections(loadChatGptAdapter);
+
+function loadChatGptAdapter() {
+  const cli = cliPath();
+  if (!cli) throw new Error('Configure the Pleiad Agent executable first');
+  return adapter(cli, 'chatgpt');
 }
 
 function modelSettings() {
@@ -152,6 +161,19 @@ function liveEvents(emit, trigger) {
 // Keep authentication in the parent, including when a provider returns an error.
 async function relayModel(frame, config, getKey, write, signal) {
   if (frame.body?.model !== config.model) throw new Error('Unexpected model');
+  if (config.chatGpt) {
+    const response = await config.chatGpt.openChatGptResponse(frame.body,
+      { id: config.registration, signal });
+    await write({ type: 'model.headers', id: frame.id, status: response.status,
+      headers: { 'content-type': response.headers.get('content-type') } });
+    if (response.body) {
+      for await (const chunk of response.body) {
+        await write({ type: 'model.chunk', id: frame.id, data: Buffer.from(chunk).toString('base64') });
+      }
+    }
+    await write({ type: 'model.end', id: frame.id });
+    return;
+  }
   if (config.managed && frame.body.stream !== true) throw new Error('Plus requires streaming');
   const authorization = config.managed ? await getKey(signal) : { key: await getKey(signal) };
   const { key } = authorization;
@@ -283,7 +305,14 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
   try {
     let config, getKey;
     const local = !managedBackendIds && !endpoint && modelSettings();
-    if (local) {
+    if (endpoint?.kind === 'chatgpt-plan') {
+      if (managedBackendIds) throw new Error(t('chatgpt.localOnly'));
+      if (internal) throw new Error(t('chatgpt.foregroundOnly'));
+      model ||= endpoint.roles.main;
+      if (!endpoint.models.includes(model)) throw new Error(t('chatgpt.refreshRequired'));
+      config = { protocol: 'openai-chatgpt', chatGpt: await loadChatGptAdapter(),
+        registration: endpoint.registration, model, vision: true };
+    } else if (local) {
       config = local;
       if (model && model !== config.model) throw new Error('The Pleiad Agent model configuration has changed');
       const key = config.keyId ? await resolveKey?.(config) : process.env.AGENT_HOST_PLEIAD_AGENT_API_KEY ||
@@ -326,6 +355,7 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
     for await (const frame of readFrames(child.stdout)) {
       if (!greeted) {
         if (frame.type !== 'hello' || frame.version !== VERSION) throw new Error('Unsupported Pleiad Agent protocol');
+        if (config.chatGpt && !frame.capabilities?.includes('openai-chatgpt')) throw new Error('Update Pleiad Agent to use ChatGPT sign-in');
         greeted = true;
         if (internal) {
           if (!frame.capabilities?.includes('completion')) throw new Error('Independent model calls are unavailable');
@@ -404,14 +434,22 @@ async function runTurn({ prompt, sessionId, hostSessionId, messageId, cwd, model
       } else if (frame.type === 'model.request' && frame.turnId === id && !requests.has(frame.id)) {
         const request = new AbortController();
         requests.set(frame.id, request);
-        void relayModel(frame, config, getKey, write, request.signal).catch(() => {
+        void relayModel(frame, config, getKey, write, request.signal).catch(error => {
+          if (config.chatGpt && !request.signal.aborted) protocolError = error.message;
           if (!request.signal.aborted) return send({ type: 'model.error', id: frame.id });
         }).finally(() => requests.delete(frame.id));
       } else if (frame.type === 'model.cancel') {
         requests.get(frame.id)?.abort();
       } else if (frame.type === 'finished' && frame.turnId === id) {
         outcome = ({ ok: 'ok', duplicate: 'ok', aborted: 'aborted' })[frame.outcome] ?? 'error';
-        if (outcome === 'error') protocolError = 'Pleiad Agent could not complete the turn';
+        if (outcome === 'error') {
+          const { accounts } = await config.chatGpt?.chatGptSession.status().catch(() => ({})) ?? {};
+          if (accounts?.some(row => row.id === config.registration && row.limited)) {
+            protocolError = t('chatgpt.limitTurn');
+          } else {
+            protocolError ??= 'Pleiad Agent could not complete the turn';
+          }
+        }
         break;
       } else if (frame.type === 'error' && pendingSteers.delete(frame.id)) {
         emit({ type: 'userMessage.dropped', messageId: frame.id });

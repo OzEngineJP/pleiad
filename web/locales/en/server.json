@@ -1,4 +1,13 @@
 {
+  "chatgpt": {
+    "limitTurn": "ChatGPT usage limit reached. Check your usage in ChatGPT before resuming.",
+    "refreshRequired": "Refresh the ChatGPT model list in connection settings.",
+    "localOnly": "ChatGPT sign-in is available on your PC only.",
+    "foregroundOnly": "ChatGPT plan usage is available in interactive conversations on your PC.",
+    "signInRequired": "Sign in with ChatGPT and enable plan usage in connection settings.",
+    "pending": "Complete sign-in in your browser.",
+    "actionInvalid": "Invalid ChatGPT connection action."
+  },
   "acp": {
     "errors": {
       "usageExhausted": "{{agent}} reported an insufficient usage balance or allowance. Check current usage and try again later.",
