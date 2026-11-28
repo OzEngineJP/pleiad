@@ -2099,7 +2099,7 @@ function aiMsg({ uuid, at, cont, backend, model } = {}) {
 }
 
 /** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える。tools はその発言のエージェントの申告（subagentToolsOf） */
-const isBoundaryTool = (name, tools) => isDelegateTool(name) || tools.has(name);
+const isBoundaryTool = (name, tools) => isDelegateTool(name) || name === 'invoke_subagent' || tools.has(name);
 
 /** 会話の下端に付いていく（本体は web/conversation-view.mjs） */
 function followBottom(ms = 320) { mainView.followBottom(ms); }
@@ -5217,8 +5217,8 @@ function selectedBackend() { return composerSelection().backend; }
  * 使えるアカウントの行には、その週の使用量を添える（quota はそのエージェントの使用量。web/header-usage.mjs の weekUsage）
  */
 function accountOptions(quota) {
-  const { backend, account } = composerSelection();
-  return accountOptionsOf(backend, account, quota);
+  const { backend, account, model } = composerSelection();
+  return accountOptionsOf(backend, account, quota, model || state.models['']?.resolvesTo);
 }
 /**
  * 登録した Claude アカウントの claude.ai のコネクター（ADR 0340 段 3）の、モデルの面の 2 行目の短い文。
@@ -5239,12 +5239,12 @@ function cliLoginSub(bid) {
   const st = state.auth.get(bid);
   return st?.loggedIn && st.account ? t("conn.officialAs", { email: st.account }) : t("conn.official");
 }
-function accountOptionsOf(backend, value, quota) {
+function accountOptionsOf(backend, value, quota, model) {
   const list = accountList(backend);
   return [
-    { value: "", label: t("conn.cliLogin"), hint: cliLoginSub(backend), usage: weekUsage(quota, ""), isDefault: connIsDefault(backend, "cli") },
+    { value: "", label: t("conn.cliLogin"), hint: cliLoginSub(backend), usage: weekUsage(quota, "", model), isDefault: connIsDefault(backend, "cli") },
     ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? t("conn.official") : t("conn.subSignedOut"), warn: !a.ready,
-      usage: a.ready ? weekUsage(quota, a.id) : null, conn: a.ready ? connectorsNote(a.connectors) : null, isDefault: connIsDefault(backend, "account", a.id) })),
+      usage: a.ready ? weekUsage(quota, a.id, model) : null, conn: a.ready ? connectorsNote(a.connectors) : null, isDefault: connIsDefault(backend, "account", a.id) })),
     ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.endpoint.deleted"), hint: t("chat.account.chooseAgain"), gone: true }] : []),
   ];
 }
@@ -5345,10 +5345,10 @@ const connChoices = {
   load: async (backend) => {
     await Promise.all([loadAccounts(backend), capsOf(backend).compatEndpoints ? compatEndpoints.load().catch(() => []) : null]);
   },
-  accounts: (backend, value) => {
+  accounts: (backend, value, model) => {
     if (!capsOf(backend).accounts) return null;
     if (!accountList(backend).length && !value) return null;
-    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota);
+    return accountOptionsOf(backend, value, usageSource.get(backend)?.quota, model);
   },
   endpointView: (backend, selected) => (capsOf(backend).compatEndpoints ? endpointViewOf(backend, selected) : null),
   hasAccounts: (backend) => accountList(backend).length > 0,
@@ -7871,7 +7871,10 @@ function linkDelegateCard(card, input = null, result = null, ctx = null) {
   if (!card.querySelector(':scope > .tc-go')) card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
   if (res) watchValueWidth(res);
-  if (card.dataset.taskId) decorateDelegateCard(card);
+  if (card.dataset.taskId) {
+    if (result && card.parentElement) paintDelegateCardsIn(card.parentElement, cardCtx.get(card)?.scope ?? null);
+    else decorateDelegateCard(card);
+  }
 }
 
 /** ply_delegate の 1 行目: サーバー名とツール名・入力の要約を、依頼の題に替える */
@@ -11925,19 +11928,26 @@ function watchRemoteReason() {
 usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); });
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
-const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
+const usageAccountName = (backend, id) => {
+  const accounts = accountList(backend);
+  return id ? accounts.find(a => a.id === id)?.name : accounts.length ? t('conn.cliLogin') : '';
+};
+const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin, accountName: usageAccountName,
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 // 子の会話のモーダルの入力欄の使用量のチップ。同じ部品の 2 つ目で、見せる値は子のもの。ポップはモーダルの中に置く（body に置くと下に隠れる）
 {
   const pop = el('div', 'pop usage-pop');
   pop.id = 'wkUsagePop'; pop.setAttribute('role', 'dialog'); pop.hidden = true;
-  workUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
+  workUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin, accountName: usageAccountName,
     openSettings: () => { $('workDialog').close(); onboarding.open('usage'); $('usageTab').click(); },
     onVisibility: () => workComposer?.syncStrip(), chip: workComposer.els.usageChip, pop, host: $('workDialog'), column: $('workDialog') });
   syncWorkUsage();
 }
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
-  onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
+  onUsageLogin: usageLogin,
+  onAccountLogin: (backend, account) => account && capsOf(backend).accounts === 'agent' ? agentAccounts.open(backend, { focus: account })
+    : account && capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account }) : openAgentConns(backend),
+  current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）
 const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: () => state.prefs });

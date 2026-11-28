@@ -550,6 +550,8 @@
     "failed": "取得に失敗しました。"
   },
   "antigravity": {
+    "delegationDelivery": "この Antigravity で Pleiad に作業を任せるときは、ネイティブの invoke_subagent ではなく ply_agents の ply_delegate を使います。公開されている mcp_<server>_ply_delegate を直接呼ぶか、call_mcp_tool の ToolName に公開名（例: ply_delegate）、Arguments に委譲の引数を渡します。Pleiad の委譲は親会話と作業一覧から追えます。",
+    "controlDelivery": "この Antigravity で会話の ToDo を扱うときは、ply_control の ply_control_call_op を直接呼ぶか、call_mcp_tool の ToolName に公開名（例: ply_control_call_op）、Arguments に { \"op\": \"todos.list\" } を渡します。操作の一覧は ply_control_list_ops で確認できます。",
     "description": "Pleiad がこの会話のために作ったエージェント。Pleiad が担当する指示・Skills・外部 MCP を ply_context から受け取る",
     "heading": "# Pleiad のコンテキスト",
     "note": "Pleiad はこのエージェント定義を {{home}} に作った。このディレクトリはユーザーのプロジェクトの一部ではない。そこにあるファイルを読んだり、一覧にしたり、変更したりしないこと。プロジェクトの作業場所は {{cwd}}。"

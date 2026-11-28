@@ -133,6 +133,17 @@ export default async function (t) {
     }
     // wire-has は、前置きの指示を含む agy が実際に受け取った本文にその文字列があるかを返す
     t.ok('agy の委譲された子には時間上限・PID管理・無期限待機禁止が実際に届く', child?.status === 'completed' && child.result === 'wire-has:yes', JSON.stringify(child?.result ?? child?.status).slice(0, 300));
+    const parent = await client.runTurn({ prompt: 'delegate-without-acp-output', sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    const cards = parent.events.filter(e => e.type === 'tool.start' && e.name === 'ply_delegate');
+    const taskIds = cards.map(card => JSON.parse(parent.events.find(e => e.type === 'tool.result' && e.id === card.id)?.text ?? '{}').taskId);
+    const tasks = await client.cmd('agentTasks', { sessionId });
+    t.ok('ACP の本文が空でも同じ題の委譲 2 件を別々のタスクへ紐付ける',
+      cards.length === 2 && new Set(taskIds).size === 2 && taskIds.every(id => id && tasks.some(task => task.taskId === id)),
+      JSON.stringify({ taskIds, work: tasks.map(task => task.taskId) }));
+    const history = await client.cmd('loadSession', { sessionId });
+    t.ok('履歴にも委譲カードのタスク ID とネイティブのサブエージェントの役割が残る',
+      taskIds.length === 2 && taskIds.every(id => JSON.stringify(history.messages).includes(id))
+      && parent.events.some(e => e.type === 'tool.start' && e.name === 'invoke_subagent' && e.input.Role === 'explorer'));
 
     // ---- 指示がエージェント任せの会話: カスタムエージェントが読めない AGENTS.md・GEMINI.md を Pleiad が発言の前に足す（issue #107）
     // 探索は scan-home（PLEIAD_SCAN_HOME。利用者の home ではない）と作業場所。`@import` の行は agy 側で解決されないため生のまま渡す

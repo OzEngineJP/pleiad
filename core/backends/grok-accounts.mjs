@@ -76,7 +76,7 @@ export async function prepareGrokAccount(account, dataDir, { login = false, allo
     await fs.writeFile(file, JSON.stringify(auth), { flag: 'wx', mode: 0o600 });
   }
   if (!login && !allowUnauthenticated && !(await readGrokCredential(account, dataDir))) {
-    throw new Error(t('accounts.backend.notLoggedIn', { agent: 'Grok Build' }));
+    throw Object.assign(new Error(t('accounts.backend.notLoggedIn', { agent: 'Grok Build' })), { reason: 'no-login' });
   }
   const env = { ...process.env, GROK_HOME: dir };
   delete env.XAI_API_KEY;

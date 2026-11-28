@@ -646,7 +646,7 @@ export function createConversationView({ sessionId = null, log, thread, frame, r
         if (ev.id) toolCards.set(ev.id, card);
         // 通常ツールは同じ行を末尾へ移し、汎用の稼働表示を重ねない。
         // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
-        if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
+        if (boundary && ev.name !== "invoke_subagent") activity.show(t("activity.runningTool", { tool: ev.name }));
         else activity.suspend();
         return card;
       }

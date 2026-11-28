@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t, agentT } from '../i18n.mjs';
+import { quotaFailure, readAccountQuotas } from '../usage.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
 import { BROWSER_SERVER } from '../browser-bridge.mjs';
 import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
@@ -253,7 +254,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   // ログインの案内が同時に走らないよう掴む旗と、待っている見張りをやめる口（authCancel）
   let pendingAuth = null;
   const loginWatch = createLoginWatch('Grok');
-  return {
+  const api = {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
     // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
     capabilities: CAPABILITY_STATES.grok,
@@ -290,14 +291,26 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         scopedBackends.delete(key);
       }
     },
-    async usage({ cwd = process.cwd() } = {}) {
+    async usage({ cwd = process.cwd(), account = null, accounts = [], skip = [] } = {}) {
+      const signedOut = () => ({ windows: [], checkedAt: null, reason: 'no-login', message: t('grok.usageNoCredentials') });
+      const read = async entry => {
+        if (entry?.ready === false) return signedOut();
+        if (!entry) return api.usage({ cwd });
+        try { return await (await api.forAccount(entry)).usage({ cwd }); }
+        catch (error) { if (error.reason === 'no-login') return signedOut(); throw error; }
+      };
+      if (!accountScope) {
+        if (account) return read(account);
+        if (accounts.length) return readAccountQuotas(accounts, skip, read);
+      }
       return serial(metadataQueue, async () => {
         let client;
         try {
           client = await openClient(cwd);
           return grokQuota(await client.call('_x.ai/billing', {}));
         } catch (error) {
-          return { windows: [], checkedAt: null, message: isAuthError(error) ? t('grok.usageNoCredentials') : t('grok.usageFetchFailed') };
+          return isAuthError(error) ? signedOut()
+            : { windows: [], checkedAt: null, reason: quotaFailure(error), message: t('grok.usageFetchFailed') };
         } finally { await client?.close(); }
       });
     },
@@ -783,6 +796,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       return { path: argv[0] === process.execPath && argv[1] ? argv[1] : argv[0], ...(version ? { version } : {}) };
     },
   };
+  return api;
 
   /** 認証まわりの小さな起動（status・logout・--version）。ターンの ACP とは別経路 */
   function runAuth(args, { timeoutMs = 15000 } = {}) {

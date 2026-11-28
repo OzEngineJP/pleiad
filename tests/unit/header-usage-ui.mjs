@@ -122,7 +122,8 @@ export default async function(t) {
     assert.equal(clickBlocked, true); await tick();
     t.ok('互換の接続先にはサブスクの率を出さず、一覧を開いて Esc・外側で閉じられる', true);
 
-    open(); await tick(); pop.querySelector('.usage-other-agents').querySelector('summary').focus();
+    const otherAgents = () => pop.querySelectorAll('.usage-other-agents').find(node => node.dataset.usageSection === 'agents');
+    open(); await tick(); otherAgents().querySelector('summary').focus();
     replies.set('current', () => Promise.resolve({ quota: { windows: [], accounts: [
       { label: 'Default', ...quota(63) },
       { label: 'Work', windows: [], needsUsageLogin: true, accountId: 'work' },
@@ -131,7 +132,7 @@ export default async function(t) {
     unknownChip();
     const authorize = sections()[0].querySelector('button');
     assert.ok(authorize);
-    assert.equal(document.activeElement, pop.querySelector('.usage-other-agents').querySelector('summary'));
+    assert.equal(document.activeElement, otherAgents().querySelector('summary'));
     authorize.focus();
     ui.show({ backend: 'current' });
     assert.equal(document.activeElement, pop.querySelector('.usage-pop-body'));

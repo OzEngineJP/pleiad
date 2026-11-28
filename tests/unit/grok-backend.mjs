@@ -52,6 +52,7 @@ export default async function (t) {
         return { sessionId };
       }
       if (method === '_x.ai/session/rename') return { success: true };
+      if (method === '_x.ai/billing') return { config: { creditUsagePercent: this.options.env.GROK_HOME.includes('accounts') ? 23 : 81 } };
       if (method === '_x.ai/session/fork') {
         const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.newCwd);
         return { newSessionId: sessionId };
@@ -377,6 +378,20 @@ export default async function (t) {
         (await backend.accountStatus({ account })).hasCredential && fs.existsSync(path.join(accountDir, 'auth.json'))
         && !fs.existsSync(path.join(defaultHome, 'auth.json')));
       const scoped = await backend.forAccount(account);
+      const missingId = 'acct-000000000000';
+      const missing = { id: missingId, name: 'Signed out', dir: path.join(dataDir, 'accounts', 'grok', missingId), ready: false };
+      const invalid = { ...missing, id: 'bad-dir', ready: true };
+      const usageMark = calls.length;
+      const quota = await backend.usage({ accounts: [account, missing, invalid] });
+      t.ok('Grok 使用量は既定と登録のホームを分離し、未ログインと失敗を行ごとに返す',
+        JSON.stringify(quota.accounts.map(row => [row.accountId, row.windows[0]?.usedPercent ?? row.reason])) ===
+          JSON.stringify([[null, 81], [accountId, 23], [missingId, 'no-login'], [invalid.id, 'error']])
+        && of('_x.ai/billing', usageMark).some(call => call.env.GROK_HOME === accountDir && !call.env.XAI_API_KEY));
+      const skipMark = calls.length;
+      const skipped = await backend.usage({ accounts: [account, missing], skip: ['login', accountId] });
+      t.ok('Grok の使用量は指定した行を起動せず、単独取得は登録アカウントの値を返す',
+        skipped.accounts[0].skipped && skipped.accounts[1].skipped && !of('_x.ai/billing', skipMark).length
+        && (await backend.usage({ account })).windows[0]?.usedPercent === 23);
       mark = calls.length;
       const firstAccountTurn = await scoped.runTurn({ prompt: 'private account turn', cwd, mode: 'ask', emit: () => {} });
       const scopedNew = of('session/new', mark)[0];

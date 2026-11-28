@@ -1908,8 +1908,10 @@ const agentOpIds = {
   ply_task_send: 'delegation.taskSend', ply_task_cancel: 'delegation.taskCancel', ply_task_list: 'delegation.taskList', ply_usage: 'delegation.usage',
 };
 const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale } = {}) => {
+  const recordDelegate = name === 'ply_delegate' ? runtime.turns.get(owner)?.control.recordDelegate : null;
   const result = await opsRegistry.invoke({ by: 'agent', via: 'mcp', sessionId: owner }, agentOpIds[name], args, opsDeps(locale));
   if (!result.ok) throw new Error(result.error);
+  recordDelegate?.(args, result.result);
   return result.result;
 },
 // ply_delegate の host に書けるホスト（端末側・ホスト側の両方がオンのもの。オフラインの印つき）。無ければ host の引数自体を出さない

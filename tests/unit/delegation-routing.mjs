@@ -6,7 +6,7 @@ import { KINDS, SIGNALS, DEFAULTS, DEFAULT_JUDGE, DECISION_THRESHOLD, levelOrder
   route, routeFromLevel, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJudge, judgeDifficulty, normalizeKey, TASK_LIMIT, JUDGE_USE, JUDGE_SERVICE } from '../../core/delegation-judges.mjs';
 import { createUsageMonitor, createUsageWarm, REFRESH_MS, STALE_MS, WARM_MS } from '../../core/delegation-usage.mjs';
-import { claudeQuota, codexQuota } from '../../core/usage.mjs';
+import { agentUsage, claudeQuota, codexQuota, readAccountQuotas } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'delegation-routing';
@@ -422,6 +422,27 @@ export default async function (t) {
   t.ok('キーの形の検査', normalizeKey('  abc  ') === 'abc' && normalizeKey('') === null && normalizeKey('a b') === null && normalizeKey('x'.repeat(501)) === null);
 
   // ---- 使用量の取り置き
+  for (const [id, model] of [['antigravity', 'gemini-3.8-flash-high'], ['grok', 'grok-4']]) {
+    const backend = { id, label: id, usage: true, capabilities: { accounts: 'agent' } };
+    const accounts = [{ id: 'work', name: 'Work', ready: true }, { id: 'signed-out', name: 'Signed out', ready: false }];
+    const quota = { ...await readAccountQuotas(accounts, [], async account => account?.ready === false
+      ? { reason: 'no-login', windows: [] }
+      : { windows: [week(account ? 15 : 100, 10, { resetsAt: null, ...(id === 'antigravity' ? { group: 'Gemini Models' } : {}) })] }), checkedAt: NOW };
+    const exposed = await agentUsage({ backend: id, get: () => backend, list: () => [backend], read: async () => quota,
+      accounts: async () => accounts, locale: 'ja' });
+    const agentMonitor = createUsageMonitor({
+      backends: () => [backend], read: async () => quota, candidates: () => [`${id}:${model}`], modelKnown: async () => true,
+    });
+    await agentMonitor.refresh();
+    const usage = agentMonitor.snapshot();
+    const [login, work, signedOut] = exposed.backends[0].accounts;
+    t.ok(`${id}: ply_usage と委譲の候補が登録アカウントの枠と未ログインを区別する`,
+      login.account === 'login' && login.windows[0].usedPercent === 100 && work.windows[0].usedPercent === 15
+      && signedOut.reason === 'no-login' && signedOut.runnable === false
+      && usage[id].accounts.find(row => row.account === 'signed-out')?.runnable === false
+      && pickAccount({ backend: id, model, accounts: ['', 'work'], usage, settings, now: NOW }) === 'work',
+      JSON.stringify(usage[id]));
+  }
   let reads = 0, warmed = 0;
   const claudeB = { id: 'claude', usage: true, capabilities: { accounts: 'token' } }, agyB = { id: 'antigravity', usage: true }, codexB = { id: 'codex', usage: true }, fakeB = { id: 'fake' };
   let agyKnows = false;

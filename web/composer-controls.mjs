@@ -451,7 +451,12 @@ function weekMeta(usage) {
   const m = el("span", `meta${usage.high ? " hot" : ""}`);
   const bar = el("span", "usage-mini"); bar.setAttribute("aria-hidden", "true");
   const fill = el("i"); fill.style.width = `${Math.min(100, Math.max(0, usage.used))}%`; bar.append(fill);
-  m.append(bar, t("composer.account.week", { percent: percentText(usage.used) }));
+  const percent = percentText(usage.used);
+  m.append(bar);
+  if (usage.label) {
+    m.title = `${usage.label} ${percent}`;
+    m.append(el("span", "usage-mini-label", usage.label), percent);
+  } else m.append(t("composer.account.week", { percent }));
   return m;
 }
 /** 1 段目の行。onClick が無ければ押せない行（値を見せるだけ。右端の印を出さない） */
@@ -1165,16 +1170,18 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     // 互換の接続先は「接続先 · モデル · 段」。モデルは表示名（web/compat-models.mjs）で、1M は札。送る ID を含む全体は title に出す
     const row = d.endpoint?.row;
     const epModel = row ? compatModelLabel(d.model || row.roles?.main || "") : null;
-    const epLabel = row ? endpointChipLabel({ connection: row.name, model: epModel.text, fullModel: epModel.id, effort: effortStops(d.efforts, d.effort).current }) : null;
-    const label = epLabel ? epLabel.text : modelChipLabel(d.models, d.model, d.efforts, d.effort);
-    const full = epLabel ? epLabel.full : label;
+    const label = modelChipLabel(d.models, d.model, d.efforts, d.effort);
     const { head: modelHead, tail: modelTail } = splitChipLabel(label);
+    const account = d.account && d.accounts?.find(a => a.value === d.account && !a.gone);
+    const connection = row?.name ?? account?.label;
+    const epLabel = connection ? endpointChipLabel({ connection, model: epModel?.text ?? modelHead, fullModel: epModel?.id,
+      effort: row ? effortStops(d.efforts, d.effort).current : modelTail }) : null;
     paintWhoChip(chips.model, { bot: d.destination?.bot, backend: d.backend,
       backendLabel: d.destination?.backendLabel?.(d.backend) ?? d.backend,
       model: epLabel ? epLabel.head : modelHead, effort: epLabel ? epLabel.tail : modelTail,
-      sent: Boolean(d.destination?.sent), endpoint: Boolean(row), oneM: Boolean(epLabel && epModel.oneM), pending: Boolean(d.modelsPending && !row),
+      sent: Boolean(d.destination?.sent), endpoint: Boolean(row), oneM: Boolean(epModel?.oneM), pending: Boolean(d.modelsPending && !connection),
       // 互換の接続先は送る ID を含む全体を title に
-      title: epLabel ? t("composer.model.chipTitle", { label: full }) : null });
+      title: epLabel ? t("composer.model.chipTitle", { label: epLabel.full }) : null });
     chips.model.dataset.value = d.model ?? "";
     chips.model.dataset.backend = d.backend ?? "";
     // 承認モード。既定から外れているときだけ、モデルのチップの ▾ の前に「· 盾 名前」を --ink-blue で出す（ADR 0252）。

@@ -551,6 +551,8 @@
     "failed": "Could not read the usage."
   },
   "antigravity": {
+    "delegationDelivery": "To delegate through Pleiad in Antigravity, use ply_agents' ply_delegate instead of the native invoke_subagent. Call the exposed mcp_<server>_ply_delegate directly, or use call_mcp_tool with its exposed ToolName (for example, ply_delegate) and the delegation arguments in Arguments. Pleiad tasks appear in the parent conversation and the work list.",
+    "controlDelivery": "To manage conversation ToDos in Antigravity, call ply_control's ply_control_call_op directly, or use call_mcp_tool with its exposed ToolName (for example, ply_control_call_op) and { \"op\": \"todos.list\" } in Arguments. Use ply_control_list_ops to discover operations.",
     "description": "An agent that Pleiad created for this conversation. It receives the instructions, Skills and external MCP servers that Pleiad manages from ply_context",
     "heading": "# Pleiad context",
     "note": "Pleiad created this agent definition in {{home}}. That directory is not part of the user's project: do not read, list or modify files there. The project workspace is {{cwd}}."

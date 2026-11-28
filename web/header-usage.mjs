@@ -35,20 +35,22 @@ export const percentText = used => used == null ? '—' : `${Math.min(Math.round
  * 見つからなければ null（別のアカウントの値を借りない）。登録が無ければ quota そのもの
  */
 export function quotaOf(quota, account = '') {
-  if (!Array.isArray(quota?.accounts) || !quota.accounts.length) return quota ?? null;
+  if (!Array.isArray(quota?.accounts) || !quota.accounts.length) return account ? null : quota ?? null;
   return quota.accounts.find(a => account ? a.accountId === account : !a.accountId) ?? null;
 }
 
 /**
- * アカウントの行の右に出す、その週の使用量（docs/design-system.md「bot のページ」、ADR 0224）。
- * quota.accounts からそのアカウントの行だけを引く（無ければ出さない。quotaOf のように先頭の行へ寄せると、別のアカウントの値に見える）。
- * 枠は全体の週次（モデルの系統だけの週次は除く）。週の枠が無い・率が分からなければ null（行は今までの補足のまま）
+ * 接続先の行には全体の週次枠、またはモデルに合うグループ枠を出す。
  */
-export function weekUsage(quota, account = '') {
-  const rows = Array.isArray(quota?.accounts) && quota.accounts.length ? quota.accounts : null;
-  const row = rows ? rows.find(a => account ? a.accountId === account : !a.accountId) : account ? null : quota;
-  const used = usedOf((row?.windows ?? []).find(w => w.minutes === 10080 && !w.model && !w.limitName));
-  return used == null ? null : { used, high: used >= HIGH };
+export function weekUsage(quota, account = '', model = '') {
+  const row = quotaOf(quota, account);
+  if (needsAuth(row) || ((account || quota?.accounts?.length) && row?.reason)) return null;
+  const windows = row?.windows ?? [];
+  const grouped = windows.filter(w => (w.group && w.minutes === 10080) || ((w.group || w.model) && w.minutes === null));
+  const window = grouped.length ? topWindow(windowsForModel(grouped, model))
+    : windows.find(w => w.minutes === 10080 && !w.model && !w.limitName);
+  const used = usedOf(window);
+  return used == null ? null : { used, high: used >= HIGH, ...(window.minutes === null ? { label: shortLabel(window) } : {}) };
 }
 
 /** 使用量の表示の認可が要る（済んでいない・やり直し・ログイン情報にトークンが無く再ログインが要る） */
@@ -209,7 +211,7 @@ export function usagePopBounds(chip, column, viewport, titleBottom = 0) {
  * chip / pop で渡し、ポップを置く先（モーダルの最前面の中。body に置くとダイアログの下に隠れる）を host、
  * 吹き出しを収める枠を column で渡して、もう 1 つ作る
  */
-export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {}, chip = $('usageChip'), pop = $('usagePop'), host = document.body, column = chip.closest?.('main') }) {
+export function setupHeaderUsage({ $, source, getBackends, accountName = () => '', onUsageLogin, openSettings, onVisibility = () => {}, chip = $('usageChip'), pop = $('usagePop'), host = document.body, column = chip.closest?.('main') }) {
   const mobile = globalThis.matchMedia?.('(max-width:700px)') ?? { matches: false, addEventListener() {} };
   let sheet = null, anchor = chip;
   host?.append(pop);
@@ -280,10 +282,14 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   // 取得そのものが失敗した（前の値を薄く出す）か、アカウントの行だけ読めずサーバーが前回の値を残した（行の staleSince）
   const staleNote = (entry, row) => (entry?.failed || entry?.quota?.stale) && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) })
     : row?.staleSince ? t('usage.header.stale', { when: fmt.relative(row.staleSince) }) : '';
+  const unavailable = (entry, row, account) =>
+    (account || entry?.quota?.accounts?.length) && (!row || entry?.failed || row.reason);
 
   function currentRow() {
     const entry = data.get(shown.backend);
     const account = quotaOf(entry?.quota, shown.account);
+    if (unavailable(entry, account, shown.account) && !needsAuth(account)) return null;
+    if (needsAuth(account)) return { ...account, windows: [] };
     const base = Array.isArray(account?.connections) ? connectionOf(account, shown.model) : account;
     return shown.endpoint ? null : base?.windows?.length ? { ...base, windows: windowsForModel(base.windows, shown.model) } : base;
   }
@@ -292,14 +298,14 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const account = quotaOf(entry?.quota, shown.account);
     const base = Array.isArray(account?.connections) ? connectionOf(account, shown.model) : account;
     // 枠が接続先・グループ・モデルの系統ごとに分かれているときは、会話のモデルに合うものだけを出す
-    const row = base?.windows?.length ? { ...base, windows: windowsForModel(base.windows, shown.model) } : base;
+    const row = currentRow();
     // 互換の接続先で動く会話はサブスクの枠を使わない
     const state = chipState(shown.endpoint ? null : row);
     chip.hidden = false;
     onVisibility();
     const agent = [labelOf(shown.backend), connectionName(base?.provider)].filter(Boolean).join(' '), stale = shown.endpoint ? '' : staleNote(entry, base);
     // 短い間隔の上限で止まっている枠は、日次・週次の率（0% のこともある）より先に出す
-    const held = shown.endpoint ? null : heldSlotOf(entry?.held, shown);
+    const held = shown.endpoint || unavailable(entry, account, shown.account) || needsAuth(account) ? null : heldSlotOf(entry?.held, shown);
     if (held) {
       const time = held.until ? heldTime(held.until) : null;
       // 5 時間・週の枠（window）で止まったものは、枠の上限の札と同じ言い方にする（短い間隔の上限とは言わない）
@@ -370,6 +376,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   function agentSection(id, entry, current) {
     const endpoint = current && shown.endpoint;
     const row = endpoint ? null : quotaOf(entry?.quota, current ? shown.account : '');
+    const accountLabel = !endpoint && (current && accountName(id, shown.account)
+      || entry?.quota?.accounts?.length && row?.label);
     const section = el('section', 'usage-agent' + (entry?.failed ? ' usage-old' : ''));
     const request = { ...source.state?.(id) };
     if (entry?.failed && !request.pending) request.failed = true;
@@ -377,7 +385,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     section.setAttribute('aria-busy', String(pending));
     if (!endpoint && Array.isArray(row?.connections)) {
       const head = el('div', 'an', labelOf(id));
-      const notes = [current && t('usage.header.thisConversation'), entry?.quota?.accounts?.length && row.label].filter(Boolean);
+      const notes = [current && t('usage.header.thisConversation'), accountLabel].filter(Boolean);
       if (notes.length) head.append(el('small', null, notes.join(' · ')));
       section.append(head);
       renderConnections(section, row, { model: current ? shown.model : '', request,
@@ -387,20 +395,20 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       return section;
     }
     // 「この会話」の節はモデルに合う枠だけに絞り、残ったグループ・接続先は「ほか N グループ」にまとめる
-    const all = row?.windows ?? [];
+    const all = current && (unavailable(entry, row, shown.account) || needsAuth(row)) ? [] : row?.windows ?? [];
     const filtered = current ? windowsForModel(all, shown.model) : all;
     const shownSet = new Set(filtered);
     const rest = all.filter(w => !shownSet.has(w));
     const { windows, group, others, below } = groupsOf(filtered);
     const groupNames = new Set(filtered.map(w => w.group).filter(Boolean));
-    const groupName = group ?? (current && rest.length && groupNames.size === 1 ? [...groupNames][0] : null);
+    const groupName = group ?? (current && groupNames.size === 1 ? [...groupNames][0] : null);
     const now = Date.now();
     const peak = list => Math.max(-1, ...list.map(w => usedOf(w, now) ?? -1));
     const restPeak = peak(rest), restOthers = new Set(rest.map(w => w.group ?? w.provider).filter(Boolean)).size;
     const totalOthers = others + restOthers;
     const restBelow = restPeak < 0 || restPeak >= 100 ? null : Math.min(100, Math.floor(restPeak / 10) * 10 + 10);
     const mergedBelow = below == null ? restBelow : restBelow == null ? below : Math.min(below, restBelow);
-    const notes = [current && t('usage.header.thisConversation'), row && entry?.quota?.accounts?.length && row.label,
+    const notes = [current && t('usage.header.thisConversation'), accountLabel,
       groupName && t('usage.header.group', { name: groupName })].filter(Boolean);
     const head = el('div', 'an', labelOf(id));
     if (notes.length) head.append(el('small', null, notes.join(' · ')));
@@ -420,7 +428,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     if (needsAuth(row)) {
       section.append(el('p', 'usage-note', row.message || t('usage.header.unauthorized')));
       // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（web/usage.mjs と同じ口）
-      if (row.accountId && onUsageLogin) {
+      if (row.accountId && onUsageLogin && (row.needsUsageLogin || row.reauth)) {
         const button = el('button', 'btn btn-quiet', row.needsUsageLogin ? t('accounts.authorizeUsage') : t('accounts.redoUsage'));
         button.type = 'button'; button.onclick = () => { close(); onUsageLogin(row.accountId); };
         section.append(button);
@@ -435,8 +443,10 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   function paintPop() {
     if (pop.hidden) return;
     const quota = data.get(shown.backend)?.quota;
-    const selected = connectionOf(quotaOf(quota, shown.account), shown.model);
-    const checked = shown.endpoint ? null : selected ? selected.checkedAt : Array.isArray(quotaOf(quota, shown.account)?.connections) ? null : quota?.checkedAt;
+    const account = quotaOf(quota, shown.account);
+    const selected = connectionOf(account, shown.model);
+    const checked = shown.endpoint || !account ? null : selected ? selected.checkedAt
+      : Array.isArray(account.connections) ? null : account.checkedAt ?? quota.checkedAt;
     const busy = ids().some(id => {
       const quota = data.get(id)?.quota, request = source.state?.(id);
       const rows = Array.isArray(quota?.accounts) ? quota.accounts : [quota];
@@ -470,14 +480,30 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const focusedInside = body.contains(document.activeElement);
     const scroll = body.scrollTop;
     const opened = [...pop.querySelectorAll('details')].map(d => d.hasAttribute('open'));
-    const othersOpen = pop.querySelector('.usage-other-agents')?.hasAttribute('open') ?? false;
+    const compare = el('details', 'usage-other-agents');
+    compare.dataset.usageSection = 'accounts';
+    const compareSummary = el('summary', null, t('usage.header.otherAccounts')); compareSummary.dataset.usageFocus = 'other-accounts';
+    compare.append(compareSummary);
+    for (const row of shown.endpoint ? [] : quota?.accounts ?? []) {
+      if ((row.accountId ?? '') === shown.account) continue;
+      const section = el('section', 'usage-agent');
+      section.append(el('div', 'an', row.label));
+      const connection = Array.isArray(row.connections) ? connectionOf(row, shown.model) : row;
+      const windows = row.reason || needsAuth(row) ? [] : windowsForModel(connection?.windows, shown.model);
+      const summaryWindows = groupsOf(windows).windows;
+      if (summaryWindows.length) section.append(rows(summaryWindows, row, source.state?.(shown.backend)));
+      else section.append(el('p', 'usage-note', row.message || t('usage.header.unavailable')));
+      compare.append(section);
+    }
     const others = el('details', 'usage-other-agents');
+    others.dataset.usageSection = 'agents';
     const summary = el('summary', null, t('usage.header.otherAgents')); summary.dataset.usageFocus = 'other-agents';
     others.append(summary, ...sections.slice(shown.backend ? 1 : 0));
-    body.replaceChildren(...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
+    const expanded = new Map([...body.querySelectorAll('.usage-other-agents')].map(d => [d.dataset.usageSection, d.hasAttribute('open')]));
+    body.replaceChildren(...(shown.backend ? [sections[0]] : []), ...(compare.children.length > 1 ? [compare] : []),
+      ...(others.children.length > 1 ? [others] : []), foot);
     [...pop.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
-    const otherAgents = pop.querySelector('.usage-other-agents');
-    if (otherAgents) otherAgents.open = othersOpen;
+    for (const d of [compare, others]) d.open = expanded.get(d.dataset.usageSection) ?? false;
     if (focusedInside) {
       const matches = [...body.querySelectorAll(focusable)].filter(node => focusKey && node.getAttribute('data-usage-focus') === focusKey);
       (matches.length === 1 ? matches[0] : body).focus({ preventScroll: true });

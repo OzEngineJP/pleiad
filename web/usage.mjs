@@ -146,14 +146,15 @@ export function renderQuota(parent, quota, onUsageLogin, request, options = {}) 
   }
   // 読めなかった行は、サーバーが前回の値を残して staleSince（その値の時刻）を添える（core/usage.mjs の createQuotaStore）
   if (quota.staleSince && !expired) parent.append(el('p', 'usage-note', t('usage.staleValue', { when: fmt.relative(quota.staleSince) })));
-  for (const account of quota.accounts ?? []) {
-    parent.append(el('h4', null, account.label)); renderQuota(parent, account, onUsageLogin, request);
-  }
   if (quota.message && (!expired || quota.needsUsageLogin || quota.reauth || quota.reason === 'no-login')) parent.append(el('p', 'usage-note', quota.message));
   // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（core/backends/claude-usage.mjs）
   if ((quota.needsUsageLogin || quota.reauth) && quota.accountId && onUsageLogin) {
     const button = el('button', 'btn', quota.needsUsageLogin ? t('accounts.authorizeUsage') : t('accounts.redoUsage'));
     button.type = 'button'; button.onclick = () => onUsageLogin(quota.accountId);
+    parent.append(button);
+  } else if (quota.reason === 'no-login' && options.accountLogin) {
+    const button = el('button', 'btn', t('conn.login'));
+    button.type = 'button'; button.onclick = () => options.accountLogin(quota.accountId ?? null);
     parent.append(button);
   }
 }
@@ -313,7 +314,7 @@ export function createUsageSource(cmd, { now = Date.now, setTimer = setTimeout, 
     onResult: listener => listeners.add(listener),
   };
 }
-export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, current = () => ({}), endpoints = async () => [] }) {
+export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, onAccountLogin, current = () => ({}), endpoints = async () => [] }) {
   let loading = false;
   // エージェントごとのカード。取り直しの間も前の表示を残し、取れてから差し替える（初回だけ「読み込み中…」）
   const cards = new Map();
@@ -324,6 +325,7 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
     renderHeld(body, result.held, result.quota);
     renderQuota(body, result.quota, onUsageLogin, source.state?.(backend.id), {
       model: current().backend === backend.id ? current().model : '', retry: () => source.load(backend.id, { force: true }).catch(() => {}),
+      accountLogin: onAccountLogin && (account => onAccountLogin(backend.id, account)),
     });
     if (result.quota.checkedAt && !(result.quota.accounts ?? [result.quota]).some(a => a.connections?.some(c => c.staleSince))) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
     renderEndpoints(body, await endpoints(backend.id).catch(() => []));

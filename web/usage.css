@@ -150,6 +150,7 @@
 .conversation-graph .usage-bar,.conversation-graph small{grid-column:1/-1}
 .conversation-graph small{color:var(--ink-weak);font-size:13px}
 .usage-other-agents{margin-top:16px}
+.usage-mini-label{max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .usage-other-agents > summary{min-height:44px;align-content:center;cursor:pointer;color:var(--ink-blue)}
 .conversation-auto-toggle{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:16px;padding:0;width:100%;background:transparent;color:var(--ink);text-align:left;font:inherit;cursor:pointer}
 .conversation-switch{width:32px;height:20px;margin-left:auto;flex:none;background:var(--fill-off);color:var(--on-fill);border-radius:var(--r-pill);padding:3px}

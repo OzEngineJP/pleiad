@@ -57,7 +57,7 @@ async function japaneseCases(t) {
   assert.equal(quotaOf(quota, '').label, 'ログイン中のアカウント');
   assert.equal(quotaOf(quota, 'work').label, '仕事');
   assert.equal(quotaOf(quota, 'gone'), null, '別のアカウントの値を代用しない');
-  assert.equal(quotaOf({ windows: [five] }, 'work').windows[0], five);
+  assert.equal(quotaOf({ windows: [five] }, 'work'), null);
   assert.equal(needsAuth(quotaOf(quota, 'work')), true);
   t.ok('Claude は会話で使うアカウントの枠。未認可も枠の無いものも「使用量 —」', true);
 
@@ -87,6 +87,15 @@ async function japaneseCases(t) {
   assert.deepEqual(windowsForModel(perModel.windows, 'gemini-3.1-pro-high').map(w => w.label), ['Gemini 3.1 Pro']);
   assert.deepEqual(windowsForModel(perModel.windows, 'claude-sonnet-5-5-max').map(w => w.label), ['Claude Sonnet 5.5']);
   assert.equal(shortLabel(perModel.windows[1]), 'Gemini 3.8 Flash');
+  assert.deepEqual(weekUsage({ accounts: [{ accountId: 'work', windows: perModel.windows.map(w => ({ ...w, resetsAt: null })) }] },
+    'work', 'gemini-3.8-flash-medium'), { label: 'Gemini 3.8 Flash', used: 25, high: false });
+  assert.deepEqual(weekUsage(agy, '', 'gemini-pro-high'), { used: agy.windows.find(w => w.minutes === 10080).usedPercent, high: false });
+  assert.deepEqual(weekUsage(agy, '', 'other'), weekUsage(agy, '', 'gemini-pro-high'));
+  assert.deepEqual(weekUsage({ windows: [
+    { minutes: null, model: 'sonnet', label: 'Sonnet', usedPercent: 40 },
+    { minutes: null, model: 'opus', label: 'Opus', usedPercent: 70 },
+  ] }, '', 'claude-sonnet-4-6'), { label: 'Sonnet', used: 40, high: false });
+  assert.equal(weekUsage({ accounts: [{ accountId: 'work', reason: 'error', windows: agy.windows }] }, 'work'), null);
   assert.equal(usedOf(perModel.windows[1], now), 25);
   t.ok('Antigravity のモデルごとの枠は、チップがモデルの系統の行だけを出す（リセットの時刻が無くても値を出す）', true);
 

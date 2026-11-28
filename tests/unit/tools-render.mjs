@@ -3,6 +3,7 @@
 //
 // DOM シムは tests/run.mjs が入口で入れている。
 import { renderToolCall, applyToolResult } from "../../web/render.mjs";
+import { t as tr } from "../../web/i18n.mjs";
 import { audit } from "../lib/audit.mjs";
 
 export const name = "tools-render";
@@ -20,6 +21,7 @@ const cases = [
   ["Glob", { pattern: "**/*.mjs", path: "core" }],
   ["Grep", { pattern: "TODO", path: ".", output_mode: "content", "-i": true }],
   ["Task", { description: "調査", subagent_type: "general-purpose", prompt: X }],
+  ["invoke_subagent", { Role: X }],
   ["WebFetch", { url: "javascript:alert(1)", prompt: "x" }],
   ["WebSearch", { query: X }],
   ["TodoWrite", { todos: [{ content: "a", status: "in_progress" }, { content: "b", status: "pending" }] }],
@@ -43,4 +45,12 @@ export default async function (t) {
          problems.length === 0, problems.join(" / ") || text.slice(0, 74));
   }
   t.ok("どのツールも中身が文字として出る", empty === 0, `空だったもの ${empty} 件`);
+  const subagent = renderToolCall("invoke_subagent", { Role: "explorer" });
+  t.ok("Antigravity のサブエージェントは種別・役割・実行中を表示する",
+    subagent.querySelector(".tc-label")?.textContent === tr("timeline.tool.label.nativeSubagent")
+    && subagent.querySelector(".tc-main")?.textContent === "explorer"
+    && subagent.querySelector(".tc-res")?.textContent === tr("timeline.result.subagentRunning"));
+  applyToolResult(subagent, { text: "done" });
+  t.ok("Antigravity のサブエージェントが終わると完了を表示する",
+    subagent.querySelector(".tc-res")?.textContent === tr("timeline.result.subagentCompleted"));
 }

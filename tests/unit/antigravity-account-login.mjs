@@ -14,7 +14,7 @@ export default async function run(t) {
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-agy-login-'));
   const home = path.join(data, 'home');
   await fs.mkdir(home);
-  const keys = ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'USERPROFILE', 'HOME', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ACP_LOG', 'FAKE_AGY_NO_FILE_MARKER', 'FAKE_AGY_PID_FILE', 'FAKE_AGY_AUTH_HOLD_MS', 'FAKE_AGY_AUTH_REFUSE'];
+  const keys = ['AGENT_HOST_AGY_BIN', 'AGENT_HOST_DATA', 'USERPROFILE', 'HOME', 'FAKE_AGY_AUTH_FILE', 'FAKE_AGY_ACP_LOG', 'FAKE_AGY_NO_FILE_MARKER', 'FAKE_AGY_PID_FILE', 'FAKE_AGY_ARGS_FILE', 'FAKE_AGY_AUTH_HOLD_MS', 'FAKE_AGY_AUTH_REFUSE'];
   const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
   const made = ['acct-0123456789ab', 'acct-aaaaaaaaaaaa', 'acct-bbbbbbbbbbbb', 'acct-cccccccccccc', 'acct-dddddddddddd'];
   const keychain = path.join(data, 'keychain-marker');
@@ -23,6 +23,7 @@ export default async function run(t) {
       AGENT_HOST_AGY_BIN: `${JSON.stringify(process.execPath)} ${JSON.stringify(fake)}`,
       AGENT_HOST_DATA: data, USERPROFILE: home, HOME: home, FAKE_AGY_AUTH_FILE: keychain,
       FAKE_AGY_ACP_LOG: path.join(data, 'acp.jsonl'), FAKE_AGY_PID_FILE: path.join(data, 'pids.json'),
+      FAKE_AGY_ARGS_FILE: path.join(data, 'args.json'),
     });
     delete process.env.FAKE_AGY_NO_FILE_MARKER;
     const acp = await import(`../../core/backends/antigravity-acp.mjs?re=login-${Date.now()}`);
@@ -122,6 +123,20 @@ export default async function run(t) {
     const ghost = { id: 'acct-cccccccccccc', name: 'G', dir: path.join(root, 'accounts', 'antigravity', 'acct-cccccccccccc') };
     await fs.mkdir(ghost.dir, { recursive: true });
     assert.equal((await backend.usage({ account: ghost })).reason, 'no-login');
+    const argv = async () => JSON.parse(await fs.readFile(process.env.FAKE_AGY_ARGS_FILE, 'utf8'));
+    const beforeBatch = (await argv()).length;
+    const batch = await backend.usage({ accounts: [account, ghost] });
+    assert.deepEqual(batch.accounts.map(row => [row.accountId, row.reason ?? null]), [[null, null], [id, null], [ghost.id, 'no-login']]);
+    assert.deepEqual(batch.windows, batch.accounts[0].windows);
+    assert.equal((await argv()).slice(beforeBatch).filter(args => args.includes('--version')).length, 1);
+    const skipped = await backend.usage({ accounts: [account, ghost], skip: ['login', id] });
+    assert.deepEqual(skipped.accounts.map(row => Boolean(row.skipped)), [true, true, false]);
+    process.env.FAKE_AGY_NO_FILE_MARKER = '1';
+    const failing = await backend.usage({ accounts: [account, ghost] });
+    delete process.env.FAKE_AGY_NO_FILE_MARKER;
+    assert.ok(failing.accounts[0].windows.length);
+    assert.equal(failing.accounts[1].reason, 'error');
+    t.ok('A usage batch shares one version check and isolates skipped, signed-out and failing accounts', true);
     t.ok('Usage and the model list are read per account with the file-storage env and the marker check', true);
 
     // 印が出ない版: 会話も prompt を送らずに止まる（鍵束へ黙って戻さない）

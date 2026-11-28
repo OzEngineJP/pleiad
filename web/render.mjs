@@ -1073,6 +1073,11 @@ function drawUnknown(card, head, inp) {
   if (s) head.append(textMain(s));
 }
 
+function drawNativeSubagent(card, head, inp) {
+  const role = inp.Role ?? inp.role ?? inp.TypeName;
+  if (typeof role === "string" && role) head.append(textMain(role));
+}
+
 // 動詞で揃える。並んだときに「何をしたか」が縦に読める
 const TOOL_LABEL = {
   Bash: t("timeline.tool.label.run"), PowerShell: t("timeline.tool.label.run"), Read: t("timeline.tool.label.read"),
@@ -1080,6 +1085,7 @@ const TOOL_LABEL = {
   MultiEdit: t("timeline.tool.label.edit"), NotebookEdit: t("timeline.tool.label.edit"),
   Glob: t("timeline.tool.label.find"), Grep: t("timeline.tool.label.grep"),
   Task: t("timeline.tool.label.delegate"), Agent: t("timeline.tool.label.delegate"),
+  invoke_subagent: t("timeline.tool.label.nativeSubagent"),
   WebFetch: t("timeline.tool.label.fetch"), WebSearch: t("timeline.tool.label.webSearch"), TodoWrite: "TODO",
   mcp__ply__present: t("timeline.tool.label.present"), mcp__host__present: t("timeline.tool.label.present"),
   mcp__host__set_status: t("timeline.tool.label.status"),
@@ -1099,6 +1105,7 @@ const TOOL_DRAW = {
   MultiEdit: drawMultiEdit, NotebookEdit: drawEdit,
   Glob: drawGlob, Grep: drawGrep,
   Task: drawTask, Agent: drawTask,
+  invoke_subagent: drawNativeSubagent,
   WebFetch: drawWebFetch, WebSearch: drawWebSearch, TodoWrite: drawTodo,
   mcp__ply__present: drawPresent, mcp__host__present: drawPresent, mcp__host__set_status: drawStatus,
   mcp__host__set_title: drawTitle, mcp__host__fork: drawFork,
@@ -1192,6 +1199,7 @@ const DRAW_FACE = new Map([
   [drawGrep,      { icon: "search",  tab: "result"  }],
   [drawGlob,      { icon: "search",  tab: "result"  }],
   [drawTask,      { icon: "person",  tab: "result"  }],
+  [drawNativeSubagent, { icon: "person", tab: "result" }],
   [drawWebFetch,  { icon: "globe",   tab: "result"  }],
   [drawWebSearch, { icon: "globe",   tab: "result"  }],
   [drawComputer,  { icon: "monitor", tab: "screen"  }],
@@ -1522,7 +1530,7 @@ export function renderToolCall(name, input, opts) {
   }
 
   // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。時刻のボタン。開閉の印
-  line.append(el("span", "tc-res"));
+  line.append(el("span", "tc-res", raw === "invoke_subagent" && !o.history ? t("timeline.result.subagentRunning") : ""));
   updateWhen(card);
   line.append(chevron());
   return card;
@@ -1666,6 +1674,8 @@ export function applyToolResult(node, result) {
       if (why && !delegate) { const line = el("span", "tc-errline", why); line.title = why; head.append(line); }
     } else if (denied) {
       resEl.textContent = t("chat.approval.denied");
+    } else if (tool === "invoke_subagent") {
+      resEl.textContent = t("timeline.result.subagentCompleted");
     } else if (computer) {
       // 止めた（Esc・止める・ロック・禁止・拒否）は ✕ にせず、止めた印と短い理由。理由の 1 文は行の下に
       if (computer.state === "stopped") {

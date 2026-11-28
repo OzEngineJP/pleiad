@@ -88,7 +88,7 @@ export function createWorkControls(h) {
       backends: h.backends(), backend: s.backend, backendSwitchable: false,
       models, modelsPending: !vocab, model: s.model,
       efforts, effortsPending: !ready, effort: s.effort, effortDisabled: !ready || Object.keys(efforts).length <= 1,
-      accounts: s.backend ? h.accounts(s.backend, s.account, s.endpoint) : null, account: s.account,
+      accounts: s.backend ? h.accounts(s.backend, s.account, s.model || models['']?.resolvesTo) : null, account: s.account,
       endpoint: s.backend ? h.endpointView(s.backend, s.endpoint) : null,
       modes, modesPending: !vocab, mode: s.mode || (Object.keys(modes)[0] ?? ''),
       // 子のエージェントは決まっている。面の頭にはロゴと名前だけを出す（Channels のスレッドの面と同じ）

@@ -3124,6 +3124,7 @@
       },
       "label": {
         "fillSecret": "Enter",
+        "nativeSubagent": "Subagent",
         "run": "Run",
         "read": "Read",
         "write": "Write",
@@ -3204,6 +3205,8 @@
       "limitedUntil": "✕ Stopped at a limit · expected to reset at {{time}}",
       "output": "Output",
       "outputPartial": "Output (partial)",
+      "subagentRunning": "Running",
+      "subagentCompleted": "Completed",
       "generatedImage": "Generated image",
       "failedExit": "✕ Failed · exit {{code}}"
     },
@@ -3643,6 +3646,7 @@
       "refreshing": "Refreshing usage",
       "windowRefreshing": "Refreshing {{window}}",
       "thisConversation": "This conversation",
+      "otherAccounts": "Other accounts",
       "group": "{{name}} group",
       "otherGroups_one": "{{count}} other group",
       "otherGroups_other": "{{count}} other groups",

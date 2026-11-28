@@ -3055,6 +3055,7 @@
       },
       "label": {
         "fillSecret": "入力",
+        "nativeSubagent": "サブエージェント",
         "run": "実行",
         "read": "読む",
         "write": "書く",
@@ -3127,6 +3128,8 @@
       "limitedUntil": "✕ 上限で停止 · {{time}} に解除の見込み",
       "output": "出力",
       "outputPartial": "出力（途中まで）",
+      "subagentRunning": "実行中",
+      "subagentCompleted": "完了",
       "generatedImage": "生成画像",
       "failedExit": "✕ 失敗 · exit {{code}}"
     },
@@ -3548,6 +3551,7 @@
       "refreshing": "使用量を更新中",
       "windowRefreshing": "{{window}}は更新中",
       "thisConversation": "この会話",
+      "otherAccounts": "ほかのアカウント",
       "group": "{{name}} のグループ",
       "otherGroups_other": "ほか {{count}} グループ",
       "otherGroupsBelow_other": "ほか {{count}} グループ（いずれも {{percent}}% 未満）",

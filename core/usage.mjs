@@ -90,6 +90,23 @@ export function quotaFailure(error) {
   return /\btime[ds]?[ _-]?out\b/i.test(text) ? 'timeout' : 'error';
 }
 
+/** CLI ログインと登録アカウントを個別に読み、既定の値も従来の位置に返す。 */
+export async function readAccountQuotas(accounts, skip, read) {
+  const rows = await Promise.all([null, ...accounts].map(async account => {
+    const accountId = account?.id ?? null;
+    const label = account ? account.name : t('opencode.usage.cliLogin');
+    let quota;
+    if (skip.includes(accountId ?? LOGIN_ACCOUNT)) quota = { skipped: true, windows: [] };
+    else {
+      try { quota = await read(account); }
+      catch (error) { quota = { windows: [], reason: quotaFailure(error), message: t('usage.fetchFailed') }; }
+    }
+    return { ...quota, accountId, label, ...(quota.reason === 'no-login' || account?.ready === false ? { ready: false } : {}) };
+  }));
+  const { accountId, label, skipped, ...login } = rows[0];
+  return { ...login, accounts: rows };
+}
+
 /** 使用枠の行。[行の名前, 行]。アカウントごとの行（accounts）があればその行（ログイン中は 'login'）、無ければ全体の 1 行（''） */
 const quotaRows = quota => Array.isArray(quota?.accounts)
   ? quota.accounts.map(a => [a?.accountId ?? LOGIN_ACCOUNT, a]) : [['', quota]];

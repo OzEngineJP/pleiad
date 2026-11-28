@@ -101,8 +101,8 @@ function capture(argv, args, timeoutMs, env = null) {
 // 認証の成否を確かめる目印にする。バージョン確認の `--version` は認証しないので含めない）
 // profile（2 つ目以降のアカウント。agyLaunchProfile）があれば、その置き場とファイル保存の env で読み、ファイル保存の印がログに出たときだけ採る
 // （出なければ鍵束＝1 つ目のログインの使用量かもしれない）
-export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000, profile = null } = {}) {
-  const version = await capture(argv, ['--version'], timeoutMs);
+export async function readAntigravityUsage({ argv = cliCommand('antigravity'), timeoutMs = 25_000, profile = null, versionProbe = null } = {}) {
+  const version = await (versionProbe ? versionProbe(() => capture(argv, ['--version'], timeoutMs)) : capture(argv, ['--version'], timeoutMs));
   if (!supportsUsage(version)) return { windows: [], attempted: false, message: t('antigravity.usage.needsUpdate') };
   const args = ['--print', '/usage', '--output-format', 'json', '--print-timeout', '20s'];
   const output = profile?.topEnv ? await capture(argv, ['--log-file', profile.logFile, ...args], timeoutMs, profile.topEnv) : await capture(argv, args, timeoutMs);

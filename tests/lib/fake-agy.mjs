@@ -526,9 +526,9 @@ async function runAcp() {
     session.token = token;
     let reply = "";
     const say = (text) => { reply += text; update(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text } }); };
-    const startTool = (title, rawInput) => {
+    const startTool = (title, rawInput, name) => {
       const toolCallId = `fake-agy-tool-${++session.toolSeq}`;
-      update(id, { sessionUpdate: "tool_call", toolCallId, title, kind: "execute", status: "in_progress", rawInput });
+      update(id, { sessionUpdate: "tool_call", toolCallId, title, name, kind: "execute", status: "in_progress", rawInput });
       return toolCallId;
     };
     const endTool = (toolCallId, status, output) => update(id, {
@@ -558,6 +558,24 @@ async function runAcp() {
       }
       if (text === "signature-after-step") { startTool("read_file", { path: "x" }); throw acpError(-32000, SIGNATURE_ERROR); }
       if (text.startsWith("wire-has:")) { say(wire.includes(text.slice("wire-has:".length)) ? "wire-has:yes" : "wire-has:no"); return finish(); }
+      if (text === "delegate-without-acp-output") {
+        const servers = session.mcpStart ? await session.mcpStart : [];
+        const { server, tool } = pickMcpTool(servers, "mcp-call:ply_delegate");
+        if (!tool) throw new Error("fake-agy: ply_delegate missing");
+        const args = { title: "表示仕様を確認する", kind: "mechanical", backend: "fake", task: "echo: 表示を確認しました。" };
+        await Promise.all([false, true].map(async direct => {
+          const name = direct ? "mcp_ply_agents_ply_delegate" : "call_mcp_tool";
+          const call = startTool(`Run ${name}`, direct ? args : mcpCallParameters(tool, args), name);
+          const response = await server.call("tools/call", { name: tool.name, arguments: args });
+          const error = response.error || response.result?.isError;
+          endTool(call, error ? "failed" : "completed", error ? mcpCallOutput(response, id, session.toolSeq) : undefined);
+        }));
+        const subagent = startTool("Explore the fixture", undefined, "invoke_subagent");
+        update(id, { sessionUpdate: "tool_call_update", toolCallId: subagent, status: "in_progress", rawInput: { Role: "explorer" } });
+        endTool(subagent, "completed", "Read the fixture");
+        say("設定画面を確認しました。");
+        return finish();
+      }
 
       // 返事を返した直後にプロセスが終わる agy（応答を書き切ってから終える）
       if (text === "result-then-exit") {

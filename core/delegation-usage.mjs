@@ -140,7 +140,7 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
           ...(Object.hasOwn(row, 'checkedAt') ? { checkedAt: row.checkedAt } : {}),
           identity: ids ? (account ? registered?.identity ?? null : ids.login ?? null) : row.identity ?? null,
           // 登録したアカウントは資格情報（Claude は専用フォルダのログイン）が無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる
-          runnable: account ? (ids ? Boolean(registered?.usageLogin) : row.ready !== false) : true };
+          runnable: account && ids ? Boolean(registered?.usageLogin) : row.ready !== false };
       });
     }
     return entry;

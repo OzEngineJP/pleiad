@@ -30,6 +30,7 @@ import { bootEnv } from "../boot-env.mjs";
 import { commandLabel, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { killTree, listProcesses } from "../process-tree.mjs";
 import { t, agentT } from "../i18n.mjs";
+import { readAccountQuotas } from '../usage.mjs';
 import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
 import { loginCancelledError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
@@ -493,7 +494,15 @@ function usageBaseOf(record, sentAt) {
   return base ? usageTotal(base.usage) : null;
 }
 
-const toolName = (name) => (name && Object.hasOwn(TOOL_HINTS, name) ? name : name || "tool");
+function acpTool(update, input) {
+  const raw = String(update.name || update.title || update.kind || 'tool').replace(/^Run /, '');
+  const wrapped = raw === 'call_mcp_tool';
+  const computer = wrapped ? agyComputerName(input) : null;
+  const mcpName = wrapped ? input?.ToolName : raw;
+  const delegate = typeof mcpName === 'string' && /^(?:mcp_.+_)?ply_delegate$/.test(mcpName);
+  return { name: computer ?? (delegate ? 'ply_delegate' : raw), computer,
+    input: computer ? computerToolInput(computer, input?.Arguments ?? {}) : wrapped && delegate ? input?.Arguments ?? {} : input ?? {} };
+}
 
 // ---------------------------------------------------------------- backend
 
@@ -547,32 +556,37 @@ export const backend = {
   // 受動の照会から呼べる。未ログインと分かっている間は起こさない。
   // 'in' は `--print /usage` が実際に読めた（attempted）ときだけ（古い CLI の needsUpdate は認証を試していない）。
   // 'out' は未認証の確定（AUTH_REQUIRED コード）だけ。理由は quota store の構造化の行（no-login）で伝える
-  async usage({ account = null } = {}) {
-    const profile = profileFor(account);
-    const catalog = profileState(profile.key);
-    if (catalog.authGuess === 'out') return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
-    // 2 つ目以降のアカウントは、トークンが無ければ起こさない（置き場の検査は hasAgyToken が行う）
-    if (profile.guard && !(await hasAgyToken(account, store.dataDir).catch(() => false))) return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
-    try {
-      if (profile.guard) prepareAgyLogs(profile);
-      const result = await (await import('./antigravity-usage.mjs')).readAntigravityUsage(profile.guard ? { profile } : {});
-      if (result?.attempted === true) {
-        catalog.authGuess = 'in';
-        // 使用量が読めた＝このプロセスでログイン済みが確かめられた。一覧（メモリにも写しにも）が無ければ裏で 1 回取る
-        //（この呼び出しは待たない。間隔の制限は refreshModelsSoon。一覧があるのに定期の読みで起こし続ける形にはしない）
-        if (catalog.modelCache === null) {
-          await loadModelsCache(catalog);
-          if (catalog.modelCache === null) refreshModelsSoon(catalog, account);
+  async usage({ account = null, accounts = [], skip = [] } = {}) {
+    let version;
+    const versionProbe = probe => version ??= probe();
+    const read = async account => {
+      const profile = profileFor(account);
+      const catalog = profileState(profile.key);
+      if (catalog.authGuess === 'out') return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
+      // 2 つ目以降のアカウントは、トークンが無ければ起こさない（置き場の検査は hasAgyToken が行う）
+      if (profile.guard && !(await hasAgyToken(account, store.dataDir).catch(() => false))) return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
+      try {
+        if (profile.guard) prepareAgyLogs(profile);
+        const result = await (await import('./antigravity-usage.mjs')).readAntigravityUsage({ profile: profile.guard ? profile : null, versionProbe });
+        if (result?.attempted === true) {
+          catalog.authGuess = 'in';
+          // 使用量が読めた＝このプロセスでログイン済みが確かめられた。一覧（メモリにも写しにも）が無ければ裏で 1 回取る
+          //（この呼び出しは待たない。間隔の制限は refreshModelsSoon。一覧があるのに定期の読みで起こし続ける形にはしない）
+          if (catalog.modelCache === null) {
+            await loadModelsCache(catalog);
+            if (catalog.modelCache === null) refreshModelsSoon(catalog, account);
+          }
         }
+        return result;
+      } catch (e) {
+        if (e?.code === 'AUTH_REQUIRED' || AUTH_REQUIRED.test(String(e?.message ?? e))) {
+          catalog.authGuess = 'out';
+          return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
+        }
+        throw e;
       }
-      return result;
-    } catch (e) {
-      if (e?.code === 'AUTH_REQUIRED' || AUTH_REQUIRED.test(String(e?.message ?? e))) {
-        catalog.authGuess = 'out';
-        return { windows: [], reason: 'no-login', message: t("antigravity.auth.notLoggedIn") };
-      }
-      throw e;
-    }
+    };
+    return account || !accounts.length ? read(account) : readAccountQuotas(accounts, skip, read);
   },
 
   // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
@@ -782,7 +796,9 @@ export const backend = {
     const secretsEnv = agySecretsEnv(secretsRuntime?.env);
     const secretsKey = Object.keys(secretsEnv).length || secretsRuntime?.instructions ? JSON.stringify([secretsEnv, secretsRuntime?.instructions ?? '']) : null;
     const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
-    const agentPrompt = [contextRuntime?.prompt, browserInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n');
+    const agentLocale = contextRuntime?.locale ?? locale;
+    const agentPrompt = [contextRuntime?.prompt, browserInstructions, computerInstructions, controlRuntime?.instructions,
+      controlRuntime?.instructions && agentT(agentLocale, 'antigravity.controlDelivery'), secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n');
     const useAgent = Boolean(contextRuntime || browserInstructions || agentRuntime || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
     const owners = antigravityAgentOwners(contextRuntime);
     // Skills・MCP を止める会話だけ agent 定義（--agent ply-context）で動かす。それ以外は session/new の MCP と systemPrompt で渡す
@@ -843,6 +859,14 @@ export const backend = {
       save();
     };
 
+    if (control && (agentRuntime || adopt)) control.recordDelegate = (input, result) => {
+      if (!prompting || closed || !result?.taskId) return;
+      const id = `${conversationId}:delegate:${result.taskId}`;
+      const name = 'ply_delegate';
+      out({ type: 'tool.start', id, name, input });
+      finishTool(id, { status: 'completed', rawOutput: JSON.stringify(result) }, { name, input });
+    };
+
     const onUpdate = (params, opts) => {
       if (!entry || (entry.sessionId && params.sessionId !== entry.sessionId)) return;
       const update = params.update ?? {};
@@ -882,15 +906,23 @@ export const backend = {
             let prev = started.get(id);
             const params2 = update.rawInput && typeof update.rawInput === 'object' ? update.rawInput : null;
             if (!prev) {
-              const toolRaw = String(update.title ?? update.kind ?? 'tool');
-              const computer = toolRaw === 'call_mcp_tool' ? agyComputerName(params2) : null;
-              const name = computer ?? toolName(toolRaw);
-              const input = computer ? computerToolInput(computer, params2?.Arguments && typeof params2.Arguments === 'object' ? params2.Arguments : {}) : params2 ?? {};
-              prev = { name, input, computer };
+              prev = acpTool(update, params2);
               started.set(id, prev);
-              out({ type: 'activity', state: 'running', label: t('activity.tool', { label: TOOL_HINTS[name]?.label ?? name }) });
+            } else if (params2 && !prev.computer) {
+              const parsed = acpTool({ ...update, name: update.name || prev.name }, params2);
+              if (!prev.visible) Object.assign(prev, parsed);
+              else prev.input = parsed.input;
+            }
+            const done = update.status === 'completed' || update.status === 'failed';
+            // The host reply identifies the exact task even when ACP omits its output.
+            if (prev.name === 'ply_delegate' && control?.recordDelegate && update.status !== 'failed') return;
+            if (!prev.visible && !params2 && !done && ['call_mcp_tool', 'invoke_subagent'].includes(prev.name)) return;
+            if (!prev.visible) {
+              const { name, input } = prev;
+              prev.visible = true;
+              const label = name === 'invoke_subagent' ? t('ui:timeline.tool.label.nativeSubagent') : TOOL_HINTS[name]?.label ?? name;
+              out({ type: 'activity', state: 'running', label: t('activity.tool', { label }) });
               out({ type: 'tool.start', id, name, input });
-              const done = update.status === 'completed' || update.status === 'failed';
               // 終わらないコマンドは agy が裏へ回す。しばらく実行中のままなら裏のコマンドとして出す
               if (!done && name === 'run_command' && !closed) {
                 const command = String(input?.CommandLine ?? '');
@@ -903,10 +935,8 @@ export const backend = {
                 timer.unref?.();
                 behind.timers.set(id, timer);
               }
-            } else if (params2 && update.sessionUpdate === 'tool_call_update' && !prev.computer) {
-              prev.input = params2;
             }
-            if (update.status === 'completed' || update.status === 'failed') {
+            if (done) {
               if (!prev.finished) { prev.finished = true; finishTool(id, update, prev); }
             }
             return;
@@ -962,6 +992,9 @@ export const backend = {
       if (adopt) {
         // 付け直す子（保持役が持つ agy）。起動も握手も session の準備も済んでいる。走っている session/prompt の応答を拾い直し、印から ack までを再生する
         if (!k?.promptId || typeof adopt.source?.write !== 'function') throw new Error('antigravity: the card has no prompt id');
+        const saved = await transcript.getMessages(conversationId, { fullResults: true });
+        const previous = saved.find(message => message.uuid === `${conversationId}:a${sentAt}`);
+        toolCalls.push(...(previous?.toolCalls ?? []).filter(call => call.id.startsWith(`${conversationId}:delegate:`)));
         const held = createHeldAcp({ source: adopt.source, lifetime: 'conversation', childPrefix: ACP_CHILD_PREFIX });
         entry = newEntry(conversationId, { keys: k.keys ?? null, home: k.home ?? null, hookRuns: k.hookRuns ?? null, cleanup: adoptHome(k.home), held, catalog });
         entry.sessionId = conversationId;
@@ -1078,7 +1111,8 @@ export const backend = {
           : null;
         const injectedText = injected.map((e) => agentT(locale, 'context.instructionsFrom', { path: e.path, scope: e.appliesTo ?? agentT(locale, 'context.allDirectories'), content: e.content })).join('\n\n') || null;
         // ply_agents の説明と Pleiad の指示は発言の本文の前に毎ターン足す。控えに残すのは人が書いた分だけ（sent）
-        const promptText = [injectedText, agentRuntime?.instructions ?? addedInstructions, visualizeInstructions, sent].filter(Boolean).join('\n\n');
+        const promptText = [injectedText, agentRuntime?.instructions ?? addedInstructions,
+          agentRuntime && agentT(agentLocale, 'antigravity.delegationDelivery'), visualizeInstructions, sent].filter(Boolean).join('\n\n');
         steered = createAcpSteer({ client, sessionId: conversationId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
           onSent: () => {}, confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.() });
         if (control) { control.handle = { sessionId: conversationId, get conversationId() { return conversationId; } }; control.steer = (item) => steered.steer(item); control.steerConfirms = true; }
@@ -1172,7 +1206,7 @@ export const backend = {
         if (dead || retracted) { closeEntry(entry); release(conversationId, entry); }
         else { live.set(conversationId, entry); armIdle(conversationId, entry); }
       }
-      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
+      if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; control.recordDelegate = null; }
     }
 
     // 選んだモデル・段を agy が断った: kind: 'model' で知らせ、委譲の自動の振り分けでは次の候補へ回す
