@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { mentionToken, filterCandidates } from '../../web/channels/mention-complete.mjs';
 import { pillsOf, withReaction, isMine } from '../../web/channels/reactions.mjs';
-import { whenText, dayText } from '../../web/channels/post.mjs';
+import { whenText, dayText, unrepresentedActivity } from '../../web/channels/post.mjs';
 import { findMentionBlocks } from '../../web/channels/mention-blocks.mjs';
 
 export const name = 'channels-feed-ui';
@@ -71,6 +71,12 @@ export default function (t) {
 
   // ---- スマホのスレッド・投稿の見た目（承認済み 2026-11-27）
   const postJs = read('web/channels/post.mjs');
+  const activity = unrepresentedActivity({ live: { owl: 'waiting', lynx: 'working' }, liveSince: { owl: 1200, lynx: 1400 } }, [
+    { turn: { botId: 'owl' }, state: 'done' },
+    { turn: { botId: 'lynx' }, state: 'working' },
+  ]);
+  t.ok('A finished reply leaves room for the next turn, and an active reply represents its own bot',
+    activity.length === 1 && activity[0].botId === 'owl' && activity[0].state === 'waiting' && activity[0].since === 1200);
   const feedCss = read('web/channels-feed.css');
   const threadCss = read('web/channels-thread.css');
   const styleCss = read('web/style.css');

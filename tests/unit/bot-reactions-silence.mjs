@@ -12,7 +12,7 @@ import { createChannelService } from '../../core/channels/service.mjs';
 import { createDispatcher, QUIET_REACTIONS } from '../../core/bots/dispatch.mjs';
 import { isSilentReply, stripSilentMark, SILENT_MARK } from '../../core/bots/silence.mjs';
 import { answerOf, asksQuestion } from '../../core/bots/reactions.mjs';
-import { vanishedTurnPost } from '../../web/channels/post.mjs';
+import { unrepresentedActivity, vanishedTurnPost } from '../../web/channels/post.mjs';
 
 export const name = 'bot-reactions-silence';
 export const title = 'bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす（DM の bot・AI は起こさない）・ほかは次に渡す・付け外しと連打）と、黙って終えたターン（印・括弧だけの一言は投稿しない）';
@@ -254,6 +254,53 @@ export default async function (t) {
     t.ok('文章を書かずに終えた DM のターンは投稿を残さない', dmPosts.length === 1 && dmPosts[0].id === dmQ.id, JSON.stringify(dmPosts));
     const dmAll = (await channels.read({ channelId: dm.id, limit: 100 })).posts.filter((p) => p.turn);
     t.ok('文章を書かずに終えた DM のターンは、消した投稿（「削除された投稿」）も残さない', dmAll.length === 1, JSON.stringify(dmAll));
+
+    const activityOf = (page) => unrepresentedActivity(page.threads[0], page.posts);
+    async function checkActivity(kind, { routed = false, internal = false, directMessage = false, dmThread = false } = {}) {
+      const channelId = directMessage || dmThread ? dm.id : channel.id;
+      const root = directMessage ? null : dmThread ? dmQ : await channels.post({ channelId, text: kind }, human);
+      const threadId = root?.id ?? null;
+      const sessionId = `s_activity_${kind}`;
+      const startedAtMs = Date.now() - 2000;
+      sessions[sessionId] = { bot: {
+        botId: 'b_owl', kind: directMessage ? 'dm' : 'thread', channelId, threadId,
+        ...(routed ? { routingCandidate: 'fake:first' } : {}), delivered: [],
+      } };
+      const read = () => channels.read({ channelId, threadId, channelFeed: true });
+      const run = async () => {
+        const turn = { info: { sessionId }, startedAtMs, agentLocale: 'ja', usage: {}, stream: {}, userInitiated: !internal };
+        turns.set(sessionId, turn);
+        await d.turnExtras(turn);
+        return { turn, sessionId };
+      };
+      const first = await run();
+      const start = await read();
+      const hadPost = start.posts.some(p => p.turn?.sessionId === sessionId);
+      const activity = activityOf(start);
+      t.ok(`${kind}: the working post or the activity row represents the bot exactly once`,
+        routed || internal ? !hadPost && activity[0]?.since === startedAtMs && activity[0].state === 'working' : hadPost && !activity.length);
+      d.onTurnEvent(first.turn, { type: 'text.delta', text: 'First visible reply from the bot in this thread.' });
+      d.onTurnEvent(first.turn, { type: 'text.end' });
+      const writing = await until(async () => {
+        const page = await read();
+        return page.posts.some(p => p.turn?.sessionId === sessionId && p.text.includes('First visible reply')) && page;
+      }, { label: kind });
+      t.ok(`${kind}: the first text replaces the activity row with a writing post`,
+        !activityOf(writing).length && writing.posts.some(p => p.turn?.sessionId === sessionId && p.state === 'working'));
+      await finish(first, []);
+      const done = await read();
+      t.ok(`${kind}: the finished reply remains and activity clears`, !activityOf(done).length
+        && done.posts.some(p => p.turn?.sessionId === sessionId && p.state === 'done'));
+      await finish(await run(), [SILENT_MARK]);
+      const silent = await read();
+      t.ok(`${kind}: an unanswered turn clears activity without adding a reply`,
+        !activityOf(silent).length && silent.posts.length === done.posts.length);
+    }
+    await checkActivity('single candidate');
+    await checkActivity('multiple candidates', { routed: true });
+    await checkActivity('internal start', { internal: true });
+    await checkActivity('DM', { routed: true, directMessage: true });
+    await checkActivity('DM thread', { routed: true, dmThread: true });
 
     // ================================================================ 人に呼ばれていないターンが黙って終えたら、スレッドに何も残さない
     // （消した投稿の「削除された投稿」の行も。2026-11 に #pleiad開発 のスレッドに 7 行並んだ不具合）。

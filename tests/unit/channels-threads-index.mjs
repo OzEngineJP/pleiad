@@ -118,6 +118,21 @@ export default async function (t) {
     await service.threads.update(a, roots[6], { state: 'waiting', live: { b_owl: 'waiting' } });
     const archived = await archive();
     t.ok('あなた待ちもアーカイブへ移せる', (await ordered(archived)).get(ARCHIVE_FOLDER).includes(roots[6]));
+    const readFeed = (args = {}) => service.read({ channelId: a, channelFeed: true, ...args });
+    const newest = await readFeed({ limit: 2 });
+    t.ok('Feed excludes archived roots before limiting results, and default reads retain them',
+      newest.posts.map(p => p.id).join() === [roots[4], roots[5]].join()
+      && (await service.read({ channelId: a, limit: 1 })).posts[0]?.id === roots[6]);
+    await organize('moveThread', { threadId: newest.nextBefore, folderId: ARCHIVE_FOLDER });
+    const older = await readFeed({ before: newest.nextBefore, limit: 2 });
+    t.ok('Archived cursor still resolves to the original boundary',
+      older.posts.map(p => p.id).join() === [roots[2], roots[3]].join());
+    const refreshed = await readFeed({ feedThrough: newest.nextBefore });
+    t.ok('An open feed can refresh through the archived cursor',
+      refreshed.posts.map(p => p.id).join() === roots[5] && refreshed.nextBefore === newest.nextBefore);
+    await organize('restoreThread', { threadId: newest.nextBefore });
+    t.ok('An open feed gets the restored post in timeline order',
+      (await readFeed({ feedThrough: newest.nextBefore })).posts.map(p => p.id).join() === [roots[4], roots[5]].join());
     await service.threads.update(a, roots[6], { state: 'working', live: { b_owl: 'working' } });
     t.ok('アーカイブ内で作業を再開しても所属が変わらない',
       (await ordered(await service.get({ channelId: a }))).get(ARCHIVE_FOLDER).includes(roots[6]));
@@ -132,8 +147,8 @@ export default async function (t) {
         && saved.threadFolders.folders[0].id === second
         && archived.threadFolders.restore[roots[6]].folderId === first);
       t.ok('アーカイブしたスレッドを検索と直接読み取りで開ける',
-        (await reader.search({ channelId: a, query: '仕事 6' })).hits.some(hit => hit.threadId === roots[6] || hit.postId === roots[6])
-        && Boolean(await reader.read({ channelId: a, threadId: roots[6] })));
+        (await reader.search({ channelId: a, query: '仕事 6' })).hits.some(hit => hit.threadId === roots[6] && hit.postId === roots[6])
+        && (await reader.read({ channelId: a, threadId: roots[6] })).posts[0]?.id === roots[6]);
     } finally {
       await reader.close();
     }
@@ -143,6 +158,9 @@ export default async function (t) {
     const atRoot = await organize('moveThread', { threadId: roots[6], folderId: ROOT_FOLDER, beforeId: roots[2] });
     t.ok('別のフォルダーを経由して直下に移せる', (await ordered(atRoot)).get(ROOT_FOLDER).includes(roots[6])
       && !(await ordered(atRoot)).get(second).length);
+    for (const threadId of roots) await organize('moveThread', { threadId, folderId: ARCHIVE_FOLDER });
+    const empty = await readFeed();
+    t.ok('A feed with every thread archived is empty and has no next page', !empty.posts.length && !empty.nextBefore);
   } finally {
     await service.close().catch(() => {});
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
