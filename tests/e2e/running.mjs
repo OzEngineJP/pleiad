@@ -50,9 +50,9 @@ export default async function (t, ctx) {
     // 形の契約。ここが turn(単数) から turns(配列) に変わったとき、
     // クライアントが追従できておらず「動いているもの」の内訳が出なくなった。
     t.ok("running は turns を配列で返す", Array.isArray(after.turns), `turns=${JSON.stringify(after.turns)}`);
-    t.ok("running は permissions / subagents / count を持つ",
-      Array.isArray(after.permissions) && Array.isArray(after.subagents) && typeof after.count === "number");
-    t.ok("count は3つの合計", after.count === after.turns.length + after.permissions.length + after.subagents.length,
+    t.ok("running は subagents と count を持ち、待ち一覧は別に届く",
+      !Object.hasOwn(after, 'permissions') && Array.isArray(after.subagents) && typeof after.count === "number");
+    t.ok("count は3つの合計", after.count === after.turns.length + c.waitingCards.filter(card => card.blocking && !card.relay).length + after.subagents.length,
       `count=${after.count}`);
     t.ok("項目には sessionId が付く",
       [...after.turns, ...after.subagents].every((x) => "sessionId" in x));

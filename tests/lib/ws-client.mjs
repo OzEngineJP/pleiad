@@ -33,6 +33,8 @@ async function rawOpen({ port, token, host = "127.0.0.1", onEvent, autoAllow = f
   const pending = new Map();
   const events = [];
   const watchers = new Set();
+  let snapshot;
+  const autoAllowed = new Set();
   let seq = 0;
   let helloDone = false;
   let resolveHello, rejectHello;
@@ -69,15 +71,41 @@ async function rawOpen({ port, token, host = "127.0.0.1", onEvent, autoAllow = f
     }
     if (m.kind !== "event") return;
     const ev = m.event;
-    events.push(ev);
-    if (autoAllow && ev.type === "permission") {
-      cmd("resolvePermission", { id: ev.id, allow: true }).catch(() => {});
+    if (ev.type === 'permission') return record({ ...ev, type: 'permissionNotice' });
+    if (ev.type !== 'waitingCards') return record(ev);
+    if (snapshot?.hostInstance === ev.hostInstance && snapshot.revision >= ev.revision) return;
+    const previous = new Map(snapshot?.cards.map(card => [card.id, card]));
+    snapshot = ev;
+    record(ev);
+    // Existing flow tests can wait for changes to an individual card. These
+    // events are test observations derived exclusively from the snapshot.
+    for (const card of ev.cards) {
+      const before = previous.get(card.id);
+      if (!before) {
+        record({ ...card, type: 'permission' });
+        if (autoAllow && !autoAllowed.has(card.id)) {
+          autoAllowed.add(card.id);
+          cmd('resolvePermission', { id: card.id, allow: true }).catch(() => {});
+        }
+      } else {
+        if (JSON.stringify(before.browserHandoff ?? before.chromeWait) !== JSON.stringify(card.browserHandoff ?? card.chromeWait))
+          record({ ...card, type: 'permissionUpdate' });
+        if (before.remote?.online !== card.remote?.online)
+          record({ id: card.id, type: 'permissionRelayState', online: card.remote?.online });
+      }
     }
+    for (const resolution of ev.resolutions ?? []) {
+      record({ ...resolution, type: previous.get(resolution.id)?.remote ? 'permissionRelayEnd' : 'permissionSettled' });
+    }
+  });
+
+  function record(ev) {
+    events.push(ev);
     // onEvent は非同期でもよい（承認を返してから次の指示を出す、など）
     const oops = (err) => console.log(`      onEvent で例外: ${err?.stack ?? err}`);
     try { Promise.resolve(onEvent?.(ev, api)).catch(oops); } catch (err) { oops(err); }
     for (const w of [...watchers]) if (w.pred(ev)) { watchers.delete(w); w.res(ev); }
-  });
+  }
 
   // 切断の検証では意図的に切るので、待っている側には例外として伝えて握り潰す
   const fail = (err) => {
@@ -92,6 +120,7 @@ async function rawOpen({ port, token, host = "127.0.0.1", onEvent, autoAllow = f
   const api = {
     ws,
     cmd,
+    get waitingCards() { return snapshot?.cards ?? []; },
     events,
     /** いまのイベント数。ここから先だけを見たいときの目印にする。 */
     mark: () => events.length,

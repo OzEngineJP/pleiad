@@ -16,11 +16,11 @@ export const SUBAGENT_MIN_MS = 1000;
 export const FOLLOW_INSURANCE_MS = 10000;
 
 /** 子の会話の出来事のうち読み直しのきっかけにするもの。承認は見ている会話に関わらず届く（streamEvents には含まれない） */
-const TASK_EVENTS = new Set([...streamEvents, 'permission', 'permissionSettled']);
+const TASK_EVENTS = new Set([...streamEvents]);
 /** サブエージェントは親の会話の中で動く。親の本文の流れ（text.delta など）は関係が薄いので、道具・活動・承認・終わりだけ */
-const SUBAGENT_EVENTS = new Set(['tool.start', 'tool.result', 'activity', 'turnResult', 'turnEnd', 'taskNotice', 'permission', 'permissionSettled']);
+const SUBAGENT_EVENTS = new Set(['tool.start', 'tool.result', 'activity', 'turnResult', 'turnEnd', 'taskNotice']);
 /** 待たせずに読み直す出来事（承認のカードが出る・消える、ターンの終わり） */
-const URGENT_EVENTS = new Set(['permission', 'permissionSettled', 'turnEnd']);
+const URGENT_EVENTS = new Set(['turnEnd']);
 
 /**
  * この項目の詳細に、出来事が届く道があるか。

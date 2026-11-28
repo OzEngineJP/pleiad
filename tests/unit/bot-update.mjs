@@ -128,7 +128,7 @@ export default async function (t) {
       const run = await call('routines.run', { routineId: definition.id });
       const thread = (await read(run.postId)).threads[0];
       const sessionId = thread.sessions[owl.id];
-      const approval = await until(async () => (await client.cmd('running')).permissions.find(card => card.sessionId === sessionId), '保持役の承認');
+      const approval = await until(async () => client.waitingCards.find(card => card.sessionId === sessionId), '保持役の承認');
       return { definition, run, approval };
     }
     const { definition: held, run: first, approval: before } = await startHeld(30);
@@ -148,17 +148,17 @@ export default async function (t) {
         if (error.code === 'ROUTINE_NOT_FOUND') return null; // 起動直後は読み込み中
         throw error;
       });
-      const work = await client.cmd('running');
-      if (current && (current.last?.state === 'stopped' || work.permissions.some(card => card.id === before.id))) return { current, work };
+      const cards = client.waitingCards;
+      if (current && (current.last?.state === 'stopped' || cards.some(card => card.id === before.id))) return { current, cards };
     }, 'ルーティンの復元');
     t.ok('保持役が引き継いだルーティンは同じ根の投稿と承認で続く',
       after.current.last?.runId === first.runId && after.current.last.state === 'working' &&
-      after.work.permissions.some(card => card.id === before.id) &&
+      after.cards.some(card => card.id === before.id) &&
       (await read()).posts.find(post => post.id === first.postId)?.state === 'working',
       after.current.last?.state === 'working' ? '' : `${JSON.stringify(after.current.last)}\n${server.tail(40)}`);
     t.ok('受領済みの札がある初回の出来事は配達中から送信済みに直す',
       (await inbox()).find(item => item.id === delivered.id)?.status === 'sent');
-    if (after.work.permissions.some(card => card.id === before.id)) {
+    if (after.cards.some(card => card.id === before.id)) {
       await client.cmd('resolvePermission', { id: before.id, allow: true });
     }
     const final = await until(async () => {

@@ -6,7 +6,15 @@ async page => {
   await page.addInitScript(() => {
     const W = window.WebSocket;
     window.__wss = [];
-    window.WebSocket = function (...a) { const s = new W(...a); window.__wss.push(s); return s; };
+    window.WebSocket = function (...args) {
+      const socket = new W(...args);
+      window.__wss.push(socket);
+      socket.addEventListener('message', ({ data }) => {
+        const { event } = JSON.parse(data);
+        if (event?.type === 'waitingCards') socket.waitingSnapshot = event;
+      });
+      return socket;
+    };
     window.WebSocket.prototype = W.prototype;
     Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
   });
@@ -25,7 +33,9 @@ async page => {
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const q = (s) => document.querySelector(s);
     const qa = (s) => [...document.querySelectorAll(s)];
-    const perm = (id, toolUseID, toolName = 'Write') => send({ type: 'permission', id, kind: 'tool', toolName, toolUseID, input: { file_path: 'D:/x/b.mjs', content: 'a' }, canAlways: true });
+    let revision = ws.waitingSnapshot.revision;
+    const waiting = (...cards) => send({ ...ws.waitingSnapshot, revision: ++revision, cards });
+    const perm = (id, toolUseID, toolName = 'Write') => waiting({ id, sessionId: sid, kind: 'tool', toolName, toolUseID, input: { file_path: 'D:/x/b.mjs', content: 'a' }, canAlways: true });
     const end = async () => { send({ type: 'turnResult', outcome: 'ok' }); send({ type: 'activity', state: 'idle' }); await sleep(300); };
     const res = {};
 
@@ -36,6 +46,7 @@ async page => {
     await sleep(350);
     res.appearedAppr = qa('.tc-appr').length;
     send({ type: 'tool.result', id: 'a2', text: 'ok', isError: false });
+    waiting();
     await sleep(350);
     const a2 = q('[data-id="a2"]');
     res.staleAppr = qa('.tc-appr').length;
@@ -63,6 +74,7 @@ async page => {
     res.arrowOnHead = key(q('.bundle .rhead'));
     // 4. 中断（結果が来ないまま turnResult aborted）。走っている印と承認カードを残さない
     send({ type: 'turnResult', outcome: 'aborted', reason: 'user' });
+    waiting();
     await sleep(500);
     res.strayRunning = qa('.tc-running').length;
     res.strayWaiting = qa('.tc-waiting, .tc-appr').length;
@@ -79,6 +91,7 @@ async page => {
     await sleep(300);
     res.activityWhileWaiting = qa('.m.activity').length;
     send({ type: 'tool.result', id: 'c1', text: 'ok', isError: false });
+    waiting();
     await end();
 
     // 6. 委譲・サブエージェント（境界のツール）の間は、従来の稼働表示を残す

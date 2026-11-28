@@ -476,7 +476,7 @@ async function holdCase(t, scratch) {
       const ids = running.turns.map((x) => x.sessionId);
       t.ok("承認待ちのターンも承認の要らないターンも走ったまま",
         ids.includes(asking.sessionId) && ids.includes(slow.sessionId), JSON.stringify(ids));
-      t.ok("承認待ちとして残っている", running.permissions.some((p) => p.id === perm.id), `permissions=${running.permissions.length}`);
+      t.ok("承認待ちとして残っている", back.waitingCards.some((p) => p.id === perm.id), `permissions=${back.waitingCards.length}`);
 
       const mark3 = back.mark();
       await back.cmd("resolvePermission", { id: perm.id, allow: true });
@@ -653,8 +653,11 @@ async function reopenCase(t, scratch) {
     const perm = await c.waitFor((e) => e.type === "permission", { ms: 20_000, from: mark });
 
     const opened = await c.cmd("loadSession", { sessionId: started.sessionId, live: true });
-    const pending = (opened.permissions ?? []).find((p) => p.id === perm.id);
-    t.ok("開き直すと保留中の承認が返る", Boolean(pending), (opened.permissions ?? []).length + " 件");
+    const reconnected = await open({ port: server.port, token: server.token });
+    await reconnected.waitFor(e => e.type === "waitingCards");
+    reconnected.close();
+    const pending = reconnected.waitingCards.find((p) => p.id === perm.id);
+    t.ok("開き直すと保留中の承認が返る", Boolean(pending), reconnected.waitingCards.length + " 件");
     t.ok("カードを組み立てられるだけの中身が付く",
       pending?.toolName === "fake_write" && pending?.input?.path === "a.txt" && pending?.canAlways === true,
       JSON.stringify(pending ?? null));
@@ -664,8 +667,8 @@ async function reopenCase(t, scratch) {
     await c.cmd("resolvePermission", { id: perm.id, allow: true });
     await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === started.sessionId, { ms: 20_000, from: mark });
     const again = await c.cmd("loadSession", { sessionId: started.sessionId, live: true });
-    t.ok("答えた承認は返らない", (again.permissions ?? []).length === 0,
-      JSON.stringify(again.permissions ?? []));
+    t.ok("答えた承認は返らない", !Object.hasOwn(opened, 'permissions') && !Object.hasOwn(again, 'permissions') && c.waitingCards.length === 0,
+      JSON.stringify(c.waitingCards));
   } finally {
     c.close();
     await server.stop();

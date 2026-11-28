@@ -64,7 +64,7 @@ export default async function (t) {
     await run({ sessionId: parent,
       prompt: ply('ply_task_send', { taskId: tasks[0].taskId, message: browser('hand_to_user', { reason: 'login', message: 'ログインしてください' }) }) });
     const pending = await wait(async () => {
-      const rows = (await c.cmd('running')).permissions ?? [];
+      const rows = c.waitingCards;
       const child = rows.filter(row => tasks.some(task => task.sessionId === row.sessionId) && !row.relay);
       const parentCards = rows.filter(row => row.sessionId === parent && row.relay);
       const parentCard = c.events.find(event => event.type === 'permission' && event.id === parentCards[0]?.id);
@@ -80,7 +80,7 @@ export default async function (t) {
 
     await c.cmd('chromeTakeOver', { sessionId: tasks[0].sessionId, by: 'device', width: 390, height: 700, scale: 2 });
     await c.cmd('chromeResume', { sessionId: tasks[0].sessionId });
-    await wait(async () => (await c.cmd('running')).permissions?.every(row => row.sessionId !== tasks[0].sessionId));
+    await wait(async () => c.waitingCards?.every(row => row.sessionId !== tasks[0].sessionId));
     assert(c.events.some(event => event.type === 'permissionSettled' && event.sessionId === tasks[0].sessionId && event.allow));
     assert(c.events.some(event => event.type === 'permissionSettled' && event.sessionId === parent && event.allow));
     t.ok('親から子の窓を戻すと、親と子のカードが同時に済む', true);

@@ -125,8 +125,7 @@ export default async function (t) {
     const th2 = await until(async () => { const r = await read(dev.id, root2.id); return r.threads[0]?.sessions?.[owl.id] ? r : null; }, { label: 'スレッドの会話' });
     const askSession = th2.threads[0].sessions[owl.id];
     t.ok('承認の出来事は bot の会話の id で出る（あなた待ちの印の元）', perm.sessionId === askSession && perm.toolName === 'fake_write');
-    const running = await host.cmd('running');
-    t.ok('running の承認待ちに bot の会話が載る（Chats の一覧はこれで仮の行を出す）', running.permissions.some((p) => p.sessionId === askSession && p.id === perm.id), JSON.stringify(running.permissions));
+    t.ok('running の承認待ちに bot の会話が載る（Chats の一覧はこれで仮の行を出す）', host.waitingCards.some((p) => p.sessionId === askSession && p.id === perm.id), JSON.stringify(host.waitingCards));
     const approval = await until(() => phone.got.find((n) => n.kind === 'approval' && n.session === askSession), { label: '承認の通知' });
     t.ok('承認はスマホへ approval を送る（bot の会話でも）', approval.id === perm.id);
     const waitingPost = await until(async () => botPost(await read(dev.id, root2.id), 'waiting')[0], { label: 'スレッドの承認待ち' });

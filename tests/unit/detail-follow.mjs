@@ -49,8 +49,8 @@ export default async function (t) {
 
   eq(followsEvent(child, "p", { type: "tool.start", sessionId: "child-1" }), { urgent: false }, "子の本文の出来事");
   eq(followsEvent(child, "p", { type: "text.delta", sessionId: "child-1" }), { urgent: false }, "子の本文の流れ");
-  eq(followsEvent(child, "p", { type: "permission", sessionId: "child-1", id: "x" }), { urgent: true }, "子の承認は待たせない");
-  eq(followsEvent(child, "p", { type: "permissionSettled", sessionId: "child-1", id: "x" }), { urgent: true }, "承認が片付いたのも待たせない");
+  eq(followsEvent(child, "p", { type: "permission", sessionId: "child-1", id: "x" }), null, "承認通知で履歴を読み直さない");
+  eq(followsEvent(child, "p", { type: "waitingCards", sessionId: "child-1", id: "x" }), null, "承認が片付いたのも待たせない");
   eq(followsEvent(child, "p", { type: "turnEnd", sessionId: "child-1" }), { urgent: true }, "ターンの終わり");
   eq(followsEvent(child, "p", { type: "tool.start", sessionId: "child-OLD" }), null, "前に見ていた別の子の出来事は捨てる");
   eq(followsEvent(child, "child-1", { type: "tool.start", sessionId: "p" }), null, "依頼元の会話の出来事ではない");

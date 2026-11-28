@@ -1421,8 +1421,7 @@ export default async function (t) {
     t.ok('承認待ちの間は、ターンの投稿もスレッドも waiting', hWait.threads[0].state === 'waiting');
     const sessionH = hWait.threads[0].sessions[owl.id];
     const lst = (await c.cmd('listSessions')).find((s) => s.id === sessionH);
-    const running = await c.cmd('running');
-    t.ok('Chats には承認待ちのときだけ出る材料: 一覧の行に bot、running の承認待ちにその会話', lst.bot.botId === owl.id && running.permissions.some((p) => p.sessionId === sessionH), JSON.stringify(running.permissions));
+    t.ok('Chats には承認待ちのときだけ出る材料: 一覧の行に bot、running の承認待ちにその会話', lst.bot.botId === owl.id && c.waitingCards.some((p) => p.sessionId === sessionH), JSON.stringify(c.waitingCards));
     const queued = await call('channels.post', { channelId: dev.id, threadId: rootH.id, text: 'echo:たまった投稿' });
     await sleep(500);
     const pend = JSON.parse(await fs.readFile(path.join(dataDir, 'channels', 'inbox.json'), 'utf8')).items.filter((i) => i.sessionId === sessionH);

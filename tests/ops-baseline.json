@@ -21,6 +21,7 @@
     "compatEndpointDefault": "human-only",
     "presence": "ui-internal",
     "notifyRegister": "ui-internal",
+    "waitingCardTrace": "ui-internal",
     "setRemoteSettings": "human-only",
     "remotePairingStart": "human-only",
     "remotePairingCancel": "human-only",

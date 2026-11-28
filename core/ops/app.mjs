@@ -93,7 +93,7 @@ export const appOps = [
     legacyCommand: 'running',
     // いま走っている作業（会話のターン・委譲の子・承認待ちの数）。サーバーが ctx.app.running を渡す
     handler: (ctx) => ctx.app.running(),
-    // 画面は、サブエージェント・裏の作業・承認待ちの中身まで持つ全量（ターンの終了の判断・更新のゲート・サイドバーの印）を読む
+    // 画面は、ターン・サブエージェント・裏の作業の状態を読む。待ちカードは waitingCards で届く。
     uiHandler: (ctx) => ctx.app.runningWork(),
   }),
 

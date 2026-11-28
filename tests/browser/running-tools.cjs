@@ -3,7 +3,15 @@ async page => {
   await page.addInitScript(() => {
     const W = window.WebSocket;
     window.__runningToolSockets = [];
-    window.WebSocket = function (...args) { const s = new W(...args); window.__runningToolSockets.push(s); return s; };
+    window.WebSocket = function (...args) {
+      const socket = new W(...args);
+      window.__runningToolSockets.push(socket);
+      socket.addEventListener('message', ({ data }) => {
+        const { event } = JSON.parse(data);
+        if (event?.type === 'waitingCards') socket.waitingSnapshot = event;
+      });
+      return socket;
+    };
     window.WebSocket.prototype = W.prototype;
     Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
   });
@@ -15,6 +23,8 @@ async page => {
     const sid = document.querySelector('.row.sel')?.dataset.session ?? localStorage.getItem('agent-host-current');
     if (!sid) throw Error('Open a saved fake conversation before running this test');
     const send = event => ws.onmessage({ data: JSON.stringify({ kind: 'event', event: { sessionId: sid, ...event } }) });
+    let revision = ws.waitingSnapshot.revision;
+    const waiting = (...cards) => send({ ...ws.waitingSnapshot, revision: ++revision, cards: cards.map(card => ({ sessionId: sid, ...card })) });
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const checks = {};
     const q = s => document.querySelector(s);
@@ -52,25 +62,27 @@ async page => {
     await wait(300);
     checks.oldUnfinishedRemain = order().join(',') === [0,1,2,4].map(i => `tail-many-${i}`).join(',') && q('[data-id="tail-many-0"]').checkVisibility();
     const waited = q('[data-id="tail-many-1"]');
-    send({ type: 'permission', id: 'tail-permission', kind: 'tool', toolName: 'Read', toolUseID: 'tail-many-1', input: { file_path: 'file-1.mjs' }, canAlways: true });
+    waiting({ id: 'tail-permission', kind: 'tool', toolName: 'Read', toolUseID: 'tail-many-1', input: { file_path: 'file-1.mjs' }, canAlways: true });
     await wait(300);
     checks.approvalInHistory = !waited.closest('.activity') && waited.classList.contains('tc-waiting') && !waited.querySelector('.run');
     send({ type: 'tool.result', id: 'tail-many-1', text: 'done' });
+    waiting();
     for (const i of [0,2,4]) send({ type: 'tool.result', id: `tail-many-${i}`, text: 'done' });
     send({ type: 'activity', state: 'idle' });
     await wait(300);
     checks.finishedNoRunning = !q('.tc-at-end') && !q('.tc-running .run') && !q('.mw.activity');
     send({ type: 'tool.start', id: 'tail-approval-after-text', name: 'Bash', input: { command: 'needs-approval' } });
     send({ type: 'text.delta', text: 'The tool is still pending.' });
-    send({ type: 'permission', id: 'tail-approval-after-text-permission', kind: 'tool', toolName: 'Bash', toolUseID: 'tail-approval-after-text', input: { command: 'needs-approval' }, canAlways: true });
+    waiting({ id: 'tail-approval-after-text-permission', kind: 'tool', toolName: 'Bash', toolUseID: 'tail-approval-after-text', input: { command: 'needs-approval' }, canAlways: true });
     await wait(300);
     const approvalAfterText = q('[data-id="tail-approval-after-text"]');
     checks.approvalAfterText = !approvalAfterText.closest('.activity') && approvalAfterText.classList.contains('tc-waiting') && !approvalAfterText.querySelector('.run') && !approvalAfterText.querySelector('.tc-appr .ln').textContent.includes('実行中');
     send({ type: 'tool.result', id: 'tail-approval-after-text', text: 'done' });
+    waiting();
     send({ type: 'activity', state: 'idle' });
 
     send({ type: 'tool.start', id: 'tail-running-ended', name: 'Bash', input: { command: 'no-result-before-running-ended' } });
-    send({ type: 'running', count: 0, turns: [], permissions: [], subagents: [], background: [], tasks: [] });
+    send({ type: 'running', count: 0, turns: [], subagents: [], background: [], tasks: [] });
     await wait(300);
     checks.runningEndedClearsMarks = !q('.tc-at-end') && !q('[data-id="tail-running-ended"] .run') && !q('[data-id="tail-running-ended"]').classList.contains('tc-running');
     return checks;

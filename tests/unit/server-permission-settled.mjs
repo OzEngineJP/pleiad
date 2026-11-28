@@ -18,7 +18,7 @@ const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args }
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
 export default async function (t) {
-  t.ok('permissionSettled は EVENTS に登録されている', P.EVENTS.has('permissionSettled'));
+  t.ok('決着は waitingCards に載せて送る', P.EVENTS.has('waitingCards'));
 
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-permission-settled-'));
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: scratch });
@@ -58,7 +58,7 @@ export default async function (t) {
       settledOwn.sessionId === task.sessionId && settledRelay.sessionId === parent && settledOwn.allow === true && settledRelay.allow === true, JSON.stringify([settledOwn, settledRelay]));
     t.ok('答えた接続と、別の接続（別の窓・スマホ）の両方に届く', (await settledOf(other, own.id, otherFrom)).id === own.id && (await settledOf(other, relay.id, otherFrom)).id === relay.id);
     t.ok('1 つの承認につき、カードの数（2）だけ出て、重ならない', noneOf(c, from).length === 2 && new Set(noneOf(c, from).map((e) => e.id)).size === 2);
-    t.ok('running の permissions からも消える（突き合わせの正本）', !(await c.cmd('running')).permissions.some((p) => [own.id, relay.id].includes(p.id)));
+    t.ok('running の permissions からも消える（突き合わせの正本）', !c.waitingCards.some((p) => [own.id, relay.id].includes(p.id)));
 
     // ---- 片付いた承認への答えは ALREADY_RESOLVED。複製の id も、知らない id も同じ
     const late = await c.cmd('resolvePermission', { id: relay.id, allow: true }).then(() => null, (e) => e);
@@ -83,30 +83,7 @@ export default async function (t) {
     t.ok('中断で片付いた複製に、遅れて押しても ALREADY_RESOLVED', lateAbort?.code === 'ALREADY_RESOLVED');
   } finally { other.close(); c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
-  // ---- 画面の配線（動きは tests/browser/work-dialog-keep-open.mjs（子のモーダル）と tests/browser/main-thread-nav.mjs・thread-deck.cjs（主）で確かめる）
   const client = read('web/client.mjs');
-  const onEvent = client.slice(client.indexOf('function onEvent('));
-  t.ok('画面: permissionSettled は会話の絞り込み（isMine）の前に受ける（開いていない会話の覚えと、子の会話のダイアログのカードを畳むため）',
-    onEvent.indexOf("ev.type === 'permissionSettled'") > 0 && onEvent.indexOf("ev.type === 'permissionSettled'") < onEvent.indexOf('if (!isMine(ev))'));
-  // 名簿は id ごとのカードの集合（web/card-roll.mjs）。同じ承認のカードのどれかが送っている最中なら触らない
-  t.ok('画面: 答えを送っている最中のカードは触らず、応答で畳む', /function onPermissionSettled\([\s\S]*?openCards\.sending\(ev\.id\)/.test(client));
-  const apply = client.slice(client.indexOf('function applyRunning('), client.indexOf('const behind = new Map();'));
-  t.ok('画面: running のたびに、出ているカードを permissions と突き合わせる', /reconcileOpenCards\(\)/.test(apply));
-  const reconcile = client.slice(client.indexOf('function reconcileOpenCards('), client.indexOf('function registerRelayCard('));
-  t.ok('画面: 突き合わせは少し待ち、そのとき最新の一覧にも無いカードだけを畳む', /setTimeout\(/.test(reconcile) && /state\.work\.permissions/.test(reconcile) && /SETTLE_RECONCILE_MS/.test(reconcile));
-  // 使う所 5（承認・質問・行の承認・コンピューターの承認・設定の変更の承認）
-  const uses = (client.match(/alreadyResolved\(/g) ?? []).length;
-  t.ok('画面: 承認・質問・行の承認・コンピューターの承認・設定の変更の承認の答えが ALREADY_RESOLVED なら、失敗の表示にせず畳む', uses >= 5, String(uses));
-  t.ok('画面: どの承認カードも名簿に載る（中継のカードだけではない）', !/if \(ev\.remote \|\| ev\.remoteOrigin\) registerRelayCard/.test(client) && !/if \(ev\.remote\) registerRelayCard/.test(client));
-  // ---- ID と版で当てる（ADR 0347 第 3 段）。古い取得結果・開いていない会話の出来事で、新しい状態を上書きしない・落とさない
-  t.ok('画面: 中継のカードの終わり・状態は、会話の絞り込み（isMine）の前に受ける（開いていない会話の覚えも片付ける）',
-    /ev\.type === 'permissionRelayEnd' \|\| ev\.type === 'permissionRelayState'/.test(onEvent)
-    && onEvent.indexOf("ev.type === 'permissionRelayEnd'") < onEvent.indexOf('if (!isMine(ev))'));
-  const adopt = client.slice(client.indexOf('function adoptPendingPerms('), client.indexOf('function adoptPendingPerms(') + 700);
-  t.ok('画面: 履歴の保留中の承認は、片付いた id と版の古い中身を当てない（古い応答が遅れて届いても畳んだカードを出し直さない）',
-    /settledPerms\.has\(/.test(adopt) && /\.rev/.test(adopt) && /adoptPendingPerms\(data\?\.permissions\)/.test(client));
-  t.ok('画面: 決着・別の場所での処理・中継の終わりで、片付いた id を覚える', (client.match(/rememberSettled\(/g) ?? []).length >= 4);
-  t.ok('画面: 同じ id の承認が新しく届いたら、片付いた覚えから外す（再起動で id が戻る）', /settledPerms\.delete\(ev\.id\)/.test(client));
   const fetchCards = client.slice(client.indexOf('async function fetchTaskCards('), client.indexOf('async function fetchTaskCards(') + 2500);
   t.ok('画面: 委譲カードの取得結果は更新時刻で比べ、古い行で新しい行を上書きしない', /function isOlderTask\(/.test(client) && /isOlderTask\(/.test(fetchCards));
   t.ok('画面: 委譲の更新は、チャンネルの写しにしか無いカードも取り直す', /watched\.rows\.has\(ev\.taskId\)/.test(client));

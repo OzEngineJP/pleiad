@@ -51,7 +51,7 @@ export default async function (t, ctx) {
     const toolOut = asked.events.filter((e) => e.type === 'tool.result').map((e) => String(e.text ?? '')).find((x) => x.includes('PENDING_APPROVAL')) ?? '';
     t.ok('set_setting が呼ばれ、承認を待たずに承認待ち（PENDING_APPROVAL）が返ってターンが終わった', asked.outcome === 'ok' && asked.tools.some((n) => /ply_control.*set_setting/.test(n)) && toolOut.includes(card?.settingChange?.requestId ?? '-'),
       `${asked.outcome} ${asked.tools.join(', ')} ${toolOut.slice(0, 200)}`);
-    t.ok('会話に承認カードが残り、設定はまだ変わっていない', Boolean(card) && (await c.cmd('running')).permissions.some((p) => p.id === card.id) && (await c.cmd('prefs')).confirmAgentSites === true);
+    t.ok('会話に承認カードが残り、設定はまだ変わっていない', Boolean(card) && c.waitingCards.some((p) => p.id === card.id) && (await c.cmd('prefs')).confirmAgentSites === true);
     if (card) {
       const after = c.mark();
       await c.cmd('resolvePermission', { id: card.id, allow: true, receipt: card.settingChange.receipt });

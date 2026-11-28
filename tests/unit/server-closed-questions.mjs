@@ -1,5 +1,5 @@
 // 回答待ちの質問（Issue #231）。fake バックエンドのサーバー越し。LLM は呼ばない。
-//   - 質問の待ちは running の permissions に question: true で出る（一覧・会話の「回答待ち」の元）
+//   - 質問の待ちは waitingCards に kind: question で出る（一覧・会話の「回答待ち」の元）
 //   - 人の回答以外（中断）で閉じた質問は、閉じた理由と質問の中身を会話に残す（questionsClosed のイベントと loadSession の closedQuestions）
 //   - 答えた・「答えずに進める」で閉じた質問は残さない
 //   - 画面の配線（client.mjs・side.mjs）と辞書
@@ -34,8 +34,8 @@ export default async function (t) {
 
     // ---- 回答待ちの印
     const card = await ask(sid);
-    const waiting = (await c.cmd('running')).permissions.find((p) => p.id === card.id);
-    t.ok('質問の待ちは running の permissions に question: true で出る', waiting?.question === true, JSON.stringify(waiting));
+    const waiting = c.waitingCards.find((p) => p.id === card.id);
+    t.ok('質問の待ちは waitingCards に kind: question で出る', waiting?.kind === 'question', JSON.stringify(waiting));
 
     // ---- 中断で閉じた質問は、理由と中身を残す
     const from = c.mark();
@@ -76,7 +76,7 @@ export default async function (t) {
   // ---- 画面の配線
   const client = read('web/client.mjs'), side = read('web/side.mjs');
   t.ok('画面は questionsClosed を受けて、閉じた質問のカードを描く', /case ['"]questionsClosed['"]/.test(client) && /closedQuestions/.test(client));
-  t.ok('画面は running の question の印から回答待ちの会話を集め、一覧へ渡す', /p\.question/.test(client) && /answerWaitIds/.test(client) && /answerWaitIds/.test(side));
+  t.ok('画面は待ち一覧から回答待ちの会話を集め、一覧へ渡す', /card\.kind === 'question'/.test(client) && /answerWaitIds/.test(client) && /answerWaitIds/.test(side));
   t.ok('一覧は回答待ちを「承認待ち」と分けて出す', /sidebar\.waitingAnswer/.test(side));
   for (const lng of ['ja', 'en']) {
     const ui = JSON.parse(read(`web/locales/${lng}/ui.json`));

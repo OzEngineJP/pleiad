@@ -12,7 +12,7 @@ export function threadActivity(thread, { runningIds, waitingIds, bgWaiting }) {
   return {
     running: ids.some(id => runningIds.has(id) && !bgWaiting.has(id))
       || (!behind && (thread.state === 'working' || live.includes('working'))),
-    waiting: ids.some(id => waitingIds.has(id)) || thread.state === 'waiting' || live.includes('waiting'),
+    waiting: ids.some(id => waitingIds.has(id)),
     behind,
   };
 }

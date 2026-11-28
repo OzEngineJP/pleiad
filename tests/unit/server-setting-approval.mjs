@@ -52,10 +52,10 @@ export default async function (t) {
       && turnEnds(a.sessionId, from).length === 1, JSON.stringify(toolOut));
     await sleep(300);
     const running = await c.cmd('running');
-    const listed = running.permissions.find((p) => p.id === card.id);
-    t.ok('ターンが終わってもカードは残る（期限なし。終了・更新を止める数には入れない）', listed?.detached === true && running.count === 0 && (await c.cmd('prefs')).confirmAgentSites === true, JSON.stringify(running.permissions));
+    const listed = c.waitingCards.find((p) => p.id === card.id);
+    t.ok('ターンが終わってもカードは残る（期限なし。終了・更新を止める数には入れない）', listed?.detached === true && running.count === 0 && (await c.cmd('prefs')).confirmAgentSites === true, JSON.stringify(c.waitingCards));
     const reopened = await c.cmd('loadSession', { sessionId: a.sessionId, live: true });
-    t.ok('会話を開き直しても、待っているカードが返る', reopened.permissions?.some((p) => p.id === card.id && p.settingChange?.requestId === card.settingChange.requestId));
+    t.ok('会話を開き直しても、待っているカードが返る', !Object.hasOwn(reopened, 'permissions') && c.waitingCards.some((p) => p.id === card.id && p.settingChange?.requestId === card.settingChange.requestId));
     from = c.mark();
     await resolve(card, true);
     const allowed = await noticeFor(a.sessionId, card.settingChange.requestId, from);
@@ -77,7 +77,7 @@ export default async function (t) {
     await c.cmd('abort', { sessionId: b.sessionId });
     await slow.catch(() => {});
     await sleep(300);
-    t.ok('ターンを中断しても、設定の変更のカードは取り下げない', duringSlow.status === 202 && (await c.cmd('running')).permissions.some((p) => p.id === cardB.id));
+    t.ok('ターンを中断しても、設定の変更のカードは取り下げない', duringSlow.status === 202 && c.waitingCards.some((p) => p.id === cardB.id));
     from = c.mark();
     await resolve(cardB, false);
     const deniedB = await noticeFor(b.sessionId, cardB.settingChange.requestId, from);
@@ -113,13 +113,13 @@ export default async function (t) {
     const supersededNotice = await noticeFor(e.sessionId, first.body.result.requestId, from);
     t.ok('古い要求の結果（取り下げ）が会話に届く', /結果: 取り下げ/.test(supersededNotice.text) && /新しい要求/.test(supersededNotice.text), supersededNotice.text);
     await c.waitFor((ev) => ev.type === 'turnEnd' && ev.sessionId === e.sessionId, { from, ms: 30_000 });
+    from = c.mark();
     const other = await api(e, 'settings.set', { key: 'agentSitePermissions', value: [{ origin: 'https://keep.example', mode: 'always', agent: 'fake' }] });
-    t.ok('別の設定の要求は置き換えない（両方のカードが残る）', other.status === 202 && (await c.cmd('running')).permissions.filter((p) => p.sessionId === e.sessionId).length === 2);
+    const sitesEv = await cardFor(e.sessionId, from, ev => ev.settingChange.requestId === other.body.result.requestId);
+    t.ok('別の設定の要求は置き換えない（両方のカードが残る）', other.status === 202 && c.waitingCards.filter((p) => p.sessionId === e.sessionId).length === 2);
 
     // ---- 許可のあとに値が変わっていたら、同じ requestId で聞き直す
     from = c.mark();
-    const cardSites = (await c.cmd('running')).permissions.find((p) => p.sessionId === e.sessionId && p.id !== card2.id);
-    const sitesEv = (await c.cmd('loadSession', { sessionId: e.sessionId, live: true })).permissions.find((p) => p.id === cardSites.id);
     await c.cmd('setPref', { key: 'agentSitePermissions', value: [{ origin: 'https://other.example', mode: 'ask', agent: 'fake' }] });
     await resolve(sitesEv, true);
     const again = await cardFor(e.sessionId, from, (ev) => ev.settingChange.requestId === other.body.result.requestId);
@@ -143,7 +143,7 @@ export default async function (t) {
     await c.waitFor((ev) => ev.type === 'turnEnd' && ev.sessionId === e.sessionId, { from: 0, ms: 30_000 });
     await sleep(300);
     const left = JSON.parse(await fs.readFile(path.join(dataDir, SETTING_APPROVALS_FILE), 'utf8'));
-    t.ok('届けたら台帳は空になり、カードも残らない', left.pending.length === 0 && left.notices.length === 0 && (await c.cmd('running')).permissions.length === 0, JSON.stringify(left));
+    t.ok('届けたら台帳は空になり、カードも残らない', left.pending.length === 0 && left.notices.length === 0 && c.waitingCards.length === 0, JSON.stringify(left));
   } finally {
     c?.close?.();
     await server.stop();

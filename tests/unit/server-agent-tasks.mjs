@@ -34,7 +34,7 @@ export default async function(t) {
   };
   // 承認の一覧が条件を満たすまで待つ。満たさないまま尽きたら false（t.ok が落とす）
   const awaitPerms = async fn => {
-    for (let i = 0; i < 200; i++) { if (fn((await c.cmd('running')).permissions ?? [])) return true; await sleep(50); } return false;
+    for (let i = 0; i < 200; i++) { if (fn(c.waitingCards)) return true; await sleep(50); } return false;
   };
   const cardOf = sessionId => [...held.values()].find(ev => ev.sessionId === sessionId);
   // その会話から Pleiad の MCP ツールを1回呼び、戻りの JSON を読む
@@ -152,15 +152,16 @@ export default async function(t) {
     const asker = rows.find(r => r.parentSessionId === top);
     const relayed = await awaitPerms(p => [top, asker.sessionId].every(id => p.some(x => x.sessionId === id)));
     t.ok('子の承認を依頼元の会話にも出す', relayed, [...held.values()].map(ev => ev.sessionId).join(' / '));
+    const notice = await c.waitFor(e => e.type === 'permissionNotice' && e.id === cardOf(asker.sessionId)?.id);
     t.ok('子の返事待ちだけを初回通知し、中継カードは通知しない',
-      cardOf(asker.sessionId)?.notifyReply === true && !cardOf(top)?.notifyReply);
+      notice.notifyReply === true && !c.events.some(e => e.type === 'permissionNotice' && e.id === cardOf(top)?.id));
     t.ok('中継したカードには「常に許可」を出さない', cardOf(top)?.canAlways === false && cardOf(asker.sessionId)?.canAlways === true);
     t.ok('中継したカードにどの会話の承認かを出す', String(cardOf(top)?.title ?? '').includes('ask-slow'), cardOf(top)?.title ?? '');
     t.ok('承認待ちの子は依頼元に waiting として見える', (await callTool(top, 'ply_task_status', { taskId: asker.taskId })).status === 'waiting');
     const waitedAt = Date.now();
     const waited = await callTool(top, 'ply_task_wait', { taskId: asker.taskId });
     t.ok('ply_task_wait は承認待ちならすぐ戻る', waited.status === 'waiting' && Date.now() - waitedAt < 15000, `${Date.now() - waitedAt}ms`);
-    t.ok('依頼元のターンが終わっても中継した承認は取り下げない', (await c.cmd('running')).permissions.some(x => x.sessionId === top));
+    t.ok('依頼元のターンが終わっても中継した承認は取り下げない', c.waitingCards.some(x => x.sessionId === top));
     await c.cmd('resolvePermission', { id: cardOf(top).id, allow: true });
     t.ok('依頼元で答えると子の承認も決着し、複製が消える',
       await awaitPerms(p => ![top, asker.sessionId].some(id => p.some(x => x.sessionId === id))));

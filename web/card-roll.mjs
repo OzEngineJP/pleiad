@@ -16,13 +16,18 @@ export function createCardRoll() {
     },
     /** その承認のカードのどれかが、この窓で答えを送っている最中か */
     sending: (id) => of(id).some((entry) => entry.sending()),
-    /** 名簿から外して、その承認のカードを全部畳む */
-    fold(id, how) {
+    /** 決着したカードを畳む。回答に対する応答を待つカードは残す。 */
+    fold(id, how, { keepSending = false } = {}) {
       const list = of(id);
       cards.delete(id);
-      for (const entry of list) entry.fold(how);
+      const sending = new Set();
+      for (const entry of list) {
+        if (keepSending && entry.sending()) sending.add(entry);
+        else entry.fold(how);
+      }
+      if (sending.size) cards.set(id, sending);
     },
-    /** 中身の差し替え（permissionUpdate）を、その承認のカード全部へ渡す。update を持たないカードは何もしない */
+    /** 一覧で変わった中身を表示済みのカード全部へ渡す */
     update(id, ev) {
       for (const entry of of(id)) entry.update?.(ev);
     },

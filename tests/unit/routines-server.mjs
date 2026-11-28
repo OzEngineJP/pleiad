@@ -135,7 +135,7 @@ export default async function (t) {
     t.ok('承認が期限を過ぎたら、ターンを止めてスレッドに「承認が無かったので取り消しました」を残す・根の投稿は failed', timedOut.state === 'failed' && reported.some((p) => p.author.kind === 'system' && p.text === '承認が無かったので取り消しました'), JSON.stringify(reported.map((p) => [p.author.kind, p.state, p.text.slice(0, 30)])));
     const ended = await until(async () => c.since(mAsk).find((e) => e.type === 'turnEnd' && e.sessionId === card.sessionId), { label: 'ターンの終わり' });
     t.ok('止めたターンは中断（理由 timeout）として残る', ended.interrupted?.reason === 'timeout' && ended.outcome === 'aborted', JSON.stringify(ended));
-    t.ok('承認カードは片付く（running の承認待ちに残らない）', !(await c.cmd('running')).permissions.some((p) => p.sessionId === card.sessionId));
+    t.ok('承認カードは片付く（running の承認待ちに残らない）', !c.waitingCards.some((p) => p.sessionId === card.sessionId));
 
     // ---- 試しの実行（dryRun）: 計画のモードの使い捨ての会話で走り、チャンネルへは投稿しない
     const trial = await call('routines.create', { name: 'echo:試し', botId: owl.id, channelId: ops.id, prompt: '集計して', trigger: { kind: 'daily', at: '03:00', weekdaysOnly: false } });

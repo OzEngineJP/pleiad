@@ -54,12 +54,15 @@ if (!external) {
 }
 // AGENT_HOST_NOTIFY_MIN_TURN_MS=0: a fake turn is far shorter than the 30 s under which a completion is not notified
 const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_NOTIFY_MIN_TURN_MS: '0' }, dataDir: path.join(scratch, 'host'), timeoutMs: 60_000 });
-const pendingPermissions = [];
+let pendingPermissions = [];
 const lastEnd = new Map();
 const c = await open({ port: server.port, token: server.token, onEvent: ev => {
-  if (ev.type === 'permission' && ev.id) {
-    pendingPermissions.push(ev);
-    out({ event: 'permission', id: ev.id, sessionId: ev.sessionId, kind: ev.kind });
+  if (ev.type === 'waitingCards') {
+    const previous = new Set(pendingPermissions.map(card => card.id));
+    pendingPermissions = ev.cards;
+    for (const { id, sessionId, kind } of ev.cards) {
+      if (!previous.has(id)) out({ event: 'permission', id, sessionId, kind });
+    }
   }
   if (ev.type === 'turnEnd' && ev.sessionId) {
     lastEnd.set(ev.sessionId, ev.completedAt);
@@ -113,7 +116,7 @@ rl.on('line', async line => {
       out({ event: 'turn', sessionId });
       c.cmd('runTurn', { prompt, sessionId, cwd: ROOT, backend: 'fake', mode: 'default' }).catch(e => out({ event: 'error', error: e.message }));
     } else if (command === 'resolve') {
-      const perm = pendingPermissions.pop();
+      const perm = pendingPermissions.at(-1);
       if (!perm) out({ event: 'error', error: 'no pending permission' });
       else {
         const answers = Object.fromEntries((perm.questions ?? []).map(q => [q.question, q.options?.[0]?.label ?? '']));

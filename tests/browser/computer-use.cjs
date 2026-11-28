@@ -2,13 +2,13 @@
 // コンピューターの操作の会話の表示（docs/computer-use.md、docs/design-system.md「コンピューターの操作」）を fake の `steps:` 台本で実ブラウザーに出して確かめる:
 // 走っている塊（3 行・止める）・アプリの承認が塊の最新の行の場所に出る・終わった塊の 3 行と「ほか N 件」・サムネイルの拡大と ← →・消えた画面・
 // Esc で止めた塊（✕ にしない）・高リスクと拒否・止めるの送信・別の会話を待つ行と「その会話へ移る」・中継された承認の単独のカード。
-// 認証済みで、案内を閉じた fake の会話（新しいセッション）から始める。サーバー側（computer.state・computerStop・撮った画面の配信・permission の computerApp）はまだ
+// 認証済みで、案内を閉じた fake の会話（新しいセッション）から始める。サーバー側（computer.state・computerStop・撮った画面の配信・waitingCards の computerApp）はまだ
 // 流れてこない前提で、ページの中で足す（WebSocket の onmessage で届いたことにする。送る側は send を包んで控え、computerStop の応答だけ作る）。
 async page => {
   const later = page.getByRole('button', { name: 'あとで', exact: true });
   if (await later.isVisible()) await later.click();
 
-  // ---- 準備: WebSocket の送信を控える・computerStop の応答を作る・届いた permission に computerApp を足す
+  // ---- 準備: WebSocket の送信を控える・computerStop の応答を作る・届いた待ち一覧のカードに computerApp を足す
   await page.addInitScript(() => {
     if (window.__cuWrapped) return;
     window.__cuWrapped = true;
@@ -20,7 +20,10 @@ async page => {
       set onmessage(fn) {
         super.onmessage = fn && ((e) => {
           const m = JSON.parse(e.data);
-          if (m.kind === 'event' && m.event?.type === 'permission' && window.__computerApp && !m.event.computerApp) m.event.computerApp = window.__computerApp;
+          if (m.event?.type === 'waitingCards') {
+            window.__waiting = m.event;
+            if (window.__computerApp) for (const card of m.event.cards) card.computerApp ??= window.__computerApp;
+          }
           return fn({ data: JSON.stringify(m) });
         });
       }
@@ -207,8 +210,9 @@ async page => {
   await page.locator('#prompt').press('Control+Enter');
   await page.waitForFunction(() => document.querySelector('.m.ai'));
   const parent = await page.evaluate(() => localStorage.getItem('agent-host-current'));
-  await page.evaluate((id) => window.__deliver({ type: 'permission', id: 'relay-1', kind: 'tool', toolName: 'ply_computer', input: {}, sessionId: id, title: '委譲先「経費の入力」 / Codex に「Excel」の操作を許可しますか？', conversationTitle: '経費の入力', canAlways: true,
-    computerApp: { agent: { id: 'codex', label: 'Codex' }, apps: [{ id: 'exe:c:/x/excel.exe', name: 'Excel', risk: 'normal' }], first: false } }), parent);
+  await page.evaluate((id) => window.__deliver({ ...window.__waiting, revision: window.__waiting.revision + 1,
+    cards: [{ id: 'relay-1', kind: 'tool', toolName: 'ply_computer', input: {}, sessionId: id, title: '委譲先「経費の入力」 / Codex に「Excel」の操作を許可しますか？', conversationTitle: '経費の入力', canAlways: true,
+      computerApp: { agent: { id: 'codex', label: 'Codex' }, apps: [{ id: 'exe:c:/x/excel.exe', name: 'Excel', risk: 'normal' }], first: false } }] }), parent);
   await page.locator('.m.card .cu-ap').waitFor();
   const relay = await page.evaluate(() => ({ q: document.querySelector('.m.card .cu-ap .q').textContent, sub: [...document.querySelectorAll('.m.card .cu-ap .sub')].map((x) => x.textContent), buttons: [...document.querySelectorAll('.m.card .card-actions .btn')].map((x) => x.textContent) }));
   if (relay.q !== 'Codex に「Excel」の操作を許可しますか？' || relay.sub[0] !== '委譲先「経費の入力」' || relay.buttons.join() !== '常に許可,拒否,この会話で許可') throw Error('relay card: ' + JSON.stringify(relay));

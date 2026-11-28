@@ -39,6 +39,7 @@ try {
   console.log(`fake server pid=${server.child.pid} port=${server.port}`);
   client = await open(server);
   await client.cmd('authLogin', { backend: 'fake' });
+  await client.cmd('onboardingSeen');
   const first = await client.runTurn({ backend: 'fake', cwd: work, prompt: 'echo:Satellite approval regression' });
   const parent = first.sessionId;
   const delegate = async (title, task) => {
@@ -51,9 +52,6 @@ try {
   const b = await delegate('Child still running', 'slow');
   ab('open', `http://127.0.0.1:${server.port}/?token=${server.token}`);
   await wait(() => evaluate(() => !!document.querySelector('#groups .row[data-session]')), 'session list');
-  // Inspect and close onboarding before selecting the conversation.
-  capture('onboarding');
-  evaluate(() => document.getElementById('onboardingDialog')?.close());
   evaluate(id => document.querySelector(`#groups .row[data-session="${id}"]`).click(), parent);
   await wait(() => evaluate(() => document.querySelectorAll('#thread .m.activity .run.sat circle').length === 2), 'two satellites before approval');
   await wait(() => evaluate(() => !!document.querySelector('#thread .m.card:not(.done) .btn-primary')), 'relayed approval');

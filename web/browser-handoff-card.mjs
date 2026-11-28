@@ -3,7 +3,7 @@
 // 接続の案内は承認の形（「許可　{エージェント} に Chrome への接続を許可しますか？」）で聞き、押したら Pleiad が Chrome の確認に答える（ADR 0218）。
 // トグルがオフ（setup）なら「オンにしてつなぐ」で Pleiad がトグルを入れる。確認なしのモードでも、ここは人が押す。
 // client.mjs は枠（見出し・置き場・名簿への登録）を作り、中身とボタンはここが持つ。
-// 決着（戻した・つながった・断った・中断）はサーバーの permissionSettled で届き、畳む字は settledLine が決める。
+// 一覧から消えたとき、決着（戻した・つながった・断った・中断）の字を settledLine が決める。
 // リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右の欄の Chrome の映像で操作する。by: 'device'）と
 // 「PC で操作する」に分ける（第 7 段）。
 // 人が操作している間のカードは「あなたが操作中」・頼まれた本文・「画面を開く」・「AI に戻す」を出す（戻す入口はどの画面からも届く。ADR 0296）。
@@ -28,7 +28,7 @@ export function handoffSummary(t, h, agent = '') {
 /** 見出しの印。接続の案内は承認（承認を待っている）、人への依頼は Chrome の操作待ち */
 export const handoffMark = (t, h) => (h?.reason === 'connect' ? t('chat.approval.headingMark') : t(`${K}headingMark`));
 
-/** 決着の 1 行。ev は permissionSettled のイベント（allow・reason・response） */
+/** 決着の 1 行。ev は一覧の決着情報（allow・reason） */
 export function settledLine(t, ev) {
   const r = ev?.response;
   if (ev?.allow === true && r?.kind === 'connected' && r.auto) return t(`${K}done.${r.continued ? 'connectedAutoContinued' : 'connectedAuto'}`);
@@ -43,7 +43,7 @@ export function settledLine(t, ev) {
  *   view = browserHandoffView(ev, { el, t, cmd, operateHere, openScreen })
  *   view.body      … 本文の要素（差し替えで中身が替わる）
  *   view.buttons   … 今のボタン（actions へ並べる）。replaceButtons の呼び出しで並べ直す
- *   view.update(h) … permissionUpdate の browserHandoff を渡して描き直す
+ *   view.update(h) … 一覧の browserHandoff を渡して描き直す
  * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す。
  * spinner() は「つないでいます…」の回る印（web/arc.mjs の runMark）。
  * operateHere(会話の id) はリモートの端末だけ: 右の欄にその会話の Chrome の映像を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す

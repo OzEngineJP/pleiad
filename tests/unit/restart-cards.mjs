@@ -71,13 +71,14 @@ export default async function (t) {
       const held = await until(async () => (await c.cmd('running')).turns.find(turn => turn.sessionId === sessionId)?.held ? true : null, WAIT_MS, 'held のターン');
       assert.ok(held, 'ターンが保持役に載っている');
       assert.ok(cardRows().some(row => row.id === first.id), 'カードの行が DB にある');
+      const before = await c.waitFor(event => event.type === 'waitingCards' && event.cards.some(card => card.id === first.id), { from, ms: WAIT_MS });
 
       server = await controller.restart();
       assert.equal(controller.restarts, 1);
-      // 起こし直したサーバーが、答えていない同じ承認を聞き直す（id はツールの id から決まる同じ値）
-      const again = await c.waitFor(event => event.type === 'permission' && event.sessionId === sessionId && event.id === first.id, { from, ms: WAIT_MS });
-      assert.equal(again.id, first.id, '同じ id のカードが出直す');
-      await c.cmd('resolvePermission', { id: again.id, allow: true });
+      const again = await c.waitFor(event => event.type === 'waitingCards' && event.hostInstance !== before.hostInstance
+        && event.cards.some(card => card.sessionId === sessionId && card.id === first.id), { from, ms: WAIT_MS });
+      t.ok('再起動したホストの一覧に、同じ識別子の承認が復元される', Boolean(again.hostInstance));
+      await c.cmd('resolvePermission', { id: first.id, allow: true });
       const end = await waitTurnEnd(sessionId, from);
       const loaded = await c.cmd('loadSession', { sessionId });
       t.ok('保持役のターンの承認待ち: 起こし直しても同じ id のカードが出直し、答えるとターンが最後まで続く',
@@ -125,8 +126,7 @@ export default async function (t) {
       await c.cmd('sendMessage', { sessionId, messageId: 'restart-cards-outlives-0001', prompt: 'outlives:{"open":{}}' });
       const card = await c.waitFor(event => event.type === 'permission' && event.sessionId === sessionId && event.toolName === 'fake_handoff', { from, ms: WAIT_MS });
       await waitTurnEnd(sessionId, from);
-      const waiting = await c.cmd('running');
-      assert.ok(waiting.permissions.some(permission => permission.id === card.id && permission.outlivesTurn === true), 'ターンの外の待ちとして残っている');
+      assert.ok(c.waitingCards.some(permission => permission.id === card.id && permission.outlivesTurn === true), 'ターンの外の待ちとして残っている');
       server = await controller.restart();
       assert.equal(controller.restarts, 3);
       await until(() => !cardRows().some(row => row.id === card.id), 10_000, '取り下げた行が消える');

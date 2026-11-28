@@ -431,7 +431,7 @@ try {
         const content = await organization.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
         throw new Error(`Organization host view did not load. Loader: ${status}. Frame: ${content.slice(0, 240)}`, { cause: error });
       });
-      const execute = (frame, commands) => frame.locator('html').evaluate(async (_, commands) => {
+      const execute = (frame, commands, initialSnapshot = false) => frame.locator('html').evaluate(async (_, { commands, initialSnapshot }) => {
         const { createHostSocket } = await import('/remote/browser-view.mjs');
         const app = createHostSocket(new URL('/ws', location.href));
         const responses = [];
@@ -445,11 +445,16 @@ try {
           };
           app.onmessage = ({ data }) => {
             const frame = JSON.parse(data);
+            if (initialSnapshot) {
+              if (frame.event?.type === 'waitingCards') { app.close(); resolve(frame.event); }
+              return;
+            }
             if (frame.kind === 'ready') return sendNext();
             if (frame.kind === 'response') { responses.push(frame); sendNext(); }
           };
         });
-      }, commands, { timeout: 20_000 });
+      }, { commands, initialSnapshot }, { timeout: 20_000 });
+      assert.deepEqual((await execute(organization, [], true)).cards, []);
       const [empty, deniedOpen, deniedSend, created] = await execute(organization, [
         ['listSessions', {}], ['loadSession', { sessionId: desk.sessionId }],
         ['sendMessage', { sessionId: desk.sessionId, prompt: 'outside this workspace' }],
@@ -461,6 +466,7 @@ try {
       assert.equal(deniedSend.code, 'SESSION_NOT_FOUND');
       assert.equal(created.ok, true, JSON.stringify(created));
       const { sessionId: orgSession } = created.result;
+      const mark = desk.pc.mark();
       const [orgList, opened, sent] = await execute(organization, [
         ['listSessions', {}], ['loadSession', { sessionId: orgSession }],
         ['sendMessage', { sessionId: orgSession, messageId: 'test-org-message', prompt: 'Inside this workspace' }],
@@ -468,6 +474,21 @@ try {
       assert.ok(JSON.stringify(orgList.result).includes(orgSession));
       assert.equal(opened.ok, true, JSON.stringify(opened));
       assert.equal(sent.ok, true, JSON.stringify(sent));
+      await desk.pc.waitFor(e => e.type === 'turnEnd' && e.sessionId === orgSession, { from: mark });
+      const sessions = [desk.sessionId, orgSession];
+      const waitingMark = desk.pc.mark();
+      const largeInput = 'waiting card '.repeat(6000);
+      await desk.pc.cmd('runTurn', { sessionId: desk.sessionId, prompt: 'question' });
+      await desk.pc.cmd('runTurn', { sessionId: orgSession, prompt: 'steps:' + JSON.stringify({
+        steps: [{ tool: 'fake_shell', ask: true, input: { command: largeInput } }],
+      }) });
+      const both = await desk.pc.waitFor(e => e.type === 'waitingCards' && sessions.every(sessionId => e.cards.some(c => c.sessionId === sessionId)), { from: waitingMark });
+      const [personalCard, orgCard] = sessions.map(sessionId => both.cards.find(c => c.sessionId === sessionId));
+      const orgWaiting = await execute(organization, [], true);
+      assert.deepEqual(orgWaiting.cards.map(c => c.id), [orgCard.id]);
+      assert.equal(orgWaiting.cards[0].input.command, largeInput);
+      const [deniedAnswer] = await execute(organization, [['resolvePermission', { id: personalCard.id, allow: false }]]);
+      assert.equal(deniedAnswer.ok, false);
       await page.evaluate(value => {
         window.unmount('desk-org');
         window.mount(value);
@@ -480,9 +501,15 @@ try {
       assert.ok(JSON.stringify(personalList.result).includes(desk.sessionId));
       assert.ok(!JSON.stringify(personalList.result).includes(orgSession));
       assert.equal(personalOpen.code, 'SESSION_NOT_FOUND');
+      const personalWaiting = await execute(view, [], true);
+      assert.deepEqual(personalWaiting.cards.map(c => c.id), [personalCard.id]);
+      const [allowedAnswer] = await execute(view, [['resolvePermission', { id: personalCard.id, allow: false }]]);
+      assert.equal(allowedAnswer.ok, true, JSON.stringify(allowedAnswer));
+      assert.deepEqual((await execute(view, [], true)).cards, []);
+      await desk.pc.cmd('resolvePermission', { id: orgCard.id, allow: false });
       const localList = JSON.stringify(await desk.pc.cmd('listSessions'));
       assert.ok(localList.includes(desk.sessionId) && localList.includes(orgSession));
-      scenarios.push('workspace-specific listing, opening, sending, and new conversation creation');
+      scenarios.push('workspace-specific listing, opening, sending, creation, and waiting cards');
 
       const claims = issued.get(desk.hostId).at(-1);
       authz.handle.closeTag('k:' + hostIdFor(Buffer.from(claims.devicePub, 'base64url')), 1013, 'try again');

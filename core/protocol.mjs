@@ -254,6 +254,7 @@ export const COMMANDS = new Set([
   'browserScreencastInput',  // { sessionId, tabId?, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
+  'waitingCardTrace',        // metadata-only diagnostics for waitingCards
   // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
   'chromeStatus',            // {} -> { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product }。変わったら chromeBrowser イベント
   'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
@@ -355,17 +356,12 @@ export const EVENTS = new Set([
   "title",        // タイトルが変わった
   "fork",         // 分岐した
   "rewind",       // { renumbered, removed: { messages, userMessages } } 同じ会話の中で発言の手前まで巻き戻した（sendMessage の rewind）。画面は履歴を読み直す。renumbered は残る発言の uuid が変わった（Codex が別スレッドに差し替えた）
-  // { requestId, outcome: allowed|denied|failed|superseded|restart } 設定の変更の承認（permission の settingChange）が決着した。カードを 1 行に畳む合図（ADR 0088）
+  // { requestId, outcome } 設定の変更や操作の結果。すでに畳んだカードの文言を更新する（ADR 0088）
   "settingApproval",
-  "permission",   // 承認が要る { id, kind: tool|question, toolName, input, canAlways, questions?, browserSite?, computerApp? }。computerApp は ply_computer のアプリの承認 { agent: { id, label }, apps: [{ id, name, risk: normal|high }], reason?, first }（docs/computer-use.md）
-  // { id, allow, reason? } その承認が片付いた（permission の id ごとに 1 つ。祖先の会話への中継の複製も別の id で 1 つずつ）。
-  // 答えた画面を含む全部の接続へ流す。答えを送っている最中のカードは応答で畳むので、画面はそれ以外の写しをここで「別の場所で処理された」に畳む。reason はエージェントへ返した理由の印（aborted など）
-  "permissionSettled",
-  // { sessionId, items: [{ id, at, reason, toolName, toolUseID, questions }] } 人の回答以外（中断・再起動・ターンの終わり・失敗）で閉じた質問。
+  "permission",   // デスクトップの一度限りの通知 { id, sessionId, notifyReply, conversationTitle?, computerApp?, settingChange? }
+  "waitingCards", // { hostInstance, revision, cards, resolutions, connectionId }
   // 会話に残し（loadSession の closedQuestions）、画面は「答えられずに閉じた質問」として答えを送る・もう一度聞く入口を出す（Issue #231）
   "questionsClosed",
-  // { id, browserHandoff } 決着していない承認の中身（payload の browserHandoff）が差し替わった。カードの id は替えない。祖先の複製の id ごとに 1 つ（ADR 0168）
-  "permissionUpdate",
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す
   "computer.state",
   "auth",         // { backend, phase: url|done|error, url?, message? }

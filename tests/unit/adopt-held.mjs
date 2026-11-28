@@ -57,8 +57,8 @@ export default async function (t) {
   const inboxWaits = async (client, sessionId) => (await client.cmd('invoke', { op: 'notifications.list', args: { filter: 'wait' } })).items.filter(x => x.target.sessionId === sessionId);
   // 実行中のスナップショット（loadSession live）の、A と B で同じになるはずの部分: 承認・ツールと本文の出来事・このターンの人の発言
   // （fake の履歴はプロセスのメモリなので、前のターンまでの発言は B に無い。Claude などは transcript から戻る）
-  const shapeOf = snap => ({
-    permissions: snap.permissions.map(p => [p.id, p.toolName]),
+  const shapeOf = (snap, waitingCards) => ({
+    permissions: waitingCards.map(p => [p.id, p.toolName]),
     events: snap.stream.events.filter(e => ['tool.start', 'tool.result', 'text.end'].includes(e.type)).map(e => [e.type, e.id ?? e.uuid ?? null]),
     user: snap.messages.filter(m => m.role === 'user').at(-1)?.text ?? null,
   });
@@ -125,7 +125,7 @@ export default async function (t) {
     await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.T && e.name === 'Read', { ms: WAIT_MS, from: markA });
     const askQ = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS, from: markA });
     const rowsQ = await until(async () => { const rows = await inboxWaits(ca, ids.Q); return rows.length ? rows : null; }, WAIT_MS, 'A の通知の一覧のあなた待ち');
-    const shapeQA = shapeOf(await ca.cmd('loadSession', { sessionId: ids.Q, live: true }));
+    const shapeQA = shapeOf(await ca.cmd('loadSession', { sessionId: ids.Q, live: true }), ca.waitingCards.filter(card => card.sessionId === ids.Q));
     // F の偽 CLI は 3 秒のツール中。A を止めた後に終端まで出力する
     await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.F, { ms: WAIT_MS, from: markA });
     const cards = {};
@@ -167,7 +167,7 @@ export default async function (t) {
     {
       const rows = await inboxWaits(cb, ids.Q);
       assert.deepEqual(rows.map(r => [r.id, r.resolvedAt ?? null]), [[rowsQ[0].id, null]], '通知の一覧のあなた待ちは A の行のまま 1 つ（起動の後片付けが決着させない）');
-      assert.deepEqual(shapeOf(await cb.cmd('loadSession', { sessionId: ids.Q, live: true })), shapeQA, 'B の実行中のスナップショットが A と同じ（承認・ツールと本文の出来事・人の発言）');
+      assert.deepEqual(shapeOf(await cb.cmd('loadSession', { sessionId: ids.Q, live: true }), cb.waitingCards.filter(card => card.sessionId === ids.Q)), shapeQA, 'B の実行中のスナップショットが A と同じ（承認・ツールと本文の出来事・人の発言）');
     }
     await cb.cmd('resolvePermission', { id: askB.id, allow: true });
     assert.equal((await until(async () => (await inboxWaits(cb, ids.Q)).find(r => r.outcome), WAIT_MS, 'あなた待ちの決着')).outcome, 'allowed', '答えると同じ行が allowed で決着');
@@ -239,7 +239,7 @@ export default async function (t) {
       // K4 は A2 の強制終了後、復元した B から中断する
       await until(async () => (await ca.cmd('running')).turns.some(turn => turn.sessionId === kid.K4), WAIT_MS, 'K4 の held ターン');
       const rowsK1 = await until(async () => { const rows = await inboxWaits(ca, kid.K1); return rows.length ? rows : null; }, WAIT_MS, 'A2 の通知の一覧のあなた待ち');
-      const shapeK1A = shapeOf(await ca.cmd('loadSession', { sessionId: kid.K1, live: true }));
+      const shapeK1A = shapeOf(await ca.cmd('loadSession', { sessionId: kid.K1, live: true }), ca.waitingCards.filter(card => card.sessionId === kid.K1));
       assert.equal(shapeK1A.permissions.length, 1);
       await sleep(600);   // 札の置き直し（touchCard は同じ tick にまとめて置く）が保持役へ届くまで
       ca.close(); ca = null;
@@ -275,7 +275,7 @@ export default async function (t) {
       {
         const rows = await inboxWaits(cb, kid.K1);
         assert.deepEqual(rows.map(r => [r.id, r.resolvedAt ?? null]), [[rowsK1[0].id, null]], 'K1: 通知の一覧のあなた待ちは A2 の行のまま 1 つ（決着させない）');
-        const shapeK1B = shapeOf(await cb.cmd('loadSession', { sessionId: kid.K1, live: true }));
+        const shapeK1B = shapeOf(await cb.cmd('loadSession', { sessionId: kid.K1, live: true }), cb.waitingCards.filter(card => card.sessionId === kid.K1));
         assert.deepEqual(shapeK1B, shapeK1A, 'K1: B の実行中のスナップショットが A2 と同じ（ツール・本文・承認・発言）');
       }
       await cb.cmd('resolvePermission', { id: askB1.id, allow: true });

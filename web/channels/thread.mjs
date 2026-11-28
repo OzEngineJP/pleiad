@@ -464,7 +464,11 @@ export function createThread(host) {
   let stopBusy = false;
   function paintStop() {
     const th = S.thread;
-    const working = th?.state === 'working' || th?.state === 'waiting' || liveBots().length > 0;
+    const sessions = sessionIds();
+    const waiting = Array.from(host.state?.waitingCards?.values() ?? []).some(card => card.blocking && sessions.has(card.sessionId));
+    const working = waiting || th?.state === 'working'
+      || [...sessions].some(id => host.state?.runningIds?.has(id))
+      || S.posts.some(post => post.turn?.botId && post.state === 'working' && !post.deletedAt);
     composer.setStop({ show: working || stopBusy, disabled: stopBusy });
   }
   async function stopThread() {
@@ -1002,19 +1006,16 @@ export function createThread(host) {
     const wrap = m?.closest?.('.mw') ?? perms.querySelector(`[data-key="perm:${CSS.escape(ev.id)}"]`);
     if (!wrap) return;
     cards.set(ev.id, wrap);
+    host.traceWaitingDraw?.(ev, wrap);
     if (stick) toBottom(); else nav.replyArrived();
   }
   function paintPendingPerms() {
-    for (const ev of host.state?.pendingPerms?.values?.() ?? []) showCard(ev);
+    for (const ev of host.state?.waitingCards?.values?.() ?? []) showCard(ev);
   }
-  /** 別の画面（Chats・スマホ）で答えた承認のカードは外す。答え終えたカード（done）は履歴として残す */
-  function settleCards() {
-    const pending = host.state?.pendingPerms;
-    if (!pending) return;
+  /** 別の画面での回答やホストの入れ替わりで外したカードを、描画済みの名簿からも外す。 */
+  function pruneCards() {
     for (const [id, wrap] of cards) {
-      if (pending.has(id) || wrap.classList.contains('done') || wrap.querySelector('.card.done')) continue;
-      wrap.remove();
-      cards.delete(id);
+      if (!wrap.isConnected) cards.delete(id);
     }
   }
 
@@ -1127,12 +1128,11 @@ export function createThread(host) {
       void composer.nextActions.load();
       paintSubs();
     },
-    permission(ev) {
-      if (S.ready && S.threadId) showCard(ev);
-    },
-    running() {
-      // client.mjs が承認の残りを数え直した後に、答え済みのカードを外す
-      if (S.threadId) setTimeout(settleCards, 0);
+    waitingCards() {
+      if (!S.ready || !S.threadId) return;
+      pruneCards();
+      paintPendingPerms();
+      paintStop();
     },
     // 書きかけの流し（ADR 0367）。スレッドの枠を宣言している間だけサーバーから届く。replay（会話を読み直した流し直し）は使わない（宣言の返事の写しがある）
     'text.delta': (ev) => streams.event(ev),

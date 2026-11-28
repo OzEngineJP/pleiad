@@ -3737,7 +3737,7 @@ function giveUp() {
 // 会話の一覧の行を変えない、数の多い出来事。これ以外の出来事ではネイティブ一覧の使い回しを捨てる（nativeSessions）
 const LIST_NEUTRAL_EVENTS = new Set([
   "text.delta", "text.end", "thinking.start", "thinking.delta", "tool.start", "tool.result", "activity",
-  "userMessage.delivered", "running", "permission", "permissionSettled", "questionsClosed", "permissionUpdate", "outbox", "mcpAuth", "claudeLogin", "computer.state",
+  "userMessage.delivered", "running", "permission", "questionsClosed", "outbox", "mcpAuth", "claudeLogin", "computer.state",
   "contextWindow", "compaction", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction", "settingsChanged", "settingApproval", "modelSwitch",
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
@@ -5094,8 +5094,8 @@ const opsApp = {
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
   reportSlow: (entries) => slowLog.recordClientBatch(entries),
-  // 画面が読む走っている作業の全量（turns・permissions・tasks・subagents・background・count）
-  runningWork: () => runningWork(),
+  // 画面が読む作業の状態。待ちカードは waitingCards で配信する。
+  runningWork: async () => screenWork(await runningWork()),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
   running: async () => {
     const work = await runningWork();
@@ -7224,7 +7224,7 @@ const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; ret
 const settingCards = new Map();
 
 // ---- 承認・質問のカードの控え（ADR 0270 段 3 の ②） ------------------------------------------------
-// runtime.waiting は写し。正本は DB の waiting_cards の行（core/store.mjs の loadWaitingCards・putWaitingCard・removeWaitingCards）。
+// 現在の一覧は runtime.waiting。DB の waiting_cards の行は再起動後の復元に使う。
 // 起動で行を読み、付け直したターンが同じ id で出し直したカードは拾い、拾わなかった行は取り下げを会話へ届ける（core/waiting-cards.mjs）
 const waitingCards = createWaitingCards({
   load: () => store.loadWaitingCards(),
@@ -7677,14 +7677,111 @@ function remoteHostsNow() {
   return out;
 }
 
-/**
- * 承認の中身を差し替えるたびに進める版（payload.rev。最初の配信は 0）。permissionUpdate と、loadSession・つなぎ直しが返す保留中の承認に載る。
- * 画面は同じ承認の id で版の古い中身を当てない（遅れて届いた履歴の応答で新しい中身を戻さない。ADR 0347 第 3 段）
- */
-function bumpPermissionRev(w) {
-  w.payload.rev = (w.payload.rev ?? 0) + 1;
-  return w.payload.rev;
+const hostInstance = crypto.randomUUID();
+let waitingRevision = 0;
+let blockingWaiting = new Set();
+const waitingConnections = new WeakMap();
+
+function waitingSnapshot(resolutions = []) {
+  const cards = [...runtime.waiting].map(([id, w]) => {
+    const { kind, sessionId, targetSessionId, toolName, input, toolUseID, title, conversationTitle,
+      canAlways, questions, editableField, browserSite, computerApp, settingChange, secretRequest,
+      browserHandoff, chromeWait, remoteOrigin } = w.payload;
+    const remote = w.remote && {
+      hostId: w.remote.hostId, hostName: w.remote.hostName, taskId: w.remote.taskId,
+      childSessionId: w.remote.childSessionId, online: w.remote.online, hostOnly: w.remote.hostOnly,
+    };
+    return {
+      id, kind, sessionId, targetSessionId, toolName, input, toolUseID, title, conversationTitle,
+      canAlways, questions, editableField, browserSite, computerApp, settingChange, secretRequest,
+      browserHandoff, chromeWait, remoteOrigin, remote, relay: Boolean(w.relay), detached: Boolean(w.detached),
+      outlivesTurn: Boolean(w.outlivesTurn), blocking: blocksTurn(w), askedAt: w.askedAt,
+    };
+  });
+  return { type: 'waitingCards', hostInstance, revision: waitingRevision, cards, resolutions };
 }
+
+async function browserCanSeeCard(scope, card) {
+  // Delegated titles and shared Chrome targets are also conversation data.
+  const ids = [card.sessionId, card.targetSessionId, card.browserHandoff?.targetSessionId];
+  return Boolean(card.sessionId) && !card.remote && !card.remoteOrigin
+    && (await Promise.all([...new Set(ids.filter(Boolean))].map(id => browserCanUseSession(scope, id)))).every(Boolean);
+}
+
+async function sendWaitingCards(ws, snapshot = structuredClone(waitingSnapshot())) {
+  const connection = waitingConnections.get(ws);
+  if (!connection || ws.readyState !== ws.OPEN) return;
+  const scope = browserConnections.get(ws);
+  let { cards, resolutions } = snapshot;
+  if (scope) {
+    cards = (await Promise.all(cards.map(async card => {
+      if (!await browserCanSeeCard(scope, card)) return null;
+      if (!card.browserHandoff?.waitingTasks) return card;
+      const { waitingTasks, ...browserHandoff } = card.browserHandoff;
+      return { ...card, browserHandoff };
+    }))).filter(Boolean);
+    // Only send display metadata for cards previously sent to this connection.
+    resolutions = resolutions.filter(r => connection.visible.has(r.id)).map(({ peer, ...r }) => r);
+  }
+  if (ws.readyState !== ws.OPEN || !runtime.sockets.has(ws) || browserConnections.get(ws) !== scope
+      || snapshot.revision < connection.sent) return;
+  connection.sent = snapshot.revision;
+  const visible = new Map(cards.map(card => [card.id, card.sessionId]));
+  connection.visible = visible;
+  connection.recent.set(snapshot.revision, visible);
+  if (connection.recent.size > 8) connection.recent.delete(connection.recent.keys().next().value);
+  const event = { ...snapshot, cards, resolutions, connectionId: connection.id };
+  ws.send(secretMasker.json(JSON.stringify({ kind: P.EVENT, event })), error => {
+    if (error) return;
+    for (const { id, sessionId } of cards) logWaiting('sent', connection.id, snapshot.revision, id, sessionId);
+  });
+}
+
+function logWaiting(phase, connectionId, revision, id, sessionId, surface) {
+  console.log('[waitingCards]', JSON.stringify({ phase, hostInstance, connectionId, revision, id, sessionId, surface }));
+}
+
+function deliverWaiting(ws, snapshot) {
+  void sendWaitingCards(ws, snapshot).catch(() => console.error('[waitingCards] delivery failed'));
+}
+
+// Each caller finishes its synchronous changes to the map and its payloads
+// before publishing, including changes to all copies of a shared Chrome card.
+function waitingChanged(resolutions = []) {
+  waitingRevision += 1;
+  const snapshot = structuredClone(waitingSnapshot(resolutions));
+  blockingWaiting = new Set(snapshot.cards.filter(card => card.blocking).map(card => card.id));
+  for (const ws of runtime.sockets) deliverWaiting(ws, snapshot);
+}
+
+function syncWaitingBlocking() {
+  for (const [id, w] of runtime.waiting) {
+    if (w.outlivesTurn && blocksTurn(w) !== blockingWaiting.has(id)) {
+      waitingChanged();
+      return;
+    }
+  }
+}
+
+function notifyWaiting(ws) {
+  for (const [id, w] of runtime.waiting) {
+    if (w.relay || w.notified) continue;
+    const { sessionId, computerApp, settingChange, conversationTitle } = w.payload;
+    const event = { type: 'permission', id, sessionId, computerApp, settingChange, conversationTitle, notifyReply: true };
+    ws.send(secretMasker.json(JSON.stringify({ kind: P.EVENT, event })));
+    w.notified = true;
+  }
+}
+
+function notifyNewWaiting(id) {
+  const w = runtime.waiting.get(id);
+  if (!w || w.notified) return;
+  const { sessionId, computerApp, settingChange, conversationTitle } = w.payload;
+  const event = { type: 'permission', id, sessionId, computerApp, settingChange, conversationTitle, notifyReply: true };
+  w.notified = sendTo({ kind: P.EVENT, event });
+}
+
+function screenWork({ permissions, ...work }) { return work; }
 
 async function runningWork() {
   // 保持役に載っているターン（子が保持役に居る。切り替えの待ちの表示が使う。desktop/switch.cjs）
@@ -7801,13 +7898,14 @@ function withWorktreeLive(rows) {
  */
 let runningSeq = 0, runningSent = '';
 async function broadcastRunning({ poll = false } = {}) {
+  syncWaitingBlocking();
   const seq = ++runningSeq;
   const work = await runningWork().catch(() => null);
   if (!work || seq !== runningSeq) return;
   const body = JSON.stringify(work);
   if (poll && body === runningSent) return;
   runningSent = body;
-  emitGlobal({ type: "running", ...work }); postResident({ work });
+  emitGlobal({ type: "running", ...screenWork(work) }); postResident({ work });
 }
 
 /** サブエージェントは走っている最中に増える。1本でも走っていれば（裏に残っていれば）定期的に配る。 */
@@ -7829,12 +7927,6 @@ function attach(ws) {
   // 今ロックを持っている・待っている会話の状態を送り直す（接続し直した画面が「止める」と待ちの表示を出せるように）
   for (const state of computerLock.snapshot()) sendTo({ kind: P.EVENT, event: { type: 'computer.state', ...state } });
 
-  // 待たせていた承認を聞き直す。取りこぼすとツールが無期限に止まる
-  for (const [id, w] of runtime.waiting) {
-    const firstNotice = !w.relay && !w.notified;
-    if (sendTo({ kind: P.EVENT, event: { ...w.payload, id, ...(firstNotice ? { notifyReply: true } : {}) } }) && firstNotice) w.notified = true;
-  }
-  if (runtime.waiting.size) console.log(`  承認 ${runtime.waiting.size} 件を聞き直した`);
   if (hadGrace) console.log(HOST_GRACE_MS > 0 ? "  猶予を解除した（host が戻った）" : "  host が戻った");
 }
 
@@ -8082,20 +8174,25 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       if (parentCard) {
         const waitingTasks = chromeLoginGroups.tasks(loginGroup, parentCard.payload.targetSessionId ?? sessionId);
         parentCard.payload.browserHandoff = { ...parentCard.payload.browserHandoff, waitingTasks };
-        emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: parentCard.payload.browserHandoff, rev: bumpPermissionRev(parentCard) });
       }
     }
     // 端末の AI に任された子の承認は、端末（依頼元の会話）へも中継する（docs/remote.md §4.5）。決着したら端末のカードも畳む
     let remoteRelay = null;
+    let answeredByDevice = false;
+    let opened = false;
     // 決着していなければ、全部のカードの browserHandoff に patch を重ねて知らせる（カードの id は替えない。ADR 0168）
     const updateCards = patch => {
       if (!cards.some(card => runtime.waiting.has(card.id))) return false;
+      let changed = false;
       for (const card of cards) {
         const w = runtime.waiting.get(card.id);
         if (!w) continue;
-        w.payload.browserHandoff = { ...w.payload.browserHandoff, ...patch };
-        emitGlobal({ type: 'permissionUpdate', id: card.id, sessionId: card.payload.sessionId ?? null, browserHandoff: w.payload.browserHandoff, rev: bumpPermissionRev(w) });
+        const handoff = { ...w.payload.browserHandoff, ...patch };
+        if (JSON.stringify(handoff) === JSON.stringify(w.payload.browserHandoff)) continue;
+        w.payload.browserHandoff = handoff;
+        changed = true;
       }
+      if (changed && opened) waitingChanged();
       // 端末の依頼元のカードも、同じ状態に替える（setup → permission → denied。docs/remote.md §4.5）
       remoteRelay?.update(chromeWaitOf(cards[0].payload.browserHandoff));
       return true;
@@ -8116,14 +8213,12 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
           waiting.payload.targetSessionId = nextLogin.sessionId;
           waiting.payload.browserHandoff = { ...nextWait?.payload.browserHandoff, targetSessionId: nextLogin.sessionId,
             waitingTasks: chromeLoginGroups.tasks(loginGroup, nextLogin.sessionId) };
-          emitGlobal({ type: 'permissionUpdate', id: parentCard.id, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff, rev: bumpPermissionRev(waiting) });
         }
       } else if (loginGroup && nextLogin) {
         const waiting = runtime.waiting.get(loginGroup.parentCardId);
         if (waiting) {
           waiting.payload.browserHandoff = { ...waiting.payload.browserHandoff,
             waitingTasks: chromeLoginGroups.tasks(loginGroup, waiting.payload.targetSessionId ?? waiting.payload.browserHandoff?.targetSessionId) };
-          emitGlobal({ type: 'permissionUpdate', id: loginGroup.parentCardId, sessionId: directParent, browserHandoff: waiting.payload.browserHandoff, rev: bumpPermissionRev(waiting) });
         }
       }
       // どれか1つで決着し、残りの複製も消す。1つも残っていなければ二重解決
@@ -8134,9 +8229,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       // 中継の複製の id は行に無い（消しても何も起きない）
       waitingCards.remove(cards.map(card => card.id));
       touchCard(runtime.turns.get(sessionId));
-      // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
-      // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
-      for (const card of cards) emitGlobal({ type: 'permissionSettled', id: card.id, sessionId: card.payload.sessionId ?? null, allow: answer?.allow === true, reason: answer?.messageKey ?? null, ...(answer?.response?.kind ? { response: { kind: answer.response.kind, continued: answer.response.continued === true } } : {}) });
+      waitingChanged(cards.map(card => ({
+        id: card.id, sessionId: card.payload.sessionId ?? null,
+        allow: answer?.allow === true, reason: answer?.messageKey ?? null,
+        ...(answer?.response?.kind ? { response: {
+          kind: answer.response.kind, auto: answer.response.auto === true, continued: answer.response.continued === true,
+        } } : {}),
+        ...(card === cards[0] && answeredByDevice ? { by: 'device', peer: remoteRoot.deviceName || '' } : {}),
+      })));
       remoteRelay?.end(answer?.messageKey === 'aborted' ? 'abort' : 'host', answer?.allow === true);
       // 呼び出し側へ生の答え（messageKey 付き）を渡す。操作待ち（core/chrome/handoff.mjs）が断る・中断を見分ける
       try { onSettle?.(answer); } catch (e) { console.error('  onSettle:', String(e?.message ?? e)); }
@@ -8169,6 +8269,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       update: patch => updateCards(patch),
       settle: answer => settle(answer),
     });
+    opened = true;
+    if (runtime.waiting.has(cards[0].id)) waitingChanged();
     touchCard(runtime.turns.get(sessionId));   // 札の waits（出している承認の id）が変わった
     // 承認・質問は端末へ中継して、そこで答えられる。設定の変更の承認（受領証つきで、決着が別の台帳へ届く）など、ターンを止めない承認（detached）は、
     // 端末の画面と AI に「ホストの画面で答えてください」と知らせるだけ（答えるボタンは無く、口からの答えも受けない。docs/remote.md §4.5）
@@ -8188,8 +8290,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
           // Chrome の操作待ちは「許可」では進まない（ホストの画面と同じ。resolvePermission の HANDOFF_ONLY）。端末の人が答えられるのは「Chrome を使わずに続ける」だけ
           if (browserHandoff && allow === true) return 'HANDOFF_ONLY';
           store.recordChange(sessionId, { by: 'human', via: 'remote-device', byDevice: remoteRoot.deviceId, field: 'op', to: 'permission.answer', reason: null }).catch(() => {});
-          // ホストの画面の子のカードを、端末で答えられた 1 行に畳む（permissionRelayEnd。remoteOrigin のカードだけが畳む）
-          emitGlobal({ type: 'permissionRelayEnd', id: cards[0].id, sessionId, by: 'device', allow, peer: remoteRoot.deviceName || '', at: new Date().toISOString() });
+          // ホストの画面でも、端末で答えられたことを表示する。
+          answeredByDevice = true;
           settle({ allow, always: false, scope: 'once', message: message ?? null,
             ...(!allow && browserHandoff ? { messageKey: 'chromeSkipped' } : !allow && !message && asked === 'tool' ? { messageKey: 'userDenied' } : {}),
             answers: answers ?? null, annotations: annotations ?? null, response: response ?? null });
@@ -8209,20 +8311,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       }).catch(() => {});
     }
 
-    // 送れなければ黙って待つ。戻ってきたら attach() が聞き直す。
-    // 既定では戻るまで待ち続け、AGENT_HOST_GRACE_MS を指定したときだけ猶予切れがターンごと中断する。
-    let sent = false;
-    for (const card of cards) {
-      const firstNotice = !card.relay;
-      if (sendTo({ kind: P.EVENT, event: { ...card.payload, id: card.id, ...(firstNotice ? { notifyReply: true } : {}) } })) {
-        sent = true;
-        if (firstNotice) runtime.waiting.get(card.id).notified = true;
-      }
-    }
-    if (!sent) {
-      if (graceExpired()) return giveUp();
-      console.log(`  host が居ないので承認を保留: ${toolName}`);
-    }
+    notifyNewWaiting(cards[0].id);
+    if (!runtime.sockets.size && graceExpired()) return giveUp();
     permissionsChanged();
   });
 };
@@ -8829,7 +8919,7 @@ const remoteCards = {
       canAlways: false, remote, ...(c.kind === 'question' ? { questions: c.questions } : {}), ...(c.chromeWait ? { chromeWait: c.chromeWait } : {}) };
     // settle は使わない（決着はホストの便りか、画面の人の答え。remoteDelegation が closeRelay で消す）
     runtime.waiting.set(id, { settle: () => {}, payload, askedAt: c.askedAt ?? new Date().toISOString(), relay: true, notified: false, detached: false, remote });
-    sendTo({ kind: P.EVENT, event: { ...payload, id } });
+    waitingChanged();
     permissionsChanged();
     return id;
   },
@@ -8837,22 +8927,27 @@ const remoteCards = {
   update(id, patch) {
     const w = runtime.waiting.get(id);
     if (!w?.payload.chromeWait || !patch?.chromeWait) return;
-    w.payload.chromeWait = { ...w.payload.chromeWait, ...patch.chromeWait };
-    emitGlobal({ type: 'permissionUpdate', id, sessionId: w.payload.sessionId ?? null, chromeWait: w.payload.chromeWait, rev: bumpPermissionRev(w) });
+    const chromeWait = { ...w.payload.chromeWait, ...patch.chromeWait };
+    if (JSON.stringify(chromeWait) === JSON.stringify(w.payload.chromeWait)) return;
+    w.payload.chromeWait = chromeWait;
+    waitingChanged();
   },
   close(id, resolution) {
     const w = runtime.waiting.get(id);
     if (!w) return;
     runtime.waiting.delete(id);
-    emitGlobal({ type: 'permissionRelayEnd', id, sessionId: w.payload.sessionId, by: resolution?.by ?? null, allow: resolution?.allow ?? null, peer: resolution?.hostName ?? w.remote.hostName, hostName: resolution?.hostName ?? w.remote.hostName, at: new Date().toISOString() });
+    waitingChanged([{ id, sessionId: w.payload.sessionId, by: resolution?.by ?? null,
+      allow: resolution?.allow ?? null, peer: resolution?.hostName ?? w.remote.hostName }]);
     permissionsChanged();
   },
   online(hostId, flag) {
-    for (const [id, w] of runtime.waiting) {
+    let changed = false;
+    for (const w of runtime.waiting.values()) {
       if (w.remote?.hostId !== hostId || (w.remote.online !== false) === flag) continue;
       w.remote.online = flag;
-      emitGlobal({ type: 'permissionRelayState', id, sessionId: w.payload.sessionId, online: flag, hostName: w.remote.hostName, peer: w.remote.hostName });
+      changed = true;
     }
+    if (changed) waitingChanged();
     if (runtime.waiting.size) broadcastRunning();
   },
 };
@@ -10870,7 +10965,6 @@ async function withdrawCards(rows) {
       }
     }
     // 開いている画面のカードを畳み、スマホの通知と通知の一覧のあなた待ちを決着させる
-    emitGlobal({ type: 'permissionSettled', id: row.id, sessionId: row.sessionId ?? null, allow: false, reason: 'restart' });
     pushNotifier.approvalResolved({ id: row.id, sessionId: row.sessionId });
     void inboxSources.permissionSettled({ id: row.id, answer: { messageKey: 'turnEnded' } });
     botHost?.onPermission({ id: row.id, ...(row.payload ?? {}) }, 'settled');
@@ -11015,6 +11109,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
   // Retain turnEnd in snapshots already being read, then release the turn.
   emit({ type: "turnEnd", completedAt, outcome: turn.outcome, interrupted, ...(requeued ? { requeued: true } : {}), ...(delegated ? { delegated: true } : {}) });
   runtime.turns.delete(turn.key);
+  syncWaitingBlocking();
   // 渡った合図が来ないまま終わった完了通知は、読まれたか分からない。通知は送り直してよいので、空いたときの経路へ戻す
   for (const [id, notice] of [...liveNotices]) {
     if (notice.owner !== turn.info.sessionId) continue;
@@ -11744,6 +11839,7 @@ wss.on("connection", (ws, req) => {
     protocolVersion: P.PROTOCOL_VERSION,
     version: APP_VERSION,
     build: BUILD,
+    hostInstance,
     homeDir: os.homedir(),
     resumedTurn: !browserScope && resumed,
     startedAt: SERVER_STARTED_AT,
@@ -11760,6 +11856,9 @@ wss.on("connection", (ws, req) => {
     // 遅い命令・送信待ちの診断記録のしきい値（ms）
     slow: slowLog.clientConfig(),
   }));
+  waitingConnections.set(ws, { id: crypto.randomUUID(), sent: -1, recent: new Map(), visible: new Map(), traceAt: 0 });
+  deliverWaiting(ws);
+  if (!browserScope) notifyWaiting(ws);
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
   if (local) hostScreens.add(ws);
   if (chromeConnection && local) ws.send(JSON.stringify(chromeBrowserFrame(chromeConnection.state())));
@@ -11780,6 +11879,22 @@ wss.on("connection", (ws, req) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg?.kind !== P.COMMAND || !P.COMMANDS.has(msg.command)) return;
+
+    if (msg.command === 'waitingCardTrace') {
+      const connection = waitingConnections.get(ws);
+      const report = msg.args?.entries;
+      const now = Date.now();
+      if (!Array.isArray(report) || report.length > 128 || now - connection.traceAt < 200) return;
+      connection.traceAt = now;
+      for (const { phase, revision, id, sessionId, surface } of report.filter(row => row && typeof row === 'object')) {
+        const visible = connection.recent.get(revision);
+        if (!visible?.has(id) || visible.get(id) !== sessionId) continue;
+        if (phase === 'received' || phase === 'ignored') logWaiting(phase, connection.id, revision, id, sessionId);
+        if (phase === 'drawn' && ['conversation', 'detail', 'thread'].includes(surface))
+          logWaiting(phase, connection.id, revision, id, sessionId, surface);
+      }
+      return;
+    }
 
     const cmdStart = performance.now();
     const cmdLabel = msg.command === 'invoke' && typeof msg.args?.op === 'string'
@@ -11856,7 +11971,7 @@ wss.on("connection", (ws, req) => {
       if (browserScope) {
         let target = browserCommandTarget(msg.command, args);
         if (msg.command === 'resolvePermission' && !args?.always && args?.scope !== 'always') {
-          target = runtime.waiting.get(args?.id)?.payload.sessionId;
+          target = null;   // resolvePermission checks both the displayed conversation and the target.
         }
         if (['attachChunk', 'attachFinish', 'attachCancel'].includes(msg.command)) {
           target = attachPending.get(args?.uploadId)?.sessionId;
@@ -12378,7 +12493,18 @@ wss.on("connection", (ws, req) => {
           const { id, allow, always, scope, message, messageKey, answers, annotations, response, receipt, editedInput } = msg.args ?? {};
           const w = runtime.waiting.get(id);
           // 片付いた承認への答え。画面は失敗にせず、そのカードを「別の場所で処理されました」に畳む（code で見分ける）
-          if (!w) return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
+          if (!w) {
+            deliverWaiting(ws);
+            if (browserScope) return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
+            return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
+          }
+          if (browserScope) {
+            const { targetSessionId, browserHandoff } = w.payload;
+            if (!await browserCanSeeCard(browserScope, { ...w.payload, remote: w.remote })
+                || targetSessionId !== w.payload.targetSessionId || browserHandoff !== w.payload.browserHandoff)
+              return reply(false, t('session.notFound'), 'SESSION_NOT_FOUND');
+          }
+          if (runtime.waiting.get(id) !== w) return reply(false, t('approval.alreadyResolved'), 'ALREADY_RESOLVED');
           // ホストの子の承認の中継（この PC の会話のカード）。人の答えをホストへ運ぶ（受領証・1 回だけはホストが照合する。docs/remote.md §4.5）。
           // この道は画面（human）の WS のこの処理だけ。AI の道具（MCP・CLI・ply_task_*）からは作れない
           if (w.remote) {
@@ -12540,23 +12666,17 @@ wss.on("connection", (ws, req) => {
               return loadReply(true, serve({ messages, presents }, msg.args, subagentToolsOf, toolHintsOf));
             }
             if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
-            // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
-            // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
-            // カードが出ず、一覧だけが「承認待ち」のまま止まる。
-            const permissions = [...runtime.waiting]
-              .filter(([, w]) => w.payload.sessionId === sessionId)
-              .map(([id, w]) => ({ ...w.payload, id }));
             const turn = read.turn;
             if (turn) {
               const { messages, presents, events } = liveBody(turn);
               return loadReply(true, serve({
                 messages, presents, completedAt, interrupted: null, draft, ...compactionData,
-                stream: { events }, streamCursor: streamSequence, permissions, shownAt: readStarted,
+                stream: { events }, streamCursor: streamSequence, shownAt: readStarted,
                 initialMessageId: turn.stream.initialMessageId,
               }, msg.args, subagentToolsOf, toolHintsOf));
             }
             // shownAt: この返事が映す履歴の時点（読み始めた時刻）。画面は描き終えたら presence でこれを返し、通知の一覧はここまでを既読にする（ADR 0347 第 3 段）
-            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, shownAt: readStarted, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
+            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, shownAt: readStarted, ...retired }, msg.args, subagentToolsOf, toolHintsOf));
           } finally {
             liveReads.delete(read);
             timing.finish(msg.args?.outline ? 'outline' : msg.args?.older ? 'older' : msg.args?.live ? 'live' : 'open');

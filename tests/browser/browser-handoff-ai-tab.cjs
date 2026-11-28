@@ -26,6 +26,7 @@ async page => {
       set onmessage(fn) {
         super.onmessage = fn && ((e) => {
           const m = JSON.parse(e.data);
+          if (m.event?.type === 'waitingCards') window.__waiting = m.event;
           if (m.kind === 'response' && m.result && typeof m.result === 'object' && 'osActions' in m.result && 'hostName' in m.result) m.result.chromeWindow = true;
           return fn({ data: JSON.stringify(m) });
         });
@@ -224,7 +225,8 @@ async page => {
   await sendFrame('H1', '調べもの', 6);
   await page.waitForTimeout(200);
   if (phone) await page.locator('.bu-conversation').click();   // スマホは会話へ戻ってカードを押す
-  await page.evaluate(() => window.__event({ type: 'permission', id: 'handoff-card', sessionId: window.__sid, browserHandoff: { reason: 'login', state: 'operating', by: 'pc' } }));
+  await page.evaluate(() => window.__event({ ...window.__waiting, revision: window.__waiting.revision + 1,
+    cards: [{ id: 'handoff-card', kind: 'tool', sessionId: window.__sid, browserHandoff: { reason: 'login', state: 'operating', by: 'pc' } }] }));
   const openScreen = page.getByRole('button', { name: '画面を開く', exact: true }).last();
   await openScreen.waitFor({ state: 'visible', timeout: 5000 });
   await openScreen.click();

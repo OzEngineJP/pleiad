@@ -198,7 +198,7 @@ export default async function (t) {
         JSON.stringify(end.interrupted));
       let work = await c.cmd('running');
       for (let i = 0; i < 200 && work.count > 0; i++) { await sleep(50); work = await c.cmd('running'); }
-      t.ok('全部の中断の後、実行中の数は 0 になる（更新・終了へ進める）', work.count === 0 && work.permissions.length === 0, JSON.stringify({ count: work.count, tasks: work.tasks.map(r => r.status) }));
+      t.ok('全部の中断の後、実行中の数は 0 になる（更新・終了へ進める）', work.count === 0 && c.waitingCards.length === 0, JSON.stringify({ count: work.count, tasks: work.tasks.map(r => r.status) }));
       const task = (await c.cmd('agentTasks', { sessionId: parent })).find(r => r.sessionId === child);
       t.ok('委譲タスクそのものは取り消す（今どおり）', task?.status === 'cancelled', task?.status);
     }

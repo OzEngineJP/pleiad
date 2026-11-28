@@ -12,6 +12,8 @@ export default function (t) {
   t.ok('応答が終わっても子が動いていると件数を残す', !behind.running && !behind.waiting && behind.behind === 2);
   work.bgWaiting.clear();
   t.ok('子が終わると印の件数が消える', !threadActivity(thread, work).behind);
+  t.ok('古いスレッド情報に待ちが残っていても、現在の待ち一覧が空なら承認待ちを出さない',
+    !threadActivity({ ...thread, state: 'waiting', live: { b: 'waiting' } }, work).waiting);
   const terminal = { kind: 'terminal' }, agent = { kind: 'agent' };
   t.ok('端末だけなら衛星と作業時間を出さない', behindOfTasks([terminal]) === null);
   t.ok('端末とシェルだけでも完了扱い', behindOfTasks([terminal, { kind: 'shell' }]) === null);

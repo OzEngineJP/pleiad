@@ -218,6 +218,7 @@ class RestartClient {
     this.api = {
       get ws() { return self.inner?.ws; },
       get ready() { return self.inner?.ready ?? Promise.resolve(); },
+      get waitingCards() { return self.inner?.waitingCards ?? []; },
       cmd: (command, args, opts) => self.#withInner(inner => inner.cmd(command, args, opts)),
       events: this.events,
       mark: () => self.events.length,

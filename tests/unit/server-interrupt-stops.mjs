@@ -59,7 +59,7 @@ export default async function (t) {
     const early = tasks?.find(r => r.title === 'Early'), long = tasks?.find(r => r.title === 'Long');
     t.ok('委譲タスクが 2 つできる', Boolean(early && long), JSON.stringify(tasks?.map(r => r.title)));
     // Early の子は承認を待っている。依頼元が走っている間に許可して終わらせると、完了通知は届かず pending のまま
-    const card = await until(async () => (await c.cmd('running')).permissions.find(p => p.sessionId === early.sessionId));
+    const card = await until(async () => c.waitingCards.find(p => p.sessionId === early.sessionId));
     t.ok('子の承認待ちが出る', Boolean(card));
     let from = await startTurn(parent, 'slow');
     await c.cmd('resolvePermission', { id: card.id, allow: true });
@@ -115,7 +115,7 @@ export default async function (t) {
     const limitParent = async (task, title) => {
       const owner = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'fake', task, title }) })).sessionId;
       const row = await until(async () => (await tasksOf(owner)).find(r => r.sessionId));
-      const ask = await until(async () => (await c.cmd('running')).permissions.find(p => p.sessionId === row?.sessionId));
+      const ask = await until(async () => c.waitingCards.find(p => p.sessionId === row?.sessionId));
       const limited = (await c.runTurn({ sessionId: owner, prompt: `limit ${FAR}` })).events.find(e => e.type === 'turnEnd' && e.sessionId === owner);
       return { owner, row, ask, limited };
     };

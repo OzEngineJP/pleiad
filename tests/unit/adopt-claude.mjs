@@ -315,7 +315,7 @@ export default async function (t) {
       const launchesBefore = await launchCount();
       {
         const running = await until(async () => { const r = await ca.cmd('running'); return r.turns.filter(x => x.held).length === 2 ? r : null; }, WAIT_MS, 'Claude の 2 つのターンが held');
-        assert.ok(running.permissions.find(p => p.id === askHQ.id)?.held, '承認待ちも held');
+        assert.ok(ca.waitingCards.some(p => p.id === askHQ.id) && running.turns.some(p => p.sessionId === askHQ.sessionId && p.held), '承認待ちも held');
       }
       const portA = a.port, tokenA = a.token;
       await sleep(800);   // 札の置き直しが保持役へ届くまで

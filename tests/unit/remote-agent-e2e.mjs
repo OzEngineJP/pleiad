@@ -174,14 +174,13 @@ export default async function (t) {
     // ---- 承認の中継: 端末の会話に出て、そこで答えられる
     const askStart = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'ask' }));
     const askId = askStart.json.taskId;
-    const card = await ct.waitFor(e => e.type === 'permission' && e.remote?.relayId && e.sessionId === sid, { from: 0, ms: 30_000 });
+    const card = await ct.waitFor(e => e.type === 'permission' && e.remote?.taskId && e.sessionId === sid, { from: 0, ms: 30_000 });
     t.ok('ホストの子の承認が、端末の依頼元の会話の中継のカードとして出る（⇄ ホスト名・常に許可は無し）', card.remote.hostName === 'desk-test' && card.canAlways === false && card.toolName === 'fake_write' && /委譲先/.test(card.title ?? ''), JSON.stringify({ r: card.remote, t: card.title }));
     const rowWaiting = await until(async () => { const l = toolResult(await tool(sid, 'ply_task_status', { taskId: askId })); return l.json?.status === 'waiting' ? l : null; }, 15_000, 'waiting');
     t.ok('承認待ちの間、ply_task_status は waiting を返す', Boolean(rowWaiting));
-    const run1 = await termCmd('running');
-    t.ok('端末の実行中の一覧にも、中継のカード（remote のホスト名・オンライン）が載る', run1.permissions.some(p => p.id === card.id && p.relay === true && p.remote?.hostName === 'desk-test' && p.remote.online === true));
+    t.ok('端末の実行中の一覧にも、中継のカード（remote のホスト名・オンライン）が載る', ct.waitingCards.some(p => p.id === card.id && p.relay === true && p.remote?.hostName === 'desk-test' && p.remote.online === true));
     const askChild = hostChildOf(await hRows(), askId);
-    const hostCard = await until(async () => (await hostCmd('running')).permissions.find(p => p.sessionId === askChild && !p.relay), 15_000, 'ホストの承認カード');
+    const hostCard = await until(async () => ch.waitingCards.find(p => p.sessionId === askChild && !p.relay), 15_000, 'ホストの承認カード');
     t.ok('ホストの画面にも子の会話の承認カードが出る', Boolean(hostCard));
     // 端末の AI は、中継されたカードに答えられない（承認の答えは画面の人の経路だけ。human-only の resolvePermission は AI の操作の一覧に無い）
     const viaControl = await (async () => {
@@ -191,27 +190,27 @@ export default async function (t) {
       }
     })();
     t.ok('端末の AI は ply_control から承認の答え（resolvePermission）を呼べず、カードは待ち続ける',
-      !/許可された/.test(JSON.stringify(viaControl.events.filter(e => e.type === 'tool.result').map(e => e.text))) && (await termCmd('running')).permissions.some(p => p.id === card.id), JSON.stringify(viaControl.events.filter(e => e.type === 'tool.result').map(e => String(e.text).slice(0, 200))));
+      !/許可された/.test(JSON.stringify(viaControl.events.filter(e => e.type === 'tool.result').map(e => e.text))) && ct.waitingCards.some(p => p.id === card.id), JSON.stringify(viaControl.events.filter(e => e.type === 'tool.result').map(e => String(e.text).slice(0, 200))));
     const mark = ct.mark();
     await termCmd('resolvePermission', { id: card.id, allow: true });
     const ended = await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === card.id, { from: mark, ms: 15_000 });
-    t.ok('端末で答えると、決着（by: device）で端末のカードが畳まれる', ended.by === 'device' && ended.allow === true && ended.hostName === 'desk-test');
+    t.ok('端末で答えると、決着（by: device）で端末のカードが畳まれる', ended.by === 'device' && ended.allow === true && ended.peer === 'desk-test', JSON.stringify(ended));
     await until(async () => (await tRows()).find(r => r.taskId === askId && r.status === 'completed' && r.result === '許可された'), 30_000, '承認後の完了');
     t.ok('許可はホストの子の承認として効き、子が続きを走らせる', true);
-    t.ok('ホストの承認カードも消える（先に答えた方で決着）', !(await hostCmd('running')).permissions.some(p => p.id === hostCard.id));
+    t.ok('ホストの承認カードも消える（先に答えた方で決着）', !ch.waitingCards.some(p => p.id === hostCard.id));
     const answeredTwice = await termCmd('resolvePermission', { id: card.id, allow: false }).then(() => null, e => e);
     t.ok('決着したカードへもう一度答えると、処理済みと返る', Boolean(answeredTwice));
 
     // ---- ホストで先に答える
     const mark2 = ct.mark();
     const ask2 = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'ask' })).json.taskId;
-    const card2 = await ct.waitFor(e => e.type === 'permission' && e.remote?.relayId && e.sessionId === sid, { from: mark2, ms: 30_000 });
+    const card2 = await ct.waitFor(e => e.type === 'permission' && e.remote?.taskId && e.sessionId === sid, { from: mark2, ms: 30_000 });
     const hostChild2 = (await hRows()).find(r => r.taskId === ask2).sessionId;
-    const hc2 = await until(async () => (await hostCmd('running')).permissions.find(p => p.sessionId === hostChild2 && !p.relay), 15_000, 'ホストの 2 件目のカード');
+    const hc2 = await until(async () => ch.waitingCards.find(p => p.sessionId === hostChild2 && !p.relay), 15_000, 'ホストの 2 件目のカード');
     const mark3 = ct.mark();
     await hostCmd('resolvePermission', { id: hc2.id, allow: false });
     const ended2 = await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === card2.id, { from: mark3, ms: 15_000 });
-    t.ok('ホストの画面で先に答えると、端末のカードが畳まれる（by: host）', ended2.by === 'host' && ended2.allow === false && ended2.hostName === 'desk-test', JSON.stringify(ended2));
+    t.ok('ホストの画面で先に答えると、端末のカードが畳まれる（by: host）', ended2.by === 'host' && ended2.allow === false && ended2.peer === 'desk-test', JSON.stringify(ended2));
     await until(async () => (await tRows()).find(r => r.taskId === ask2 && r.status === 'completed'), 30_000, '拒否の後の完了');
 
     // ---- オフライン: 即座に失敗する・走っている途中で切れてもホストで続き、つながり直すと追いつく
@@ -219,15 +218,15 @@ export default async function (t) {
     const catchStart = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: `steps:${steps}` })).json.taskId;
     await until(async () => (await tRows()).find(r => r.taskId === catchStart && r.status === 'running'), 20_000, '追いつきの試験の実行中');
     const ask3 = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'ask' })).json.taskId;
-    const card3 = await until(async () => (await termCmd('running')).permissions.find(p => p.relay && p.remote && p.remote.online && p.id !== card.id && p.id !== card2.id), 30_000, '3 件目の中継のカード');
+    const card3 = await until(async () => ct.waitingCards.find(p => p.relay && p.remote && p.remote.online && p.id !== card.id && p.id !== card2.id), 30_000, '3 件目の中継のカード');
     const markOff = ct.mark();
     await within(relay.close(), 5000, '中継の停止');
     await ct.waitFor(e => e.type === 'permissionRelayState' && e.id === card3.id && e.online === false, { from: markOff, ms: 15_000 });
-    t.ok('ホストがオフラインの間、中継のカードはオフラインの印になる（permissionRelayState）', (await termCmd('running')).permissions.find(p => p.id === card3.id)?.remote?.online === false);
+    t.ok('ホストがオフラインの間、中継のカードはオフラインの印になる（permissionRelayState）', ct.waitingCards.find(p => p.id === card3.id)?.remote?.online === false);
     const offView = await hostView(catchStart);
     t.ok('オフラインの間の読み出しは、待たずに offline と、使えなくなった時刻（since）を返す', offView.state === 'offline' && Number.isFinite(offView.since) && (await termCmd('running')).remoteHosts?.[hostId]?.since === offView.since, JSON.stringify(offView));
     const offAnswer = await termCmd('resolvePermission', { id: card3.id, allow: true }).then(() => null, e => e);
-    t.ok('オフラインの間は答えを送れず、理由を返す（カードは残る）', /オフライン/.test(offAnswer?.message ?? '') && (await termCmd('running')).permissions.some(p => p.id === card3.id), offAnswer?.message);
+    t.ok('オフラインの間は答えを送れず、理由を返す（カードは残る）', /オフライン/.test(offAnswer?.message ?? '') && ct.waitingCards.some(p => p.id === card3.id), offAnswer?.message);
     const t0 = Date.now();
     const offDelegate = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:OFFLINE' }));
     t.ok('オフラインのホストへの ply_delegate は、待たずに失敗する', offDelegate.isError === true && /オフライン/.test(offDelegate.text) && Date.now() - t0 < 5000, `${Date.now() - t0}ms ${offDelegate.text.slice(0, 120)}`);
@@ -244,7 +243,7 @@ export default async function (t) {
     const backView = await until(async () => { const v = await hostView(catchStart); return v.state === 'ok' ? v : null; }, 30_000, 'つなぎ直した後の読み出し');
     t.ok('つなぎ直すと読み出しが続きを返す（切れている間に進んだ分も読める）。オフラインの印の時刻は消える', backView.messages.some(m => m.role === 'assistant' && /DONE_WHILE_OFFLINE/.test(m.text)) && (await termCmd('running')).remoteHosts?.[hostId]?.since === undefined, JSON.stringify(backView).slice(0, 300));
     await ct.waitFor(e => e.type === 'permissionRelayState' && e.id === card3.id && e.online === true, { from: markOn, ms: 20_000 });
-    t.ok('つなぎ直すと、中継のカードがオンラインに戻る', (await termCmd('running')).permissions.find(p => p.id === card3.id)?.remote?.online === true);
+    t.ok('つなぎ直すと、中継のカードがオンラインに戻る', ct.waitingCards.find(p => p.id === card3.id)?.remote?.online === true);
     const markAns = ct.mark();
     await termCmd('resolvePermission', { id: card3.id, allow: true });
     await ct.waitFor(e => e.type === 'permissionRelayEnd' && e.id === card3.id, { from: markAns, ms: 15_000 });
@@ -254,7 +253,7 @@ export default async function (t) {
     // ---- 質問のカードの中継: 端末の会話で選んで答え、選んだ項目がホストの子へ届く
     const markQ = ct.mark();
     const qId = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'question' })).json.taskId;
-    const qCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.relayId && e.kind === 'question' && e.sessionId === sid, { from: markQ, ms: 30_000 });
+    const qCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.taskId && e.kind === 'question' && e.sessionId === sid, { from: markQ, ms: 30_000 });
     t.ok('ホストの子の質問が、端末の依頼元の会話に質問のカード（選択肢つき・⇄ ホスト名）として出る', qCard.remote.hostName === 'desk-test' && qCard.questions?.[0]?.question === 'どれにする？' && qCard.canAlways === false, JSON.stringify(qCard).slice(0, 240));
     const markQa = ct.mark();
     await termCmd('resolvePermission', { id: qCard.id, allow: true, answers: { 'どれにする？': 'B' } });
@@ -270,7 +269,7 @@ export default async function (t) {
     const hoCard = await ct.waitFor(e => e.type === 'permission' && e.remote?.hostOnly === true && e.sessionId === sid, { from: markH, ms: 30_000 });
     t.ok('設定の変更の承認は、端末に答えられない「ホストの画面で答える」カード（hostOnly）として出る', hoCard.remote.hostName === 'desk-test' && hoCard.canAlways === false, JSON.stringify(hoCard.remote));
     const hoAns = await termCmd('resolvePermission', { id: hoCard.id, allow: true }).then(() => null, e => e);
-    t.ok('端末からは答えを送れない（カードは残る）', Boolean(hoAns) && (await termCmd('running')).permissions.some(p => p.id === hoCard.id));
+    t.ok('端末からは答えを送れない（カードは残る）', Boolean(hoAns) && ct.waitingCards.some(p => p.id === hoCard.id));
     const hoStatus = toolResult(await tool(sid, 'ply_task_status', { taskId: hoId }));
     t.ok('AI へ返る状態に、ホストの画面で答える旨（hostOnlyApproval）が付く', /desk-test/.test(hoStatus.json?.hostOnlyApproval ?? ''), hoStatus.text.slice(0, 200));
     const hoHost = await ch.waitFor(e => e.type === 'permission' && e.settingChange, { from: 0, ms: 15_000 });

@@ -492,13 +492,13 @@ export default async function (t) {
     // 受領証が違う・別の ID・別の端末は答えられない
     await ax.send({ t: 'answer', id: relay1.id, receipt: 'f'.repeat(64), allow: true });
     const mismatch = await ax.fresh(e => e.t === 'answered' && e.id === relay1.id, 5000, '受領証の違う答え');
-    t.ok('受領証が違う答えは捨てる（RECEIPT_MISMATCH）。承認は待ち続ける', mismatch.ok === false && mismatch.code === 'RECEIPT_MISMATCH' && (await c.cmd('running')).permissions.some(p => p.id === hostCard.id));
+    t.ok('受領証が違う答えは捨てる（RECEIPT_MISMATCH）。承認は待ち続ける', mismatch.ok === false && mismatch.code === 'RECEIPT_MISMATCH' && c.waitingCards.some(p => p.id === hostCard.id));
     await ax.send({ t: 'answer', id: 'no-such-relay', receipt: relay1.receipt, allow: true });
     t.ok('知らない承認の ID への答えは捨てる（NOT_FOUND）', (await ax.fresh(e => e.t === 'answered' && e.id === 'no-such-relay', 5000, '知らない ID')).code === 'NOT_FOUND');
     t.ok('別の端末（laptop）には中継されない', (await a0.none(e => e.t === 'relay' && e.relay.id === relay1.id)) === true);
     await a0.send({ t: 'answer', id: relay1.id, receipt: relay1.receipt, allow: true });
     t.ok('別の端末が承認の ID と受領証を知っていても答えられない（NOT_FOUND）', (await a0.fresh(e => e.t === 'answered' && e.id === relay1.id, 5000, '別の端末の答え')).code === 'NOT_FOUND');
-    t.ok('それでも承認は待ち続ける', (await c.cmd('running')).permissions.some(p => p.id === hostCard.id));
+    t.ok('それでも承認は待ち続ける', c.waitingCards.some(p => p.id === hostCard.id));
     // 2 本目の口には、待っている承認が snapshot で届く
     const ax2 = await agent(desk2);
     t.ok('つなぎ直した口（2 本目）には、待っている承認が relays で届く', Boolean(await ax2.next(e => e.t === 'relays' && e.relays.some(r => r.id === relay1.id), 5000, '中継の snapshot')));
@@ -521,7 +521,7 @@ export default async function (t) {
     const ask2Id = ask2.result.task.taskId;
     const relay2 = (await ax.next(e => e.t === 'relay' && e.relay.taskId === ask2Id, 15_000, '2 件目の中継')).relay;
     const child2 = (await hostRows()).find(r => r.taskId === ask2Id).sessionId;
-    const card2 = await within((async () => { for (;;) { const p = (await c.cmd('running')).permissions.find(x => x.sessionId === child2 && !x.relay); if (p) return p; await sleep(50); } })(), 10_000, 'ホストの承認カード');
+    const card2 = await within((async () => { for (;;) { const p = c.waitingCards.find(x => x.sessionId === child2 && !x.relay); if (p) return p; await sleep(50); } })(), 10_000, 'ホストの承認カード');
     await cmd('resolvePermission', { id: card2.id, allow: false });
     const end2 = await ax.next(e => e.t === 'relayEnd' && e.id === relay2.id, 10_000, 'ホストで答えた決着');
     t.ok('ホストの画面で先に答えると、端末へ relayEnd（by: host・allow）が流れる', end2.by === 'host' && end2.allow === false, JSON.stringify(end2));

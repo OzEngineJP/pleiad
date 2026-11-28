@@ -34,7 +34,7 @@ export function waitState(w) {
  *   view.body        … 本文（状態で中身が替わる。role=group の中の aria-live=polite）
  *   view.res         … 足の左の 1 行（待った時間・送信中・失敗の理由）
  *   view.skip        … 「Chrome を使わずに続けてもらう」
- *   view.update(w)   … permissionUpdate の chromeWait を渡して描き直す
+ *   view.update(w)   … 一覧の chromeWait を渡して描き直す
  *   view.setOnline(b)… ホストの接続の状態。オフラインの間は押せず、言う
  *   view.tick()      … 待った時間の字を今に合わせる（client が 30 秒ごとに呼ぶ）
  *   view.settle()    … 決着した後に呼ぶ。以後は触らない
@@ -126,7 +126,7 @@ export function chromeWaitView(ev, { el, t, cmd, now = () => Date.now(), spinner
       paintButtons();
       return;
     }
-    // 畳みは決着の便り（permissionRelayEnd）が行う。便りが先に届いていれば、もう畳まれている
+    // 待ち一覧の更新が先に届き、カードが畳まれていることがある。
     busy = false;
     paintButtons();
   };

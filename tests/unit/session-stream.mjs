@@ -18,7 +18,7 @@ export const title = "途中で開いたセッションを履歴と受信イベ�
 
 export default async function (t) {
   const source = readClientAndLiveTurn();   // appendText 〜 resetLiveTurn は web/live-turn.mjs（ADR 0319 段 6-3）
-  const functions = ["onEvent", "turnFailedRow", "onStopping", "onTurnOk", "onReplyArrived", "onTurnSettled", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
+  const functions = ["onEvent", "applyWaitingCards", "turnFailedRow", "onStopping", "onTurnOk", "onReplyArrived", "onTurnSettled", "isMine", "appendText", "flushStream", "cancelStream", "endStream", "openTurnEl", "closeTurnEl", "resetLiveTurn", "clearThread", "paintSession", "select", "loadHistory", "loadAndPaint"].map(name => cutFunction(source, name, { withAsync: true })).join("\n");
   const noop = () => {};
   const notices = [];
   const completionNotifications = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: notice => notices.push(notice) } }, openSession: noop });
@@ -26,7 +26,7 @@ export default async function (t) {
   const renderedPermissions = [];
   const historyTimers = new Map();
   let timerId = 0;
-  const state = { current: "other", sessions: [], drafts: new Map(), runningIds: new Set(["target"]), stopping: new Set(), pendingPerms: new Map() };
+  const state = { current: "other", sessions: [], drafts: new Map(), runningIds: new Set(["target"]), stopping: new Set(), waitingCards: new Map() };
   const shownUpTo = new Map();
   let failHistory = null;
   const loads = createSessionLoads();
@@ -69,11 +69,12 @@ export default async function (t) {
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
     renderPermission: ev => renderedPermissions.push(ev),
     browserEntry: null, browserSettings: { chromeRepaint: noop },
-    // 承認カードはこのテストの対象外（tests/unit/server-fake.mjs の reopenCase が見ている）
-    paintPendingPerms: id => { for (const ev of state.pendingPerms.values()) if (ev.sessionId === id) context.renderPermission(ev); }, paintComputerWait: noop,
-    // 描き終えた履歴の時点（閲覧状況の報告に載せ、通知の一覧の既読に使う。ADR 0347 第 3 段）。片付いた承認の覚えは client の adoptPendingPerms
+    waitingHost: 'host', waitingRevision: -1, waitingReady: false, traceWaiting: noop,
+    settingCardsOpen: new Map(), openCards: { ids: () => [], prune: noop }, bg: { view: null },
+    syncWaitingStatus: () => false, syncStopAndResume: noop, controls: { fit: noop }, paintDelegateCards: noop,
+    paintPendingPerms: id => { for (const ev of state.waitingCards.values()) if (ev.sessionId === id) context.renderPermission(ev); }, paintComputerWait: noop,
+    // 描き終えた履歴の時点（閲覧状況の報告に載せ、通知の一覧の既読に使う。ADR 0347 第 3 段）
     shownUpTo, noteShown: (id, at) => { if (id && Number.isFinite(at)) shownUpTo.set(id, at); },
-    adoptPendingPerms: list => { for (const p of list ?? []) state.pendingPerms.set(p.id, p); }, settledPerms: new Set(),
     readCompletions: { mark: noop }, renderSessions: noop, acknowledgeDisplayed: noop, el: () => ({ dataset: {} }), renderMarkdown: x => x, renderAssistantMarkdown: x => x,
     closeBundle: noop, settleStrays: noop, followBottom: noop, closeThink: noop, activity: { show: noop, hide: noop }, atBottom: () => false,
     ensureTurnEl: () => ({ append: x => bodies.push(x) }),
@@ -114,6 +115,10 @@ export default async function (t) {
   vm.runInContext(`${liveTurnStateDecl()}\n${functions}\n${openBridge()}`, context);   // mainView は web/conversation-view.mjs の会話を開く仕事（ADR 0319 段 6-5）
   const event = (text, streamSeq) => ({ type: "text.delta", sessionId: "target", text, streamSeq });
   const deliver = ev => { context.event = ev; vm.runInContext("onEvent(event)", context); };
+  const waiting = (revision, cards, hostInstance = 'host') => {
+    context.snapshot = { hostInstance, revision, cards };
+    vm.runInContext('applyWaitingCards(snapshot)', context);
+  };
   deliver(event("先頭", 1)); // Not viewing this session yet.
   const selection = vm.runInContext("select('target')", context);
   deliver(event("・取得中", 2));
@@ -161,8 +166,9 @@ export default async function (t) {
   await new Promise(setImmediate);
   const beforeSync = syncs;
   t.ok('分割再生を始める前に骨組みのタイマーを止める', historyTimers.size === 0);
-  deliver({ type: 'permission', id: 'during-replay', sessionId: 'target', toolUseID: 'pending-tool', kind: 'tool' });
-  t.ok('再生中の承認は覚えて、ツール行を復元するまでは描かない', state.pendingPerms.has('during-replay') && !renderedPermissions.length);
+  waiting(2, [{ id: 'during-replay', sessionId: 'target', toolUseID: 'pending-tool', kind: 'tool' }]);
+  waiting(1, []);
+  t.ok('再生中の承認は最新の待ち一覧に残り、ツール行を復元するまでは描かない', state.waitingCards.has('during-replay') && !renderedPermissions.length);
   deliver(event("tail", 170));
   deliver({ type: "text.end", sessionId: "target", streamSeq: 171 });
   deliver({ type: "turnEnd", sessionId: "target", streamSeq: 172, outcome: 'ok', completedAt: 200 });
@@ -171,7 +177,14 @@ export default async function (t) {
   await longSelection;
   t.ok("分割再生の本文と到着した末尾を一度ずつ残し、最後に履歴を同期する", bodies[0]?.dataset.raw === many.map(e => e.text).join('') + 'tail' && syncs === beforeSync + 1 && state.loadingSession === null);
   t.ok('再生後に受信した承認を一度だけ描く', renderedPermissions.length === 1 && renderedPermissions[0].id === 'during-replay');
-  state.pendingPerms.clear();
+  const previousWaiting = state.waitingCards;
+  context.waitingReady = false;
+  waiting(2, [...previousWaiting.values()]);
+  t.ok('同じホストに同じ番号で戻ったら回答を再開し、カードは描き直さない', context.waitingReady && state.waitingCards === previousWaiting && renderedPermissions.length === 1);
+  waiting(10, [], 'previous-host');
+  t.ok('古いホストの番号が大きくても待ち一覧を替えない', state.waitingCards === previousWaiting);
+  waiting(3, []);
+  t.ok('新しい空の待ち一覧で承認が消える', state.waitingCards.size === 0);
   loads.replay = originalReplay;
 
   // 読み込みの失敗: 開き直しで前の位置を消し、失敗したら付け直さない（通知の一覧をその会話の分まで既読にしない）

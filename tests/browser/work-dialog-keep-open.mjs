@@ -182,8 +182,12 @@ try {
           try {
             const m = JSON.parse(e.data);
             if (m.kind !== 'event') return;
-            if (m.event.type === 'permission') log.perm.push({ t: now(), id: m.event.id, tool: m.event.toolName, sessionId: m.event.sessionId });
-            if (m.event.type === 'permissionSettled') log.settled.push({ t: now(), id: m.event.id });
+            if (m.event.type === 'waitingCards') {
+              for (const card of m.event.cards) {
+                if (!log.perm.some(entry => entry.id === card.id)) log.perm.push({ t: now(), id: card.id, tool: card.toolName, sessionId: card.sessionId });
+              }
+              for (const resolution of m.event.resolutions ?? []) log.settled.push({ t: now(), id: resolution.id });
+            }
           } catch { /* 文字でないフレーム */ }
         });
       }

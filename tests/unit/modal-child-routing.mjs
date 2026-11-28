@@ -2,7 +2,7 @@
 //   - 主が同じ会話を開いているときは主が描く（振り分けは false を返し、実例は何も描かない）
 //   - 別の会話の出来事は、実例に描かない（false を返し、主の経路へ回る）
 //   - 実例を閉じたあと（modalChild が null）は描かない・呼んでも落ちない
-//   - 描く種類の出来事だけ流す。読み込みの間の出来事は取り置く（描かない）。承認は承認の置き場へ、追加の指示は一覧の読み直しへ
+//   - 描く種類の出来事だけ流す。読み込みの間の出来事は取り置く（描かない）。追加の指示は一覧の読み直しへ
 // client.mjs の最上位の関数を切り出して vm で走らせる（本物の画面の経路は tests/browser/child-modal-main-independence.mjs が見る）。
 import vm from "node:vm";
 import { readWeb, cutFunction } from "../lib/cut-source.mjs";
@@ -23,7 +23,6 @@ export default async function (t) {
     const calls = [];
     const ctx = {
       modalChild: mc, state: { current }, calls,
-      modalChildPermission: (ev) => calls.push(`permission:${ev.id}`),
       refreshModalInstructions: () => calls.push("instructions"),
     };
     vm.runInNewContext(`${setSource}\n${routeSource}\nglobalThis.route = routeModalChild; globalThis.kinds = MODAL_CHILD_EVENTS;`, ctx);
@@ -80,8 +79,7 @@ export default async function (t) {
   {
     const mc = makeMc();
     const c = build({ mc, current: "root-1" });
-    t.ok("承認: 承認の置き場へ（処理済み）", c.route({ type: "permission", id: "p1", sessionId: "child-1" }) === true && c.calls.join() === "permission:p1" && mc.applied.length === 0);
-    c.calls.length = 0;
+    t.ok("待ち一覧は会話の出来事として振り分けない", !c.kinds.has("waitingCards"));
     t.ok("追加の指示の出来事: 一覧の読み直しへ（処理済み・本文へは描かない）", c.route({ type: "taskInstruction", sessionId: "child-1" }) === true && c.calls.join() === "instructions" && mc.applied.length === 0);
     t.ok("描かない種類の出来事（prefs など）: false（主の経路へ）", c.route({ type: "prefs", sessionId: "child-1" }) === false && mc.applied.length === 0);
   }

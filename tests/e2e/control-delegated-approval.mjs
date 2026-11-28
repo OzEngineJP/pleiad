@@ -22,7 +22,9 @@ export default async function (t, ctx) {
       prompt: 'This is an authorized, bounded integration test. Call the Pleiad MCP tool ply_delegate exactly once with kind="trivial", backend="claude", title="e2e settings child", and task="Use the Pleiad ply_control MCP tool set_setting to change the setting confirmAgentSites to false (reason: e2e). It returns a pending-approval status immediately; do not wait, do not retry, and do not use shell or files. Write that status in one line and finish."  Use the actual MCP tool; do not use native Agent or spawn tools. After receiving the taskId, reply briefly and finish this turn. Pleiad will deliver results later. When the child completion notification arrives, reply briefly. When a message starting with "[Pleiad 設定の変更の結果" arrives, reply with one line "SEEN: " followed by its 結果 line and the taskId of the child it mentions, and do not delegate again.' });
 
     // 子が承認待ちを受けて終わる（カードは子の会話のもの）
-    const card = await c.waitFor((e) => e.type === 'permission' && e.settingChange && e.sessionId !== parent.sessionId, { from, ms: 240000 }).catch(() => null);
+    const isChildCard = card => card.settingChange && card.sessionId !== parent.sessionId;
+    const snapshot = await c.waitFor(e => e.type === 'waitingCards' && e.cards.some(isChildCard), { from, ms: 240000 }).catch(() => null);
+    const card = snapshot?.cards.find(isChildCard);
     let task = null;
     for (let i = 0; i < 240; i++) {
       task = (await c.cmd('agentTasks', { sessionId: parent.sessionId }))[0];

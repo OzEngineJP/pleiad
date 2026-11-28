@@ -59,10 +59,11 @@ export default async function(t) {
     const turn1 = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: computer([shotCall, clickCall]) });
     const s1 = turn1.sessionId;
     const card = cards.find(x => x.computerApp);
-    t.ok('承認のカードの payload: toolName ply_computer・canAlways・input {}・notifyReply・computerApp { agent, apps, first }', card && card.toolName === 'ply_computer' && card.kind === 'tool' && card.canAlways === true && JSON.stringify(card.input) === '{}'
-      && card.notifyReply === true && card.sessionId === s1 && card.computerApp.agent.id === 'fake' && card.computerApp.agent.label === 'Fake (test)' && card.computerApp.apps.length === 1
+    t.ok('承認のカードの payload: toolName ply_computer・canAlways・input {}・computerApp { agent, apps, first }', card && card.toolName === 'ply_computer' && card.kind === 'tool' && card.canAlways === true && JSON.stringify(card.input) === '{}'
+      && card.sessionId === s1 && card.computerApp.agent.id === 'fake' && card.computerApp.agent.label === 'Fake (test)' && card.computerApp.apps.length === 1
       && card.computerApp.apps[0].id === NOTEPAD && card.computerApp.apps[0].name === 'メモ帳' && card.computerApp.apps[0].risk === 'normal' && card.computerApp.first === true, JSON.stringify(card));
     t.ok('見出しは「{エージェント名} に「{アプリ名}」の操作を許可しますか？」', card.title === 'Fake (test) に「メモ帳」の操作を許可しますか？', card.title);
+    t.ok('最初のカードは一度通知する', c.since(mark1).filter(e => e.type === 'permissionNotice' && e.id === card.id && e.notifyReply).length === 1);
 
     const results = turn1.events.filter(e => e.type === 'tool.result' && e.sessionId === s1);
     const starts = turn1.events.filter(e => e.type === 'tool.start' && e.sessionId === s1);

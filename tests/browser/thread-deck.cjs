@@ -250,9 +250,8 @@ async (page, { url = 'http://127.0.0.1:7436/?token=thread-deck-test' } = {}) => 
   await card.first().waitFor({ timeout: 8000 });
   const pendingId = await page.evaluate(() => [...document.querySelectorAll('#chThread .th-perms .mw')].length);
   check(pendingId === 1, 'the second approval card shows up');
-  const running = await cmd('running');
-  const perm = running.permissions.find((p) => !p.relay);
-  await cmd('resolvePermission', { id: perm.id, allow: true });
+  const permId = await page.locator('#chThread .th-perms .mw').getAttribute('data-key');
+  await cmd('resolvePermission', { id: permId.slice('perm:'.length), allow: true });
   await page.waitForFunction(() => document.querySelectorAll('#chThread .th-perms .mw').length === 0, null, { timeout: 8000 });
   check(true, 'an approval answered elsewhere (another screen) removes the card from the thread');
 

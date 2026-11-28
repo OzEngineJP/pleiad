@@ -1,30 +1,23 @@
-// ターンが終わっても残る承認の待ち（outlivesTurn）と、カードの中身の差し替え（permissionUpdate）。ADR 0168。fake バックエンドのサーバー越し。LLM は呼ばない。
+// ターンが終わっても残る承認の待ち（outlivesTurn）と、待ち一覧でのカードの差し替え。ADR 0168。fake バックエンドのサーバー越し。LLM は呼ばない。
 //   - ターンが走っている間だけ、ターンを止める待ちとして数える（running の blocking・count）
 //   - ターンが終わっても取り下げない・実行中の数に入らない。host が戻らなくても（giveUp）断られない
 //   - 人の「止める」・巻き戻し・会話の削除では aborted で片付く
 //   - update が祖先の中継の複製にも届く・つなぎ直した画面に新しい中身が届く・外からの settle で permissionSettled が出る
-//   - 画面の配線（card-roll の update・client の受け口と pendingPerms の書き替え）
+//   - 画面の配線（card-roll の update・client の受け口と待ち一覧の置き換え）
 import fs from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
-import * as P from '../../core/protocol.mjs';
 
 export const name = 'server-permission-update';
 export const title = 'ターンを越えて残る承認の待ち: ターンの間だけ止める・終わっても残る・止める/巻き戻し/削除で片付く・中身の差し替えが複製とつなぎ直しに届く';
 
-const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 const script = (spec) => 'outlives:' + JSON.stringify(spec);
 const delegate = (task) => 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'fake', task } });
 
 export default async function (t) {
-  t.ok('permissionUpdate は EVENTS に登録されている', P.EVENTS.has('permissionUpdate'));
-  const server0 = read('core/server.mjs');
-  t.ok('permissionUpdate は一覧を作り直さない出来事（LIST_NEUTRAL_EVENTS）', /LIST_NEUTRAL_EVENTS = new Set\(\[[^\]]*"permissionUpdate"/.test(server0));
-
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-permission-update-'));
   const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir: scratch });
   const c = await open({ port: server.port, token: server.token });
@@ -32,7 +25,7 @@ export default async function (t) {
   const running = async () => c.cmd('running');
   const waitCards = async (sessionId) => {
     for (let i = 0; i < 200; i++) {
-      const own = (await running()).permissions.filter((p) => p.sessionId === sessionId);
+      const own = c.waitingCards.filter((p) => p.sessionId === sessionId);
       if (own.length) return own;
       await sleep(50);
     }
@@ -64,30 +57,34 @@ export default async function (t) {
     // ---- ターンが終わっても残る（signal を渡していても、ターンの終わりでは取り下げない）
     const first = await start(script({ open: { signal: true } }));
     await ended(first.sessionId, first.from);
-    const [wait2] = await waitCards(first.sessionId);
+    const afterTurn = await c.waitFor(e => e.type === 'waitingCards' && e.cards.some(card => card.sessionId === first.sessionId && !card.blocking), { from: first.from });
+    const wait2 = afterTurn.cards.find(card => card.sessionId === first.sessionId);
     t.ok('ターンの後: 待ちは残るが blocking ではない', wait2.blocking === false && wait2.outlivesTurn === true, JSON.stringify(wait2));
     const run2 = await running();
     t.ok('ターンの後: 実行中の数にも入らない', run2.count === 0 && run2.handover === undefined, JSON.stringify({ count: run2.count, handover: run2.handover }));
     t.ok('ターンの後: 取り下げの知らせ（permissionSettled）は出ていない', !c.since(first.from).some((e) => e.type === 'permissionSettled' && e.id === wait2.id));
 
-    // ---- update: 全部のカードの payload に重ねて permissionUpdate を出す。重ねるのは browserHandoff だけ
+    // ---- update: 一覧のコピーも含め、browserHandoff の変更を同時に送る。
     const updFrom = c.mark();
     await op({ op: 'update', target: first.sessionId, patch: { state: 'asking' } });
-    const ev1 = await c.waitFor((e) => e.type === 'permissionUpdate' && e.id === wait2.id, { from: updFrom, ms: 15_000 });
-    t.ok('permissionUpdate は元のカードの id と browserHandoff を運ぶ', ev1.sessionId === first.sessionId && ev1.browserHandoff?.state === 'asking', JSON.stringify(ev1));
+    const snapshot1 = await c.waitFor(e => e.type === 'waitingCards' && e.cards.some(card => card.id === wait2.id && card.browserHandoff?.state === 'asking'), { from: updFrom });
+    const ev1 = snapshot1.cards.find(card => card.id === wait2.id);
+    t.ok('一覧は元のカードの id と変更後の内容を運ぶ', ev1.sessionId === first.sessionId && ev1.browserHandoff?.state === 'asking', JSON.stringify(ev1));
     const updFrom2 = c.mark();
     await op({ op: 'update', target: first.sessionId, patch: { step: 2 } });
-    const ev2 = await c.waitFor((e) => e.type === 'permissionUpdate' && e.id === wait2.id, { from: updFrom2, ms: 15_000 });
+    const snapshot2 = await c.waitFor(e => e.type === 'waitingCards' && e.cards.some(card => card.id === wait2.id && card.browserHandoff?.step === 2), { from: updFrom2 });
+    const ev2 = snapshot2.cards.find(card => card.id === wait2.id);
     t.ok('続けた update は旧い中身に重なる', ev2.browserHandoff?.state === 'asking' && ev2.browserHandoff?.step === 2, JSON.stringify(ev2));
     // 版（rev）: 画面は届いた順でなく版で当てる（遅れて届いた古い差し替えで新しい中身を戻さない。ADR 0347 第 3 段）
-    t.ok('permissionUpdate は版（rev）を運び、差し替えるたびに上がる', Number.isInteger(ev1.rev) && Number.isInteger(ev2.rev) && ev2.rev > ev1.rev, JSON.stringify([ev1.rev, ev2.rev]));
+    t.ok('一覧の番号は変更のたびに上がる', afterTurn.revision < snapshot1.revision && snapshot1.revision < snapshot2.revision);
 
     // ---- つなぎ直した画面に、新しい中身が届く
     const c2 = await open({ port: server.port, token: server.token });
     try {
-      const again = await c2.waitFor((e) => e.type === 'permission' && e.id === wait2.id, { ms: 15_000 });
+      const snapshot = await c2.waitFor(e => e.type === 'waitingCards');
+      const again = snapshot.cards.find(card => card.id === wait2.id);
       t.ok('つなぎ直した画面には、差し替え後の中身で承認が届く', again.browserHandoff?.state === 'asking' && again.browserHandoff?.step === 2, JSON.stringify(again.browserHandoff));
-      t.ok('つなぎ直した画面に届く承認も同じ版（rev）を持つ（その後に届く古い差し替えを捨てられる）', again.rev === ev2.rev, JSON.stringify([again.rev, ev2.rev]));
+      t.ok('つなぎ直した画面に同じホスト識別子と一覧番号が届く', snapshot.hostInstance === snapshot2.hostInstance && snapshot.revision === snapshot2.revision);
     } finally { c2.close(); }
 
     // ---- 外からの settle（resolvePermission を通さない）で permissionSettled が出て、畳まれる
@@ -95,7 +92,7 @@ export default async function (t) {
     await op({ op: 'settle', target: first.sessionId, answer: { allow: true } });
     const settled = await c.waitFor((e) => e.type === 'permissionSettled' && e.id === wait2.id, { from: setFrom, ms: 15_000 });
     t.ok('外からの settle で permissionSettled が出る（allow が運ばれる）', settled.allow === true, JSON.stringify(settled));
-    t.ok('決着後は running から消える', !(await running()).permissions.some((p) => p.id === wait2.id));
+    t.ok('決着後は running から消える', !c.waitingCards.some((p) => p.id === wait2.id));
     const afterFrom = c.mark();
     await op({ op: 'update', target: first.sessionId, patch: { late: 1 } });
     await sleep(150);
@@ -105,7 +102,7 @@ export default async function (t) {
     const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: delegate(script({ open: { hold: true, signal: true, key: 'child' } })) })).sessionId;
     let childCards = [];
     for (let i = 0; i < 300 && childCards.length < 2; i++) {
-      childCards = (await running()).permissions.filter((p) => p.outlivesTurn);
+      childCards = c.waitingCards.filter((p) => p.outlivesTurn);
       if (childCards.length < 2) await sleep(50);
     }
     const own = childCards.find((p) => !p.relay), relay = childCards.find((p) => p.relay);
@@ -145,7 +142,7 @@ export default async function (t) {
     const dFrom = c.mark();
     await c.cmd('deleteSession', { sessionId: doomed.sessionId });
     const deleted = await c.waitFor((e) => e.type === 'permissionSettled' && e.id === wait4.id, { from: dFrom, ms: 15_000 });
-    t.ok('会話の削除で、ターンの終わった後の待ちが aborted で片付く', deleted.reason === 'aborted' && !(await running()).permissions.some((p) => p.id === wait4.id));
+    t.ok('会話の削除で、ターンの終わった後の待ちが aborted で片付く', deleted.reason === 'aborted' && !c.waitingCards.some((p) => p.id === wait4.id));
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
   // ---- host が戻らなくても（giveUp）、ターンの終わった後の待ちは断らない。走っているターンの普通の待ちは断る
@@ -165,7 +162,7 @@ export default async function (t) {
       try {
         const state = await b.cmd('running');
         t.ok('前提: 猶予が切れて走っていたターンは中断された', state.turns.length === 0);
-        const waits = state.permissions;
+        const waits = b.waitingCards;
         t.ok('giveUp: ターンの終わった後の待ちは断られず残る', waits.some((p) => p.sessionId === idle.sessionId && p.outlivesTurn), JSON.stringify(waits));
         const ev = b.events.filter((e) => e.type === 'permissionSettled');
         t.ok('giveUp: 取り下げの知らせも出ない', !ev.some((e) => e.sessionId === idle.sessionId));
@@ -173,19 +170,4 @@ export default async function (t) {
     } finally { a.close(); await s.stop(); await fs.rm(dir, { recursive: true, force: true }); }
   }
 
-  // ---- 画面の配線
-  const roll = read('web/card-roll.mjs');
-  t.ok('画面: 名簿は update(id, ev) でその承認のカード全部に差し替えを渡す', /update\(id, ev\)[\s\S]*?entry\.update\?\.\(ev\)/.test(roll));
-  const client = read('web/client.mjs');
-  const onEvent = client.slice(client.indexOf('function onEvent('));
-  // 開いていない会話の承認の差し替えも落とさない（会話の絞り込み isMine の前で受ける。ADR 0347 第 3 段）
-  t.ok('画面: permissionUpdate の受け口（会話の絞り込みの前・pendingPerms の写しの書き替えと名簿への受け渡し）',
-    /if \(ev\.type === 'permissionUpdate'\) \{ onPermissionUpdate\(ev\); return; \}/.test(onEvent)
-    && onEvent.indexOf("ev.type === 'permissionUpdate'") < onEvent.indexOf('if (!isMine(ev))')
-    && /function onPermissionUpdate\([\s\S]*?state\.pendingPerms\.set\([\s\S]*?openCards\.update\(ev\.id, ev\)/.test(client));
-  const onUpdate = client.slice(client.indexOf('function onPermissionUpdate('), client.indexOf('function onPermissionUpdate(') + 900);
-  t.ok('画面: 片付いた承認・版が今の写し以下の差し替えは当てない', /settledPerms\.has\(ev\.id\)\) return/.test(onUpdate) && /\(pending\.rev \?\? 0\) >= ev\.rev\) return/.test(onUpdate));
-  t.ok('画面: 中継のカードの名簿の項目が update を持つ（種類ごとの描き直しは parts.onUpdate）', /openCards\.add\(ev\.id, \{[^}]*update: \(patch\) => parts\.onUpdate\?\.\(patch\)/.test(client));
-  const protocol = read('core/protocol.mjs');
-  t.ok('protocol.mjs の EVENTS に permissionUpdate', /"permissionUpdate"/.test(protocol));
 }

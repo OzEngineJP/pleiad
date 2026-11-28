@@ -49,7 +49,7 @@ export default async function (t) {
     const done = await wait(async () => { const row = await rowOf(); return row?.status === 'completed' && row.notification === 'sent' ? row : null; });
     const child = done.sessionId;
     t.ok('hand_to_user の後で子のターンが終わり、タスクが completed・1 回知らせた', noticesOf().length === 1, String(noticesOf().length));
-    await wait(async () => ((await c.cmd('running')).permissions ?? []).some(row => row.sessionId === child && !row.relay));
+    await wait(async () => (c.waitingCards).some(row => row.sessionId === child && !row.relay));
     t.ok('人へのカードはターンの後も残る', true);
 
     // 子の窓を開いておく（引き継ぐ窓。見ている会話の直接の子は操作の範囲に入る）
