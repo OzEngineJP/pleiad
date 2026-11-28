@@ -15,6 +15,7 @@ import { runMark } from '../arc.mjs';
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { announce } from '../message-actions.mjs';
+import { createNextActions } from './next-actions.mjs';
 
 const PREFIX = 'th';
 const SAVE_WAIT_MS = 400;
@@ -42,7 +43,7 @@ const UNUSED = ['armedChip', 'draftSaved', 'resume', 'contextMeterWrap', 'contex
  * @param {object} [o.edit] 「編集して再送信」の持ち分（web/composer/edit-mode.mjs の host）: target(id) → { time, tail } か null、send(ctx)、branch(ctx)、decorate(id, on, tail)、locate(id)
  */
 export function createThreadComposer({ host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, backendLabel, wakePreview, onSend, receiver = () => null, session = () => null, onStop = () => {},
-  schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {} }) {
+  schedules = () => [], compact = async () => {}, pending = () => [], withdrawPending = async () => {}, edit: editHost = {}, nextActionScope, botOf }) {
   const form = buildComposer(PREFIX);
   form.classList.add('th-composer');
   form.noValidate = true;
@@ -75,6 +76,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
   input.setAttribute('aria-controls', list.id);
 
   let disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null, pendingEdit = null;
+  let nextActions;
   // 送っている持ち主（スレッド）。送信中はそのスレッドだけのもの: 別のスレッドへ移れば、そこではすぐ書いて送れる
   const sending = new Set();
   // 持ち主を離れている間に届いた失敗。戻ったときに入力欄の下へ出す
@@ -134,7 +136,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
       onChange: () => { dismissWake(); saveDraft(); paintHint(); },
     },
     wait: { runMark, onChange: () => syncSend() },
-    keys: [(e) => mention.keydown(e), (e) => blocks.keydown(e), (e) => c.slash?.keydown(e)],
+    keys: [(e) => mention.keydown(e), (e) => blocks.keydown(e), (e) => c.slash?.keydown(e), (e) => nextActions?.keydown(e)],
     onSubmit: () => submit(),
     onSchedule: () => c.sendMenu?.open(),
   });
@@ -226,6 +228,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
 
   // ---- 提案（誰も @ していない文に）。@ が無くても受ける bot がいる（前に答えた bot・DM の bot）ときは出さない
   function paintHint() {
+    nextActions?.refresh();
     const text = input.value.trim();
     const bot = text && !disabled && !receiver() ? suggest() : null;
     if (!bot || /@/.test(text)) { hint.hidden = true; return; }
@@ -350,8 +353,14 @@ export function createThreadComposer({ host, bucket = () => null, candidates, bl
     input.focus();
   });
 
+  if (nextActionScope) nextActions = createNextActions({
+    host, input, box: els.cbox, scope: nextActionScope, botOf,
+    blocked: () => disabled || busy() || edit.active || pendingEdit || c.shell?.active || c.shell?.blocked || att.items.length > 0,
+  });
+
   return {
     el: form,
+    nextActions,
     work: { strip: els.contextStrip, entry: els.workEntryButton },
     input,
     editor: c.editor,

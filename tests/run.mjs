@@ -1217,6 +1217,7 @@ const SUITES = [
   // bot を起こす・配る: @ で起こす・返事の @ で連鎖・［止める］・途中送信とたまった出来事・DM・暗黙では起こさない・末尾（記憶の核の写し）・再起動の戻し・inbox.json
   './unit/bot-enablement.mjs',
   './unit/bot-dispatch.mjs',
+  './unit/bot-next-actions.mjs',
   // bot の投稿へのリアクション（問いへの答えは人・bot・AI のどれでも起こす・bot と AI は DM では起こさない・ほかは次に渡す）と、黙って終えたターン（印・括弧だけの一言は投稿しない。ADR 0109・0119 の追記）
   './unit/bot-reactions-silence.mjs',
   // 人の途中送信で bot のターンの投稿を分ける細かい場合（今の投稿を本文のまま確定・続きは新しい投稿。bot・AI・聞こえた投稿・リアクションは分けない・止める・失敗・返事の @・呼んだ bot への返事。ADR 0117 の追記）と、実サーバーの並び・channelPost

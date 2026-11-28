@@ -65,6 +65,9 @@ export function createFeed(host) {
     id: 'chFeedComposer',
     host,
     bucket: () => S.id,
+    nextActionScope: () => S.ready && !root.hidden && S.channel?.kind === 'dm' && !S.channel.archivedAt
+      ? { channelId: S.id } : null,
+    botOf: (id) => S.bots.get(id),
     candidates: () => candidates(),
     blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
@@ -317,6 +320,7 @@ export function createFeed(host) {
       S.nextBefore = page.nextBefore ?? null;
       S.feedThrough = S.nextBefore;
       S.ready = true;
+      void composer.nextActions.load();
       paintHead();
       paintAll();
       for (const ev of S.queue.splice(0)) events[ev.type]?.(ev);
@@ -567,6 +571,8 @@ export function createFeed(host) {
   }
 
   const events = {
+    botNextActionsChanged: (ev) => void composer.nextActions.load(ev),
+    prefs: () => queueMicrotask(() => void composer.nextActions.load()),
     channelPost: (ev) => {
       if (!isHere(ev.channelId)) return;
       if (!S.ready) { S.queue.push(ev); return; }
@@ -600,6 +606,7 @@ export function createFeed(host) {
       paintHead();
       repaintAll();
       composer.refresh();
+      void composer.nextActions.load();
     },
     todosChanged: (ev) => todo?.onEvent(ev),
     todoListChanged: (ev) => todo?.onEvent(ev),
@@ -632,7 +639,7 @@ export function createFeed(host) {
       if (emptyNote) emptyNote.hidden = true;
       if (!same) { S.channel = null; S.posts = []; S.index = new Map(); S.threads = {}; S.summaries = {}; S.readSent = 0; paintHead(); }
       else paintHead();   // 別の面（bot のページなど）へ移ると hide() が見出しを戻すので、同じチャンネルへ戻ったときも描き直す
-      const done = same ? Promise.resolve().then(() => { toBottom(); markRead(); }) : load(view.id);
+      const done = same ? Promise.resolve().then(() => { toBottom(); markRead(); void composer.nextActions.load(); }) : load(view.id);
       done.then(() => {
         if (S.id !== view.id) return;
         if (view.threadId) host.openThread?.(view.id, view.threadId, { postId: view.postId });
@@ -643,12 +650,13 @@ export function createFeed(host) {
     },
     hide() {
       root.hidden = true;
+      composer.nextActions.refresh();
       clearHead();
       if (emptyNote) emptyNote.hidden = false;
     },
     onEvent(ev) { events[ev?.type]?.(ev); },
     sideTabChanged(tab) { if (tab === 'channels' && S.ready) markRead(); },
     /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
-    reconnected() { todo?.reconnected(); },
+    reconnected() { todo?.reconnected(); void composer.nextActions.load(); },
   };
 }

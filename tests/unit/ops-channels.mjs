@@ -21,8 +21,11 @@ export default async function (t) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ops-channels-'));
   try {
     // ---- 定義
-    t.ok('操作はスレッドの整理を含めて 25 個', IDS.every((id) => registry.get(id))
-      && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 25 && !registry.get('channels.threadBudget'));
+    t.ok('操作はスレッドの整理と次の行動の提案を含めて 26 個', IDS.every((id) => registry.get(id))
+      && registry.ops.filter((o) => o.id.startsWith('channels.')).length === 26 && !registry.get('channels.threadBudget'));
+    const nextActions = registry.get('channels.nextActions');
+    t.ok('次の行動の候補は画面から確認・採用する', nextActions.risk === 'write'
+      && nextActions.surfaces.ui && !nextActions.surfaces.mcp && !nextActions.surfaces.cli);
     const organize = registry.get('channels.organizeThreads');
     t.ok('スレッドの整理は画面からだけ書き込める', organize.risk === 'write'
       && organize.surfaces.ui && !organize.surfaces.mcp && !organize.surfaces.cli);

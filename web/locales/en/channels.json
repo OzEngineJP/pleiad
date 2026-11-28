@@ -1,4 +1,9 @@
 {
+  "nextActions": {
+    "action": "Ask {{name}} to {{action}}",
+    "more": "{{count}} more",
+    "described": "Suggested message for {{name}}. {{text}}"
+  },
   "botDelete": {
     "menu": "Delete bot…",
     "more": "Bot menu",

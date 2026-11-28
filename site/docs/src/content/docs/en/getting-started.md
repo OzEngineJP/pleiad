@@ -100,6 +100,10 @@ Type `@` in the input of a channel or its thread to see bot suggestions. The bot
 - **Bots that aren't members**: calling a bot that isn't a channel member with `@` adds it to the members when you post, and tells you ("Added … to the channel members").
 - **How a bot runs**: under a thread's input there are only attachments and send. The model, working folder, and approval mode are set on the bot's page (they can't be changed per thread).
 
+## Use a bot's next-message suggestions
+
+After a bot replies in a channel, thread, or DM, the input shows suggested next messages based on the conversation. Choose one to put it in the input as a draft, then edit it before sending. Choosing a suggestion does not send it. Use Tab to select a suggestion and Shift+Tab to switch suggestions.
+
 ## Delete a bot you created
 
 On the bot's page, press the "⋯" next to "Open DM" and choose "Delete bot…". You can also right-click the bot in the sidebar. Review what will be deleted and which conversations will be kept, then press "Delete". Built-in bots cannot be deleted.

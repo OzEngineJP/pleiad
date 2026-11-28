@@ -148,6 +148,23 @@
 .ch-input.md-atom-sel{caret-color:transparent}
 .ch-input[aria-disabled=true]{cursor:not-allowed}
 .ch-input[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch-next-actions{min-width:0;margin:0 0 4px;padding-inline:8px;font-size:var(--fs-sm)}
+.ch-next-line{display:flex;align-items:center;gap:12px;min-width:0}
+.ch-next-actions button{display:flex;align-items:center;gap:6px;min-width:0;min-height:28px;padding:2px 4px;border:0;background:none;color:var(--ink-strong);font:inherit;text-align:start;cursor:pointer}
+.ch-next-actions [hidden]{display:none}
+.ch-next-actions button:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px;border-radius:var(--r-s)}
+.ch-next-actions button:hover .ch-next-text{text-decoration:underline}
+.ch-next-actions button svg.i,.ch-next-bot{width:16px;height:16px;flex:none}
+.ch-next-primary > svg.i{color:var(--ink-blue)}
+.ch-next-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-next-actions .ch-next-more{flex:none;color:var(--ink-weak);white-space:nowrap}
+.ch-next-more[aria-expanded=true] svg{transform:rotate(180deg)}
+.ch-next-choices{padding-inline-start:4px}
+.ch-next-choice{max-width:100%}
+.ch-next-actions + .ch-box{position:relative}
+.ch-input[data-ghost][data-empty=true]::before{content:none}
+body.channels #cbox .recall-open{display:none}
+@media (pointer:coarse){.ch-next-actions button{min-height:36px}}
 .ch-input strong{color:var(--ink-strong);font-weight:650}
 .ch-input code{background:var(--surface-2);border-radius:var(--r-s);padding:.05em .4em;font:.92em var(--font-mono)}
 .ch-input a.md-link{color:var(--ink-blue);text-decoration:underline;cursor:text}
@@ -251,6 +268,7 @@
 /* 指で使う画面は、入力欄の字を 16px 以上に（iOS は 16px 未満の欄に触れると画面を拡大する）。行間は Chats の #prompt と同じ */
 @media (pointer:coarse){
   .ch-input{font-size:max(16px,1em) !important;line-height:1.5}
+  .ch-box .composer-ghost{font-size:max(16px,1em);line-height:1.5}
 }
 @media (max-width:700px){
   .ch-log{padding:2px 18px 10px 24px}

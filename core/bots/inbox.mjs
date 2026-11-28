@@ -4,7 +4,8 @@
 // 起動時は、引き継いだターンに属さない delivering を unknown にして、pending を配り直す（recover）。
 //
 //   createInboxStore({ dir, now }) → { load, add, list, mark, remove, recover }
-//     add({ sessionId, botId, channelId, threadId, postId, caller?, reply?, inner?, heard?, heardTo?, reaction? }): Promise<InboxItem>
+//     add({ sessionId, botId, channelId, threadId, postId, caller?, reply?, inner?, heard?, heardTo?, reaction?, nextAction? }): Promise<InboxItem>
+//       nextAction は、人の投稿を名前指定または DM の直接の依頼として届けた印
 //       heard = @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（包みに heard="true"。返事をするかは bot が決める。ADR 0128）
 //       heardTo = 聞こえた投稿が誰との話の続きか（bot の id。包みに to="<bot の名前>"。heard のときだけ。ADR 0128 の追記）
 //       reaction = bot の投稿（postId）に付いたリアクション { emoji, by: Author, byKey, at, quiet? }。quiet なら配らず、次に起きたときに一緒に渡す（ADR 0109 の追記）
@@ -65,14 +66,14 @@ export function createInboxStore({ dir, now = Date.now } = {}) {
   return {
     file,
     load: () => serial(async () => { await load(); }),
-    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, heardTo, reaction }) => mutate((data) => {
+    add: ({ sessionId, botId, channelId, threadId = null, postId = null, caller, reply, inner, heard, heardTo, reaction, nextAction }) => mutate((data) => {
       if (inner?.wakeKeys?.length) {
         const queued = data.items.find(item => item.sessionId === sessionId &&
           inner.wakeKeys.every(key => item.inner?.wakeKeys?.includes(key)));
         if (queued) return clone(queued);
       }
       const at = now();
-      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(heard && heardTo ? { heardTo } : {}), ...(reaction ? { reaction } : {}), status: 'pending', at, updatedAt: at };
+      const item = { id: newId('inbox', at), sessionId, botId, channelId, threadId, postId, ...(caller ? { caller } : {}), ...(reply ? { reply } : {}), ...(inner ? { inner } : {}), ...(heard ? { heard: true } : {}), ...(heard && heardTo ? { heardTo } : {}), ...(reaction ? { reaction } : {}), ...(nextAction ? { nextAction: true } : {}), status: 'pending', at, updatedAt: at };
       data.items.push(item);
       return clone(item);
     }),
