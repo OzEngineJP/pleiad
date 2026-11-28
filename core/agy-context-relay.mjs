@@ -21,9 +21,8 @@
 // 受け取った JSON-RPC をそのまま Pleiad へ POST し、返事を stdout へ書く。env が無ければ（利用者が手で
 // このエージェントを選んだなど）ツールを持たない MCP として振る舞う。
 import readline from 'node:readline';
-import { agentT } from './i18n.mjs';
 
-// computer-delivery.mjs の AGY_TOOL_PREFIX と同じ（中継は i18n 以外を読み込まずに軽く起こす）
+// computer-delivery.mjs の AGY_TOOL_PREFIX と同じ（中継は正常系で i18n を含め他モジュールを読み込まずに軽く起こす）
 const TOOL_PREFIX = 'ply_computer_';
 // core/ops/surfaces/mcp.mjs の ply_control のツール名の接頭辞（同上、軽く起こすため読み込まない）。agy はツールの定義をサーバー名の階層なしで書くので、
 // search_sessions のような一般的な名前は他のサーバーと衝突する。tools/list の名前に付け、呼び出しでは外して Pleiad へ渡す
@@ -57,6 +56,14 @@ const find = kind => live.find(up => up.kind === kind);
 
 const write = message => process.stdout.write(JSON.stringify(message) + '\n');
 const fail = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } });
+
+// エラー文言が必要になったときだけ i18n.mjs（全ロケール JSON の読み込み）を遅延ロードしてキャッシュする。
+// 名前を agentT にそろえ、tests/lint-i18n.mjs がキーを静的に検査できるように保つ
+let translate;
+async function agentT(lng, key, vars) {
+  translate ??= import('./i18n.mjs').then(m => m.agentT);
+  return (await translate)(lng, key, vars);
+}
 
 /** ply_computer の名前の付け外し。tools/list の名前に付け、tools/call の名前から外す */
 const PREFIXES = { computer: TOOL_PREFIX, control: CONTROL_PREFIX };
@@ -98,8 +105,8 @@ async function connect(up, message) {
 async function post(up, message) {
   const response = await connect(up, message);
   if (message.id === undefined) { await response.body?.cancel().catch(() => {}); return null; }
-  if (response.status === 401) return { error: [-32001, agentT(locale, 'relay.inactive')] };
-  if (!response.ok) return { error: [-32603, agentT(locale, 'relay.unreachableStatus', { status: response.status })] };
+  if (response.status === 401) return { error: [-32001, await agentT(locale, 'relay.inactive')] };
+  if (!response.ok) return { error: [-32603, await agentT(locale, 'relay.unreachableStatus', { status: response.status })] };
   return { body: incoming(up, message.method, await response.json()) };
 }
 
@@ -145,7 +152,11 @@ function local(message) {
   return fail(message.id, -32601, 'Method not found');
 }
 
-const onError = message => error => fail(message.id, -32603, agentT(locale, 'relay.unreachable', { error: error?.message ?? error }));
+const onError = message => async error => {
+  const detail = error?.message ?? error;
+  const text = await agentT(locale, 'relay.unreachable', { error: detail }).catch(() => `Cannot reach Pleiad context: ${detail}`);
+  fail(message.id, -32603, text);
+};
 
 for await (const line of readline.createInterface({ input: process.stdin })) {
   let message;
