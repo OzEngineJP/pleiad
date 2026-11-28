@@ -39,6 +39,8 @@
 .mp-step b { color:var(--ink); }
 .mp-presets { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; margin-top:6px; }
 .mp-preset { display:block; text-align:left; padding:8px 12px; border-radius:var(--r-m); background:transparent; color:var(--ink); cursor:pointer; }
+.chatgpt-sign-in { margin:8px 0 4px; min-height:40px; border:1px solid #767676; border-radius:8px; background:#fff; color:#111; }
+.chatgpt-sign-in:hover { background:#eee; color:#111; }
 .mp-preset:hover { background:var(--surface-2); }
 .mp-preset:disabled { color:var(--ink-weak); cursor:default; background:transparent; }
 .mp-preset[aria-pressed="true"] { background:var(--surface-paper); box-shadow:0 4px 14px var(--shadow); }
@@ -441,7 +443,9 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .conn-panel .conn-add>.mp-link{min-height:var(--hit)}
 .conn-kind-h{margin:10px 0 4px;font-size:var(--fs-s);color:var(--ink-weak)}
 .conn-kinds .mp-preset{background:var(--surface-1);min-height:var(--hit)}
-.conn-kinds .mp-preset:hover{background:var(--surface-sel)}
+.conn-kinds .chatgpt-sign-in { margin:8px 0 4px; min-height:40px; border:1px solid #767676; border-radius:8px; background:#fff; color:#111; }
+.chatgpt-sign-in:hover { background:#eee; color:#111; }
+.mp-preset:hover{background:var(--surface-sel)}
 .conn-kinds .mp-preset>span{font-weight:600}
 .conn-kinds .mp-preset small{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 .conn-panel .mp-state{margin:10px 0 0}

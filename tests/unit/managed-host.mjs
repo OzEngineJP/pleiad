@@ -56,6 +56,15 @@ export default async function (t) {
     t.ok('印の無い PC は従来どおり指定されたバックエンドで会話を作れる',
       (await pcWs.cmd('backends')).map(b => b.id).join() === 'fake'
       && Boolean((await pcWs.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId));
+    const endpoints = await cmd('compatEndpoints', { agent: 'pleiad-agent' });
+    t.ok('管理下ホストでは ChatGPT プランの接続先が出ない',
+      endpoints.endpoints.every(e => e.kind !== 'chatgpt-plan'));
+    const chatGptLogin = await cmd('chatGptConnection', { action: 'login' }).then(() => null, error => error);
+    t.ok('管理下ホストで ChatGPT のログインを直接呼んでも拒否する', chatGptLogin?.code === 'host_only', chatGptLogin?.message);
+    const chatGptRun = await cmd('runTurn', {
+      backend: 'pleiad-agent', cwd: ROOT, endpoint: 'chatgpt-' + 'a'.repeat(32), prompt: 'must not run',
+    }).then(() => null, error => error);
+    t.ok('管理下ホストで保存済みの ChatGPT プランを指定しても実行を拒否する', Boolean(chatGptRun), chatGptRun?.message);
     const made = await cmd('newSession', { backend: 'pleiad-agent', cwd: ROOT });
     t.ok('管理下ホストは Pleiad Agent で会話を作れる', Boolean(made.sessionId));
     await denied('起動後に環境変数を消しても会話の作成を拒む', cmd('newSession', { backend: 'fake', cwd: ROOT }));

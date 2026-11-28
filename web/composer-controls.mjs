@@ -836,7 +836,14 @@ function compatModelView(ctx) {
   };
   list();
   const placeholder = main ? t("composer.model.searchMain", { model: compatModelLabel(main).text }) : t("composer.model.search");
-  return [searchBox(ctx, { placeholder, list, commit: (typed) => commit(resolveTyped(cands, typed)) }), box];
+  const controls = [searchBox(ctx, { placeholder, list, commit: (typed) => commit(resolveTyped(cands, typed)) }), box];
+  if (ep.row.kind === 'chatgpt-plan') {
+    const usage = el('a', 'btn mp-link', t('chatgpt.manageUsage'));
+    usage.href = 'https://chatgpt.com/settings/usage';
+    usage.target = '_blank'; usage.rel = 'noopener noreferrer';
+    controls.unshift(pnote(t(ep.row.limited ? 'chatgpt.limitTurn' : 'chatgpt.usingPlan')), usage);
+  }
+  return controls;
 }
 
 /**

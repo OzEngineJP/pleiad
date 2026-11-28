@@ -58,7 +58,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
   // ---------------------------------------------------------------- 一覧（互換のカードだけ。公式・見出し・［＋ 追加］は接続先の一覧の面が持つ。ADR 0359）
   // 1 枚 = 名前（· 新しい会話の既定）・「種類 · ホスト · 確認」の 1 行 |［接続を確認］（確かめていない・失敗のときだけ）［既定にする］［編集］［削除］
   function listCards() {
-    return endpoints.filter(x => x.agent === agent).map((e) => {
+    return endpoints.filter(x => x.agent === agent && x.kind !== 'chatgpt-plan').map((e) => {
       const asking = confirming === e.id, c = checkText(e);
       const unchecked = !e.lastCheck || !e.lastCheck.ok || checking === e.id;
       return connCard({

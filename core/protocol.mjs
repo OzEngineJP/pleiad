@@ -62,6 +62,7 @@ export const COMMANDS = new Set([
   'compatEndpointSave',     // { input, receipt, id? } -> { id }。確認の受領証が今の接続情報と合うときだけ保存する
   'compatEndpointRecheck',  // { id } -> { ok, lines?, error? }。保存済みを確かめ直して結果を記録する
   'compatEndpointDelete',   // { id } -> 一覧。キーも消す。選んでいる会話は次の送信の前に選び直しを求める
+  'chatGptConnection',
   'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   // リモート（ホスト側。core/remote/connector.mjs、docs/remote.md §6.1）。どの画面からも触れる（全権限）。秘密・トークンは返さない
   // スマホ・この PC への通知（core/notify、ADR 0086）。presence は各画面の「いま見ている会話」、notifyRegister は中継越しのスマホの通知鍵と設定の登録

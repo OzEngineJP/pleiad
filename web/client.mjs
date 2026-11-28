@@ -3620,6 +3620,10 @@ function onEvent(ev, replay = false) {
       return mainView.apply(ev, replay);
     case 'modelSwitch':
     case "turnResult":
+      if (!replay && ev.outcome === 'error' && ev.sessionId === state.current && state.endpoint?.startsWith('chatgpt-')) {
+        compatEndpoints.invalidate(); connAsked.delete('pleiad-agent');
+        syncTopbar().catch(() => {}); renderAuth();
+      }
       trackSwitch(ev);
       return mainView.apply(ev, replay);
     case "sessionsChanged":
@@ -4102,9 +4106,90 @@ let connPrefsSeen = '';
 
 /** 頭の行の数を出すために一覧（アカウント・互換）を取りに行ったエージェント（変わったという便りで空にする） */
 const connAsked = new Set();
+const chatGptAvailable = b => b.id === 'pleiad-agent' && !b.managedConnection && !window.plyRemote;
+let chatGptStatus = {};
+let chatGptAction = '';
+let chatGptError = '';
+let chatGptLogout = '';
+
+async function updateChatGpt(action, args) {
+  if (action !== 'status' && action !== 'cancel' && chatGptAction) return;
+  if (action !== 'status' && action !== 'cancel') {
+    chatGptAction = action;
+    chatGptError = '';
+    renderAuth();
+  }
+  try {
+    const status = await cmd('chatGptConnection', { action, ...args }, { timeoutMs: action === 'login' ? 1220000 : 60000 });
+    if (action === 'status') {
+      chatGptStatus = { ...chatGptStatus, ...status };
+    } else {
+      chatGptStatus = status;
+    }
+    if (action !== 'status') compatEndpoints.invalidate();
+  } catch (error) {
+    if (action !== 'status') chatGptError = error.message;
+  } finally {
+    if (action === chatGptAction) chatGptAction = '';
+    repaintConn();
+    if (action !== 'status') syncTopbar().catch(() => {});
+  }
+}
+
+function chatGptCards(b) {
+  const cards = [];
+  if (chatGptStatus.legacy) cards.push(el('p', 'mp-note mp-warn', t('chatgpt.legacy')));
+  if (chatGptError || chatGptStatus.note || chatGptStatus.firstSignIn) {
+    const message = chatGptError || (chatGptStatus.note === 'chatgpt.revokeUnconfirmed' ? t('chatgpt.revokeUnconfirmed')
+      : chatGptStatus.note ? t('chatgpt.refreshRequired') : t('chatgpt.firstSignIn'));
+    const notice = el('p', 'mp-note', message);
+    notice.setAttribute('role', 'status');
+    cards.push(notice);
+  }
+  if (chatGptAction === 'login' || chatGptStatus.pending) {
+    cards.push(connCard({ name: 'ChatGPT', status: t('chatgpt.pending'), actions: [
+      { label: t('conn.cancel'), onClick: () => updateChatGpt('cancel') },
+    ] }));
+  }
+  for (const account of chatGptStatus.accounts ?? []) {
+    const { id, endpointId, connected, planEnabled, limited, models } = account;
+    const busy = Boolean(chatGptAction || chatGptStatus.pending);
+    const isDefault = connIsDefault(b.id, 'endpoint', endpointId);
+    const confirming = chatGptLogout === id;
+    const usage = el('a', 'btn mp-link', t('chatgpt.manageUsage'));
+    usage.href = 'https://chatgpt.com/settings/usage';
+    usage.target = '_blank'; usage.rel = 'noopener noreferrer';
+    const status = !connected ? t('conn.signedOut')
+      : limited ? t('chatgpt.limitTurn')
+      : !planEnabled ? t('chatgpt.consentRequired')
+      : models.length ? t('chatgpt.usingPlan') : t('chatgpt.refreshRequired');
+    cards.push(connCard({
+      name: account.email ? 'ChatGPT · ' + account.email : 'ChatGPT',
+      status, isDefault, confirming, warn: !connected || !planEnabled || limited || !models.length,
+      actions: confirming ? [] : [
+        !connected && { label: t('chatgpt.signIn'), disabled: busy, onClick: () => updateChatGpt('login', { id }) },
+        connected && !planEnabled && { label: t('chatgpt.enablePlan'), disabled: busy, onClick: () => updateChatGpt('login', { id, consent: true }) },
+        connected && planEnabled && !limited && { label: t('chatgpt.refreshModels'), disabled: busy, onClick: () => updateChatGpt('models', { id }) },
+        limited && { label: t('chatgpt.resume'), disabled: busy, onClick: () => updateChatGpt('resume', { id }) },
+        connected && planEnabled && !limited && models.length && !isDefault && {
+          label: t('conn.makeDefault'), disabled: busy, onClick: () => setConnDefault(b.id, { endpoint: endpointId }),
+        },
+        connected && { label: t('conn.logout'), disabled: busy, onClick: () => { chatGptLogout = id; renderAuth(); } },
+      ],
+      extra: [
+        connected && !confirming && usage,
+        confirming && connConfirm({ text: t('chatgpt.logoutConfirm'), yesLabel: t('conn.logout'),
+          onNo: () => { chatGptLogout = ''; renderAuth(); },
+          onYes: () => { chatGptLogout = ''; void updateChatGpt('logout', { id }); } }),
+      ],
+    }));
+  }
+  return cards;
+}
 function askConnLists(b) {
   if (connAsked.has(b.id)) return;
   connAsked.add(b.id);
+  if (chatGptAvailable(b)) void updateChatGpt('status');
   Promise.all([b.capabilities?.accounts ? loadAccounts(b.id) : null, b.capabilities?.compatEndpoints ? compatEndpoints.load().catch(() => []) : null])
     .then(() => repaintConn()).catch(() => {});
 }
@@ -4245,6 +4330,13 @@ function connAddArea(b) {
     stage.append(el('div', 'conn-kind-h', label), g);
   };
   if (kind) group(t('conn.kindOfficial'), [preset(t('conn.officialPreset'), t('conn.officialHint', { agent: b.label }), official, 'official')]);
+  if (chatGptAvailable(b)) {
+    const button = el('button', 'btn chatgpt-sign-in', t('chatgpt.signIn'));
+    button.type = 'button'; button.setAttribute('data-oai-siwc-button', '');
+    button.disabled = Boolean(chatGptAction || chatGptStatus.pending);
+    button.onclick = () => { connAddOpen = ''; void updateChatGpt('login'); };
+    stage.append(button, el('p', 'mp-note', t('chatgpt.hint')));
+  }
   if (compat) {
     const defaultKind = KIND[b.id];
     const presets = PRESETS[b.id] ?? [];
@@ -4265,6 +4357,7 @@ function connPanel(b, st, { accounts, endpoints }) {
   // 環境変数の API キーは、どの接続先を選んでもそちらが使われる（事故になるので、そのときだけ 1 行）
   if (b.capabilities?.accounts === 'token' && claudeAccounts.envApiKey()) p.append(el('p', 'mp-note mp-warn conn-env', t('conn.envKey')));
   p.append(cliLoginCard(b, st));
+  if (chatGptAvailable(b)) p.append(...chatGptCards(b));
   if (accounts) p.append(connSection('accounts'));
   if (endpoints) p.append(connSection('endpoints'));
   if (accounts || endpoints) p.append(connAddArea(b));
@@ -5310,6 +5403,7 @@ async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible =
   state.endpointShown = visible && supported;
   const chosen = list.find((e) => e.id === value);
   const warning = !value ? "" : !chosen ? t("chat.endpoint.deletedWarning")
+    : chosen.limited ? t('chatgpt.limitTurn')
     : chosen.ready === false ? t("chat.endpoint.failedWarning", { name: chosen.name }) : "";
   state.endpoint = value;
   paintConnWarning("endpoint", warning);
@@ -5323,7 +5417,7 @@ function endpointView(bid) {
 function endpointViewOf(bid, selected) {
   const list = compatEndpoints.list(bid);
   const row = list.find((e) => e.id === selected) ?? null;
-  const where = (e) => `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}`;
+  const where = (e) => e.kind === 'chatgpt-plan' ? t('chatgpt.usingPlan') : `${KIND_LABEL[e.kind]} · ${e.baseUrl.replace(/^https?:\/\//, "")}`;
   return {
     selected, row, lost: lostText(bid),
     roleNames: bid === "claude" ? CLAUDE_ROLES.map((r) => [r.key, r.short]) : [],

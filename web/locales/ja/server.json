@@ -1,4 +1,13 @@
 {
+  "chatgpt": {
+    "limitTurn": "ChatGPT プランの利用上限に達しました。ChatGPT で利用状況を確認してから再開してください。",
+    "refreshRequired": "接続設定で ChatGPT のモデル一覧を更新してください。",
+    "localOnly": "ChatGPT でのログインは、ご自身の PC で利用できます。",
+    "foregroundOnly": "ChatGPT プランは、ご自身の PC で直接操作する会話で利用できます。",
+    "signInRequired": "接続設定で ChatGPT にログインし、プランの利用を有効にしてください。",
+    "pending": "ブラウザーでログインを完了してください。",
+    "actionInvalid": "ChatGPT 接続の操作が無効です。"
+  },
   "acp": {
     "errors": {
       "usageExhausted": "{{agent}} から利用残高または利用枠が不足しているとの応答がありました。現在の使用状況を確認し、時間を置いてから再送してください。",

@@ -347,7 +347,7 @@ export async function checkEndpoint({ agent, preset, baseUrl, authMode, key, pro
  * @param {Function} [o.lookup]  名前解決（テストで差し替える）
  * @param {ReturnType<import('./api-keys.mjs').createApiKeys>|null} [o.apiKeys]  API キーの置き場。無ければ（または移行が済むまで）、接続先ごとの古い置き場にキーを持つ
  */
-export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchImpl = fetch, lookup, now = Date.now, managed = false } = {}) {
+export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchImpl = fetch, lookup, now = Date.now, managed = false, chatGpt = null } = {}) {
   const file = path.join(dataDir, 'compat-endpoints.json');
   const receipts = new Map();
   let queue = Promise.resolve();
@@ -449,14 +449,18 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     return { agent, preset, baseUrl, authMode, key, keySource, existing, refs };
   }
 
+  const chatGptId = id => Boolean(chatGpt && typeof id === 'string' && /^chatgpt-[0-9a-f]{32}$/.test(id));
+  const chatGptRows = agent => chatGpt && (!agent || agent === 'pleiad-agent') ? chatGpt.list() : [];
+
   return {
     file,
     async list(agent) {
       if (managed) return { endpoints: [], defaults: {}, storage: null };
       const [data, keys, storage, refs] = await Promise.all([read(), secrets.keys(SECRET_PREFIX).catch(() => []), secrets.status().catch(() => null), viaRefs()]);
       const stored = new Set(keys);
+      const chatGptEndpoints = (await chatGptRows(agent)).map(e => ({ ...e, isDefault: data.defaults[e.agent] === e.id }));
       return {
-        endpoints: data.endpoints.filter(e => !agent || e.agent === agent).map(e => row(e, stored, data.defaults, refs)),
+        endpoints: [...data.endpoints.filter(e => !agent || e.agent === agent).map(e => row(e, stored, data.defaults, refs)), ...chatGptEndpoints],
         defaults: { ...data.defaults },
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
       };
@@ -464,6 +468,10 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     async get(id) {
       if (managed) return null;
       const data = await read();
+      if (chatGptId(id)) {
+        const e = (await chatGptRows()).find(row => row.id === id);
+        return e ? { ...e, isDefault: data.defaults[e.agent] === id } : null;
+      }
       const e = data.endpoints.find(x => x.id === id);
       if (!e) return null;
       const stored = new Set(await secrets.keys(SECRET_PREFIX).catch(() => []));
@@ -515,6 +523,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     },
     async has(id, agent) {
       if (managed) return false;
+      if (chatGptId(id)) return (await chatGptRows(agent)).some(row => row.id === id);
       return (await read()).endpoints.some(e => e.id === id && (!agent || e.agent === agent));
     },
     /**
@@ -659,8 +668,9 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       }
       if (!COMPAT_AGENTS.includes(agent)) throw new Error(t('compat.store.badAgent'));
       const target = String(id ?? '');
+      const chatGptTarget = chatGptId(target) && (await chatGptRows(agent)).some(e => e.id === target && e.ready);
       await update(data => {
-        if (target && !data.endpoints.some(e => e.id === target && e.agent === agent)) throw new Error(t('compat.store.notRegistered'));
+        if (target && !chatGptTarget && !data.endpoints.some(e => e.id === target && e.agent === agent)) throw new Error(t('compat.store.notRegistered'));
         data.defaults[agent] = target;
       });
     },
@@ -670,6 +680,7 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       const data = await read().catch(() => null);
       if (!data) return '';
       const id = data.defaults[agent] ?? '';
+      if (chatGptId(id) && agent === 'pleiad-agent') return id;
       return id && data.endpoints.some(e => e.id === id && e.agent === agent) ? id : '';
     },
     /**
@@ -679,6 +690,10 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
     async resolve(id, agent) {
       if (!id) return null;
       if (managed) throw new EndpointError(t('compat.resolve.deleted'), 'deleted');
+      if (chatGptId(id)) {
+        if (agent && agent !== 'pleiad-agent') throw new EndpointError(t('compat.resolve.deleted'), 'agent');
+        return chatGpt.resolve(id);
+      }
       const data = await read();
       const e = data.endpoints.find(x => x.id === id);
       if (!e) throw new EndpointError(t('compat.resolve.deleted'), 'deleted');
