@@ -218,6 +218,8 @@ export default async function (t) {
     const grant = await waitForCard(alwaysSession, 'tool', grantMark);
     await client.cmd('resolvePermission', { id: grant.id, allow: true, always: true });
     await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === alwaysSession, { from: grantMark });
+    t.ok('常に許可を選んだターンで、既存のファイルを上書きできる',
+      await fs.readFile(filePath, 'utf8') === 'proposed text');
     await fs.writeFile(filePath, 'before restarting');
     await restart();
     const alwaysMark = client.mark();
