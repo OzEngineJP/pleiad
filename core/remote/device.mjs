@@ -30,6 +30,11 @@ import { t } from '../i18n.mjs';
 const HOST_ID = /^[a-z2-7]{26}$/;
 /** AI の線だけ: ホストが居ない（host-offline）間の張り直しの上限を 5 分に延ばす。張り直しのたびに中継の券を Plus の api へ取り直すので、オフラインのままのホストへの取り直しの頻度を下げる */
 const AGENT_LINK_OFFLINE_MAX_MS = 300_000;
+/**
+ * AI の線だけ: 券の 503（Plus が止まっている → paused）と、一時的なこともある 404・403 host_removed（→ removed）は止めずに待って張り直す
+ * （上限は同じ 5 分。ホスト側の plus-link と同じ扱い）。窓の線は人が「再試行」を押す前提なので今まで通り止める
+ */
+const AGENT_LINK_RETRY_STATES = Object.freeze(['paused', 'removed']);
 const secretKeyOf = (hostId, via = 'own') => via === 'plus' ? `host-plus:${hostId}` : `host:${hostId}`;
 /** 取り消された後に Plus で申し込む新しい鍵の置き場（許可されるまで同じ鍵を使う） */
 const pendingKeyOf = hostId => `host-plus-pending:${hostId}`;
@@ -431,7 +436,11 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const rec = pickHostRecord(await store.hosts(), hostId, { usable: agentUsable });
       const via = rec?.via ?? 'own';
       const cur = agents.get(hostId);
-      if (cur && rec && cur.via === via) return cur.agent;
+      if (cur && rec && cur.via === via) {
+        // 止まった線（取り消し以外の「張り直さない」状態）は使い回さず張り直す。hosts・refresh・resync のたびにここを通る
+        if (!cur.link.running) cur.link.retryNow();
+        return cur.agent;
+      }
       if (cur) await agentClose(hostId);
       if (!rec) return null;
       const creds = await store.credentials(hostId, via);
@@ -440,13 +449,13 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const auth = via === 'plus' ? plusAuthFor(hostId) ?? {} : {};
       const link = new DeviceLink({ creds: { ...creds, via }, keyPair, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log, via,
         getIdToken: auth.getIdToken ?? null, getTicket: auth.getTicket ?? null, onReadmit: auth.onReadmit ?? null,
-        backoff: { offlineMaxMs: AGENT_LINK_OFFLINE_MAX_MS, ...proxyOptions.backoff },
+        backoff: { offlineMaxMs: AGENT_LINK_OFFLINE_MAX_MS, ...proxyOptions.backoff }, retryStates: AGENT_LINK_RETRY_STATES,
         ...(proxyOptions.connectTimeoutMs ? { connectTimeoutMs: proxyOptions.connectTimeoutMs } : {}) });
       const agent = new AgentLink({ link, ...(proxyOptions.agentRequestTimeoutMs ? { requestTimeoutMs: proxyOptions.agentRequestTimeoutMs } : {}) });
       const logged = new Set();
       let lastState;
       let suppressed = 0;
-      // 再試行で状態が行き来しても、復帰するまでは同じ状態・許可・理由を繰り返し記録しない。
+      // 再試行で状態が行き来しても、復帰するまでは同じ状態・許可・理由を繰り返し記録しない（線の状態と retryAt は行に添えるだけで鍵に入れない）。
       // エラー本文・中継の理由文・ホストの表示名は記録しない。
       const report = ({ state, allowed }, reason) => {
         let summary = '';
@@ -459,18 +468,21 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
         const key = `state=${state} allowed=${allowed} reason=${reason}`;
         if (logged.has(key)) { suppressed++; return; }
         logged.add(key);
-        logAgentState(`remote agent host=${HOST_ID.test(hostId) ? hostId : '[invalid]'} via=${via === 'plus' ? 'plus' : 'own'} ${key}${summary}`);
+        const retryAt = link.status.retryAt;
+        logAgentState(`remote agent host=${HOST_ID.test(hostId) ? hostId : '[invalid]'} via=${via === 'plus' ? 'plus' : 'own'} ${key} link=${link.state}${retryAt ? ` retryAt=${retryAt}` : ''}${summary}`);
       };
       link.on('status', s => {
         if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, reapproveAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }, via).catch(() => {});
         if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }, via).catch(() => {});
         if (s.state === 'reapprove') store.updateHost(hostId, { reapproveAt: new Date().toISOString() }, via).catch(() => {});
       });
+      const entry = { via, link, agent, report, agentSince: new Date().toISOString() };
       agent.on('state', (st, reason) => {
         if (reason) report(st, reason);
+        entry.agentSince = new Date().toISOString();
         events.emit('agent-state', { hostId, ...st });
       });
-      agents.set(hostId, { via, link, agent, report });
+      agents.set(hostId, entry);
       agent.start();
       link.on('status', s => {
         if (s.diagnostic) report(agent.status, s.diagnostic);
@@ -500,6 +512,24 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     const ids = new Set(hosts.map(h => h.hostId));
     for (const id of [...agents.keys()]) if (!ids.has(id)) await agentClose(id);
     for (const id of ids) await agentOpen(id).catch(e => log(`remote agent: ${e.message}`));
+  }
+
+  /** 窓の「再試行」と同じ: そのホストの AI の線を今すぐ張り直す（止まっていればつなぎ始め、待っていれば待たずに）。線が無ければ何もしない */
+  function agentRetry(hostId) {
+    agents.get(hostId)?.link.retryNow();
+  }
+
+  /** 張ってある AI の線の状態（ホストごと）。経路・線（link）の状態・AI の口（agent）の状態・最後に変わった時刻・次の張り直しの時刻 */
+  function agentLines() {
+    return [...agents].map(([hostId, e]) => {
+      const ls = e.link.status;
+      const as = e.agent.status;
+      return {
+        hostId, via: e.via,
+        link: { state: ls.state, since: ls.since ?? null, retryAt: ls.retryAt ?? null, running: e.link.running },
+        agent: { state: as.state, allowed: as.allowed === true, since: e.agentSince },
+      };
+    });
   }
 
   /** 資格を作り直したホストの、開いているプロキシと線（どちらも同じ via のもの）を新しい資格と鍵で張り直す */
@@ -598,6 +628,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     },
     async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
     agentSync,
+    agentRetry,
+    agentLines,
     pickHostRecord,
     /** 張ってある線（無ければ null） */
     agent: hostId => agents.get(hostId)?.agent ?? null,

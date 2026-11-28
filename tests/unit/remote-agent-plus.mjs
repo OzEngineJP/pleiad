@@ -174,6 +174,60 @@ export default async function (t) {
     t.ok('つながると plus の記録の最後の接続が書かれる（own の記録は作らない）', (await dev.store.host(hostId, 'own')) === null);
     await dev.closeAll();
 
+    // ---- 券の発行が 503（Plus が止まっている）で断られても、AI の線は止まらずに待って張り直し、Plus が戻れば設定操作なしで ready に戻る
+    let ticketFail = { status: 503, code: 'unavailable' };
+    let ticketCalls = 0;
+    const logs = [];
+    const stateLogs = [];
+    const flakyAuth = () => ({
+      getIdToken: async () => plus.issueIdToken(UID),
+      // 戻った後は券の無い前の版の api と同じく null を返し、ID トークンでつなぐ
+      getTicket: async () => { ticketCalls++; if (ticketFail) throw Object.assign(new Error('BODY-TEXT-MUST-NOT-BE-LOGGED'), ticketFail); return null; },
+    });
+    const flaky = makeDevice({ plusAuth: flakyAuth, log: line => logs.push(line), logAgentState: line => stateLogs.push(line) });
+    await flaky.agentSync();
+    const fa = flaky.agent(hostId);
+    const retried = await until(() => ticketCalls >= 2, 5000, '券の 503 の後の取り直し').then(() => true, () => false);
+    t.ok('券の 503 の後も AI の線は止まらず、張り直しを待つ（running のまま retryAt が付く）', retried && fa?.link.running === true,
+      JSON.stringify({ ticketCalls, link: fa?.link.status, running: fa?.link.running }));
+    const ticketLog = logs.find(l => l.includes('ticket failed'));
+    t.ok('券の失敗の記録は状態・status・code だけ（本文を出さない）',
+      Boolean(ticketLog) && /state=paused/.test(ticketLog) && /status=503/.test(ticketLog) && /code=unavailable/.test(ticketLog) && !logs.some(l => l.includes('BODY-TEXT')),
+      JSON.stringify(logs.slice(0, 3)));
+    t.ok('線の状態の記録に link の状態と retryAt が付く', stateLogs.some(l => /link=paused/.test(l) && /retryAt=\d{4}-/.test(l)), JSON.stringify(stateLogs.slice(0, 4)));
+    ticketFail = null;
+    const recovered = await until(() => fa?.status?.state === 'ready', 15_000, 'Plus が戻った後の ready').then(() => true, () => false);
+    t.ok('Plus が戻れば、設定操作なしで AI の線が ready に戻る', recovered, JSON.stringify({ agent: fa?.status, link: fa?.link.status }));
+
+    // ---- 止まった線（本当に止まる状態。403 not_plus → blocked）は、agentSync（hosts・refresh・resync）で張り直される
+    const stopLine = async label => {
+      ticketFail = { status: 403, code: 'not_plus' };
+      fa.link.retryNow(fa.link.creds);   // 資格を渡すと、つながっていても今すぐ張り直す
+      const stopped = await until(() => fa.link.running === false && fa.link.state === 'blocked', 5000, `${label}: 線が止まる`).then(() => true, () => false);
+      ticketFail = null;
+      return stopped;
+    };
+    const stopped1 = await stopLine('agentSync');
+    await flaky.agentSync();
+    const reopened = await until(() => flaky.agent(hostId)?.status?.state === 'ready', 15_000, 'agentSync の後の ready').then(() => true, () => false);
+    t.ok('止まった AI の線は agentSync（hosts・refresh・resync の道）で張り直されて ready に戻る', stopped1 && reopened,
+      JSON.stringify({ stopped1, agent: flaky.agent(hostId)?.status, link: flaky.agent(hostId)?.link.status }));
+
+    // ---- 窓の「再試行」と同じ口（agentRetry）でも、止まった AI の線が張り直される
+    const stopped2 = await stopLine('agentRetry');
+    await flaky.agentRetry?.(hostId);
+    const retriedNow = await until(() => flaky.agent(hostId)?.status?.state === 'ready', 15_000, 'agentRetry の後の ready').then(() => true, () => false);
+    t.ok('agentRetry で止まった AI の線が張り直されて ready に戻る', stopped2 && typeof flaky.agentRetry === 'function' && retriedNow,
+      JSON.stringify({ stopped2, agent: flaky.agent(hostId)?.status, link: flaky.agent(hostId)?.link.status }));
+
+    // ---- 線の状態を読む口（remote.status の delegation に載せるもの）: 経路・link の状態・agent の状態・since・retryAt
+    const ls = flaky.agentLines?.() ?? [];
+    const mine = ls.find(l => l.hostId === hostId);
+    t.ok('agentLines はホストごとに via・link.state・agent.state・since・retryAt を返す',
+      mine?.via === 'plus' && mine.link?.state === 'connected' && mine.agent?.state === 'ready' && typeof mine.link.since === 'string' && 'retryAt' in mine.link,
+      JSON.stringify(ls));
+    await flaky.closeAll();
+
     // ---- 端末のローカルのサーバー（main の身代わり付き）から ply_delegate { host } で任せる
     term = await startServer({
       env: { AGENT_HOST_BACKENDS: 'fake', FAKE_REMOTE_DEVICE_DIR: devDir, FAKE_REMOTE_DEVICE_PLUS_ID_TOKEN: plus.issueIdToken(UID) },
@@ -197,6 +251,14 @@ export default async function (t) {
     const call = invoked.find(c => c.op === 'delegate');
     t.ok('ホストの口に、その端末から delegate の依頼が届く（依頼文と依頼元の会話）',
       call?.deviceId === deviceId && call.args.task === 'echo:VIA_PLUS' && call.requester?.sessionId === sid, JSON.stringify(call ?? null).slice(0, 200));
+
+    // ---- 読む操作 remote.status（画面の remoteStatus と同じ）に、端末の側の AI の線の状態がホストごとに載る
+    const rs = await ct.cmd('remoteStatus');
+    const line = Array.isArray(rs?.agentLines) ? rs.agentLines.find(l => l.hostId === hostId) : null;
+    t.ok('remote.status の agentLines に、そのホストの経路・link.state・agent.state・since・retryAt が載る',
+      line?.via === 'plus' && line.link?.state === 'connected' && line.agent?.state === 'ready' && typeof line.agent.since === 'string'
+      && typeof line.link.since === 'string' && 'retryAt' in line.link && line.name === 'plus-desk',
+      JSON.stringify(rs?.agentLines ?? null).slice(0, 400));
   } finally {
     ct?.close();
     await within(term?.stop() ?? Promise.resolve(), 15_000, '端末のサーバーの停止').catch(e => t.note(e.message));

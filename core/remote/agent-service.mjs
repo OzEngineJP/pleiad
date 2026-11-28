@@ -102,6 +102,10 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
             return post({ type: 'remote-agent', id, ok: true, result });
           } finally { aborts.delete(id); }
         }
+        case 'lines': {
+          // 読むだけ（張り直さない）。remote.status の agentLines（線の経路・状態・最後に変わった時刻・次の張り直し）
+          return post({ type: 'remote-agent', id, ok: true, result: d.agentLines?.() ?? [] });
+        }
         case 'abort': { aborts.get(message.target)?.abort(); return; }
         case 'answer': {
           const agent = d.agent(message.hostId);

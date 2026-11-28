@@ -224,6 +224,8 @@ function createRemoteWindows(deps) {
         cipher: safeStorageCipher({ safeStorage, platform }), app: app.getVersion(), name: os.hostname(), platform: 'desktop',
         // Plus 経由の PC への AI の線（docs/remote.md §4.5）。Plus を使わない設定の間は張らない（窓の一覧も Plus の PC を出さない）
         plusAuth: hostId => (readRemoteSettings(remoteDir).plus?.use !== false ? plusAuthFor(hostId) : null),
+        // 線の記録（券の失敗は状態・status・code だけ。本文・秘密・トークンは出さない。device-link.mjs）
+        log: line => desktopLog?.info(line),
         logAgentState: line => desktopLog?.info(line),
       });
       d.on('status', onStatus);
@@ -572,7 +574,11 @@ function createRemoteWindows(deps) {
     });
     ipcMain.handle('ply:remote-retry', async event => {
       const { hostId } = trust.check(event, ['remote']);
-      (await (await device()).proxy(hostId))?.retryNow();
+      const d = await device();
+      (await d.proxy(hostId))?.retryNow();
+      // 同じホストの AI の線も張り直す（止まっていればつなぎ始め、待っていれば待たずに）。線が無い・経路が替わったなら refresh が張る
+      d.agentRetry?.(hostId);
+      await agentBridge?.refresh();
     });
     ipcMain.on('ply:remote-close', event => { trust.find(event, ['remote'])?.window.close(); });
 
