@@ -19,6 +19,32 @@ async page => {
     apply: !document.querySelector('#applySettings').hidden,
   }));
 
+  // 以前の版が残した予約を、サーバーから受け取った場合を再現する。
+  let clientSocket;
+  let savedReservation;
+  await page.routeWebSocket(/\/ws/, socket => {
+    const server = socket.connectToServer();
+    if (clientSocket) return;
+    clientSocket = socket;
+    const lists = new Set();
+    socket.onMessage(raw => {
+      const msg = JSON.parse(raw);
+      if (msg.command === 'listSessions') lists.add(msg.id);
+      if (msg.command === 'listSessions' && savedReservation) {
+        delete msg.args.since;
+        server.send(JSON.stringify(msg));
+      } else server.send(raw);
+    });
+    server.onMessage(raw => {
+      const msg = JSON.parse(raw);
+      if (msg.kind === 'response' && lists.delete(msg.id) && savedReservation) {
+        const row = (msg.result?.rows ?? msg.result)?.find(s => s.id === savedReservation.sessionId);
+        if (row) row.nextSettings = savedReservation.nextSettings;
+        socket.send(JSON.stringify(msg));
+      } else socket.send(raw);
+    });
+  });
+  await page.reload();
   await page.setViewportSize({ width: 1280, height: 820 });
   await page.locator('#newSession').click();
   await wait(800);
@@ -53,6 +79,20 @@ async page => {
   await page.waitForFunction(() => document.querySelector('#nextSettings').hidden);
   const cancelled = (await ws('listSessions', {})).find((s) => s.id === id);
   check('取り消すと予約が消え、今の設定は変わらない', !cancelled?.nextSettings && cancelled?.effort === 'high', JSON.stringify({ effort: cancelled?.effort, next: cancelled?.nextSettings }));
+
+  const showSavedReservation = nextSettings => {
+    savedReservation = { sessionId: id, nextSettings };
+    clientSocket.send(JSON.stringify({ kind: 'event', event: { type: 'nextSettings', ...savedReservation } }));
+  };
+  const same = { backend: cancelled.backend, model: cancelled.model, effort: cancelled.effort };
+  showSavedReservation({ ...same, effort: 'low', mode: cancelled.mode });
+  await page.waitForFunction(() => /low/.test(document.querySelector('#nextSettingsText').textContent));
+  const sameMode = await page.locator('#nextSettingsText .next-item').allTextContents();
+  showSavedReservation(same);
+  await page.waitForFunction(() => document.querySelector('#nextSettings').hidden, null, { timeout: 2_000 }).catch(() => {});
+  const empty = await band();
+  const sameModeHidden = sameMode.length === 1 && /low/.test(sameMode[0]);
+  check('今と同じ承認モードを項目に出さず、変更項目が 0 件なら帯も［今すぐ変える］も出さない', sameModeHidden && empty.hidden && !empty.apply, JSON.stringify({ sameMode, empty }));
 
   await ws('abort', { sessionId: id });
   return { passed: true, checks };

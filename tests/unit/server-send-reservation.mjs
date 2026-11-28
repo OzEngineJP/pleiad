@@ -6,6 +6,7 @@
 // 送ったターンは予約を会話の値へ効かせる。次の選択が今の値と同じだと予約は作られないので、競合の回はモデルを交互に替える。
 // fake backend・一時のデータ置き場・別ポート（tests/lib/server.mjs）。本物のデータには触れない。
 import crypto from 'node:crypto';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +14,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-send-reservation';
-export const title = '止まっている会話から送った予約: 一致すれば消え、違えば残り、書き込みと重なっても同じ値は残らない';
+export const title = '送信時の設定予約: 一致すれば消え、違えば残り、書き込みと重なっても同じ値は残らない';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -21,9 +22,10 @@ async function withServer(fn) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'agent-host-send-reservation-')));
   const dataDir = path.join(scratch, 'data');
   await fs.mkdir(dataDir, { recursive: true });
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 60_000 });
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 60_000,
+    entry: path.join(ROOT, 'tests/lib/send-reservation-server.mjs'), ipc: true });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
-  try { await fn(c); }
+  try { await fn(c, server.child); }
   finally {
     c?.close?.();
     await server.stop();
@@ -87,7 +89,7 @@ async function stop(c, id, from) {
 }
 
 export default async function (t) {
-  await withServer(async (c) => {
+  await withServer(async (c, child) => {
     const id = await stopped(c);
     await c.cmd('setTurnSettings', { sessionId: id, model: 'fast', effort: 'high' });
     const reserved = await session(c, id);
@@ -150,5 +152,46 @@ export default async function (t) {
     }
     t.ok('重なった選択は、予約として返るか、送信が同じ値を引き取る', armed === 8, `受けた回数 ${armed} / 8${notes.length ? ` ${notes.join(' | ')}` : ''}`);
     t.ok('予約の書き込みと、同じスナップショットの送信が重なっても、走っている間に予約は残らない', stayed === 0, `残った回数 ${stayed} / 8${notes.length ? ` ${notes.join(' | ')}` : ''}`);
+
+    for (const active of [true, false]) {
+      const id = await stopped(c);
+      const from = active ? await sendSlow(c, id, snapshotOf(await session(c, id))) : c.mark();
+      const settings = snapshotOf(await session(c, id), { model: 'fast', effort: 'high' });
+      const armed = once(child, 'message', { signal: AbortSignal.timeout(10_000) });
+      child.send('holdModels');
+      const [armedMessage] = await armed;
+      if (armedMessage !== 'modelsArmed') throw new Error(String(armedMessage));
+      const held = once(child, 'message', { signal: AbortSignal.timeout(10_000) });
+      const writing = c.cmd('setTurnSettings', { sessionId: id, model: settings.model, effort: settings.effort });
+      const [heldMessage] = await held;
+      if (heldMessage !== 'modelsHeld') throw new Error(String(heldMessage));
+
+      const label = active ? '作業中の送信' : '次のターンを始める送信';
+      const eventsFrom = c.mark();
+      const messageId = crypto.randomUUID();
+      await c.cmd('sendMessage', { sessionId: id, messageId, prompt: 'slow', settings });
+      const applied = active
+        ? e => e.type === 'model' && e.sessionId === id && e.model === settings.model
+        : e => e.type === 'running' && (e.turns ?? []).some(turn => turn.sessionId === id);
+      const early = await c.waitFor(applied, { from: eventsFrom, ms: 1_500 }).catch(() => null);
+      child.send('releaseModels');
+      await writing;
+      await c.waitFor(applied, { from: eventsFrom, ms: 20_000 });
+      const row = await session(c, id);
+      t.ok(`${label}は予約を書き終えてから設定を効かせ、予約を消す`, !early && row?.model === settings.model && row?.effort === settings.effort && row?.nextSettings === null,
+        JSON.stringify({ appliedBeforeWrite: Boolean(early), nextSettings: row?.nextSettings }));
+      if (active) {
+        // 途中送信を受けない fake の slow では、設定を効かせても発言は送信待ちに残る。
+        // その間に今の値を選び直しても、予約を作り直さない。
+        const messages = c.since(eventsFrom).filter(e => e.type === 'outbox' && e.sessionId === id).at(-1)?.messages;
+        t.ok('設定が効いた後も発言は送信待ちにある', messages?.some(item => item.id === messageId && item.status === 'queued'));
+        await c.cmd('setTurnSettings', { sessionId: id, model: settings.model, effort: settings.effort });
+        t.ok('設定が効いた送信がまだ待ち列にあっても、同じ設定の予約を作り直さない', (await session(c, id))?.nextSettings === null);
+        await c.cmd('sendMessage', { sessionId: id, messageId: crypto.randomUUID(), prompt: 'slow', settings: { ...settings, model: 'smart' } });
+        await c.cmd('setTurnSettings', { sessionId: id, model: settings.model, effort: settings.effort });
+        t.ok('今とは違う設定を持つ送信が待っていれば、今の値を選び直した予約を残す', (await session(c, id))?.nextSettings?.model === settings.model);
+      }
+      await stop(c, id, from);
+    }
   });
 }

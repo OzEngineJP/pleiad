@@ -5087,6 +5087,7 @@ function paintSettingsNotice() {
   const show = pendingWorktree || Boolean(next) && (isRunningHere() || behind);
   $("nextSettings").hidden = !show;
   if (!show) {
+    $("applySettings").hidden = true;
     $("nextSettingsBehind").hidden = true;
     $("nextSettings").classList.remove("wt-compact");
     paintHandoffNote(s, null);
@@ -5136,12 +5137,21 @@ function paintSettingsNotice() {
     if (switching) item("backend", labelOf(next.backend));
     if (switching || next.model !== (s.model ?? "")) item("model", `${next.model ? (nextEndpoint ? compatModelText(next.model) : state.models[next.model]?.label ?? next.model) : epFallback}${switching && !next.model && fallback === t("chat.model.default") ? t("chat.next.targetDefault") : ""}`);
     if (next.effort !== undefined && next.effort !== (s.effort ?? "")) item("effort", next.effort || t("chat.next.useDefault"));
-    if (next.mode !== undefined) item("mode", state.modes[next.mode]?.label ?? next.mode);
+    if (next.mode !== undefined && next.mode !== s.mode) item("mode", state.modes[next.mode]?.label ?? next.mode);
     if (next.cwd) item("cwd", worktreeNextText(next.cwd) ?? next.cwd);
     // 接続先は 1 項目（互換ならその名前、公式ならアカウントの名前。'' は CLI のログイン。ADR 0359）
     const connChanged = next.endpoint !== undefined && next.endpoint !== (s.compatEndpoint ?? "")
       || !nextEndpoint && next.account !== undefined && next.account !== (s.claudeAccount ?? "");
     if (connChanged) item("endpoint", nextEndpoint ? endpointLabel(nextEndpoint) : accountLabel(next.account ?? s.claudeAccount ?? "", next.backend));
+    if (!items.length) {
+      $("nextSettings").hidden = true;
+      $("applySettings").hidden = true;
+      $("nextSettingsBehind").hidden = true;
+      $("nextSettings").classList.remove("wt-compact");
+      $("nextSettingsText").replaceChildren();
+      paintHandoffNote(s, null);
+      return;
+    }
     // 変えるのが worktree だけのときは、軽い 1 行（「次のターンから適用」＋枝分かれの印の札。ADR 0089）
     const compact = !behind && items.length === 1 && Boolean(next.cwd && worktreeNextText(next.cwd));
     $("nextSettings").classList.toggle("wt-compact", compact);

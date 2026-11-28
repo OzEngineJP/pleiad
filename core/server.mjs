@@ -4910,6 +4910,8 @@ const settingsTraces = new Map();
 const preparingSends = new Set();
 
 async function consumeSendReservation(sessionId, snapshot) {
+  // 適用中に始まった書き込みも、送信と一致する分まで引き取る。
+  await settingsWrites.get(sessionId)?.catch(() => {});
   const consumed = await store.consumeNextSettings(sessionId, next => Object.entries(next).every(([key, value]) => (
     key === 'cwd' && snapshot.cwd ? path.resolve(value) === path.resolve(snapshot.cwd) : value === snapshot[key]
   )));
@@ -4959,7 +4961,7 @@ async function stopTurnForSettings(sessionId, turn, { wait = true } = {}) {
  * 委譲の子は止めると委譲タスクが終わってしまうので、その場で効かないなら次のターンへ回す
  */
 async function applyReservedNow(sessionId, { via = 'button', snapshot } = {}) {
-  if (!snapshot) await settingsWrites.get(sessionId)?.catch?.(() => {});
+  await settingsWrites.get(sessionId)?.catch(() => {});
   const turn = runtime.turns.get(sessionId);
   const meta = { ...(await store.get(sessionId)) };
   const next = snapshot ?? meta.nextSettings;
@@ -5334,7 +5336,6 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
     let selectedEndpoint = !endpointCapable(target) ? ''
       : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
     if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
-    const endpointChanged = selectedEndpoint !== currentEndpoint;
     const previousBackend = current.nextSettings?.backend ?? source.id;
     // アカウント（'' = ログイン中のアカウント。ADR 0222）。モデルと同じく次のターンから効く。
     // エージェントを替えたとき、今のアカウントが替えた先のものでなければ、替えた先のログイン中のアカウントにする
@@ -5342,7 +5343,6 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
     const carried = current.nextSettings?.account ?? current.claudeAccount ?? '';
     const selectedAccount = account ?? (target.id === previousBackend || !carried || await accountHas(target, carried) ? carried : '');
     if (!cancel && account && !(await accountHas(target, account))) throw new Error(t('settings.accountNotRegistered'));
-    const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
     if (!cancel && !selectedEndpoint && selectedAccount) target = await backendForAccount(target, await accountResolve(target, selectedAccount));
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
     let selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
@@ -5365,11 +5365,25 @@ async function reserveTurnSettings(args, { delegated = false, limitSwitch = fals
       const own = (current.history ?? []).some(h => h?.field === "cwd") ? current.cwd ?? info?.cwd : info?.cwd ?? current.cwd;
       if (own && path.resolve(own) === selectedCwd) selectedCwd = undefined;
     }
+    // 検証の間に送信が設定を効かせることがあるので、保存は直前の会話の値と比べる。
+    const latest = await store.get(sessionId);
+    const latestBackend = latest.backend ?? source.id;
+    const accountChanged = selectedAccount !== (latest.claudeAccount ?? '');
+    const endpointChanged = selectedEndpoint !== (latest.compatEndpoint ?? '');
+    if (selectedCwd && latest.cwd && path.resolve(latest.cwd) === path.resolve(selectedCwd)) selectedCwd = undefined;
     // A pending send can still apply its captured settings. Keep an explicit
-    // selection even when it equals the settings currently applied.
-    const hasCapturedSend = (await store.get(sessionId)).outbox?.some(item => item.args.settings && ['queued', 'sending'].includes(item.status));
-    const preserveChoice = hasCapturedSend && ['backend', 'model', 'effort', 'mode', 'cwd', 'account', 'endpoint'].some(key => explicit[key] !== undefined);
-    const next = cancel || (!preserveChoice && source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
+    // selection if the send can change the current settings. A live change may
+    // already be applied while its message is still queued for delivery.
+    const hasPendingChange = latest.outbox?.some(item => {
+      const snapshot = item.args.settings;
+      return snapshot && item.status === 'queued' && (
+        settingsDiff({ ...latest, backend: latestBackend }, snapshot).length > 0
+        || snapshot.account !== (latest.claudeAccount ?? '') || snapshot.endpoint !== (latest.compatEndpoint ?? '')
+        || snapshot.worktreePending || Boolean(snapshot.cwd && (!latest.cwd || path.resolve(snapshot.cwd) !== path.resolve(latest.cwd)))
+      );
+    });
+    const preserveChoice = hasPendingChange && ['backend', 'model', 'effort', 'mode', 'cwd', 'account', 'endpoint'].some(key => explicit[key] !== undefined);
+    const next = cancel || (!preserveChoice && latestBackend === target.id && (latest.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === latest.mode) && (latest.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
       ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd || preserveChoice && requestedCwd ? { cwd: selectedCwd ?? path.resolve(requestedCwd) } : {}), ...(accountChanged || preserveChoice && account !== undefined ? { account: selectedAccount } : {}), ...(endpointChanged || preserveChoice && endpoint !== undefined ? { endpoint: selectedEndpoint } : {}) };
     await store.setSessionData(sessionId, "nextSettings", next, { durable: true });
     if (current.unsent && pendingWorktree !== current.worktreePending) await store.setSessionData(sessionId, 'worktreePending', pendingWorktree);
@@ -9579,7 +9593,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const { prompt, sessionId = null } = args ?? {};
 
   // 行き先が決まらないターンは始めない。断るのは登録する前。
-  if (!args?.settings) await settingsWrites.get(sessionId);
+  const settingsWrite = settingsWrites.get(sessionId);
+  await (args?.settings ? settingsWrite?.catch(() => {}) : settingsWrite);
   let backend = await pickBackend(sessionId, args?.backend);
   if (!args?.settings) backend = refuseRetired(backend);
   if (hooks.pendingDecision && !backend.getPendingDecision) throw new Error('Agent decision recovery is unavailable');
