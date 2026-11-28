@@ -88,17 +88,53 @@ export default async function (t) {
     const notice = (await client.cmd('loadSession', { sessionId: parent })).messages.find(m => m.internalTaskNotice)?.text ?? '';
     t.ok('完了通知に拒否の件数を載せる（組織の管理ポリシーを例に挙げる）', notice.includes('組織の管理ポリシー') && notice.includes('echo hi'), notice.slice(-600));
 
+    // ---- 空 end_turn（本文なし・ツールなし）: mcpMissing を早まって出さず、次ターンの実応答で 1 度だけ出す
+    const emptyDisabled = await client.runTurn({ prompt: 'empty-turn', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('空 end_turn（本文なし・ツールなし）では管理ポリシーの知らせを早まって出さない', emptyDisabled.outcome === 'ok' && textOf(emptyDisabled) === '', textOf(emptyDisabled));
+    const afterEmptyDisabled = await client.runTurn({ prompt: 'こんにちは', sessionId: emptyDisabled.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    const afterEmptyBody = textOf(afterEmptyDisabled);
+    t.ok('空 end_turn の次の実応答ターンで MCP 未接続なら mcpMissing を出す', afterEmptyDisabled.outcome === 'ok'
+      && afterEmptyBody.startsWith('了解: こんにちは') && afterEmptyBody.includes('「MCP サーバー」') && afterEmptyBody.includes('request-review'), afterEmptyBody);
+    const afterEmptyThird = await client.runTurn({ prompt: 'もう一度', sessionId: emptyDisabled.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('実応答で出した後は次のターンで繰り返さない', afterEmptyThird.outcome === 'ok' && !textOf(afterEmptyThird).includes('Pleiad からの知らせ'), textOf(afterEmptyThird));
+
     client.close(); client = null;
     await host.stop(); host = null;
     await cleanupTestHolder(dataDir);
 
     // ---- 管理ポリシーの無い agy: MCP を起こしたので何も足さない
     dataDir = path.join(tmp, 'data-plain');
-    // 確認が要るか分からない permission_mode（「サンドボックスで続行」のときの実機の値は見ていない）では、モードの知らせを出さない
-    host = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: FAKE_AGY, FAKE_AGY_PERMISSION_MODE: 'proceed-in-sandbox' } });
+    // 確認が要るか分からない permission_mode（「サンドボックスで続行」のときの実機の値は見ていない）では、モードの知らせを出さない。
+    // FAKE_AGY_MCP_ON_TURN=1 で空ターンでは未接続・実応答ターンで接続する挙動を再現する
+    host = await startServer({ dataDir, timeoutMs: 30_000, env: { AGENT_HOST_BACKENDS: 'fake,antigravity', AGENT_HOST_AGY_BIN: FAKE_AGY, FAKE_AGY_PERMISSION_MODE: 'proceed-in-sandbox', FAKE_AGY_MCP_ON_TURN: '1' } });
     client = await open({ ...host, autoAllow: true });
     const plain = await client.runTurn({ prompt: 'こんにちは', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('MCP に接続があり、確認の要ると分かっているモードでなければ、知らせを足さない', plain.outcome === 'ok' && textOf(plain) === '了解: こんにちは', textOf(plain));
+
+    // ---- 空 end_turn の後に次ターンで MCP 接続が到達した場合
+    const emptyConnected = await client.runTurn({ prompt: 'empty-turn', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('MCP 未接続のまま空 end_turn が返っても、この時点では mcpMissing を出さない', emptyConnected.outcome === 'ok' && textOf(emptyConnected) === '', textOf(emptyConnected));
+    const afterEmptyConnected = await client.runTurn({ prompt: 'こんにちは', sessionId: emptyConnected.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('次ターンの実応答で MCP に接続済みなら mcpMissing を出さない', afterEmptyConnected.outcome === 'ok' && textOf(afterEmptyConnected) === '了解: こんにちは', textOf(afterEmptyConnected));
+
+    // ---- ステア合流: 1 回目が空 end_turn で即返却され、ステア実行中に MCP 接続が到達した場合
+    const { sessionId: steerSid } = await client.cmd('newSession', { backend: 'antigravity', cwd });
+    const steerMark = client.mark();
+    await client.cmd('sendMessage', { sessionId: steerSid, messageId: 'agy-steer-1', prompt: 'steer-merge', mode: 'yolo' });
+    await client.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'agy-steer-1', { from: steerMark, ms: 30_000 });
+    await client.cmd('sendMessage', { sessionId: steerSid, messageId: 'agy-steer-2', prompt: '追伸です', mode: 'yolo' });
+    await client.waitFor(e => e.type === 'turnEnd' && e.sessionId === steerSid, { from: steerMark, ms: 60_000 });
+    const steerEvents = client.since(steerMark).filter(e => e.sessionId === steerSid);
+    const steerBody = steerEvents.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    const lastDeltaAt = steerEvents.findLastIndex(e => e.type === 'text.delta');
+    const textEndAt = steerEvents.findIndex(e => e.type === 'text.end');
+    const turnResultAt = steerEvents.findIndex(e => e.type === 'turnResult');
+    t.ok('ステア合流で 1 回目が空 end_turn を返してもステア完了と MCP 接続を待ち、mcpMissing を誤検知しない',
+      steerEvents[turnResultAt]?.outcome === 'ok' && steerBody === '了解: 追伸です' && !steerBody.includes('Pleiad からの知らせ'),
+      JSON.stringify({ outcome: steerEvents[turnResultAt]?.outcome, steerBody }));
+    t.ok('ステア側の text.delta がすべて出た後に text.end が出る',
+      lastDeltaAt >= 0 && textEndAt > lastDeltaAt && turnResultAt > textEndAt,
+      JSON.stringify({ lastDeltaAt, textEndAt, turnResultAt }));
   } finally {
     client?.close();
     await host?.stop();

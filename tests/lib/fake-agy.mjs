@@ -440,7 +440,7 @@ async function runAcp() {
   const attach = (data, mcpServers) => {
     let session = sessions.get(data.sessionId);
     if (!session) {
-      session = { data, tail: Promise.resolve(), epoch: 0, token: null, closed: false, toolSeq: 0, mcpStart: null };
+      session = { data, tail: Promise.resolve(), epoch: 0, token: null, closed: false, toolSeq: 0, mcpStart: null, mcpSpecs: null, promptSeq: 0, mergeWake: null };
       sessions.set(data.sessionId, session);
     }
     // --agent のカスタムエージェント（Skills・MCP を止める会話）は、その frontmatter の mcpServers を使う（session/new の mcpServers は空）
@@ -457,7 +457,10 @@ async function runAcp() {
         }));
       } catch {}
     }
-    if (specs.length && !session.mcpStart && process.env.FAKE_AGY_MCP_DISABLED !== "1") session.mcpStart = connectMcp(specs).catch(() => []);
+    if (specs.length && !session.mcpStart && process.env.FAKE_AGY_MCP_DISABLED !== "1") {
+      if (process.env.FAKE_AGY_MCP_ON_TURN === "1") session.mcpSpecs = specs;
+      else session.mcpStart = connectMcp(specs).catch(() => []);
+    }
     return session;
   };
 
@@ -519,7 +522,7 @@ async function runAcp() {
   };
 
   // ---- 1 ターン ----
-  async function turn(session, wire, ctx) {
+  async function turn(session, wire, ctx, seq = 0) {
     const { data } = session;
     const id = data.sessionId;
     const token = { cancelled: false, wake: null };
@@ -636,6 +639,20 @@ async function runAcp() {
         return finish();
       }
 
+      // 本文もツールも出さない空の end_turn（ステア合流で 1 通目が空返却される挙動などの再現）
+      if (text === "empty-turn") return finish();
+      if (text === "steer-merge") {
+        if (session.promptSeq <= seq) {
+          await new Promise((resolve) => {
+            if (token.cancelled) return resolve();
+            session.mergeWake = resolve;
+            token.wake = resolve;
+          });
+          session.mergeWake = null;
+        }
+        return finish();
+      }
+
       // 何も出さずに中断まで待つターン（quiet）と、本文を 1 つ出して中断まで待つターン（slow）
       if (text.startsWith("quiet")) { await hold(token); return finish(); }
       if (text.startsWith("slow") || text.includes("[slow]")) { say("待つ"); await hold(token); return finish(); }
@@ -712,8 +729,11 @@ async function runAcp() {
     };
 
     try {
-      // 本物は MCP を最初のプロンプトで待つ。返事を待たない MCP で止まらないよう上限を置く
-      if (session.mcpStart) await Promise.race([session.mcpStart, new Promise((r) => setTimeout(r, 10_000).unref())]);
+      // 本物は MCP を最初のプロンプトで待つ。返事を待たない MCP で止まらないよう上限を置く。
+      // empty-turn / steer-merge は MCP 接続前に空 end_turn が返る再現のため、このターンでは接続しない
+      const skipMcp = text === "empty-turn" || text === "steer-merge";
+      if (!skipMcp && !session.mcpStart && session.mcpSpecs?.length) session.mcpStart = connectMcp(session.mcpSpecs).catch(() => []);
+      if (!skipMcp && session.mcpStart) await Promise.race([session.mcpStart, new Promise((r) => setTimeout(r, 10_000).unref())]);
       return await script();
     } finally {
       // 返す前に会話を残す（session/load が、止まった後でも途中までの本文を再生できる）
@@ -836,8 +856,11 @@ async function runAcp() {
       // 受け取ったプロンプトを 1 行ずつ控える（再送で二重に届かないことを数える試験用）
       if (process.env.FAKE_AGY_PROMPT_LOG) { try { fs.appendFileSync(process.env.FAKE_AGY_PROMPT_LOG, `${wire.replaceAll("\n", " ")}\n`); } catch {} }
       // 1 つの会話の prompt は 1 つずつ。走っている間に来たものは順番を待ち、中断されたら始まる前に cancelled で答える
+      const seq = ++session.promptSeq;
+      // 1 通目が steer-merge で待機中なら、ステア（2 通目）の到着と同時に 1 通目を空の end_turn で即返却する
+      if (session.mergeWake) session.mergeWake();
       const epoch = session.epoch;
-      const run = session.tail.then(() => (session.epoch !== epoch || session.closed ? { stopReason: "cancelled" } : turn(session, wire, ctx)));
+      const run = session.tail.then(() => (session.epoch !== epoch || session.closed ? { stopReason: "cancelled" } : turn(session, wire, ctx, seq)));
       session.tail = run.catch(() => {});
       return run;
     },
