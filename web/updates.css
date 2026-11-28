@@ -23,8 +23,7 @@
 .t-prefs { margin:24px 0 0; }
 .t-prefs[hidden] { display:none; }
 .t-prefs .rm-mrow { padding-left:0; padding-right:0; }
-.t-prefs .rm-mrow.off { opacity:.4; }
-.t-prefs .cx-sw[aria-disabled=true] { cursor:not-allowed; }
+.t-prefs .rm-mrow.off .rm-lbl { color:var(--ink-weak); }
 .t-sec { margin:32px 0 0; }
 .t-sec > h3 { margin:0 0 4px; }
 /* リリースノート: 1 つの節に、同じ形の行（版 · 日付 / 題・右の ›）。押すと本文が開く（web/release-notes.mjs） */

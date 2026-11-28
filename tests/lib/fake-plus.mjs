@@ -198,8 +198,10 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid', 
       if (m) return r.handler(req, res, url, m);
     }
 
-    // キー無しの機能の中継の口（判定・書き起こし・読み上げ）。ID トークンを確かめ、state.proxy で試験が応答を決める
-    if (url.pathname.startsWith('/v1/proxy/') && req.method === 'POST') {
+    // ID トークンを確かめ、state.proxy で試験が応答を決める。
+    const isProxy = url.pathname.startsWith('/v1/proxy/') && req.method === 'POST';
+    const isBoard = /^\/v1\/todo-boards(?:\/|$)/.test(url.pathname) && req.method === 'GET';
+    if (isProxy || isBoard) {
       if (!uidOf(req)) return json(res, 401, { error: { code: 'unauthenticated', message: 'no token' } });
       const custom = state.proxy[url.pathname];
       if (!custom) return json(res, 404, { error: { code: 'not_found', message: 'not configured' } });

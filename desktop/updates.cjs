@@ -95,12 +95,14 @@ class Updates extends EventEmitter {
       if (action === 'dismiss') { this.patch({ notice: false }); return this.snapshot(); }
       if (action === 'preferences') {
         if (!['stable', 'beta'].includes(value?.channel) || typeof value.autoDownload !== 'boolean' || typeof value.autoCheck !== 'boolean') throw new Error(t('update.invalidSettings'));
-        if (['downloaded', 'downloading', 'installing'].includes(this.state.phase)) throw new Error(t('update.applyDownloadedFirst'));
+        if (['downloading', 'installing'].includes(this.state.phase)) throw new Error(t('update.busy'));
+        const channelChanged = this.state.channel !== value.channel;
         const previous = this.snapshot();
         Object.assign(this.state, { channel: value.channel, autoCheck: value.autoCheck, autoDownload: value.autoDownload });
         try { await this.save(); } catch (e) { this.state = previous; throw e; }
         this.applyChannel();
-        this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', releases: [], error: null });
+        if (channelChanged) this.patch({ phase: this.enabled ? 'idle' : 'unavailable', target: null, notes: '', releases: [], error: null });
+        else this.patch({});
       } else {
         if (!this.enabled) throw new Error(t('update.unavailable'));
         if (action === 'check' || action === 'prepare') {
@@ -131,7 +133,7 @@ class Updates extends EventEmitter {
       }
       return this.snapshot();
     } catch (e) {
-      if (['checking', 'downloading', 'error'].includes(this.state.phase)) this.patch({ phase: 'error', error: updateError(e, this.authenticated) });
+      if (action !== 'preferences' && ['checking', 'downloading', 'error'].includes(this.state.phase)) this.patch({ phase: 'error', error: updateError(e, this.authenticated) });
       throw e;
     } finally { this.busy = false; }
   }

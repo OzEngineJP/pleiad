@@ -705,6 +705,8 @@
     "required": "required"
   },
   "ops": {
+    "todoLists": {"catalog":{"summary":"List standalone to-do lists"},"create":{"summary":"Create a standalone to-do list"},"list":{"summary":"Read a standalone to-do list"},"add":{"summary":"Add items to a standalone to-do list"},"update":{"summary":"Update items in a standalone to-do list"},"remove":{"summary":"Remove items from a standalone to-do list"},"checkLinks":{"summary":"Check links in a standalone to-do list"}},
+    "todoBoards": {"catalog":{"summary":"List available Plus boards"},"read":{"summary":"Read a Plus board"}},
     "plus": {
       "status": {
         "summary": "Pleiad Plus state (availability, signed-in, account, reachability). Never returns tokens, email, or uid.",

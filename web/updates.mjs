@@ -69,10 +69,10 @@ export function setupUpdates({ page, open, lock }) {
     if (downloading && !applying && progress !== null) $('updatePromptProgress').value = progress;
     else $('updatePromptProgress').removeAttribute('value');
 
-    // 更新の設定（スイッチ）。作業中・ダウンロード済みの間は変えられない。disabled にするとキーボードの居場所が押した
-    // スイッチから外れるので、aria-disabled で見せ、押しは toggle の入口で無視する
+    // 更新の設定（スイッチ）。確認中・ダウンロード中・適用中（作業中）の間だけ変えられない。ダウンロード済みの待機中は
+    // 変えられる。disabled にするとキーボードの居場所が押したスイッチから外れるので、aria-disabled で見せ、押しは toggle の入口で無視する
     const working = busy || ['checking', 'downloading', 'installing'].includes(state.phase);
-    const locked = switchesLocked = working || state.phase === 'downloaded';
+    const locked = switchesLocked = working;
     $('updatePreferences').hidden = !state.enabled;
     for (const [id, on] of [['updateCheckAutomatic', state.autoCheck !== false], ['updateAutomatic', state.autoDownload === true], ['updateBeta', state.channel === 'beta']]) {
       $(id).setAttribute('aria-checked', String(on));

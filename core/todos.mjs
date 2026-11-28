@@ -204,6 +204,13 @@ export function createTodos({ dataDir, now = Date.now, onChange = () => {}, task
   }
 
   return {
+    lists: () => open().lists(),
+    listName: id => open().listName(id),
+    createList(name) {
+      const id = crypto.randomUUID();
+      open().createList(id, name);
+      return { id, name };
+    },
     syncTasks() {
       for (const id of open().linkedSessions()) {
         const scope = { kind: 'session', id };

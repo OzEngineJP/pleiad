@@ -2672,6 +2672,49 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 .todo-pop[data-mode=edit] .td-edit:hover{background:var(--fill-primary-hover);color:var(--on-fill)}
 .todo-pop[data-mode=edit] .td-edit .ic{opacity:0;transform:scale(.8)}
 .todo-pop[data-mode=edit] .td-edit .lb{opacity:1;transform:none}
+/* ToDo のタブ（承認済み 2026-11-28） */
+.td-tabs{display:flex;align-items:center;gap:2px;flex:none;min-width:0;padding:0 8px 4px}
+.td-tabrail,.td-tabstrip{display:flex;gap:2px;flex:1;min-width:0}
+.td-tabstrip{overflow-x:auto;scrollbar-width:thin;overscroll-behavior-inline:contain}
+.td-tab{display:flex;align-items:center;flex:none;max-width:min(200px,100%);border-radius:var(--r-s);color:var(--ink-weak)}
+.td-tabrail > .td-tab{align-self:flex-start}
+.td-tab[data-selected=true]{background:var(--surface-sel);color:var(--ink);font-weight:600}
+.td-tab-label,.td-tab-close,.td-tab-tool{min-height:var(--td-hit);background:transparent;color:inherit;cursor:pointer}
+.td-tab-label{padding:0 9px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-ui);border-radius:var(--r-s)}
+.td-tab-close,.td-tab-tool{display:grid;place-items:center;width:var(--td-hit);padding:0;flex:none;color:var(--ink-weak);border-radius:var(--r-pill);font-size:18px;line-height:1}
+.td-tab-close:hover,.td-tab-tool:hover,.td-tab-tool[aria-expanded=true],.td-tab-label:hover{background:var(--surface-1);color:var(--ink)}
+.td-tab-close{font-size:16px}
+.td-tabrail button:focus-visible,.td-tab-tool:focus-visible{outline-offset:-2px}
+.td-tab-panel{display:flex;flex-direction:column;flex:1;min-height:0}
+.td-tab-content,.td-tab-chooser{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0 12px 12px}
+.td-tab-panel[hidden],.td-tab-content[hidden],.td-tab-chooser[hidden],.td-tab-tool[hidden],.td-stage[hidden],.td-addwrap[hidden],.td-body[hidden],.td-edit[hidden]{display:none}
+.todo-pop:has(.td-tab-chooser:not([hidden])) :is(.td-seg,.td-edit){display:none}
+.td-tab-pickerhead,.td-board-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:var(--td-hit);padding:4px 0}
+.td-tab-pickerhead h3{flex:1;margin:0;font-size:var(--fs);font-weight:600}
+.td-tab-options h4{margin:12px 0 3px;padding:0 8px;color:var(--ink-weak);font-size:var(--fs-ui);font-weight:600}
+.td-tab-recents:has(button){margin-bottom:8px}
+.td-tab-option{display:flex;align-items:center;justify-content:space-between;width:100%;min-width:0;min-height:var(--td-hit);padding:6px 8px;border-radius:var(--r-s);background:transparent;color:var(--ink);text-align:start;cursor:pointer}
+.td-tab-option-row{display:flex;align-items:center;gap:4px}
+.td-tab-search.field{margin:4px 0 8px}
+.td-tab-option:hover,.td-tab-option[aria-current=true]{background:var(--surface-sel)}
+.td-tab-option-text{min-width:0;overflow-wrap:anywhere}
+.td-tab-option small,.td-board-group small{display:block;margin-top:2px;color:var(--ink-weak);font-size:var(--fs-ui)}
+.td-tab-chevron{color:var(--ink-weak);flex:none}
+.td-tab-state{color:var(--ink-weak);font-size:var(--fs-ui);margin:8px 0;overflow-wrap:anywhere}
+.td-native-status{padding:0 12px}
+.td-tab-form{display:grid;gap:8px;margin:12px 0}
+.td-tab-form input{display:block;width:100%;margin:4px 0 0}
+.td-tab-action,.td-board-link{min-height:var(--td-hit);padding:0 8px;background:transparent;color:var(--ink);font-weight:600;cursor:pointer}
+.td-tab-action{justify-self:start;background:var(--surface-1);border-radius:var(--r-pill);padding:0 14px}
+.td-tab-action:hover,.td-board-link:hover{background:var(--surface-2)}
+.td-tab-action:disabled{opacity:.6}
+.td-board-link{display:inline-flex;align-items:center;gap:4px;flex:none;padding-inline:4px;font-size:var(--fs-ui)}
+.td-board-link svg.i{width:14px;height:14px}
+.td-board-group{margin:10px 0}
+.td-board-group h3{margin:0;padding:6px 0;color:var(--ink-weak);font-size:var(--fs-ui);font-weight:600;overflow-wrap:anywhere}
+.td-board-group ul{margin:0;padding:0;list-style:none}
+.td-board-group li{padding:4px 0 7px;overflow-wrap:anywhere;font-size:var(--fs);font-weight:600}
+.td-board-group li small{font-weight:400}
 /* 中身。フローのときだけ、つかんで動かす・拡大縮小する */
 .td-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .td-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:2px 8px 6px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}

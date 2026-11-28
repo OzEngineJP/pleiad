@@ -704,6 +704,8 @@
     "required": "必須"
   },
   "ops": {
+    "todoLists": {"catalog":{"summary":"独立した ToDo リストの一覧を表示"},"create":{"summary":"独立した ToDo リストを作成"},"list":{"summary":"独立した ToDo リストの項目を表示"},"add":{"summary":"独立した ToDo リストに項目を追加"},"update":{"summary":"独立した ToDo リストの項目を変更"},"remove":{"summary":"独立した ToDo リストの項目を削除"},"checkLinks":{"summary":"独立した ToDo リストの成果物を確認"}},
+    "todoBoards": {"catalog":{"summary":"Plus のボードの一覧を表示"},"read":{"summary":"Plus のボードを表示"}},
     "plus": {
       "status": {
         "summary": "Pleiad Plus の状態（利用可否・ログイン中か・アカウント・サーバーへの到達）。トークン・メールアドレス・uid は返さない。",

@@ -84,7 +84,6 @@
     "settingsReadFailed": "更新設定を読み込めませんでした。設定ファイルを確認してください。",
     "busy": "更新の処理中です。完了をお待ちください。",
     "invalidSettings": "更新設定が正しくありません。",
-    "applyDownloadedFirst": "ダウンロードした更新を適用してから変更してください。",
     "unavailable": "この起動方法では自動更新を利用できません。",
     "checkFirst": "更新を確認してからダウンロードしてください。",
     "notDownloaded": "更新のダウンロードが完了していません。",

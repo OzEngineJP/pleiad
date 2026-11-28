@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { TODO_TEXT_MAX } from '../../core/todos.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -13,7 +14,7 @@ const { chromium } = require(process.env.PW_CORE || (process.platform === 'win32
   ? 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core' : 'playwright-core'));
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-todo-improvements-'));
 const shots = process.env.TODO_SCREENSHOTS;
-const long = '画面を切り替えずに、会話の ToDo の全文を確認します。'.repeat(24);
+const long = '画面を切り替えずに、会話の ToDo の全文を確認します。'.repeat(8).slice(0, TODO_TEXT_MAX);
 let host, client, browser;
 try {
   host = await startServer({ dataDir: root, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_LOCALE: 'ja' } });
@@ -68,7 +69,7 @@ try {
     }, [theme, sessionId]);
     const page = await context.newPage();
     page.setDefaultTimeout(6_000);
-    await page.goto(`http://127.0.0.1:${host.port}/?token=${host.token}`);
+    await page.goto(`http://127.0.0.1:${host.port}/?token=${host.token}&open=${sessionId}`);
     await showPanel(page, width);
     return page;
   }
@@ -77,12 +78,12 @@ try {
       await page.locator('#sessionMore').click();
       await page.getByRole('menuitem', { name: /ToDo/ }).click();
     } else await page.locator('#todoEntry').click();
-    await page.locator(`.td-item[data-id="${d}"]`).waitFor({ state: 'attached' });
+    await row(page, d).waitFor({ state: 'attached' });
   }
-  const row = (page, id) => page.locator(`.td-item[data-id="${id}"]`);
+  const panel = page => page.locator('body > main > .todo-pop');
+  const row = (page, id) => panel(page).locator(`.td-item[data-id="${id}"]`);
   const read = page => row(page, d).locator('.td-text');
-  const mode = (page, view) => page.locator(`.td-seg [data-v="${view}"]`).click();
-  const panel = page => page.locator('.todo-pop');
+  const mode = (page, view) => panel(page).locator(`.td-seg [data-v="${view}"]`).click();
   const widthOf = page => panel(page).evaluate(el => el.offsetWidth);
 
   const desktop = await openPanel(1280, 'light');
@@ -102,7 +103,7 @@ try {
   await capture(desktop, 'light-1280-keyboard-expanded');
   await read(desktop).press('Space');
   assert.equal(await read(desktop).getAttribute('aria-expanded'), 'false');
-  const resize = desktop.locator('.td-resize-width');
+  const resize = panel(desktop).locator('.td-resize-width');
   const defaultWidth = await widthOf(desktop);
   await resize.press('ArrowLeft');
   assert.equal(await widthOf(desktop), defaultWidth + 16);
@@ -116,7 +117,7 @@ try {
   assert.equal(await widthOf(desktop), defaultWidth + 16);
   await resize.press('Home');
   assert.equal(await widthOf(desktop), defaultWidth);
-  const corner = desktop.locator('.td-resize-both');
+  const corner = panel(desktop).locator('.td-resize-both');
   const { x, y, width, height } = await corner.boundingBox();
   const defaultHeight = await panel(desktop).evaluate(el => el.offsetHeight);
   await desktop.mouse.move(x + width / 2, y + height / 2);
@@ -128,9 +129,9 @@ try {
   await capture(desktop, 'light-1280-resized');
   await corner.dblclick();
   assert.equal(await widthOf(desktop), defaultWidth);
-  await desktop.locator('.td-max').click();
+  await panel(desktop).locator('.td-max').click();
   assert.equal(await resize.isVisible(), false);
-  await desktop.locator('.td-max').click();
+  await panel(desktop).locator('.td-max').click();
   await desktop.keyboard.press('Escape');
   await panel(desktop).waitFor({ state: 'hidden' });
   await showPanel(desktop, 1280);
@@ -140,8 +141,8 @@ try {
 
   const dark = await openPanel(1280, 'dark');
   await mode(dark, 'flow');
-  await dark.locator('.td-stack').waitFor();
-  assert.equal(await dark.locator('.td-stack').count(), 1);
+  await panel(dark).locator('.td-stack').waitFor();
+  assert.equal(await panel(dark).locator('.td-stack').count(), 1);
   const sibling = await row(dark, e).evaluate(el => el.style.transform);
   await read(dark).click();
   assert.equal(await read(dark).getAttribute('aria-expanded'), 'true');
@@ -164,7 +165,7 @@ try {
 
   const mobile = await openPanel(360, 'light');
   await mode(mobile, 'list');
-  assert.equal(await mobile.locator('.td-resize-width').isVisible(), false);
+  assert.equal(await panel(mobile).locator('.td-resize-width').isVisible(), false);
   await capture(mobile, 'light-360-list');
   await read(mobile).click();
   assert.equal(await read(mobile).getAttribute('aria-expanded'), 'true');
@@ -192,32 +193,32 @@ try {
     previous = items.at(-1).id;
     count = target;
     for (const [page, size] of [[dark, 1280], [mobileDark, 360]]) {
-      await page.locator('.td-close').click();
+      await panel(page).locator('.td-close').click();
       await panel(page).waitFor({ state: 'hidden' });
       await showPanel(page, size);
       assert.equal(await panel(page).evaluate(el => el.scrollWidth <= el.clientWidth), true);
       await page.waitForFunction(n => document.querySelectorAll('.todo-pop .td-item[data-id]').length === n, count);
-      const stack = page.locator('.td-stack');
+      const stack = panel(page).locator('.td-stack');
       await stack.filter({ hasText: '完了 6' }).waitFor();
       assert.equal(await stack.count(), 1);
       assert.equal(await stack.evaluate(el => el.offsetWidth), 112);
       assert.equal(await stack.evaluate(el => el.offsetHeight), size === 360 ? 36 : 28);
       assert.equal(await panel(page).locator('.td-item.gone').count(), 6);
-      assert.equal(await page.locator('.td-edge.pend').count() > 0, true);
+      assert.equal(await panel(page).locator('.td-edge.pend').count() > 0, true);
       if (target === 10) {
         await stack.click();
         await stack.waitFor({ state: 'hidden' });
         assert.equal(await panel(page).locator('.td-item[data-id]:not(.gone)').count(), count);
-        await page.locator('.td-fold').click();
+        await panel(page).locator('.td-fold').click();
         await stack.waitFor();
         await mode(page, 'list');
         assert.equal(await panel(page).locator('.td-item[data-id]:not(.gone)').count(), count);
-        assert.equal(await page.locator('.td-fold').isVisible(), false);
+        assert.equal(await panel(page).locator('.td-fold').isVisible(), false);
         await mode(page, 'flow');
         await stack.waitFor();
       }
       await capture(page, `dark-${size}-flow-${count}`);
-      await page.locator('.td-zoom button').last().click();
+      await panel(page).locator('.td-zoom button').last().click();
       if (count === 30) await capture(page, `dark-${size}-flow-${count}-overview`);
     }
   }
@@ -225,8 +226,8 @@ try {
 
   const { items: existing } = await invoke('todos.list', {});
   await invoke('todos.remove', { ids: existing.map(item => item.id) });
-  const empty = mobileDark.getByText('ToDo はありません', { exact: true });
-  const switcher = mobileDark.locator('.td-seg');
+  const empty = panel(mobileDark).getByText('ToDo はありません', { exact: true });
+  const switcher = panel(mobileDark).locator('.td-seg');
   const firstText = '下書きを確認する';
   const secondText = '下書きを送る';
   const addInput = mobileDark.getByRole('textbox', { name: 'ToDo を追加' });
@@ -241,7 +242,7 @@ try {
   assert.equal(await empty.isVisible(), false);
   assert.equal(await panel(mobileDark).getAttribute('data-view'), 'list');
   assert.equal(await switcher.locator('[data-v="list"]').getAttribute('aria-pressed'), 'true');
-  assert.equal(await mobileDark.locator('.td-head').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  assert.equal(await panel(mobileDark).locator('.td-head').evaluate(el => el.scrollWidth <= el.clientWidth), true);
   await capture(mobileDark, 'dark-360-first-item-edit');
   await mode(mobileDark, 'flow');
   assert.equal(await panel(mobileDark).getAttribute('data-view'), 'flow');
@@ -255,7 +256,7 @@ try {
   const secondBox = await second.boundingBox();
   assert.equal(firstBox.x, secondBox.x);
   assert.ok(firstBox.y < secondBox.y);
-  assert.equal(await mobileDark.locator('.td-edge').count(), 0);
+  assert.equal(await panel(mobileDark).locator('.td-edge').count(), 0);
   const { items: independent } = await invoke('todos.list', {});
   assert.deepEqual(independent.map(item => item.after), [[], []]);
   await capture(mobileDark, 'dark-360-independent-flow');

@@ -435,9 +435,12 @@ const relayTokens = (env) => RELAY_AUTH_KEYS.map((k) => env?.[k]).filter((v) => 
 /**
  * agy の最初の result で 1 度だけ出す、組織の管理ポリシーの知らせ（無ければ ""）。
  * 確認の要るモードで動いている・中継に 1 度も接続が無い、のどちらか（両方なら両方）。
- * 拒否で失敗にしたターン（deniedTurn）は失敗の理由に案内を書くので、モードの分は重ねない
+ * 拒否で失敗にしたターン（deniedTurn）は失敗の理由に案内を書くので、モードの分は重ねない。
+ * 本文もツール実行も拒否も無い空の end_turn（例: ステアの合流で即返却された 1 通目）では
+ * まだ判定せず、実際に返答・ツール実行・拒否があったターンで 1 度だけ確かめる
  */
-function adminNotice(session, { askedSkip, deniedTurn }) {
+function adminNotice(session, { askedSkip, deniedTurn, responded = true }) {
+  if (!responded) return "";
   const parts = [];
   const mode = String(session.permissionMode ?? "");
   if (!session.reviewNoticed && askedSkip && REVIEW_MODES.has(mode.toLowerCase())) {
@@ -1135,9 +1138,16 @@ export const backend = {
       if (fatal) throw fatal;
       const stopReason = result?.stopReason;
       // ---- 返答の締め
+      // ステア（後続の session/prompt）が走っている間に 1 回目が end_turn で先に返ることがある（agy が 2 通を合流する場合など）。
+      // adminNotice・text.end・usage を出す前にステアの完了を待ち、ステア側の出力・MCP 接続が揃ってから締める
+      if (stopReason === 'end_turn' && steered?.size > 0 && !local.signal.aborted) {
+        await Promise.race([steered.drain({ alive: () => !local.signal.aborted && !fatal }).catch(() => {}), stopped]);
+        if (fatal) throw fatal;
+      }
       const denials = Array.isArray(result?._meta?.antigravity?.deniedActions) ? result._meta.antigravity.deniedActions : [];
       const deniedTurn = denials.length > 0 && !sawText && stopReason === 'end_turn';
-      const notice = replaying || stopReason !== 'end_turn' ? '' : adminNotice(entry, { askedSkip: yolo, deniedTurn });
+      const responded = sawText || started.size > 0 || deniedTurn;
+      const notice = replaying || local.signal.aborted || stopReason !== 'end_turn' ? '' : adminNotice(entry, { askedSkip: yolo, deniedTurn, responded });
       if (notice) {
         const add = `${text ? '\n\n' : ''}${notice}`;
         if (!sawText) { sawText = true; out({ type: 'activity', state: 'writing' }); }
