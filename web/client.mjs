@@ -5709,7 +5709,7 @@ const side = createSide({
   onOrganizeThreads: organizeThreads,
   onThreadFolderMenu: threadFolderMenu,
   onGroupContext: (st, x, y) => groupMenu(st, x, y),
-  onFamilyContext: (root, members, x, y) => familyMenu(root, members, x, y),
+  onFamilyContext: familyMenu,
   onSetGrouped: (s, ungrouped) => setGrouped(s, ungrouped),
   onJoinGroup: (s, root) => joinGroup(s, root),
   onMoveGroup: (root, status) => moveGroup(root, status),
@@ -9581,21 +9581,22 @@ function groupItems(s) {
   return [{ label: t("session.menu.gather"), hint: t("session.menu.count", { count: loose.length }), onClick: () => gatherKin(root, loose) }];
 }
 
-/** グループの見出しの右クリック。解除と、まとまりごとの状態変更 */
+/** 親の会話の操作に、グループごとの状態変更を加える。 */
 function familyMenu(root, members, x, y) {
-  const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
-  showMenu(x, y, [
-    { label: t("session.menu.ungroup"), hint: t("session.menu.count", { count: members.length }), onClick: () => ungroupFamily(root, members) },
-    { sep: true },
+  const count = members.length;
+  const ungroup = t("session.menu.ungroup");
+  rowMenu(root, x, y, [
+    // 絞り込みで元の親が隠れた場合も、表示中のまとまりを解除できる。
+    ...(groupItems(root).some(item => item.label === ungroup) ? [] : [
+      { label: ungroup, hint: t("session.menu.count", { count }), onClick: () => ungroupFamily(root, members) },
+    ]),
     { label: t("session.menu.groupStatus"), hint: statusWord(root.status), sub: () => [
       { input: { placeholder: t("session.menu.newStatus"), onCommit: (v) => moveGroup(root, v) } },
-      ...known.map((k) => ({ label: k, hint: t("session.menu.count", { count: members.length }), checked: k === root.status, onClick: () => moveGroup(root, k) })),
+      ...side.statusChoices().map((k) => ({ label: k, hint: t("session.menu.count", { count }), checked: k === root.status, onClick: () => moveGroup(root, k) })),
       { sep: true },
       { label: t("session.menu.clearStatus"), onClick: () => moveGroup(root, "") },
     ] },
-    { sep: true },
-    { label: t("session.menu.openRoot"), hint: rowLabel(root), onClick: () => openConversation(root.id) },
-  ], t("session.menu.groupTitle", { title: rowLabel(root) }));
+  ]);
 }
 
 /** 会話を消す。未送信は deleteUnsentSession、送った会話は deleteSession（sessions.delete。ADR 0147） */
@@ -9634,8 +9635,10 @@ function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, conns = null;
   let waitingVisible = false;
   const known = side.statusChoices();   // 脇の見出しと同じ候補（web/side.mjs の statusChoices）
+  const parentId = s.parent?.sessionId;
+  const parent = parentId ? state.sessions.find(row => row.id === parentId) : null;
   // 枝の行き来。親があるか子がある行だけ。家族は開いている間に取り寄せる（メニューは同期で組む）
-  const hasKin = Boolean(s.parent?.sessionId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
+  const hasKin = Boolean(parentId) || state.sessions.some((z) => z.parent?.sessionId === s.id);
   let kin = null;
   if (hasKin) cmd("lineage", { sessionId: s.id }).then((r) => { kin = r; }).catch(() => {});
   const kinItems = () => !kin ? [{ label: t("session.menu.loading") }]
@@ -9647,7 +9650,7 @@ function rowMenu(s, x, y, lead = []) {
     ...lead, ...(lead.length ? [{ sep: true }] : []),
     // 頭の「…」（開いている会話。先頭に「開く」の見出しを足したとき）では、同じ語の「開く」（この会話を開く）を出さない
     ...(lead.length && s.id === state.current ? [] : [{ label: t("session.menu.open"), onClick: () => openConversation(s.id) }]),
-    ...(s.parent?.sessionId ? [{ label: t("session.menu.openParent"), hint: sessionLabel(s.parent.sessionId).slice(0, 20), onClick: () => openConversation(s.parent.sessionId) }] : []),
+    ...(parentId ? [{ label: t("session.menu.openParent"), hint: parent ? rowLabel(parent).slice(0, 20) : "", onClick: () => openConversation(parentId) }] : []),
     ...(hasKin ? [{ label: t("session.menu.branches"), sub: kinItems }] : []),
     { label: t("session.menu.rename"), sub: () => [
       { input: { placeholder: t("session.menu.newTitle"), value: s.title === "(no title)" ? "" : s.title, onCommit: (v) =>

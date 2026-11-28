@@ -316,7 +316,7 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 .grp.collapsed > .rows{display:none}
 /* 行は見出しより一段右。所属が分かる */
 .rows{display:flex;flex-direction:column;gap:2px;padding-left:16px}
-.pending-new-top{flex:none}
+.pending-new-top{flex:none;padding-left:0}
 .row{border-radius:var(--r-m);padding:7px 10px;cursor:pointer;min-width:0;transition:background-color var(--dur-fast) var(--ease-out)}
 /* 画面の外の行はレイアウトと描画を省く。設定から戻る・脇を開くたびに数百行を組み直していた。高さは一度描いた値を覚える */
 #groups .row{content-visibility:auto;contain-intrinsic-size:auto 52px}
@@ -330,33 +330,8 @@ body.settings #sidebar .side-foot #settings{background:var(--surface-paper);colo
 /* fork で生まれた会話の印。題の前。グループから外しても状態を変えても消えない（§4.1） */
 .forkmark{width:12px;height:12px;flex:none;fill:none;stroke:var(--ink-weak);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
-/* ==================== グループ（fork でつながった会話のまとまり、§4.1） ====================
-   見出しはフォルダの役目だけ。押すと開閉し、選択はしない（会話は中の行から開く）。
-   線は引かず、開いた器の面を一段沈めて「ひとつの箱」にする */
-.fam{border-radius:var(--r-m);transition:background-color var(--dur-fast) var(--ease-out)}
-.fam.open{background:var(--surface-2)}
-/* 外にある枝を落とせる先。掴んでいる間、面がさらに一段沈む（線は引かない） */
-.fam.over{background:var(--surface-3)}
-/* 畳んだ器の中に、今いる会話がある。行と同じ白へ持ち上げて場所を示す */
-.fam.here>.fam-head{background:var(--surface-paper)}
-/* 掴んでいる見出し。落とすとグループごと状態が変わる */
-.fam-head.dragging{background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
-.fam-head{display:flex;align-items:flex-start;gap:5px;width:100%;min-width:0;padding:7px 10px 7px 4px;
-  background:transparent;text-align:left;cursor:pointer;color:var(--ink);border-radius:var(--r-m);
-  transition:background-color var(--dur-fast) var(--ease-out)}
-.fam-head:hover{background:var(--surface-hover)}
-.fam.open>.fam-head:hover{background:var(--surface-3)}
 .fam-chev{width:10px;height:10px;flex:none;margin:5px 3px 0;fill:none;stroke:var(--ink-weak);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;
   transition:transform var(--dur-fast) var(--ease-out)}
-.fam-head[aria-expanded=true] .fam-chev{transform:rotate(90deg)}
-.fam-body{flex:1;min-width:0}
-.fam-name{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
-.fam-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fam-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
-/* 畳んでいる間だけ出る要約。行の meta と同じ位置に印だけ（件数・枝の本数は出さない） */
-.fam-sum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak)}
-/* 器の中の行。グループの行と同じだけ字下げする */
-.fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
 .row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-weak);min-width:0}
 /* ---- 検索の結果（平らな listbox。web/side.mjs。docs/design-system.md §4.1「検索」） ---- */
 .groups.flat{gap:2px}
@@ -2307,25 +2282,23 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
    出すときは visible ではなく inherit（脇ごと隠れている間に「…」だけ見えて押せることがないように） */
 .more-btn{color:var(--ink-weak)}
 .row-more{width:22px;height:22px;margin:-3px -4px -3px auto;visibility:hidden}
-.row-more svg.i,.grp-more svg.i,.fam-more svg.i{width:14px;height:14px}
+.row-more svg.i,.grp-more svg.i{width:14px;height:14px}
 .row:hover .row-more,.row:focus-within .row-more,.row.sel .row-more,.row-more[aria-expanded=true]{visibility:inherit}
 .botsec-head:hover .row-more,.botsec-head.sel .row-more,.kbd:focus-within .botsec-head.is-active .row-more{visibility:inherit}
 @media (max-width:700px){.botsec-head .row-more{visibility:inherit}}
 .grp-more{width:26px;height:26px;visibility:hidden}
 .grp-head:hover .grp-more,.grp-head:focus-within .grp-more{visibility:inherit}
 .fam{position:relative}
-.fam-more{position:absolute;right:4px;top:3px;width:26px;height:26px;visibility:hidden}
-.fam>.fam-head{padding-right:32px}
-.fam:hover>.fam-more,.fam>.fam-head:focus-visible+.fam-more,.fam-more:focus-visible{visibility:inherit}
+
 #sessionMore,#workMore{display:none}
 
 /* ---- 入力の種類がタッチ（ホバーが無い・指で押す） ---- */
 @media (hover:none){
-  .row-more,.grp-more,.fam-more{visibility:inherit}   /* 脇が隠れている間は一緒に隠れる */
+  .row-more,.grp-more{visibility:inherit}   /* 脇が隠れている間は一緒に隠れる */
   .grp-add{opacity:1}   /* ホバーでしか見えなかった ＋ */
   #sessionMore:not([hidden]){display:inline-flex}
   /* 長押しは「…」と同じメニュー（web/long-press.mjs）。文字の選択と OS の吹き出しを出さない */
-  .row,.grp-head,.fam-head,.dir-card,.tree-row{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+  .row,.grp-head,.dir-card,.tree-row{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 }
 @media (pointer:coarse){
   /* 入力欄の字は 16px 以上。iOS は 16px 未満の欄に触れると画面を拡大する（--fs は 14px）。
@@ -2338,7 +2311,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .resume{min-height:36px}
   :is(#prompt,#thPrompt,#wkPrompt){line-height:1.5}
   .md-b{min-height:1.5em}
-  .row-more,.grp-more,.fam-more{min-width:32px;min-height:32px}
+  .row-more,.grp-more{min-width:32px;min-height:32px}
   .row{padding-top:9px;padding-bottom:9px}
   .pop .li{min-height:40px}
   .pop.menu{min-width:min(240px,calc(100vw - 16px))}

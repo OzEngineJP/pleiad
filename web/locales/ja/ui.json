@@ -2797,8 +2797,6 @@
       "groupStatus": "グループの状態を変更",
       "newStatus": "新しい状態を作る",
       "clearStatus": "状態なしにする",
-      "openRoot": "根の会話を開く",
-      "groupTitle": "{{title}} のグループ",
       "loading": "読み込んでいる…",
       "thisRow": "この行",
       "branch": "枝",
@@ -2861,8 +2859,7 @@
     "mode": "承認モードは依頼元に合わせた"
     },
     "rowMore": "「{{title}}」の操作",
-    "groupMore": "状態「{{status}}」の操作",
-    "familyMore": "グループ「{{title}}」の操作"
+    "groupMore": "状態「{{status}}」の操作"
   },
   "app": {
     "listSeparator": "・",

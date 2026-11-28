@@ -170,7 +170,7 @@ function loadRecentSearches() {
  * @param {(status: string, icon: string) => void} o.onSetIcon         アイコンを選んだ（空 = なし）
  * @param {(session: object, x: number, y: number) => void} [o.onContext]  行の右クリック
  * @param {(status: string|null, x: number, y: number) => void} [o.onGroupContext]  状態の見出しの右クリック
- * @param {(root: object, members: object[], x: number, y: number) => void} [o.onFamilyContext]  グループの見出しの右クリック
+ * @param {(root: object, members: object[], x: number, y: number) => void} [o.onFamilyContext]  グループの親の行の右クリック
  * @param {(session: object, ungrouped: boolean) => void} [o.onSetGrouped]  グループから外す / 戻す
  * @param {(session: object, root: object) => void} [o.onJoinGroup]  そのグループへ入れる（状態も根に揃える）
  * @param {(root: object, status: string) => void} [o.onMoveGroup]  グループごと別の状態へ移す
@@ -1002,9 +1002,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     $("keyHint").hidden = !(keyboard && document.activeElement === root);
   }
 
-  /** 親の項目（行 → 器の見出し・状態の見出し、器の見出し → 状態の見出し） */
+  /** 枝の親は元の会話。元の会話や単独の行の親は状態の見出し。 */
   function parentItem(n) {
-    if (n.classList.contains("row") && n.closest(".fam")) return n.closest(".fam").querySelector(":scope > .fam-head");
+    if (n.classList.contains("fam-branch")) return n.closest(".fam").querySelector(":scope > .fam-root");
     return (n.classList.contains("grp-head") ? n.closest(".grp")?.parentElement?.closest(".grp") : n.closest(".grp"))?.querySelector(":scope > .grp-head") ?? null;
   }
 
@@ -1063,7 +1063,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       typedAt = now;
       const from = at + 1;
       const found = [...items.slice(from), ...items.slice(0, from)]
-        .find((n) => (n.querySelector(".row-t, .grp-name, .fam-t")?.textContent ?? "").toLowerCase().startsWith(typed.toLowerCase()));
+        .find((n) => (n.querySelector(".row-t, .grp-name")?.textContent ?? "").toLowerCase().startsWith(typed.toLowerCase()));
       if (!found) return;
       go(found);
     } else return;
@@ -1073,8 +1073,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   });
 
   // ---- 家族（fork した会話の器） ------------------------------------------
-  // 根とその子孫をひとつの器に入れる。見出しはフォルダの役目だけで、押すと開閉する（選べない）。
-  // 根の会話は器の中の先頭の行から開く。行はどれも自分の題を出す（根も題のまま）。
+  // 元の会話を親の行にし、枝の枝もその下へ平らに並べる。
 
   const rowOrder = (a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0);
   /** 器に並ぶ行。根が先頭、続けて枝を新しい順に */
@@ -1149,12 +1148,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   /**
-   * 畳んだ器の見出しに出す要約。中の様子を開かずに読めるようにする。
+   * 畳んだグループの親の行に出す枝の要約。中の様子を開かずに読めるようにする。
    * 印（走っている・裏で待っている・中断・未確認・承認待ち）だけ。状態ごとの件数と枝の本数は出さない
    * （器は根の状態の見出しの下に並び、状態は見出しが言う。docs/design-system.md §4.1「グループの要約」）
    */
   function famSummary(list) {
-    const sum = el("div", "fam-sum");
+    const sum = el("span", "fam-sum");
     const active = list.some((s) => last.runningIds.has(s.id) && !last.bgWaiting.has(s.id));
     const behind = list.reduce((n, s) => n + (last.bgWaiting.get(s.id) ?? 0), 0);
     const waiting = list.filter((s) => last.waitingIds.has(s.id)).length;
@@ -1167,62 +1166,24 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     return sum;
   }
 
-  /** 家族の器。中に根と枝が平らに並ぶ（枝の枝も同じ器。入れ子の器は作らない） */
   function family(fam, level = 2) {
     const list = members(fam);
+    const branches = list.slice(1);
     const id = fam.root.id;
-    // 今いる会話が中にあれば開いたまま出す（人が閉じるまで）。それ以外の既定は畳んだ状態
-    const here = list.some((s) => s.id === last.currentId);
+    const here = branches.some((s) => s.id === last.currentId);
     const open = expanded.has(id) || (!decided.has(id) && here);
-    // 畳んだまま中の会話を見ていることがある。器の面を白へ持ち上げて「今いるのはこの中」を示す
-    const box = keyed(el("div", "fam" + (open ? " open" : "") + (here && !open ? " here" : "")), `family:${id}`, true);
+    const box = keyed(el("div", "fam" + (here && !open ? " here" : "")), 'family:' + id, true);
     box.sideFamily = fam;
     box.setAttribute("role", "none");
-    const head = el("div", "fam-head");
     const setOpen = (next) => {
       decided.add(id);
       if (next) expanded.add(id); else expanded.delete(id);
       save();
       render();
     };
-    treeItem(head, `f:${id}`, level, {
-      expanded: open,
-      open: () => setOpen(!open),
-      expand: setOpen,
-      menu: onFamilyContext && ((x, y) => onFamilyContext(fam.root, list, x, y)),
-    });
-    head.setAttribute("aria-controls", `fam-${id}`);
-    head.title = open ? t("sidebar.family.collapse") : here ? t("sidebar.family.hereInside") : t("sidebar.family.expand");
-    const body = el("div", "fam-body");
-    const name = el("div", "fam-name");
-    if (fam.root.parent?.sessionId) name.append(forkMark());
-    name.append(el("span", "fam-t", titleOf(fam.root)));
-    body.append(name);
-    // 開けば中の行が同じことを言うので、畳んでいる間だけ。印が 1 つも無ければ題の 1 行だけにする
-    const sum = open ? null : famSummary(list);
-    if (sum?.childElementCount) body.append(sum);
-    head.append(chevron(), body);
-    head.setAttribute("aria-label", spoken([...name.children, ...(body.querySelector(".fam-sum")?.children ?? [])]) || t("session.untitled"));
-    head.onclick = () => setOpen(!open);
-    head.oncontextmenu = (e) => { if (!onFamilyContext) return; e.preventDefault(); onFamilyContext(fam.root, list, e.clientX, e.clientY); };
-    // 見出しをつかむと、グループごと別の状態へ移せる（中の会話も一緒に動く）
-    head.draggable = true;
-    head.addEventListener("dragstart", (e) => {
-      dragId = id;
-      dragKind = "group";
-      e.dataTransfer.setData("text/plain", id);
-      e.dataTransfer.effectAllowed = "move";
-      head.classList.add("dragging");
-    });
-    head.addEventListener("dragend", () => {
-      dragId = null;
-      dragKind = null;
-      head.classList.remove("dragging");
-      for (const g of root.querySelectorAll(".over")) g.classList.remove("over");
-    });
-    box.append(head);
-    // 「…」は見出しの外に置き、器の右上に重ねる
-    if (onFamilyContext) box.append(menuButton("fam-more", t("session.familyMore", { title: titleOf(fam.root) || t("session.untitled") }), (x, y) => onFamilyContext(fam.root, list, x, y)));
+    box.append(row(fam.root, level, { disclosure: {
+      open, here, setOpen, list, summary: open ? null : famSummary(branches),
+    } }));
     // 外にある枝をここへ落とすと、このグループに入る（状態も根に揃う）
     box.addEventListener("dragover", (e) => {
       // スレッドの行はグループに入れない（器は会話のまとまりだけ）
@@ -1244,13 +1205,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       dragKind = null;
       if (s) onJoinGroup?.(s, box.sideFamily.root);
     });
-    if (open) {
-      const kids = keyed(el("div", "fam-rows"), `family-rows:${id}`, true);
-      kids.id = `fam-${id}`;
-      kids.setAttribute("role", "group");
-      for (const s of list) kids.append(row(s, level + 1));
-      box.append(kids);
-    }
+    const kids = keyed(el("div", open ? "fam-rows" : "fam-rows collapsed"), "family-rows:" + id, true);
+    kids.id = "fam-" + id;
+    kids.setAttribute("role", "group");
+    if (open) for (const branch of branches) kids.append(row(branch, level + 1, { branch: true }));
+    box.append(kids);
     return box;
   }
 
@@ -1258,9 +1217,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * 一覧の行。id が null なら、まだ id の無い新しいセッション（印は付かず、掴めない）
    * @param {number} level ツリーの深さ（作成中 1・状態の見出しの下 2・器の中 3）
    */
-  function row(s, level) {
+  function row(s, level, { disclosure, branch = false } = {}) {
     const key = `session:${level}:${s.id ?? ''}`;
-    const signature = JSON.stringify([s, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
+    const signature = JSON.stringify([s, level, branch,
+      disclosure && [disclosure.open, disclosure.here, disclosure.list.map(s => s.id), disclosure.summary?.innerHTML], s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id), last.answerWaitIds.has(s.id),
       last.bgWaiting.get(s.id), last.unreadIds.has(s.id), last.interrupted.get(s.id), last.schedules.get(s.id),
       last.pendingRows.get(s.id), last.backendLabels, document.documentElement.lang, Math.floor(Date.now() / 60000),
       s.bot ? [directory.bots.get(s.bot.botId), s.bot.channelId ? directory.channels.get(s.bot.channelId) : null] : null]);
@@ -1272,26 +1232,36 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return keep;
     }
     const open = s.id === last.currentId;
-    const r = keyed(el("div", "row side-chat-row" + (open ? " sel" : "")), key);
+    const r = keyed(el("div", "row side-chat-row" + (open ? " sel" : "") + (disclosure ? " fam-root" : branch ? " fam-branch" : "")), key);
     nextRows.set(key, { signature, node: r });
     const pendingRow = last.pendingRows.get(s.id);
     const interactive = s.id != null && pendingRow?.kind !== 'new';
     if (pendingRow) r.classList.add('pending-row', `pending-${pendingRow.kind ?? 'move'}`);
     // 開いている会話は白い面（.sel）と aria-selected・aria-current。指している項目（キーボード）とは別に示す
-    treeItem(r, `s:${s.id ?? ""}`, level, {
-      open: () => { if (!open) onOpen?.(s.id); },
-      menu: onContext && interactive && ((x, y) => onContext(s, x, y)),
+    const openConversation = () => { if (!open) onOpen?.(s.id); };
+    const menu = disclosure && onFamilyContext
+      ? (x, y) => onFamilyContext(s, disclosure.list, x, y)
+      : onContext && interactive && ((x, y) => onContext(s, x, y));
+    treeItem(r, 's:' + (s.id ?? ""), level, {
+      open: openConversation,
+      expanded: disclosure?.open,
+      expand: disclosure?.setOpen,
+      menu,
     });
+    if (disclosure) {
+      r.setAttribute("aria-controls", "fam-" + s.id);
+      if (disclosure.open) r.setAttribute("aria-owns", "fam-" + s.id);
+    }
     r.setAttribute("aria-selected", String(open));
     if (open) r.setAttribute("aria-current", "page");
     r.dataset.session = s.id ?? "";
     if (s.thread) r.dataset.thread = `${s.thread.channelId}:${s.thread.threadId}`;
     const title = el("div", "row-title");
     // fork で生まれた会話の印。グループから外しても状態を変えても消えない（§4.1）
-    if (s.parent?.sessionId) title.append(forkMark());
+    if (s.parent?.sessionId && !branch && !disclosure) title.append(forkMark());
     title.append(el("span", "row-t", titleOf(s)));
     // 右クリックと同じメニューを開く「…」。キーボードは一覧の Shift+F10・メニューキーで同じメニュー
-    if (onContext && interactive) title.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y)));
+    if (menu) title.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), menu));
     r.append(title);
     const meta = el("div", "row-meta");
     // 走っていれば弧。裏だけを待っていれば衛星（ターンが終わっても裏の作業が残っている会話を含む）
@@ -1324,7 +1294,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.delegation?.remote) meta.append(el("span", "row-remote", t("session.remoteOrigin.badge", { device: s.delegation.remote.deviceName || "" })));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", waitingLabel(s.id)));
     if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text, pendingRow.queued));
-    else if (!sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
+    const when = !pendingRow?.visible && !sendAt && !missed
+      ? el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)) : null;
+    if (when && !disclosure) meta.append(when);
     if (last.backendLabels && s.backend) meta.append(backendLogo(s.backend, last.backendLabels[s.backend] ?? s.backend));
     const cwd = el("span", "row-cwd");
     // worktree の中の会話は、元の場所の名前に枝分かれの印（ADR 0089）
@@ -1333,11 +1305,30 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (s.cwd) cwd.title = s.worktree ? `${s.worktree.origin} · ${s.cwd}` : s.cwd;
     meta.append(cwd);
     if (s.unsent) meta.append(el("span", "row-unsent", s.hasDraft ? t("sidebar.unsentDraft") : t("sidebar.unsent")));
+    const summary = disclosure?.summary;
+    if (summary?.childElementCount) meta.append(summary);
+    if (when && disclosure) meta.append(when);
     r.append(meta);
-    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([...meta.children])].filter(Boolean).join(", "));
+    r.setAttribute("aria-label", [
+      titleOf(s) || t("session.untitled"),
+      spoken([...meta.children].flatMap(node => node === summary ? [...node.children] : [node])),
+    ].filter(Boolean).join(", "));
+    if (disclosure) {
+      const toggle = el("button", "fam-toggle");
+      const label = disclosure.open ? t("sidebar.family.collapse") : t("sidebar.family.expand");
+      toggle.type = "button";
+      toggle.tabIndex = -1;
+      toggle.title = disclosure.here && !disclosure.open ? t("sidebar.family.hereInside") : label;
+      toggle.setAttribute("aria-label", label);
+      toggle.setAttribute("aria-expanded", String(disclosure.open));
+      toggle.setAttribute("aria-controls", "fam-" + s.id);
+      toggle.append(chevron());
+      toggle.onclick = (e) => { e.stopPropagation(); disclosure.setOpen(!disclosure.open); };
+      r.append(toggle);
+    }
 
-    r.onclick = () => { if (!open) onOpen?.(s.id); };
-    r.oncontextmenu = (e) => { if (!onContext || !interactive) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
+    r.onclick = openConversation;
+    r.oncontextmenu = (e) => { if (!menu) return; e.preventDefault(); menu(e.clientX, e.clientY); };
     if (!interactive || (s.bot && !s.thread)) return r;   // bot の会話は状態を持たないので、つかんで状態へ落とせない（スレッドは状態を持つ）
 
     // つかんで別の状態へ落とすと状態が変わる（グループの中の行はそこで外れる）。
@@ -1346,7 +1337,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     r.draggable = true;
     r.addEventListener("dragstart", (e) => {
       dragId = s.id;
-      dragKind = "row";
+      dragKind = disclosure ? "group" : "row";
       e.dataTransfer.setData("text/plain", s.id);
       e.dataTransfer.effectAllowed = "move";
       r.classList.add("dragging");
@@ -1953,7 +1944,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   if ($("newSession")) $("newSession").onclick = newChat;
   // 一覧の空白の右クリック（行や見出しの上は各自のメニュー）
   root.oncontextmenu = (e) => {
-    if (!onListContext || e.target.closest(".row,.grp-head,.fam-head")) return;
+    if (!onListContext || e.target.closest(".row,.grp-head")) return;
     e.preventDefault();
     onListContext(e.clientX, e.clientY);
   };

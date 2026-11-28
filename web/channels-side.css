@@ -55,7 +55,7 @@
 .botsec-head.sel{background:var(--surface-paper);border-radius:var(--r-m)}
 
 #groups{
-  --side-row-height:32px;--side-chat-height:46px;--side-action:28px;
+  --side-chat-indent:34px;--side-row-height:32px;--side-chat-height:46px;--side-action:28px;
   --side-text:var(--fs);--side-detail:var(--fs-s);--side-channel-hit:30px;
 }
 #groups :is(.side-list-head,.status-head,.botsec-head,.side-add-row){
@@ -104,18 +104,56 @@
 }
 @media (prefers-reduced-motion:reduce){.side-disclosure > *{transition:none}}
 #groups .side-chat-row{
-  position:relative;display:grid;align-content:center;height:var(--side-chat-height);padding:4px calc(10px + var(--side-action)) 4px 50px;
+  position:relative;display:grid;align-content:center;height:var(--side-chat-height);padding:4px calc(10px + var(--side-action)) 4px var(--side-chat-indent);
   contain-intrinsic-size:auto var(--side-chat-height);color:var(--ink);
 }
-#groups :is(.pending-new-top,.fam-rows) .side-chat-row{padding-left:34px}
+#groups .side-chat-row.fam-branch{margin-left:var(--branch-indent)}
 #groups .side-chat-row .row-title{font-size:var(--side-text);font-weight:400;line-height:1.25}
 #groups .side-chat-row .row-meta{font-size:var(--side-detail);color:var(--ink-weak);line-height:1.25;padding-right:42px}
 #groups .side-chat-row .row-cwd{text-align:left}
 #groups .side-chat-row .row-meta > .row-when{position:absolute;right:calc(10px + var(--side-action));font:inherit}
-#groups .side-chat-row .row-meta > .unread-mark{position:absolute;left:29px;top:10px}
+#groups .side-chat-row .row-meta > .unread-mark{position:absolute;left:11px;top:calc((var(--side-chat-height) - 26px) / 2)}
 #groups .side-chat-row .row-more{position:absolute;right:4px;top:0;width:var(--side-action);height:100%;margin:0}
-#groups .fam-name{font-size:var(--side-text)}
-#groups .fam-sum{font-size:var(--side-detail)}
+#groups.kbd:focus .fam-root.is-active .row-more{visibility:inherit}
+/* 親の題から枝の題へ。選択・ホバーの面の上に曲線を重ねる。 */
+.fam{
+  --branch-indent:16px;--branch-corner:6px;--branch-stroke:1.5px;
+  --branch-title-center:calc((var(--side-chat-height) - 1.25 * var(--side-detail) - 2px) / 2);
+  border-radius:var(--r-m);
+}
+.fam.over{background:var(--surface-3)}
+.fam-rows{display:grid;gap:2px;position:relative;margin-top:2px}
+.fam-rows.collapsed{display:none}
+.fam-rows::before,.fam-branch::before{content:"";position:absolute;z-index:1;pointer-events:none}
+.fam-rows::before{
+  top:-2px;left:var(--side-chat-indent);
+  bottom:calc(var(--side-chat-height) - var(--branch-title-center) + var(--branch-corner));
+  border:solid var(--line-strong);border-width:0 0 0 var(--branch-stroke); /* allow-border: 枝へつながる縦の線 */
+}
+.fam-branch::before{
+  top:calc(var(--branch-title-center) - var(--branch-corner));left:calc(var(--side-chat-indent) - var(--branch-indent));
+  width:12px;height:var(--branch-corner);
+  border:solid var(--line-strong);border-width:0 0 var(--branch-stroke) var(--branch-stroke); /* allow-border: 枝を題につなぐ曲線 */
+  border-bottom-left-radius:var(--branch-corner);
+}
+#groups .fam-branch .row-meta > .unread-mark{position:static}
+#groups .side-chat-row.fam-root{padding-right:calc(10px + 2 * var(--side-action))}
+#groups .fam-root .row-meta{flex-wrap:nowrap;gap:4px;padding-right:0}
+#groups .fam-root .row-meta > .row-when{position:static;flex:none;white-space:nowrap}
+.fam-sum{display:flex;align-items:center;gap:3px;flex:none}
+.fam-toggle{
+  position:absolute;top:50%;right:calc(4px + var(--side-action));transform:translateY(-50%);
+  width:var(--side-action);height:max(36px,var(--side-action));display:grid;place-items:center;
+  padding:0;border-radius:var(--r-s);background:transparent;cursor:pointer;
+}
+.fam-toggle .fam-chev{
+  position:relative;top:calc((1.25 * var(--side-text) + 2px) / 2);
+  width:12px;height:12px;margin:0;
+}
+.fam-toggle[aria-expanded=true] .fam-chev{transform:rotate(90deg)}
+.fam.here .fam-toggle .fam-chev{stroke:var(--line-blue)}
+@media (hover:hover){.fam-toggle:hover .fam-chev{stroke:var(--ink)}}
+@media (prefers-reduced-motion:reduce){.fam-toggle .fam-chev{transition:none}}
 @media (max-width:700px),(pointer:coarse){
   #groups{--side-row-height:44px;--side-chat-height:52px;--side-action:44px;--side-text:16px;--side-detail:var(--fs-l);--side-channel-hit:44px}
 }

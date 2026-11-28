@@ -120,14 +120,14 @@ async (page) => {
   const source = await command('loadSession', { sessionId: 'ss-index' });
   const fork = await command('fork', { sessionId: 'ss-index', upToMessageId: source.messages[0].uuid, title: `枝 ${Date.now()}` });
   await page.waitForTimeout(600);
-  const family = page.locator('#groups .fam-head[data-key="f:ss-index"]');
+  const family = page.locator('#groups .fam-root[data-session="ss-index"]');
   await family.waitFor();
   if (await page.locator('#onboardingDialog[open]').count()) await page.locator('#closeOnboarding').click();
-  if (await family.getAttribute('aria-expanded') === 'false') await family.click();
+  if (await family.getAttribute('aria-expanded') === 'false') await family.locator('.fam-toggle').click();
   await page.waitForFunction((id) => document.querySelector(`#groups .row[data-session="${id}"]`), fork.sessionId);
   checks.push(check(await page.evaluate((id) => {
     const child = document.querySelector(`#groups .row[data-session="${id}"]`);
-    return child?.closest('.fam')?.querySelector('.fam-head')?.getAttribute('aria-expanded') === 'true';
+    return child?.closest('.fam')?.querySelector('.fam-root')?.getAttribute('aria-expanded') === 'true';
   }, fork.sessionId), '枝は同じ状態のグループに入る'));
   await command('setStatus', { sessionId: fork.sessionId, status: `別の状態 ${Date.now()}` });
   await page.waitForFunction((id) => !document.querySelector(`#groups .row[data-session="${id}"]`)?.closest('.fam'), fork.sessionId);

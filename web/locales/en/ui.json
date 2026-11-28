@@ -2859,8 +2859,6 @@
       "groupStatus": "Change group status",
       "newStatus": "New status",
       "clearStatus": "Clear status",
-      "openRoot": "Open root conversation",
-      "groupTitle": "{{title}} group",
       "loading": "Loading…",
       "thisRow": "This one",
       "branch": "Branch",
@@ -2927,8 +2925,7 @@
     "mode": "Approval mode follows the requester"
     },
     "rowMore": "Actions for \"{{title}}\"",
-    "groupMore": "Actions for status \"{{status}}\"",
-    "familyMore": "Actions for group \"{{title}}\""
+    "groupMore": "Actions for status \"{{status}}\""
   },
   "app": {
     "listSeparator": ", ",

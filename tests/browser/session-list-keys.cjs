@@ -26,14 +26,16 @@ async (page) => {
   check(await page.locator('#groups .row[tabindex="0"], #groups button:not([tabindex="-1"])').count() === 0, 'no row or button inside the list is in the tab order');
 
   // 開いている会話は白い面と aria-selected・aria-current
-  await page.locator('#groups .row:not(.sel)[data-session]').first().click();
-  await page.waitForFunction(() => document.querySelector('#groups .row.sel')?.getAttribute('aria-current') === 'page');
-  const opened = (await state()).sel;
+  const conversation = page.locator('#groups .row:not(.sel)[data-session]').first();
+  const opened = await conversation.getAttribute('data-key');
+  await conversation.click();
+  await page.waitForFunction(k => document.querySelector('#groups .row.sel[aria-current="page"]')?.dataset.key === k, opened);
   check(await page.locator('#groups .row.sel[aria-selected="true"]').count() === 1, 'the open row has aria-selected=true');
   check(!(await state()).hint, 'no key hint after a mouse click');
 
-  // 検索欄 → 漏斗 → 一覧（Tab 2 回）。入ると開いている行を指す
+  // 検索欄 → 漏斗 → 新規チャット → 一覧。入ると開いている行を指す
   await page.locator('#q').focus();
+  await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   let s = await state();
@@ -57,7 +59,11 @@ async (page) => {
   // Home は先頭（状態の見出し）。← で畳み、→ で開く
   await page.keyboard.press('Home');
   s = await state();
-  check(s.activeClass.includes('grp-head') && s.level === '1' && s.expanded === 'true', 'Home goes to the quick chats heading');
+  const firstItem = await page.locator('#groups [role="treeitem"]').first().getAttribute('data-key');
+  check(s.active === firstItem, 'Home goes to the first item');
+  if (!s.activeClass.includes('status-head')) await page.keyboard.press('ArrowDown');
+  s = await state();
+  check(s.activeClass.includes('status-head') && s.level === '1' && s.expanded === 'true', 'the first status heading is expanded at level 1');
   await page.keyboard.press('ArrowLeft');
   check((await state()).expanded === 'false', 'ArrowLeft collapses a heading');
   await page.keyboard.press('ArrowDown');
@@ -80,23 +86,36 @@ async (page) => {
   s = await state();
   check(s.focused && !s.menu.length, 'Escape closes the menu and returns to the list');
 
-  // 器の見出し: → で開いて子へ、← で見出しへ
-  for (let i = 0; i < 40 && !(await state()).activeClass.includes('fam-head'); i++) await page.keyboard.press('ArrowDown');
+  // 親の会話: → で開いて枝へ、← で親へ
+  for (let i = 0; i < 40 && !(await state()).activeClass.includes('fam-root'); i++) await page.keyboard.press('ArrowDown');
   s = await state();
-  check(s.activeClass.includes('fam-head'), 'the group header is reachable with arrows');
+  check(s.activeClass.includes('fam-root'), 'the parent conversation is reachable with arrows');
   if (s.expanded === 'false') await page.keyboard.press('ArrowRight');
   check((await state()).expanded === 'true', 'ArrowRight opens the group');
   await page.keyboard.press('ArrowRight');
   s = await state();
-  check(s.level === '4', 'ArrowRight moves into the group');
+  check(s.level === '3', 'ArrowRight moves into the group');
   await page.keyboard.press('ArrowLeft');
-  check((await state()).activeClass.includes('fam-head'), 'ArrowLeft returns to the group header');
+  check((await state()).activeClass.includes('fam-root'), 'ArrowLeft returns to the parent conversation');
+
+  const parent = (await state()).active;
+  await page.keyboard.press('ArrowLeft');
+  check((await state()).expanded === 'false', 'ArrowLeft collapses the group on its parent');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(k => document.querySelector('#groups .fam-root.sel')?.dataset.key === k, parent);
+  check((await state()).expanded === 'false', 'Enter opens the parent conversation and keeps the group collapsed');
+  await page.locator('#groups').focus();
+  await page.keyboard.press('ArrowRight');
+  check((await state()).expanded === 'true', 'the selected parent can be expanded again');
 
   // 行の Shift+F10 はその行のメニュー。Space で開く
   await page.keyboard.press('ArrowDown');
-  const target = (await state()).active;
+  s = await state();
+  check(s.level === '3' && s.activeClass.includes('fam-branch'), 'ArrowDown points to a branch row');
+  const target = s.active;
   await page.keyboard.press('Shift+F10');
-  check((await state()).menu[0] === '開く', 'row menu opens with Shift+F10');
+  s = await state();
+  check(s.menu.includes('開く'), `row menu opens with Shift+F10 (${s.focused}; ${s.menu.join(', ')})`);
   await page.keyboard.press('Escape');
   await page.keyboard.press(' ');
   await page.waitForFunction(k => document.querySelector('#groups .row.sel')?.dataset.key === k, target);
