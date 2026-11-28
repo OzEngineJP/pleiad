@@ -5,6 +5,7 @@ import { managedBackendIds } from './host-policy.mjs';
 
 export const chatGptEndpoint = id => typeof id === 'string' && /^chatgpt-[0-9a-f]{32}$/.test(id);
 const endpointId = id => 'chatgpt-' + createHash('sha256').update(id).digest('hex').slice(0, 32);
+const agent = 'pleiad-agent';
 
 export function createChatGptConnections(load) {
   let pending;
@@ -14,6 +15,8 @@ export function createChatGptConnections(load) {
   };
 
   return {
+    agent,
+    isEndpointId: chatGptEndpoint,
     async list() {
       if (managedBackendIds) return [];
       const bridge = await adapter().catch(() => null);
@@ -22,7 +25,7 @@ export function createChatGptConnections(load) {
       return accounts.map((account, i) => {
         const { ids, info } = normalizeModels(account.models);
         return {
-          id: endpointId(account.id), agent: 'pleiad-agent', kind: 'chatgpt-plan',
+          id: endpointId(account.id), agent, kind: 'chatgpt-plan',
           name: `ChatGPT ${i + 1}`, baseUrl: 'https://api.openai.com/v1',
           limited: account.limited,
           ready: account.connected && account.planEnabled && !account.limited && ids.length > 0,
@@ -39,7 +42,7 @@ export function createChatGptConnections(load) {
       if (!account.connected || !account.planEnabled) throw new Error(t('chatgpt.signInRequired'));
       const { ids, info } = normalizeModels(account.models);
       if (!ids.length) throw new Error(t('chatgpt.refreshRequired'));
-      return { id, agent: 'pleiad-agent', kind: 'chatgpt-plan', registration: account.id,
+      return { id, agent, kind: 'chatgpt-plan', registration: account.id,
         models: ids, modelInfo: info, roles: { main: ids[0] } };
     },
     async command(action, args, signal) {
