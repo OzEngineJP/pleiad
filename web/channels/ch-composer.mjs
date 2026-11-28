@@ -14,6 +14,7 @@ import { setupMentionBlocks } from './mention-blocks.mjs';
 import { setupSlashSkills } from '../slash-skills.mjs';
 import { createChAttachments } from './ch-attachments.mjs';
 import { DRAFT_STORE, parseDrafts, serializeDrafts } from './ch-attach-model.mjs';
+import { createNextActions } from './next-actions.mjs';
 
 const sendIcon = () => {
   const svg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
@@ -44,7 +45,7 @@ const SAVE_WAIT_MS = 400;
  * @returns {{ el: HTMLFormElement, input: HTMLElement, focus(): void, setPlaceholder(text: string): void, setDisabled(on: boolean, reason?: string): void, refresh(): void, clear(): void,
  *   setDraftKey(key: string|null): void, saveDraft(): void, bindDropZone(zone: HTMLElement): void }}
  */
-export function createChComposer({ id, host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, skills = null, backendLabel, wakePreview, onSend, idPrefix = id }) {
+export function createChComposer({ id, host, bucket = () => null, candidates, blockBots = () => [], suggest = () => null, skills = null, backendLabel, wakePreview, onSend, idPrefix = id, nextActionScope, botOf }) {
   const form = el('form', 'ch-composer');
   form.id = id;
   form.noValidate = true;
@@ -88,6 +89,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   send.append(sendIcon());
 
   let disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;
+  let nextActions;
   // 送っている持ち主（チャンネル）。送信中はその持ち主だけのもの: 別のチャンネルへ移れば、そこではすぐ書いて送れる
   const sending = new Set();
   // 持ち主を離れている間に届いた失敗。戻ったときに入力欄の下へ出す
@@ -153,6 +155,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
   form.addEventListener('focusin', fit);
 
   function paintHint() {
+    nextActions?.refresh();
     const text = input.value.trim();
     const bot = text && !disabled ? suggest() : null;
     if (!bot || /@/.test(text)) { hint.hidden = true; return; }
@@ -242,6 +245,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
     if (mention.keydown(e)) return;
     if (slash?.keydown(e)) return;
     if (blocks.keydown(e)) return;
+    if (nextActions?.keydown(e)) return;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
   });
   input.addEventListener('input', () => { dismissWake(); if (note.textContent && !busy()) say(''); paintHint(); saveDraftSoon(); });
@@ -255,8 +259,14 @@ export function createChComposer({ id, host, bucket = () => null, candidates, bl
     input.focus();
   });
 
+  if (nextActionScope) nextActions = createNextActions({
+    host, input, box, scope: nextActionScope, botOf,
+    blocked: () => disabled || busy() || attach.items.length > 0,
+  });
+
   return {
     el: form,
+    nextActions,
     input,
     editor,
     attach,

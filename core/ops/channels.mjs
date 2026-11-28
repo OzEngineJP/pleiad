@@ -216,6 +216,24 @@ export const channelOps = [
     handler: async (ctx, args) => run(ctx, async () => { await refuseHidden(ctx); return ctx.channels.setThreadTitle(args, await authorOf(ctx)); }),
   }),
   defineOp({
+    id: 'channels.nextActions', summary: D('nextActions', 'summary'), risk: 'write',
+    riskReason: 'Consumes a suggestion in the conversation composer without sending a post or changing stored data',
+    input: z.object({
+      channelId: channelId('nextActions'),
+      threadId: z.string().min(1).optional().describe(D('nextActions', 'threadId')),
+      consumeId: z.string().min(1).optional().describe(D('nextActions', 'consumeId')),
+    }),
+    output: z.object({
+      suggestions: z.array(z.object({ id: z.string(), botId: z.string(), expiresAt: z.number(), action: z.string(), text: z.string() })),
+      consumed: z.boolean(),
+    }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, args) => {
+      if (ctx.principal?.by !== 'human' || !ctx.botNextActions) throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI'));
+      return ctx.botNextActions(args);
+    },
+  }),
+  defineOp({
     // bot へ届く前の人の投稿（送信待ちの行。ADR 0157 の F12）。画面の道具
     id: 'channels.pending', summary: D('pending', 'summary'), risk: 'read',
     input: z.object({ channelId: channelId('pending'), threadId: postId('pending', 'threadId') }),

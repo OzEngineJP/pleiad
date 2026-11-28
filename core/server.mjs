@@ -3742,7 +3742,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged", "secretsChanged",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botNextActionsChanged", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged", "secretsChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
   // 会話の ToDo（ADR 0342）。会話の一覧の行は変わらない
@@ -9433,6 +9433,10 @@ function makeBotHost() {
     reserveBotStart: () => updateGate.locked ? null : updateGate.enter(),
     // 内部 AI 呼出し（Issue #180。learn・pulse の安いモデルは、会話を作らずここを通る。分離できない印の backend は投げる）
     internalCall: internalCalls.call,
+    generateBotSuggestion: ({ request, reply, turn, signal }) => {
+      const gist = suggestionGist([{ role: 'user', text: request.text }, { role: 'assistant', text: reply.text }]);
+      return gist ? runPromptSuggestion(turn, gist, signal, { action: true }) : null;
+    },
     getBackend, assertBackendAllowed, listBackends, resolveModel, resolveEffort, agentLocaleFor, agentT, currentLocale, lastReply,
     routeBotSession,
     botRoutingView: bot => delegationRoutingState(bot),
@@ -11099,16 +11103,22 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
     const { messages } = await history.loadTranscript(id, backend);
     const gist = suggestionGist(messages);
     if (!gist || signal.aborted) return null;
-    const saved = await store.get(id);
-    if (chatGptEndpoint(saved.compatEndpoint)) return null;
-    const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
-    if (saved.compatEndpoint && !endpoint) return null;
-    // 共通の内部呼出しで回す（usage は internalTask 欄付きで記録される。kind 'suggest'）
-    const out = await internalCalls.call({ kind: 'suggest', backend, prompt: suggestionPrompt(gist), signal,
-      ...backend.internalCallSettings?.(saved),
-      endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? ''), locale: await ensureAgentLocale(id) });
-    return out?.aborted ? null : (out?.text ?? null);
+    return runPromptSuggestion(turn, gist, signal);
   });
+}
+
+async function runPromptSuggestion(turn, gist, signal, options) {
+  const backend = turn.backend;
+  if (!backend?.internalTurn || !capabilityValue(backend.capabilities?.internalCall)) return null;
+  const id = turn.info.sessionId;
+  const saved = await store.get(id);
+  if (chatGptEndpoint(saved.compatEndpoint)) return null;
+  const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
+  if ((saved.compatEndpoint && !endpoint) || signal.aborted) return null;
+  const out = await internalCalls.call({ kind: 'suggest', backend, prompt: suggestionPrompt(gist, options), signal,
+    ...backend.internalCallSettings?.(saved),
+    endpoint: endpoint ?? undefined, accountId: endpoint ? undefined : (saved.claudeAccount ?? ''), locale: await ensureAgentLocale(id) });
+  return out?.aborted ? null : (out?.text ?? null);
 }
 
 /** 送信待ちが残っている会話を全部 kick する。ターンが終わるたびに呼ぶ。 */

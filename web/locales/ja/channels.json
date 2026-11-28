@@ -1,4 +1,9 @@
 {
+  "nextActions": {
+    "action": "{{name}}に{{action}}",
+    "more": "ほか {{count}} 件",
+    "described": "{{name}}へのメッセージ候補。{{text}}"
+  },
   "botDelete": {
     "menu": "bot を削除…",
     "more": "bot のメニュー",

@@ -30,6 +30,7 @@ const NUDGE_MS = 700;
  * @param {() => void} [o.painted] 出す・隠すを決め直した（欄の右のボタンの位置を分け合う部品へ）
  */
 export function createSuggestion({ prompt, box, t, touch = () => false, enabled, blocked = () => false, accept,
+  describe = (text) => t('chat.suggestion.described', { text }),
   announce = () => {}, dismiss = () => {}, painted = () => {} }) {
   let text = null;
   let visible = false;
@@ -77,7 +78,7 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
       take.hidden = !touchMode || covered();
       prompt.dataset.ghost = touchMode ? 'touch' : '1';
       prompt.style.minHeight = `${ghost.offsetHeight}px`;
-      prompt.setAttribute('aria-description', t('chat.suggestion.described', { text }));
+      prompt.setAttribute('aria-description', describe(text));
     } else if (fade && visible) {
       // Esc で消す: 字は 120ms で薄れてから隠す（その間も欄の高さは保つ）
       ghost.classList.add('out');
@@ -136,6 +137,7 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
   return {
     get text() { return text; },
     get visible() { return visible; },
+    take() { if (visible && !covered()) use(); },
     /** 出す候補を替える（null で消す） */
     set(value) { text = typeof value === 'string' && value.trim() ? value : null; paint(); },
     /** 欄の中身・状態が変わった（input・フォーカス・会話の切り替え・送信） */
