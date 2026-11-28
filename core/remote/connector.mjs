@@ -190,6 +190,8 @@ export function createRemoteHost({
     name: 'own',
     /** 張ってよいか。true / false（disabled）/ { error }（error）。 */
     ready() {
+      // 自分の中継を使わない（URL も秘密も空）は誤りではない。片方だけ・URL が正しくないのは設定の誤り
+      if (!cfg.relayUrl && !cfg.secret) return false;
       if (!cfg.relayUrl || !cfg.secret) return { error: { code: 'config', message: t('remote.settings.needConfig') } };
       try { relayWsUrl(cfg.relayUrl, '/v1/host'); } catch (e) { return { error: { code: 'config', message: e.message } }; }
       return true;

@@ -261,17 +261,19 @@ export default async function (t) {
 
     await device.agentSync();
     await until(() => device.agent(hostId)?.usable, 10_000, '握手を 2 回タイムアウトした後に委譲が使える');
+    // 行の末尾は「 link=<線の状態>」と、張り直しを待つ間は「 retryAt=<時刻>」（鍵には入らない）
+    const ends = (line, key, tail = '') => new RegExp(`${key} link=[a-z-]+( retryAt=\\S+)?${tail}$`).test(line ?? '');
     t.ok('握手のタイムアウトと繰り返しを各 1 行に抑え、復帰時に抑えた回数を記録する',
       ticketAttempts === 3 && agentAttempts === 3 && agentLog.length === 4 &&
-      agentLog[0].endsWith('state=offline allowed=false reason=ticket-failed') &&
-      agentLog[1].endsWith('state=connecting allowed=false reason=agent-handshake') &&
-      agentLog[2].endsWith('state=offline allowed=false reason=agent-handshake-timeout') &&
-      agentLog[3].endsWith('state=ready allowed=true reason=agent-ready suppressed=4'), agentLog.join('\n'));
+      ends(agentLog[0], 'state=offline allowed=false reason=ticket-failed') &&
+      ends(agentLog[1], 'state=connecting allowed=false reason=agent-handshake') &&
+      ends(agentLog[2], 'state=offline allowed=false reason=agent-handshake-timeout') &&
+      ends(agentLog[3], 'state=ready allowed=true reason=agent-ready', ' suppressed=4'), agentLog.join('\n'));
     readyStream.reset(RESET_CODE.CANCEL);
     await until(() => device.agent(hostId)?.state === 'unsupported', 10_000, '復帰後にもう一度タイムアウトし、次に拒否される');
     t.ok('復帰後のタイムアウトと拒否は新たに記録し、どの行にも券と URL は出さない',
       agentLog.filter(line => line.includes('reason=agent-handshake-timeout')).length === 2 &&
-      agentLog.at(-1).endsWith('state=unsupported allowed=false reason=agent-handshake-rejected') &&
+      ends(agentLog.at(-1), 'state=unsupported allowed=false reason=agent-handshake-rejected') &&
       agentLog.every(line => line.includes(`host=${hostId} via=plus`) && !line.includes(ticketSecret) && !line.includes('private-query') && !line.includes('://')), agentLog.join('\n'));
 
     // ---- プロキシ起動と 4ヘッダー接続 ----

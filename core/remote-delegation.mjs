@@ -109,6 +109,11 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
     /** 任せた子の会話の経過の読み出し（ホストの viewed の result）。画面（human）の delegation.hostView からだけ呼ぶ */
     view: async (hostId, taskId, cursor = null) => (await call('view', { hostId, taskId, cursor }, { timeoutMs: 30_000 })).result,
     sync: async (hostId, taskIds) => (await call('sync', { hostId, taskIds }, { timeoutMs: 15_000 })).result === true,
+    /** main が持つ AI の線の状態（読むだけ）。[{ hostId, via, link: { state, since, retryAt, running }, agent: { state, allowed, since } }] */
+    lines: async ({ timeoutMs: ms = 3000 } = {}) => {
+      const r = (await call('lines', {}, { timeoutMs: ms })).result;
+      return Array.isArray(r) ? r : [];
+    },
     onEvent: on('event'), onState: on('state'), onHosts: on('hosts'), onReady: on('ready'),
   };
 }

@@ -214,6 +214,21 @@ export default async function (t) {
       return s.links.own.state === 'connected' && Date.parse(s.links.own.since) >= errAt;
     }, 10_000, 'own が張り直す');
 
+    // ---- own を使わない（URL も秘密も空）は誤りではなく disabled。plus は張ったまま
+    const offAt = Date.now();
+    await host.setSettings({ relayUrl: '', enrollSecret: '' });
+    await until(async () => {
+      const s = await host.status();
+      return s.links.own.state !== 'connected' && Date.parse(s.links.own.since) >= offAt;
+    }, 10_000, 'own が閉じる');
+    const sOff = await host.status();
+    t.ok('own の URL も秘密も空なら disabled（誤りにしない）', sOff.links.own.state === 'disabled' && !sOff.links.own.error && sOff.links.plus.state === 'connected', JSON.stringify(sOff.links));
+    await host.setSettings({ relayUrl: url1, enrollSecret: SECRET });
+    await until(async () => {
+      const s = await host.status();
+      return s.links.own.state === 'connected' && Date.parse(s.links.own.since) >= offAt;
+    }, 10_000, 'own が張り直す（設定を戻した後）');
+
     // ---- 偽の中継: incoming の差し込み
     const fake = await startFakeRelay();
     fakes.push(fake);

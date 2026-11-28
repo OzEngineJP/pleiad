@@ -7238,7 +7238,8 @@ async function subagentStateOf(backend, sessionId, id) {
 
 // リモート（core/ops/remote.mjs）の本体。秘密・トークンは返さない（core/remote/connector.mjs）
 const opsRemote = {
-  status: () => remoteStatus(),
+  // agentLines: この PC の AI からほかの PC へ任せる線の、ホストごとの状態（main が持つ。デスクトップ版の外では null）
+  status: async () => ({ ...(await remoteStatus()), agentLines: await remoteAgentLinesNow() }),
   setResident: async (patch) => {
     await residentPrefs.set({ keepRunning: patch.keepRunning, sleep: patch.sleep });
     const status = await remoteStatus();
@@ -7706,6 +7707,21 @@ function remoteHostsNow() {
       ...(!online && remoteDelegation?.offlineSince(h.hostId) ? { since: remoteDelegation.offlineSince(h.hostId) } : {}) };
   }
   return out;
+}
+
+/**
+ * この PC の AI からほかの PC へ任せる線の、ホストごとの状態（remote.status の agentLines。読むだけで張り直さない）。
+ * 経路（via）・線の状態（link.state）・AI の口の状態（agent.state）・最後に変わった時刻（since）・次の張り直し（retryAt）。
+ * main との口が無い起動（デスクトップ版でない）と、main が答えない間（更新の引き継ぎ中など）は null
+ */
+async function remoteAgentLinesNow() {
+  if (!remoteAgentBridge) return null;
+  const names = new Map((remoteAgentBridge.hosts ?? []).map((h) => [h.hostId, h.name]));
+  try {
+    return (await remoteAgentBridge.lines()).map((l) => ({ ...l, name: names.get(l.hostId) ?? null }));
+  } catch {
+    return null;
+  }
 }
 
 const hostInstance = crypto.randomUUID();

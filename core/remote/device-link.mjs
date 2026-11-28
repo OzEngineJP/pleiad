@@ -19,6 +19,7 @@
 //   'removed'       （Plus）ホストの PC が Plus のアカウントから外された（4401 host・券の発行が 403 host_removed・404）。張り直さない
 //   'stopped'       stop() した
 //
+// 「張り直さない」状態のうち retryStates に渡したもの（AI の線は 'paused'・'removed'）は、止めずに offlineMaxMs を上限に待って張り直す。
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
 // host-offline（ホストが居ない）が続く間だけは、backoff.offlineMaxMs で別の上限を付けられる
 // （張り直しのたびに券を取り直す線が、オフラインのままのホストへ短い間隔で取り直し続けるのを延ばす。既定は maxMs と同じ）。
@@ -161,8 +162,10 @@ export class DeviceLink extends EventEmitter {
    * backoff: { minMs, maxMs, stableMs, offlineMaxMs }（試験で縮める。offlineMaxMs は host-offline が続く間の上限。無ければ maxMs）
    * connectTimeoutMs: 中継への接続・ハンドシェイク・HELLO のそれぞれの待ちの上限
    */
-  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, getTicket = null, onReadmit = null }) {
+  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, getTicket = null, onReadmit = null, retryStates = [] }) {
     super();
+    /** 止めずに待って張り直す状態（既定は無し。AI の線は 'paused'・'removed' を渡す。上限は backoff.offlineMaxMs） */
+    this.retryStates = new Set(retryStates);
     this.creds = creds;
     this.via = via ?? creds.via ?? 'own';
     this.getIdToken = getIdToken ?? creds.getIdToken ?? null;
@@ -267,14 +270,10 @@ export class DeviceLink extends EventEmitter {
 
   #scheduleRetry(state, detail, { delayOverride = null } = {}) {
     if (!this.running) return;
-    if (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit' || state === 'update' || state === 'removed') {
+    const waits = this.retryStates.has(state);
+    if (!waits && (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit' || state === 'update' || state === 'removed' || state === 'paused')) {
       this.running = false;
       this.#setStatus(state, detail);
-      return;
-    }
-    if (state === 'paused') {
-      this.running = false;
-      this.#setStatus('paused', detail);
       return;
     }
     if (state === 'readmit') {
@@ -304,8 +303,8 @@ export class DeviceLink extends EventEmitter {
       });
       return;
     }
-    // host-offline が続く間だけ offlineMaxMs まで延ばす。ほかの理由（通信の断・中継の作り直しなど）はいつもの上限に戻る
-    const cap = state === 'host-offline' ? this.backoff.offlineMaxMs : this.backoff.maxMs;
+    // host-offline と、止めずに待つと選んだ状態（retryStates）の間だけ offlineMaxMs まで延ばす。ほかの理由（通信の断・中継の作り直しなど）はいつもの上限に戻る
+    const cap = state === 'host-offline' || waits ? this.backoff.offlineMaxMs : this.backoff.maxMs;
     const base = Math.min(cap, this.backoff.minMs * 2 ** this.attempt);
     const delay = delayOverride != null ? delayOverride : Math.round(base * (0.75 + Math.random() * 0.5));
     this.attempt++;
@@ -344,8 +343,11 @@ export class DeviceLink extends EventEmitter {
       try { ticket = await this.getTicket({ hostId: creds.hostId, keyPair: this.keyPair }); }
       catch (e) {
         if (!live()) return;
-        this.log(`remote device: ticket failed: ${e.message}`);
-        return this.#scheduleRetry(ticketFailureState(e), { reason: 'ticket', diagnostic: 'ticket-failed' });
+        // 本文（e.message）は記録しない。状態・HTTP の status・code だけ
+        const state = ticketFailureState(e);
+        const code = typeof e?.code === 'string' && /^[\w.-]{1,40}$/.test(e.code) ? e.code : '-';
+        this.log(`remote device: ticket failed state=${state} status=${Number.isInteger(e?.status) ? e.status : '-'} code=${code}`);
+        return this.#scheduleRetry(state, { reason: 'ticket', diagnostic: 'ticket-failed' });
       }
       if (!live()) return;
       if (ticket) headers['x-pleiad-ticket'] = ticket;

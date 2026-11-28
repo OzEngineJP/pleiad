@@ -372,6 +372,7 @@ ${emitSource}`, context);
       ];
       let removed = new Set();
       let loadQueue = null;
+      const retries = [];
 
       class FakeWindow extends EventEmitter {
         constructor(opts = {}) {
@@ -428,8 +429,9 @@ ${emitSource}`, context);
         },
         async proxy(id) {
           const port = portOf(id);
-          return { url: `http://127.0.0.1:${port}/?token=tok-${id}` };
+          return { url: `http://127.0.0.1:${port}/?token=tok-${id}`, retryNow: () => retries.push({ line: 'window', id }) };
         },
+        agentRetry(id) { retries.push({ line: 'agent', id }); },
         async close() {},
         async disconnect() {},
         async remove(id) { removed.add(id); },
@@ -466,7 +468,7 @@ ${emitSource}`, context);
       const sendIpc = (ch, win, ...args) => ipcListeners.get(ch)(senderOf(win), ...args);
 
       return {
-        dir, localWin, createdWindows, timeline, rwInstance, invokeIpc, sendIpc,
+        dir, localWin, createdWindows, timeline, rwInstance, invokeIpc, sendIpc, retries,
         deferLoads: () => { loadQueue = []; return () => { const q = loadQueue; loadQueue = null; q.forEach(fn => fn()); }; },
         cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
       };
@@ -512,6 +514,20 @@ ${emitSource}`, context);
           afterSecondClose.some(e => e.label === w2.label && e.hasIcon === false && e.destroyed === false)
           && afterSecondClose.some(e => e.label === 'local' && e.hasIcon === false && e.destroyed === false),
           JSON.stringify(afterSecondClose));
+      } finally { h.cleanup(); }
+    }
+
+    // 窓の「再試行」(ply:remote-retry) は、窓の線だけでなく同じホストの AI の線も張り直す
+    {
+      const h = setupHarness();
+      try {
+        await h.rwInstance.openHost(hostId1);
+        const w1 = h.createdWindows[0];
+        await h.invokeIpc('ply:remote-retry', w1);
+        t.ok('窓の再試行で、窓の線と同じホストの AI の線の両方を張り直す',
+          h.retries.some(r => r.line === 'window' && r.id === hostId1) && h.retries.some(r => r.line === 'agent' && r.id === hostId1)
+          && !h.retries.some(r => r.id === hostId2),
+          JSON.stringify(h.retries));
       } finally { h.cleanup(); }
     }
 
