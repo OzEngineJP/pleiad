@@ -2987,6 +2987,7 @@
     "noReply": "No reply from the server"
   },
   "dialog": {
+    "closeWithEscape": "Close (Esc)",
     "onboarding": {
       "title": "Welcome to Pleiad",
       "subtitle": "Choose an agent and a working directory, then start your first conversation.",

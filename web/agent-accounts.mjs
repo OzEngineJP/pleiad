@@ -271,7 +271,15 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
       const dialog = el('dialog', 'rm-dialog aa-notice');
       dialog.setAttribute('aria-labelledby', 'aaNoticeTitle');
       const title = el('h2', null, t(`${key}.title`)); title.id = 'aaNoticeTitle';
-      const done = (yes) => { try { dialog.close?.(); } catch {} dialog.remove(); resolve(yes); };
+      let decided = false;
+      const done = (yes) => {
+        if (decided) return;
+        decided = true;
+        const finish = () => { dialog.remove(); resolve(yes); };
+        if (!dialog.matches?.(':modal')) { finish(); return; }
+        dialog.addEventListener('close', finish, { once: true });
+        dialog.close();
+      };
       const no = button(t('agentAccounts.cancel'), () => done(false));
       const yes = button(t(`${key}.ok`), () => done(true), 'btn btn-primary');
       yes.dataset.act = 'notice-ok'; no.dataset.act = 'notice-cancel';

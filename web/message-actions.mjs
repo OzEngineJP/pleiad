@@ -5,6 +5,7 @@ import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { openExternalLink } from './link-open.mjs';
+import { closeIcon } from './icons.mjs';
 
 export const COPIED_MS = 1200;
 export function aiReportUrl() {
@@ -185,10 +186,11 @@ export function openSourceDialog({ text = '', at = '', opener = null, variants =
   const [glyph, done] = copyGlyphs();
   const copyLabel = el('span', null, t('chat.message.copy'));
   copy.append(glyph, done, copyLabel);
-  const close = el('button', 'btn btn-quiet src-btn');
+  const close = el('button', 'btn btn-icon');
   close.type = 'button';
-  close.append(el('span', null, t('chat.attachList.close')), el('span', null, '×'));
-  close.lastChild.setAttribute('aria-hidden', 'true');
+  close.innerHTML = closeIcon;
+  close.setAttribute('aria-label', t('dialog.close'));
+  close.title = t('dialog.closeWithEscape');
   head.append(copy, close);
   const body = el('pre', 'src-body', String(text ?? ''));
   body.tabIndex = 0;

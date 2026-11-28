@@ -555,7 +555,13 @@ export function askDroppedFolder(info, doc = document) {
       ? t('upload.drop.summaryExcluding', { summary: sizeLine(info.files, info.bytes), excludes: fmt.list(info.excludes) })
       : sizeLine(info.files, info.bytes));
     const acts = el('div', 'fu-go fu-acts');
-    const finish = (v) => { dlg.close(); dlg.remove(); resolve(v); };
+    let decision;
+    const finish = (v) => {
+      if (decision !== undefined) return;
+      decision = v;
+      dlg.addEventListener('close', () => { dlg.remove(); resolve(decision); }, { once: true });
+      dlg.close();
+    };
     const send = button(t('upload.drop.send'), 'btn-primary', () => finish('send'));
     acts.append(send, button(t('upload.drop.attach'), 'btn-quiet', () => finish('attach')), button(t('upload.drop.cancel'), '', () => finish(null)));
     dlg.append(q, sub, acts, el('p', 'cnote fu-sub', t('upload.drop.attachNote')));

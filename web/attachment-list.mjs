@@ -7,7 +7,7 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { formatBytes } from './folder-upload.mjs';
-import { fileIcon } from './icons.mjs';
+import { closeIcon, fileIcon } from './icons.mjs';
 
 // i18n-dynamic: chat.attachList.origin.
 const ORIGIN_MARK = { host: '⇄', device: '▯' };
@@ -36,10 +36,11 @@ export function openAttachmentList({ anchor = null, title, items = [], actions =
   const head = el('div', 'att-list-head');
   const heading = el('h3', null, title);
   heading.id = titleId;
-  const closeButton = el('button', 'btn btn-quiet att-list-close');
+  const closeButton = el('button', 'btn btn-icon');
   closeButton.type = 'button';
-  closeButton.append(el('span', null, t('chat.attachList.close')), el('span', null, '×'));
-  closeButton.lastChild.setAttribute('aria-hidden', 'true');
+  closeButton.innerHTML = closeIcon;
+  closeButton.setAttribute('aria-label', t('chat.attachList.close'));
+  closeButton.title = t('dialog.closeWithEscape');
   head.append(heading, closeButton);
   const body = el('div', 'att-list-body');
   inner.append(el('div', 'att-list-handle'), head, body);

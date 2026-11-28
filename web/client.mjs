@@ -155,7 +155,8 @@ import { branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
 import { chromeControlStore, createChromeControlView, createTabHolderStore, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
 import { setSettingsTraceLabels } from './settings-trace.mjs';
-import { branchIcon } from './icons.mjs';
+import { branchIcon, closeIcon } from './icons.mjs';
+import { watchModalTitleBar } from './modal-title-bar.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 import { whileStill, rightPanelMoving } from './panel-moving.mjs';
 import { createSender } from './composer/sender.mjs';
@@ -6920,7 +6921,8 @@ function openWork(key, scope = null) {
   flushDetailSettled(bg.view);
   bg.view = null;
   // 先に開く。詳細の読み込みは開いているときだけ走る
-  if (!$('workDialog').open) { workSide.begin(); $('workDialog').showModal(); }
+  if (!$('workDialog').open) workSide.begin();
+  $('workDialog').showModal();
   renderBackground();
   restoreChildSubagents();
   // 配信の間に始まって終わった子孫の委譲も一覧に出すため、会話の分を読み直す
@@ -8387,7 +8389,6 @@ function applyTheme(mode) {
   else document.documentElement.dataset.theme = m;
   try { localStorage.setItem("agent-host-theme", m); } catch { /* 保存できなくても動く */ }
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
-  paintTitleBar();
   paintShellTheme();
   // 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295。browserUnify を返す本体だけ）
   if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
@@ -8438,7 +8439,7 @@ function initTheme() {
   applyTheme(saved);
   for (const b of $("themeSeg").querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
   // 自動のときは OS の明暗が変わると面の色も変わる。窓のボタンの地も追いかける
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { paintTitleBar(); paintShellTheme(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paintShellTheme);
 }
 
 // ---------------------------------------------------------------- 言語
@@ -8497,28 +8498,12 @@ function initLocale() {
 // 閉じる・最小化のボタンは OS が描くので、地（帯の右端の面）と記号（本文の字）の色を今の配色から読んで送る。
 // 地は脇の開閉・設定・プレビュー・窓の幅でも変わる（style.css の --bar-end）。どの条件で何色かは CSS だけが決め、
 // ここは解決した結果を読むだけ。tokens.css の値も二重に持たない。同じ色は送り直さない
-let titleBarSent = "";
-function paintTitleBar() {
-  if (!window.plyDesktop?.setTitleBar) return;
-  const bar = document.querySelector(".titlebar");
-  if (!bar) return;
-  const css = getComputedStyle(bar);
-  const colors = { color: css.getPropertyValue("--bar-end").trim(), symbolColor: css.getPropertyValue("--ink").trim() };
-  const key = JSON.stringify(colors);
-  if (key === titleBarSent) return;
-  titleBarSent = key;
-  window.plyDesktop.setTitleBar(colors);
-}
-
-// 帯の色を決める印（html の class・配色、body の class）が変わるたび、窓の幅が変わるたびに合わせ直す。
-// 脇の開閉では setSidebar が side-moving を外した瞬間が、そのまま切り替えの瞬間になる
 function watchTitleBar() {
-  if (!window.plyDesktop?.setTitleBar) return;
-  const watch = new MutationObserver(paintTitleBar);
-  watch.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
-  watch.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-  addEventListener("resize", paintTitleBar);
-  paintTitleBar();
+  const desktop = window.plyDesktop;
+  const bar = document.querySelector('.titlebar');
+  if (bar && desktop?.setTitleBar && desktop.platform !== 'darwin') {
+    watchModalTitleBar({ document, window, bar, send: colors => desktop.setTitleBar(colors) });
+  }
 }
 
 // 入力欄の既定の案内。指で使う画面には Ctrl+Enter が無いので、送信のボタンを案内する
@@ -11788,8 +11773,9 @@ $("authNeed").onclick = (e) => { e.stopPropagation(); side.closePops(); openSett
 
 $("prompt").addEventListener("input", () => syncResume());
 
+$("workDialog").querySelector('header button[data-close]').innerHTML = closeIcon;
 $("workDialog").addEventListener("click", (e) => {
-  if (e.target.dataset?.close !== undefined || e.target === $("workDialog")) $("workDialog").close();
+  if (e.target.closest('button[data-close]') || e.target === $("workDialog")) $("workDialog").close();
 });
 
 // タイトルは人間もその場で変えられる。AI 用ツールと同じ store を通る（設計メモ 2.2）
