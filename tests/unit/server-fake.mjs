@@ -47,7 +47,7 @@ export default async function (t) {
   });
 
   try {
-    t.ok("protocolVersion 3 で握手する", c.ready.protocolVersion === 3, String(c.ready.protocolVersion));
+    t.ok("protocolVersion 4 で握手する", c.ready.protocolVersion === 4, String(c.ready.protocolVersion));
     const absentBackground = await c.cmd('loadBackground', { sessionId: 'no-session', taskId: 'no-task' });
     t.ok('終了済みまたは存在しない裏の作業を読むとnullを返す', absentBackground.task === null);
 

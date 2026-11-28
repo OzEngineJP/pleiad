@@ -246,7 +246,7 @@ export default async function (t) {
     const w = await openWs(`ws://127.0.0.1:${port}/ws?token=${proxy.token}`);
     sockets.push(w);
     const ready = w.ws ? JSON.parse(await w.next()) : null;
-    t.ok('プロキシの /ws でホストの ready が届く', ready?.kind === 'ready' && ready.protocolVersion === 3, JSON.stringify(w.status ?? w.error ?? ready?.kind));
+    t.ok('プロキシの /ws でホストの ready が届く', ready?.kind === 'ready' && ready.protocolVersion === 4, JSON.stringify(w.status ?? w.error ?? ready?.kind));
     const r1 = w.ws ? await wsCommand(w, 'remoteStatus') : null;
     t.ok('プロキシの /ws でコマンドが通る（端末がつながり中に見える）', r1?.ok === true && r1.result.devices.some(d => d.id === host.deviceId && d.connected));
     if (w.ws) {

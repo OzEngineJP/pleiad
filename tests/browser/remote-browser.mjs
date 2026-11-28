@@ -16,6 +16,8 @@ import { startFakePlus } from '../lib/fake-plus.mjs';
 import { createPlusRelayAuthz } from '../lib/plus-relay-authz.mjs';
 import { ROOT, startServer, waitForTestHolders } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { writeSessions } from '../lib/data-store.mjs';
+import { remoteOwnerId } from '../../core/remote/agent-protocol.mjs';
 
 const require = createRequire(import.meta.url);
 const playwright = require(process.env.PW_CORE ?? (process.platform === 'win32'
@@ -150,7 +152,12 @@ try {
     const file = path.join(folder, name + '.bin');
     await writeFile(file, bytes);
     const capture = path.join(directory, 'external.log');
-    const host = await startServer({ dataDir: path.join(directory, 'data'),
+    const dataDir = path.join(directory, 'data');
+    const delegatedSession = `fake-${randomUUID()}`;
+    writeSessions(dataDir, { [delegatedSession]: {
+      backend: 'fake', cwd: folder, delegation: { parentSessionId: remoteOwnerId('fixture-device', 'fixture-parent') },
+    } });
+    const host = await startServer({ dataDir,
       entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
       env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: capture,
         PLEIAD_REMOTE_BROWSER_ORIGIN: shellOrigin },
@@ -178,7 +185,7 @@ try {
       if (new URL(req.url, 'http://localhost').pathname === '/') return res.writeHead(403).end();
       return asset(req, res);
     }, 'localhost');
-    allHosts.set(hostId, { name, pc, sessionId, file, hostId, hostKey, hostOrigin: loader.origin,
+    allHosts.set(hostId, { name, pc, sessionId, delegatedSession, file, hostId, hostKey, hostOrigin: loader.origin,
       relayUrl: shellOrigin.replace('http:', 'ws:') + '/v1/device' });
   }
 
@@ -476,17 +483,36 @@ try {
       assert.equal(sent.ok, true, JSON.stringify(sent));
       await desk.pc.waitFor(e => e.type === 'turnEnd' && e.sessionId === orgSession, { from: mark });
       const sessions = [desk.sessionId, orgSession];
+      const [secondOrg] = await execute(organization, [['newSession', { backend: 'fake', cwd: path.dirname(desk.file) }]]);
+      assert.equal(secondOrg.ok, true);
+      sessions.push(secondOrg.result.sessionId);
       const waitingMark = desk.pc.mark();
-      const largeInput = 'waiting card '.repeat(6000);
+      const largeInput = 'waiting card '.repeat(6000) + 'END-OF-APPROVAL-INPUT';
       await desk.pc.cmd('runTurn', { sessionId: desk.sessionId, prompt: 'question' });
-      await desk.pc.cmd('runTurn', { sessionId: orgSession, prompt: 'steps:' + JSON.stringify({
-        steps: [{ tool: 'fake_shell', ask: true, input: { command: largeInput } }],
-      }) });
-      const both = await desk.pc.waitFor(e => e.type === 'waitingCards' && sessions.every(sessionId => e.cards.some(c => c.sessionId === sessionId)), { from: waitingMark });
-      const [personalCard, orgCard] = sessions.map(sessionId => both.cards.find(c => c.sessionId === sessionId));
+      for (const sessionId of sessions.slice(1)) {
+        await desk.pc.cmd('runTurn', { sessionId, prompt: 'steps:' + JSON.stringify({
+          steps: [{ tool: 'fake_shell', ask: true, input: { command: largeInput } }],
+        }) });
+      }
+      const both = await desk.pc.waitFor(e => e.type === 'waitingCards' && sessions.every(sessionId => e.cards.some(c => c.sessionId === sessionId)), { from: waitingMark, ms: 15_000 });
+      const [personalCard, orgCard, secondOrgCard] = sessions.map(sessionId => both.cards.find(c => c.sessionId === sessionId));
       const orgWaiting = await execute(organization, [], true);
-      assert.deepEqual(orgWaiting.cards.map(c => c.id), [orgCard.id]);
-      assert.equal(orgWaiting.cards[0].input.command, largeInput);
+      assert.deepEqual(orgWaiting.cards.map(c => c.id), [orgCard.id, secondOrgCard.id]);
+      assert.ok(JSON.stringify(orgWaiting).length < 4000, 'waiting snapshot should contain two bounded previews');
+      assert.ok(orgWaiting.cards.every(c => c.lazyInput && c.input === undefined));
+      const cardRow = organization.locator(`.row[data-session="${orgSession}"]`);
+      await cardRow.evaluate(row => row.click());
+      const approval = organization.locator(`.mw[data-key="perm:${orgCard.id}"] .card > .card:not(.done)`);
+      const approve = approval.locator('.card-actions .btn-primary');
+      assert.equal(await approve.isEnabled(), true);
+      assert.ok(!(await approval.locator('code').textContent()).includes('END-OF-APPROVAL-INPUT'));
+      await approval.locator('.approval-input-load').evaluate(button => button.click());
+      await approval.locator('code', { hasText: 'END-OF-APPROVAL-INPUT' }).waitFor();
+      assert.equal(JSON.parse(await approval.locator('code').textContent()).command, largeInput);
+      const allowed = desk.pc.mark();
+      await approve.evaluate(button => button.click());
+      await desk.pc.waitFor(e => e.type === 'waitingCards' && !e.cards.some(c => c.id === orgCard.id), { from: allowed, ms: 15_000 });
+      await desk.pc.cmd('resolvePermission', { id: secondOrgCard.id, allow: false });
       const [deniedAnswer] = await execute(organization, [['resolvePermission', { id: personalCard.id, allow: false }]]);
       assert.equal(deniedAnswer.ok, false);
       await page.evaluate(value => {
@@ -506,7 +532,52 @@ try {
       const [allowedAnswer] = await execute(view, [['resolvePermission', { id: personalCard.id, allow: false }]]);
       assert.equal(allowedAnswer.ok, true, JSON.stringify(allowedAnswer));
       assert.deepEqual((await execute(view, [], true)).cards, []);
-      await desk.pc.cmd('resolvePermission', { id: orgCard.id, allow: false });
+      const [delegatedOpen] = await execute(view, [['loadSession', { sessionId: desk.delegatedSession }]]);
+      assert.equal(delegatedOpen.ok, true, 'the scoped browser can read the delegated conversation');
+      await view.locator('html').evaluate(async () => {
+        const { createHostSocket } = await import('/remote/browser-view.mjs');
+        const probe = createHostSocket(new URL('/ws', location.href));
+        window.permissionProbe = { probe, events: [] };
+        await new Promise((resolve, reject) => {
+          probe.onerror = reject;
+          probe.onmessage = ({ data }) => {
+            const { event } = JSON.parse(data);
+            if (event) window.permissionProbe.events.push(event);
+            if (event?.type === 'waitingCards') resolve();
+            window.permissionProbe.check?.();
+          };
+        });
+      });
+      const noticeMark = desk.pc.mark();
+      await desk.pc.cmd('runTurn', { sessionId: desk.delegatedSession, prompt: 'ask' });
+      const hidden = await desk.pc.waitFor(e => e.type === 'waitingCards' && e.cards.some(c => c.sessionId === desk.delegatedSession), { from: noticeMark, ms: 15_000 });
+      const hiddenCard = hidden.cards.find(c => c.sessionId === desk.delegatedSession);
+      assert.ok(hiddenCard.remoteOrigin);
+      // An ordinary setting request on the same connection is the delivery sentinel.
+      await desk.pc.cmd('setPref', { key: 'confirmAgentSites', value: true });
+      await desk.pc.cmd('runTurn', { sessionId: desk.sessionId, prompt: 'control:' + JSON.stringify({
+        name: 'set_setting', arguments: { key: 'confirmAgentSites', value: false, reason: 'notification-private-reason' },
+      }) });
+      const shown = await desk.pc.waitFor(e => e.type === 'waitingCards' && e.cards.some(c => c.sessionId === desk.sessionId && c.settingChange), { from: noticeMark, ms: 15_000 });
+      const shownCard = shown.cards.find(c => c.sessionId === desk.sessionId && c.settingChange);
+      const observed = await view.locator('html').evaluate(async (_, { revision, id }) => {
+        const { probe, events } = window.permissionProbe;
+        const ready = () => events.some(e => e.type === 'waitingCards' && e.revision === revision) &&
+          events.some(e => e.type === 'permission' && e.id === id);
+        if (!ready()) await new Promise(resolve => {
+          window.permissionProbe.check = () => { if (ready()) resolve(); };
+        });
+        probe.close();
+        return events;
+      }, { revision: shown.revision, id: shownCard.id }, { timeout: 15_000 });
+      assert.ok(!observed.some(e => e.type === 'permission' && e.id === hiddenCard.id));
+      assert.ok(!observed.some(e => e.type === 'waitingCards' && e.cards.some(c => c.id === hiddenCard.id)));
+      const visibleNotice = observed.find(e => e.type === 'permission' && e.id === shownCard.id);
+      const { conversationTitle, ...noticeFields } = visibleNotice;
+      assert.deepEqual(noticeFields, { type: 'permission', id: shownCard.id, sessionId: desk.sessionId, notifyReply: true });
+      assert.ok(conversationTitle === undefined || typeof conversationTitle === 'string');
+      await desk.pc.cmd('resolvePermission', { id: shownCard.id, allow: false, receipt: shownCard.settingChange.receipt });
+      await desk.pc.cmd('resolvePermission', { id: hiddenCard.id, allow: false });
       const localList = JSON.stringify(await desk.pc.cmd('listSessions'));
       assert.ok(localList.includes(desk.sessionId) && localList.includes(orgSession));
       scenarios.push('workspace-specific listing, opening, sending, creation, and waiting cards');

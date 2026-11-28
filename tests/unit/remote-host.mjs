@@ -129,7 +129,7 @@ export default async function (t) {
     const w = await dA.ws('/ws');
     t.ok('/ws の WebSocket が受け付けられる', w.accepted === true, JSON.stringify(w.status ?? w.reset));
     const ready = w.accepted ? JSON.parse(await w.next()) : null;
-    t.ok('/ws で ready が届く', ready?.kind === 'ready' && ready.protocolVersion === 3);
+    t.ok('/ws で ready が届く', ready?.kind === 'ready' && ready.protocolVersion === 4);
     if (w.accepted) {
       // 窓（256 KiB）より大きいメッセージを先に流してから、コマンドが通ること
       await within(w.send(JSON.stringify({ kind: 'noise', pad: 'x'.repeat(1_500_000) })), 15_000, '大きい WS メッセージの送信');

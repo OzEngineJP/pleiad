@@ -67,7 +67,7 @@ export const COMMAND_PASS = [
   'invoke', 'presence', 'notifyStatus', 'setNotifyDevice', 'notifyRegister', 'remoteStatus', 'remoteDevices',
   'onboardingStatus', 'onboardingSeen', 'completeSetup',
   'runTurn', 'sendMessage', 'messageAction', 'listMessages', 'compactConversation', 'cancelCompaction',
-  'abort', 'resume', 'listSessions', 'loadSession', 'watchSession', 'newSession', 'saveDraft', 'deleteUnsentSession', 'deleteSession', 'waitingCardTrace',
+  'abort', 'resume', 'listSessions', 'loadSession', 'watchSession', 'newSession', 'saveDraft', 'deleteUnsentSession', 'deleteSession',
   'setTurnSettings', 'applyTurnSettingsNow', 'setStatus', 'markRead', 'setGrouped', 'setTitle', 'fork', 'resolvePermission', 'listStatuses',
   'efforts', 'modes', 'setModel', 'models', 'listDirs', 'hostCapabilities', 'resolvePath', 'backends', 'authStatus', 'running',
   'loadSubagent', 'findSubagent', 'loadBackground', 'stopBackground', 'renameStatus', 'prefs', 'setPref',

@@ -123,7 +123,12 @@ export const appOps = [
     input: z.object({
       entries: z.array(z.object({
         at: z.string().max(40).optional().describe('agent:ops.app.reportSlow.at'),
-        kind: z.enum(['client-pending', 'client-rtt', 'submit-wait']).describe('agent:ops.app.reportSlow.kind'),
+        kind: z.enum(['client-pending', 'client-rtt', 'submit-wait', 'waiting-card']).describe('agent:ops.app.reportSlow.kind'),
+        phase: z.enum(['received', 'ignored', 'drawn']).optional(),
+        id: z.string().max(80).optional(),
+        revision: z.number().int().nonnegative().optional(),
+        connectionId: z.uuid().optional(),
+        surface: z.enum(['conversation', 'detail', 'thread']).optional(),
         command: z.string().max(80).optional().describe('agent:ops.app.reportSlow.command'),
         ms: z.number().nonnegative().optional().describe('agent:ops.app.reportSlow.ms'),
         sessionId: z.string().max(80).optional().describe('agent:ops.app.reportSlow.sessionId'),

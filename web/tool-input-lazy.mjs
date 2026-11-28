@@ -7,7 +7,9 @@
 
 /** 全文を取る URL。sig は全文の署名（サーバーが照らし、別の中身なら 404。覚えの鍵にもなる） */
 export function toolInputUrl(lazy) {
-  return `/tool-input?${new URLSearchParams({ sessionId: lazy.sessionId, id: lazy.id, sig: String(lazy.sig) })}`;
+  const params = new URLSearchParams({ sessionId: lazy.sessionId, id: lazy.id, sig: String(lazy.sig) });
+  if (lazy.waiting) params.set('waiting', '1');
+  return `/tool-input?${params}`;
 }
 
 /** renderToolCall に渡す lazyInput（{ sessionId, id, sig, size?, change? }）が、取りに行ける形か */

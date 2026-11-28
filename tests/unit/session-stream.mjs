@@ -69,7 +69,7 @@ export default async function (t) {
     displayedCompletions: new Map(), document: { visibilityState: "visible" },
     renderPermission: ev => renderedPermissions.push(ev),
     browserEntry: null, browserSettings: { chromeRepaint: noop },
-    waitingHost: 'host', waitingRevision: -1, waitingReady: false, traceWaiting: noop,
+    waitingHost: 'host', waitingRevision: -1, waitingReady: false, waitingTrace: false, traceWaiting: noop,
     settingCardsOpen: new Map(), openCards: { ids: () => [], prune: noop }, bg: { view: null },
     syncWaitingStatus: () => false, syncStopAndResume: noop, controls: { fit: noop }, paintDelegateCards: noop,
     paintPendingPerms: id => { for (const ev of state.waitingCards.values()) if (ev.sessionId === id) context.renderPermission(ev); }, paintComputerWait: noop,

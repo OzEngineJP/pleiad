@@ -178,6 +178,10 @@ export function createSlowClient({
     configure,
     track,
     recordSubmitWait,
+    recordWaiting(entry) {
+      enqueue({ ...entry, kind: 'waiting-card' });
+      scheduleFlush();
+    },
     flush,
   };
 }

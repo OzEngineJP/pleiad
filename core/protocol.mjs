@@ -6,7 +6,8 @@
 // v3: 状態グループのアイコン（setStatusIcon / statusIcon、listStatuses に icon）、
 //     runTurn の status（新規セッションに最初から状態を付ける）、lineage（系譜）、
 //     text.end の uuid（走っている最中の発言から分岐できるように）。
-export const PROTOCOL_VERSION = 3;
+// v4: 待ちカードを waitingCards の一覧で配信する。
+export const PROTOCOL_VERSION = 4;
 
 /**
  * イベントに sessionId を付ける。全イベントに sessionId が付く（無いものは null）のが契約。
@@ -254,7 +255,6 @@ export const COMMANDS = new Set([
   'browserScreencastInput',  // { sessionId, tabId?, input: { type: tap|scroll|text|key, x?, y?, dx?, dy?, text?, key? } } -> {}
   // コンピューターの操作（docs/computer-use.md）。ホストの OS を操作する命令ではなく止める側なので、リモートの端末からも受ける
   'computerStop',            // { sessionId } -> { stopped }。その会話の走っているターン（貸している先の子のターンも）に止めた印を付け、main へ computer-stop を送る
-  'waitingCardTrace',        // metadata-only diagnostics for waitingCards
   // エージェントのブラウザー（PC の Chrome）への接続（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。つなぐ・切る・前に出すはホストの PC の画面だけ（browser.chrome*）
   'chromeStatus',            // {} -> { state: off|setup|permission|denied|connected|unsupported, reason, dialog, product }。変わったら chromeBrowser イベント
   'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
@@ -359,7 +359,7 @@ export const EVENTS = new Set([
   // { requestId, outcome } 設定の変更や操作の結果。すでに畳んだカードの文言を更新する（ADR 0088）
   "settingApproval",
   "permission",   // デスクトップの一度限りの通知 { id, sessionId, notifyReply, conversationTitle?, computerApp?, settingChange? }
-  "waitingCards", // { hostInstance, revision, cards, resolutions, connectionId }
+  "waitingCards", // { hostInstance, revision, cards, resolutions, connectionId }; 大きな入力は inputPreview と lazyInput.sig で /tool-input を参照
   // 会話に残し（loadSession の closedQuestions）、画面は「答えられずに閉じた質問」として答えを送る・もう一度聞く入口を出す（Issue #231）
   "questionsClosed",
   // { state: idle|running|waiting, holder?: { sessionId, title }, since? } コンピューターの操作のロック。running はこの会話のターンが持っている（借りている）、waiting は別の会話が操作中で待っている。承認と同じく全部の接続へ流す

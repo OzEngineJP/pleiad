@@ -214,7 +214,8 @@ import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
-import { serveHistory, subagentToolSet } from "../web/history-sync.mjs";
+import { serveHistory, subagentToolSet, LAZY_MIN, INPUT_HEAD } from "../web/history-sync.mjs";
+import { hash53 } from "../web/hash53.mjs";
 import { digestOf } from "../web/outline.mjs";
 import { switchBackend, createConversation, conversationForCreation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { rebuildEnabled, REBUILD_LIMITS } from "./context-rebuild.mjs";
@@ -236,6 +237,7 @@ import { onExit, holderRootFor } from './process.mjs';
 const BOOT_ENV = takeBootEnv(process.env);
 // 画面・リモートへ送る前に、秘密情報の値と一致する部分を伏せる（core/secret-mask.mjs。ADR 0217）。emitGlobal・sendTo が使うので、どの出来事より先に作る
 const secretMasker = createSecretMasker();
+let waitingInputs = new WeakMap();
 const secretStream = createStreamMasker(secretMasker);
 
 // 保存（DB への書き込み）の失敗は例外として返る（ADR 0115）。待たずに呼んで受けていない箇所が残っていると、Node の既定
@@ -797,7 +799,10 @@ const secrets = createSecrets({
 // 伏せる値の一覧は変わるたびに読み直す（送る口は待てない）。伏せる口（secretMasker・secretStream）はファイルの頭で作る
 let maskRefresh = Promise.resolve();
 function refreshSecretMask() {
-  maskRefresh = maskRefresh.then(() => secrets.maskValues()).then(values => secretMasker.set(values)).catch(e => console.error('  secrets: 伏せる値を読めなかった:', String(e?.code ?? e?.message ?? e)));
+  maskRefresh = maskRefresh.then(() => secrets.maskValues()).then(values => {
+    secretMasker.set(values);
+    waitingInputs = new WeakMap();
+  }).catch(e => console.error('  secrets: 伏せる値を読めなかった:', String(e?.code ?? e?.message ?? e)));
   return maskRefresh;
 }
 secrets.init().then(refreshSecretMask).catch(() => {});
@@ -3115,8 +3120,20 @@ const server = http.createServer(async (req, res) => {
       const sessionId = url.searchParams.get('sessionId'), id = url.searchParams.get('id'), sigRaw = url.searchParams.get('sig');
       const sig = sigRaw !== null && /^\d{1,16}$/.test(sigRaw) ? Number(sigRaw) : null;
       const valid = Boolean(sessionId) && Boolean(id) && id.length <= 512 && sig !== null;
+      const waiting = url.searchParams.get('waiting') === '1';
       let found = null;
-      if (valid) {
+      if (valid && waiting) {
+        const w = runtime.waiting.get(id);
+        const payload = w?.payload;
+        const target = payload?.targetSessionId, handoff = payload?.browserHandoff;
+        if (payload?.sessionId === sessionId &&
+            (!browserScope || await browserCanSeeCard(browserScope, { ...payload, remote: w.remote })) &&
+            runtime.waiting.get(id) === w && w.payload === payload &&
+            payload.targetSessionId === target && payload.browserHandoff === handoff &&
+            waitingInput(w)?.lazyInput.sig === sig) {
+          found = secretMasker.json(JSON.stringify(payload.input));
+        }
+      } else if (valid) {
         const turn = runtime.turns.get(sessionId);
         // 走っているターンの、まだ記録に載っていない呼び出し（畳んだ発言。loadSession の窓の発言と同じ並び）
         const extra = turn ? [...turn.stream.messages, ...liveSnapshot(turn.stream, { backend: turn.backend?.id ?? null, model: turn.info?.model || null }).messages] : [];
@@ -3126,8 +3143,8 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(valid ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
         return res.end('not found');
       }
-      let buf = Buffer.from(JSON.stringify(found), 'utf8');
-      const headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff',
+      let buf = Buffer.from(waiting ? found : JSON.stringify(found), 'utf8');
+      const headers = { 'content-type':'application/json; charset=utf-8', 'cache-control': waiting ? 'private, no-store' : 'private, max-age=31536000, immutable', 'x-content-type-options':'nosniff',
         'content-security-policy':"sandbox; default-src 'none'", vary:'Accept-Encoding' };
       // 数 MiB の文字列は縮むので、受け手が gzip を受けるなら縮めて返す（中継越しの画面に効く。core/bulk-replies.mjs と同じ）
       if (/\bgzip\b/i.test(String(req.headers['accept-encoding'] ?? ''))) { buf = await gzipAsync(buf, { level: 6 }); headers['content-encoding'] = 'gzip'; }
@@ -3792,7 +3809,7 @@ function threadStreamFor(channelId, threadId) {
 }
 
 /** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
-function sendTo(frame) {
+function sendTo(frame, waiting) {
   // 秘密情報の値（エージェントがシェルで表示したものなど）は、画面・リモートへ出す前に伏せる（ADR 0217）
   const text = secretMasker.json(JSON.stringify(frame));
   const event = frame.kind === P.EVENT ? frame.event : null;
@@ -3809,11 +3826,25 @@ function sendTo(frame) {
     if (!event || wanted(ws, event)) ws.send(text);
   }
   if (scoped.length) {
+    const card = waiting && { ...waiting.payload, remote: waiting.remote };
+    const scopedText = waiting
+      ? secretMasker.json(JSON.stringify({ kind: P.EVENT, event: permissionNotice(event.id, card, true) }))
+      : text;
     void Promise.all(scoped.map(async ws => {
-      if (await browserCanUseSession(browserConnections.get(ws), event.sessionId) && ws.readyState === ws.OPEN && wanted(ws, event)) ws.send(text);
+      const scope = browserConnections.get(ws);
+      const visible = waiting
+        ? await browserCanSeeCard(scope, card)
+        : await browserCanUseSession(scope, event.sessionId);
+      if (visible && ws.readyState === ws.OPEN && browserConnections.get(ws) === scope && wanted(ws, event) &&
+          (!waiting || (runtime.waiting.get(event.id) === waiting && waiting.remote === card.remote &&
+            waiting.payload.remoteOrigin === card.remoteOrigin && waiting.payload.targetSessionId === card.targetSessionId &&
+            waiting.payload.browserHandoff === card.browserHandoff))) {
+        ws.send(scopedText);
+        if (waiting) waiting.notified = true;
+      }
     })).catch(error => console.error('Could not route browser conversation event:', error.message));
   }
-  return sent || scoped.length > 0;
+  return sent || (!waiting && scoped.length > 0);
 }
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
 const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
@@ -5093,7 +5124,7 @@ const opsApp = {
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
   cliSetup: () => mcpSetup({ dataDir: store.dataDir }),
   // 遅い命令・イベントループ・送信待ちの診断ログ（slow-commands.log）
-  reportSlow: (entries) => slowLog.recordClientBatch(entries),
+  reportSlow: (entries) => slowLog.recordClientBatch(waitingTrace ? entries : entries.filter(e => e.kind !== 'waiting-card')),
   // 画面が読む作業の状態。待ちカードは waitingCards で配信する。
   runningWork: async () => screenWork(await runningWork()),
   // いま走っている作業の要約（app.running）。会話のターン・委譲の子・承認待ちの数
@@ -7681,6 +7712,21 @@ const hostInstance = crypto.randomUUID();
 let waitingRevision = 0;
 let blockingWaiting = new Set();
 const waitingConnections = new WeakMap();
+const waitingTrace = BOOT_ENV.AGENT_HOST_WAITING_TRACE === '1';
+
+function waitingInput(w) {
+  const source = w.payload.input;
+  const cached = waitingInputs.get(w);
+  if (cached && cached.source === source) return cached.preview;
+  const json = JSON.stringify(source);
+  const masked = json?.length >= LAZY_MIN ? secretMasker.json(json) : null;
+  const preview = masked === null ? null : {
+    inputPreview: masked.slice(0, INPUT_HEAD) + '…',
+    lazyInput: { sig: hash53(masked) },
+  };
+  waitingInputs.set(w, { source, preview });
+  return preview;
+}
 
 function waitingSnapshot(resolutions = []) {
   const cards = [...runtime.waiting].map(([id, w]) => {
@@ -7692,10 +7738,11 @@ function waitingSnapshot(resolutions = []) {
       childSessionId: w.remote.childSessionId, online: w.remote.online, hostOnly: w.remote.hostOnly,
     };
     return {
-      id, kind, sessionId, targetSessionId, toolName, input, toolUseID, title, conversationTitle,
+      id, kind, sessionId, targetSessionId, toolName, toolUseID, title, conversationTitle,
       canAlways, questions, editableField, browserSite, computerApp, settingChange, secretRequest,
       browserHandoff, chromeWait, remoteOrigin, remote, relay: Boolean(w.relay), detached: Boolean(w.detached),
       outlivesTurn: Boolean(w.outlivesTurn), blocking: blocksTurn(w), askedAt: w.askedAt,
+      ...(waitingInput(w) ?? { input }),
     };
   });
   return { type: 'waitingCards', hostInstance, revision: waitingRevision, cards, resolutions };
@@ -7726,19 +7773,12 @@ async function sendWaitingCards(ws, snapshot = structuredClone(waitingSnapshot()
   if (ws.readyState !== ws.OPEN || !runtime.sockets.has(ws) || browserConnections.get(ws) !== scope
       || snapshot.revision < connection.sent) return;
   connection.sent = snapshot.revision;
-  const visible = new Map(cards.map(card => [card.id, card.sessionId]));
-  connection.visible = visible;
-  connection.recent.set(snapshot.revision, visible);
-  if (connection.recent.size > 8) connection.recent.delete(connection.recent.keys().next().value);
+  connection.visible = new Set(cards.map(card => card.id));
   const event = { ...snapshot, cards, resolutions, connectionId: connection.id };
-  ws.send(secretMasker.json(JSON.stringify({ kind: P.EVENT, event })), error => {
+  ws.send(secretMasker.json(JSON.stringify({ kind: P.EVENT, event })), waitingTrace ? error => {
     if (error) return;
-    for (const { id, sessionId } of cards) logWaiting('sent', connection.id, snapshot.revision, id, sessionId);
-  });
-}
-
-function logWaiting(phase, connectionId, revision, id, sessionId, surface) {
-  console.log('[waitingCards]', JSON.stringify({ phase, hostInstance, connectionId, revision, id, sessionId, surface }));
+    for (const { id } of cards) console.log('[waitingCards]', JSON.stringify({ phase: 'sent', id, revision: snapshot.revision, connectionId: connection.id }));
+  } : undefined);
 }
 
 function deliverWaiting(ws, snapshot) {
@@ -7763,11 +7803,16 @@ function syncWaitingBlocking() {
   }
 }
 
+function permissionNotice(id, payload, scoped = false) {
+  const { sessionId, computerApp, settingChange, conversationTitle } = payload;
+  return { type: 'permission', id, sessionId, conversationTitle, notifyReply: true,
+    ...(!scoped ? { computerApp, settingChange } : {}) };
+}
+
 function notifyWaiting(ws) {
   for (const [id, w] of runtime.waiting) {
     if (w.relay || w.notified) continue;
-    const { sessionId, computerApp, settingChange, conversationTitle } = w.payload;
-    const event = { type: 'permission', id, sessionId, computerApp, settingChange, conversationTitle, notifyReply: true };
+    const event = permissionNotice(id, w.payload);
     ws.send(secretMasker.json(JSON.stringify({ kind: P.EVENT, event })));
     w.notified = true;
   }
@@ -7776,9 +7821,7 @@ function notifyWaiting(ws) {
 function notifyNewWaiting(id) {
   const w = runtime.waiting.get(id);
   if (!w || w.notified) return;
-  const { sessionId, computerApp, settingChange, conversationTitle } = w.payload;
-  const event = { type: 'permission', id, sessionId, computerApp, settingChange, conversationTitle, notifyReply: true };
-  w.notified = sendTo({ kind: P.EVENT, event });
+  w.notified = sendTo({ kind: P.EVENT, event: permissionNotice(id, w.payload) }, w);
 }
 
 function screenWork({ permissions, ...work }) { return work; }
@@ -11855,8 +11898,9 @@ wss.on("connection", (ws, req) => {
     hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     // 遅い命令・送信待ちの診断記録のしきい値（ms）
     slow: slowLog.clientConfig(),
+    waitingTrace,
   }));
-  waitingConnections.set(ws, { id: crypto.randomUUID(), sent: -1, recent: new Map(), visible: new Map(), traceAt: 0 });
+  waitingConnections.set(ws, { id: crypto.randomUUID(), sent: -1, visible: new Set() });
   deliverWaiting(ws);
   if (!browserScope) notifyWaiting(ws);
   // エージェントのブラウザー（PC の Chrome）への接続の今の状態。ホストの PC の画面だけ（リモートの端末へは送らない）
@@ -11879,22 +11923,6 @@ wss.on("connection", (ws, req) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg?.kind !== P.COMMAND || !P.COMMANDS.has(msg.command)) return;
-
-    if (msg.command === 'waitingCardTrace') {
-      const connection = waitingConnections.get(ws);
-      const report = msg.args?.entries;
-      const now = Date.now();
-      if (!Array.isArray(report) || report.length > 128 || now - connection.traceAt < 200) return;
-      connection.traceAt = now;
-      for (const { phase, revision, id, sessionId, surface } of report.filter(row => row && typeof row === 'object')) {
-        const visible = connection.recent.get(revision);
-        if (!visible?.has(id) || visible.get(id) !== sessionId) continue;
-        if (phase === 'received' || phase === 'ignored') logWaiting(phase, connection.id, revision, id, sessionId);
-        if (phase === 'drawn' && ['conversation', 'detail', 'thread'].includes(surface))
-          logWaiting(phase, connection.id, revision, id, sessionId, surface);
-      }
-      return;
-    }
 
     const cmdStart = performance.now();
     const cmdLabel = msg.command === 'invoke' && typeof msg.args?.op === 'string'

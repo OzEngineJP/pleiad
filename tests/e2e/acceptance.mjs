@@ -19,7 +19,7 @@ const samePath = (a, b) => {
 export default async function (t, ctx) {
   const c = await ctx.open({ autoAllow: true });
   try {
-    t.ok("ready ハンドシェイク", c.ready.protocolVersion === 3, `protocolVersion=${c.ready.protocolVersion}`);
+    t.ok("ready ハンドシェイク", c.ready.protocolVersion === 4, `protocolVersion=${c.ready.protocolVersion}`);
 
     const sessions = await c.cmd("listSessions");
     t.ok("listSessions", Array.isArray(sessions) && sessions.length > 0, `${sessions.length} 件`);

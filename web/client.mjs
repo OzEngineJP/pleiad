@@ -162,6 +162,7 @@ import { whileStill, rightPanelMoving } from './panel-moving.mjs';
 import { createSender } from './composer/sender.mjs';
 import { createWorkComposer } from './composer/work-composer.mjs';
 import { createWorkControls } from './composer/work-controls.mjs';
+import { fetchToolInput } from './tool-input-lazy.mjs';
 const outboxes = new Map();
 let workComposer = null;   // 子の会話のモーダルの入力欄（web/composer/work-composer.mjs。下の操作の節で作る）
 const slowClient = createSlowClient({
@@ -476,7 +477,7 @@ const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("co
 let freshSessionId = null;
 
 const NL = String.fromCharCode(10);
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 // この画面を配ったサーバーの版（サーバーが index.html に埋める。web/interrupt.mjs の versionReload）
 const SERVED_BUILD = document.querySelector('meta[name="pleiad-build"]')?.content ?? "";
 // この PC の通知（設定 › 通知 › この PC）。切った種類と、いま見ている会話は出さない（ADR 0086）
@@ -2691,6 +2692,7 @@ let foldSeq = 0;
  * ▸ はツールの行の折りたたみと同じ。Enter・Space でも開閉する。開いている間は 55% に沈めない（style.css）
  */
 function foldSettledCard(card, head, code, target) {
+  code.querySelector('.approval-input-load')?.remove();
   const caret = el("span", "caret", "▸");
   caret.setAttribute("aria-hidden", "true");
   head.prepend(caret);
@@ -2926,8 +2928,9 @@ function permissionCard(ev, into = null) {
   card.append(head);
   if (ev.remoteOrigin) card.append(el("p", "relay-note", t("chat.approval.relay.hostCanAnswer", { device: ev.remoteOrigin.deviceName })));
 
-  const input = JSON.stringify(ev.input ?? {}, null, 2);
-  const short = input.length > 1200 ? input.slice(0, 1200) + NL + "…" : input;
+  let input = ev.input;
+  const preview = ev.inputPreview ?? JSON.stringify(input ?? {}, null, 2);
+  const short = preview.length > 1200 ? preview.slice(0, 1200) + NL + "…" : preview;
   const code = el("div", "code-block");
   const pre = el("pre");
   pre.append(el("code", null, short));
@@ -2946,7 +2949,28 @@ function permissionCard(ev, into = null) {
   allow.type = "button";
   if (ev.browserSite) { actions.append(allow); if (canAlways) actions.append(always); actions.append(deny); }
   else { if (canAlways) actions.append(always); actions.append(deny, allow); }
-  const editApproval = approvalEditor(ev, card);
+  let editApproval = approvalEditor(ev, card);
+  if (ev.lazyInput && !ev.browserSite) {
+    const load = el("button", "btn btn-quiet approval-input-load", t("dialog.work.showFull"));
+    load.type = "button";
+    load.onclick = async () => {
+      load.disabled = true;
+      load.textContent = t("timeline.tool.inputLoading");
+      try {
+        const full = await fetchToolInput({ ...ev.lazyInput, id: ev.id, sessionId: ev.sessionId, waiting: true });
+        if (!load.isConnected || !state.waitingCards.has(ev.id)) return;
+        input = full;
+        pre.firstChild.textContent = JSON.stringify(full, null, 2);
+        load.remove();
+        editApproval = approvalEditor({ ...ev, input: full }, card);
+        card.append(actions);
+      } catch {
+        load.disabled = false;
+        load.textContent = `${t("timeline.tool.inputFailed")} · ${t("timeline.tool.inputRetry")}`;
+      }
+    };
+    code.append(load);
+  }
   card.append(actions);
 
   // 押したらサーバーが受け取るまで「◯◯を送っています…」（ボタンは止め、カードは待っている形のまま）。
@@ -2987,7 +3011,7 @@ function permissionCard(ev, into = null) {
     head.append(el("span", "res", `${ok ? (forever ? t("chat.approval.allowedAlways") : t("chat.approval.allowed")) : t("chat.approval.denied")} · ${hhmm(new Date())}`));
     actions.remove();
     // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
-    if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
+    if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(input));
     activity.afterPermission(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
   };
   allow.onclick = () => settle(true);
@@ -3026,24 +3050,17 @@ const openCards = createCardRoll();
 const alreadyResolved = (err, id) => err?.code === 'ALREADY_RESOLVED' || !state.waitingCards.has(id);
 const foldElsewhere = id => openCards.fold(id, { by: 'elsewhere' });
 let waitingHost, waitingRevision = -1, waitingReady = false;
-let waitingTraceTimer;
-const waitingTraces = [];
+let waitingTrace = false, waitingConnection;
 const tracedWaitingNodes = new WeakSet();
 
-function traceWaiting(phase, revision, card, surface) {
-  if (waitingTraces.length < 128) waitingTraces.push({ phase, revision, id: card.id, sessionId: card.sessionId, surface });
-  waitingTraceTimer ??= setTimeout(() => {
-    waitingTraceTimer = null;
-    const entries = waitingTraces.splice(0);
-    try {
-      if (waitingReady && entries.length && ws?.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ kind: 'command', command: 'waitingCardTrace', args: { entries } }));
-    } catch { /* A diagnostic may be lost if the connection closes. */ }
-  }, 250);
+function traceWaiting(phase, revision, { id }, surface) {
+  const entry = { phase, revision, id, connectionId: waitingConnection, surface };
+  console.debug('[waitingCards]', JSON.stringify(entry));
+  if (!browserEmbedded) slowClient.recordWaiting(entry);
 }
 
 function traceWaitingDraw(card, node, surface) {
-  if (!node || tracedWaitingNodes.has(node)) return;
+  if (!waitingTrace || !node || tracedWaitingNodes.has(node)) return;
   const revision = waitingRevision;
   const socket = ws;
   requestAnimationFrame(() => {
@@ -3056,7 +3073,10 @@ function traceWaitingDraw(card, node, surface) {
 function applyWaitingCards(ev) {
   if (ev.hostInstance !== waitingHost || !Number.isSafeInteger(ev.revision) || !Array.isArray(ev.cards)) return;
   const fresh = ev.revision > waitingRevision;
-  for (const card of ev.cards) traceWaiting(fresh ? 'received' : 'ignored', ev.revision, card);
+  if (waitingTrace) {
+    waitingConnection = ev.connectionId;
+    for (const card of ev.cards) traceWaiting(fresh ? 'received' : 'ignored', ev.revision, card);
+  }
   if (ev.revision < waitingRevision || (!fresh && waitingReady)) return;
   waitingReady = true;
   if (!fresh) return;
@@ -3198,7 +3218,7 @@ function renderPermission(ev) {
     return computerApproval(ev, computerApp, null);
   }
   // 実行中の行は元の所属へ戻して承認カードにする。本文が先に来てまとまりを閉じた場合も同じ。
-  const row = ev.kind !== "question" && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
+  const row = ev.kind !== "question" && !ev.lazyInput && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
   if (row?.isConnected && (row.classList.contains("tc-at-end") || bundleOf(row)?.live)) {
     markWaiting(row);
     activity.suspend();   // 承認カードが「承認を待っている」を語る
@@ -7435,7 +7455,7 @@ function modalChildPermission(ev) {
   if (th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"], [data-perm-id="${CSS.escape(ev.id)}"]`)) return;
   // ツールの承認は、主と同じに、走っているツールの行の中に出す（renderPermission のツール行の分岐と同じ条件・同じ手順。持ち主は子の実例）
   const lt = mc.view.liveTurn;
-  const row = ev.kind !== 'question' && !ev.browserSite && !ev.browserHandoff && !(ev.chromeWait && ev.remote) && !ev.computerApp && !ev.settingChange && !ev.secretRequest && ev.toolUseID
+  const row = ev.kind !== 'question' && !ev.lazyInput && !ev.browserSite && !ev.browserHandoff && !(ev.chromeWait && ev.remote) && !ev.computerApp && !ev.settingChange && !ev.secretRequest && ev.toolUseID
     ? lt.toolCards.get(ev.toolUseID) : null;
   if (row?.isConnected && (row.classList.contains('tc-at-end') || bundleOf(row)?.live)) {
     markWaiting(row);
@@ -11338,6 +11358,7 @@ function connect() {
       state.voice = m.voice === 1; voiceUi.refresh();
       // protocolVersion は必ず gate する。想定外なら黙って誤動作させない
       if (m.protocolVersion !== PROTOCOL) {
+        if (reloadForVersion(m)) return;
         sys(html.t("app.protocolUnsupported", { version: m.protocolVersion }));
         return ws.close();
       }
@@ -11363,6 +11384,7 @@ function connect() {
       connStatus.ready();
       state.hostTimeZone = m.hostTimeZone ?? null;
       slowClient.configure(m.slow);
+      waitingTrace = m.waitingTrace === true;
       slowClient.flush();
       refreshSchedules().catch(() => {});
       // 切れている間の確認と、旧版がこのブラウザーに持っていた確認済みを送る（受け取られたら旧版の分は消す）
@@ -11477,7 +11499,6 @@ function connect() {
   ws.onclose = () => {
     if (socket !== ws) return;
     waitingReady = false;
-    waitingTraces.length = 0;
     // 困っているときだけ出す。切れても向こうは走り続けている（既定では戻るまで待ち続ける）ので実行中の印は消さない。
     // 開き直すのは connStatus（1.5 秒ごと。トークンが古いと分かったら開き直さない）
     for (const [, p] of pending) p.rej(Object.assign(new Error(t("app.disconnected")), { disconnected: true }));

@@ -21,6 +21,7 @@ const ALLOWED_KINDS = new Set([
   'server-cmd',
   'event-loop',
   'submit-wait',
+  'waiting-card',
 ]);
 const ALLOWED_SOURCES = new Set(['client', 'server']);
 const ALLOWED_OUTCOMES = new Set(['pending', 'ok', 'error', 'closed', 'cancelled', 'sent']);
@@ -126,6 +127,15 @@ export function sanitizeSlowEntry(raw, { defaultSource = 'server', now = Date.no
     kind: raw.kind,
     source,
   };
+  if (raw.kind === 'waiting-card') {
+    const id = safeToken(raw.id);
+    const connectionId = safeToken(raw.connectionId);
+    const { phase, revision, surface } = raw;
+    if (!id || !connectionId || !Number.isSafeInteger(revision) || revision < 0 ||
+        !['received', 'ignored', 'drawn'].includes(phase)) return null;
+    return { ...entry, id, connectionId, revision, phase,
+      ...(phase === 'drawn' && ['conversation', 'detail', 'thread'].includes(surface) ? { surface } : {}) };
+  }
 
   const command = safeToken(raw.command, 80);
   if (command !== undefined) entry.command = command;
