@@ -51,7 +51,12 @@ export default async function (t) {
   const api = await startFakeCompatApi({ keys: [KEY], auth: 'bearer' });
   try {
     const secrets = createSecretStore({ file: path.join(dir, 'compat-endpoint-secrets.json'), cipher: plainCipher });
-    const eps = createCompatEndpoints({ dataDir: dir, secrets });
+    const eps = createCompatEndpoints({ dataDir: dir, secrets, chatGpt: bridge });
+
+    t.ok('ChatGPT の接続先は提供元のエージェントの一覧にだけ出る',
+      (await eps.list(bridge.agent)).endpoints.some(e => e.id === endpointId) && (await eps.list('codex')).endpoints.length === 0);
+    t.ok('ChatGPT の接続先を別のエージェントで指定すると拒否する',
+      (await rejects(() => eps.resolve(endpointId, 'codex')))?.code === 'agent');
 
     // ---- URL の検査
     t.ok('Claude の URL の末尾の /v1 は断る', (await rejects(() => normalizeUrl('claude', 'https://x.example/v1')))?.message.includes('/v1'));

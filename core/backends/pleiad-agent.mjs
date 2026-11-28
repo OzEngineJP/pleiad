@@ -509,6 +509,7 @@ export const backend = {
   id: 'pleiad-agent',
   label: 'Pleiad Agent',
   defaultConnectionLabel: 'Pleiad Plus',
+  chatGptConnection: true,
   capabilities: CAPABILITY_STATES[ID],
   traits: AGENT_TRAITS[ID],
   internalCallSettings: ({ model, effort }) => ({ model, effort }),

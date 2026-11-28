@@ -3621,7 +3621,8 @@ function onEvent(ev, replay = false) {
     case 'modelSwitch':
     case "turnResult":
       if (!replay && ev.outcome === 'error' && ev.sessionId === state.current && state.endpoint?.startsWith('chatgpt-')) {
-        compatEndpoints.invalidate(); connAsked.delete('pleiad-agent');
+        compatEndpoints.invalidate();
+        for (const b of state.backends.filter(chatGptAvailable)) connAsked.delete(b.id);
         syncTopbar().catch(() => {}); renderAuth();
       }
       trackSwitch(ev);
@@ -4106,7 +4107,7 @@ let connPrefsSeen = '';
 
 /** 頭の行の数を出すために一覧（アカウント・互換）を取りに行ったエージェント（変わったという便りで空にする） */
 const connAsked = new Set();
-const chatGptAvailable = b => b.id === 'pleiad-agent' && !b.managedConnection && !window.plyRemote;
+const chatGptAvailable = b => b.chatGptConnection === true && !window.plyRemote;
 let chatGptStatus = {};
 let chatGptAction = '';
 let chatGptError = '';

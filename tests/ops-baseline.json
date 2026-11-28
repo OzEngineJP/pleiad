@@ -56,6 +56,7 @@
     "authLogout": "human-only",
     "authSubmit": "human-only",
     "authCancel": "human-only",
+    "chatGptConnection": "human-only",
     "claudeSdkInstall": "human-only",
     "plusLogin": "human-only",
     "plusLoginCancel": "human-only",
