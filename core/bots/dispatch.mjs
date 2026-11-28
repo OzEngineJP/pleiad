@@ -179,7 +179,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
 
   /** スレッドの状態を、走っているターン・承認待ち・最後の失敗から決めて書く（変わったときだけ） */
   function refreshThread(channelId, threadId) {
-    const key = threadKeyOf(channelId, threadId);
+    const key = threadKeyOf(channelId, threadId) ?? (channelId && `${channelId}/dm`);
     if (!key) return Promise.resolve();
     const prev = threadChains.get(key) ?? Promise.resolve();
     const run = prev.then(async () => {
@@ -188,11 +188,20 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       const state = recs.some((r) => r.waiting.size) ? 'waiting' : going ? 'working' : failedKeys.has(key) ? 'failed' : 'idle';
       // どの bot が動いているか（state はスレッド全体の集計）。始めたばかりのターンは作業中として数える
       const live = {};
-      for (const s of starting.values()) if (s.channelId === channelId && s.threadId === threadId && s.botId) live[s.botId] = 'working';
-      for (const r of recs) live[r.botId] = r.waiting.size ? 'waiting' : 'working';
-      const mark = JSON.stringify([state, Object.entries(live).sort(([x], [y]) => x.localeCompare(y))]);
+      const liveSince = {};
+      for (const s of starting.values()) {
+        if (s.channelId !== channelId || s.threadId !== threadId || !s.botId) continue;
+        live[s.botId] = 'working';
+        liveSince[s.botId] = s.startedAt;
+      }
+      for (const r of recs) {
+        live[r.botId] = r.waiting.size ? 'waiting' : 'working';
+        liveSince[r.botId] = r.startedAt;
+      }
+      const mark = JSON.stringify([state, live, liveSince]);
       if (threadStates.get(key) === mark) return;
-      await channels.threads.update(channelId, threadId, { state, live });
+      if (threadId) await channels.threads.update(channelId, threadId, { state, live, liveSince });
+      else await channels.setDmActivity(channelId, { state, live, liveSince });
       threadStates.set(key, mark);
     }).catch((e) => log('could not write the thread state:', errText(e)));
     const tail = run.then(() => {}, () => {});
@@ -922,7 +931,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     if (!release) { deferForUpdate(sessionId); return; }
     try {
       await inbox.mark(ids, 'delivering');
-      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, taint: sb.taint, callers: callersOf(items) });
+      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, startedAt: now(), taint: sb.taint, callers: callersOf(items) });
       refreshThread(channel.id, threadId);
       const key = threadKeyOf(channel.id, threadId);
       // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
@@ -1041,6 +1050,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const channelId = sb.channelId ?? (sb.kind === 'dm' ? bot.dmChannelId : null);
     const rec = {
       sessionId, generation: enablement?.generation(), botId: bot.id, kind: sb.kind, channelId, threadId: sb.threadId ?? null, taint: sb.taint ?? pre?.inner?.taint ?? undefined, postId: null, postReady: null,
+      startedAt: pre?.startedAt ?? turn.startedAtMs ?? now(),
       // 自分の心拍から起きたターン（inner: 結果の行の印）と、心拍が動いている bot か（呼ばれたターンの後にも流れへ 1 行足す。ADR 0126）
       inner: pre?.inner ?? null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
@@ -1118,8 +1128,8 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     }
     if (rec.threadId) {
       await channels.threads.update(channelId, rec.threadId, { sessions: { [bot.id]: sessionId } }).catch(() => {});
-      await refreshThread(channelId, rec.threadId);
     }
+    await refreshThread(channelId, rec.threadId);
     return { botInstructions: null, notes: [...notes, ...(pre?.payloadNotes ?? [])] };
   }
 
@@ -1145,6 +1155,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const rec = {
       sessionId, botId: bot.id, kind: sb.kind, routineId: sb.routineId, channelId, threadId, taint: sb.taint ?? undefined,
       generation: enablement?.generation(),
+      startedAt: turn.startedAtMs ?? card?.startedAtMs ?? now(),
       postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
       inner: null, pulseBot: Boolean(brain && bot.pulse?.on),
       itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
@@ -1190,6 +1201,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     for (const [id, live] of restoredSteers) liveSteers.set(id, live);
     const key = threadKeyOf(channelId, threadId);
     if (key) failedKeys.delete(key);
+    await refreshThread(channelId, threadId);
     return true;
   }
 

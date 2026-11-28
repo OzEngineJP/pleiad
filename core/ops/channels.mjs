@@ -154,6 +154,8 @@ export const channelOps = [
       threadId: z.string().min(1).optional().describe(D('read', 'threadId')),
       before: z.string().min(1).optional().describe(D('read', 'before')),
       limit: z.number().int().min(1).max(LIMITS.readMax).optional().describe(D('read', 'limit')),
+      channelFeed: z.boolean().optional(),
+      feedThrough: z.string().min(1).nullable().optional(),
     }),
     output: z.object({ posts: z.array(z.unknown()), threads: z.array(z.unknown()), summaries: z.unknown(), nextBefore: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['channels', 'read'], positional: ['channelId'] } },

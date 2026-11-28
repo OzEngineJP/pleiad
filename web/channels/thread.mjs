@@ -9,7 +9,7 @@ import { el } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
 import { savedEvent } from '../saved-text.mjs';
-import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText, vanishedTurnPost } from './post.mjs';
+import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText, vanishedTurnPost, paintActivity } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createThreadComposer } from './thread-composer.mjs';
 import { shownBot } from './plain-bot.mjs';
@@ -81,8 +81,9 @@ export function createThread(host) {
   const rootSlot = el('div', 'th-root col-lane');
   const rdiv = el('div', 'th-rdiv col-lane');
   const replies = el('div', 'th-replies col-lane');
+  const activity = el('div', 'col-lane');
   const perms = el('div', 'th-perms bg-thread col-lane');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
-  log.append(older, rootSlot, rdiv, replies, perms);
+  log.append(older, rootSlot, rdiv, replies, activity, perms);
   // 会話の移動（最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
   const frame = el('div', 'log-frame th-frame');
   frame.append(log);
@@ -307,6 +308,7 @@ export function createThread(host) {
 
   // ---------------------------------------------------------------- 発言者・bot
   const ctx = {
+    liveSince: (post) => S.thread?.liveSince?.[post.turn?.botId],
     host,
     get bots() { return S.bots; },
     summaryOf: () => null,
@@ -582,7 +584,9 @@ export function createThread(host) {
 
   function paintRdiv() {
     const n = Math.max(0, S.posts.length - 1);
-    rdiv.textContent = n ? t('channels:thread.replies', { count: n }) : t('channels:thread.noReplies');
+    const running = paintActivity(activity, S.thread, S.posts.slice(1), ctx);
+    rdiv.hidden = !n && running;
+    rdiv.textContent = n ? t('channels:thread.replies', { count: n }) : running ? '' : t('channels:thread.noReplies');
   }
 
   function paintAll() {
@@ -613,7 +617,7 @@ export function createThread(host) {
     Object.assign(S, { channel: null, posts: [], index: new Map(), thread: null, nextBefore: null, ready: false, queue: [], loadingOlder: false, pending: [] });
     postEls.clear(); toolCache.clear(); cards.clear(); tools.forget(); streams.forget();
     perms.replaceChildren();
-    rootSlot.replaceChildren(); replies.replaceChildren(); rdiv.textContent = '';
+    rootSlot.replaceChildren(); replies.replaceChildren(); activity.replaceChildren(); rdiv.textContent = '';
     stopBusy = false; composer.setStop();
     nav.reset(); toc.reset();
     todo?.load(null);
@@ -1037,6 +1041,7 @@ export function createThread(host) {
       repaint(p.id);   // 保存された本文が伸びた分は、ここで本文に吸収され、書きかけの残りが縮む
       if (p.turn?.sessionId && was !== p.state && !LIVE.has(p.state)) { tools.refresh(p.turn.sessionId, { force: true }); streams.settled(p.turn.sessionId); }
     }
+    paintRdiv();
     afterPosts();
     // 走っている間の道具の行は、投稿の更新（1 秒に 1 回まで）に合わせて取り直す（間隔は thread-tools の REFRESH_MS）
     if (p.turn?.sessionId && (LIVE.has(p.state) || op === 'add')) tools.refresh(p.turn.sessionId, { force: op === 'add' });
@@ -1087,6 +1092,7 @@ export function createThread(host) {
       const idle = S.thread?.state !== 'idle' && ev.thread.state === 'idle';
       const retitled = (S.thread?.title ?? '') !== (ev.thread.title ?? '');
       S.thread = ev.thread;
+      paintRdiv();
       if (threadReadOnly()) composer.edit.end({ restore: true });
       composer.setDisabled(Boolean((threadReadOnly() && !receiver()) || S.channel?.archivedAt), threadReadOnly() ? t('ui:deletedBotReadOnly') : t('channels:feed.archived'));
       if (retitled) paintHead();

@@ -155,6 +155,7 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
     return post;
   }
   const emitThread = (thread) => emit({ type: 'channelThread', channelId: thread.channelId, threadId: thread.threadId, thread });
+  const dmActivity = new Map();
 
   function validateMembers(members) {
     if (!Array.isArray(members)) throw invalid('members must be an array');
@@ -305,8 +306,17 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       return clone((await store.snapshot(channelId)).find((p) => p.id === postId) ?? null);
     },
 
-    async read({ channelId, threadId, before, limit = LIMITS.readDefault }) {
-      await need(channelId);
+    // A DM has no thread root for its timeline. Keep its live activity out of the post store.
+    async setDmActivity(channelId, activity) {
+      if ((await store.channel(channelId))?.kind !== 'dm') return;
+      const thread = { channelId, threadId: null, ...activity };
+      if (activity.state === 'idle') dmActivity.delete(channelId);
+      else dmActivity.set(channelId, thread);
+      emitThread(thread);
+    },
+
+    async read({ channelId, threadId, before, limit = LIMITS.readDefault, channelFeed = false, feedThrough }) {
+      const channel = await need(channelId);
       const max = Math.min(Math.max(1, Math.floor(limit) || LIMITS.readDefault), LIMITS.readMax);
       const all = await store.snapshot(channelId);
       if (threadId) {
@@ -323,11 +333,21 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const feed = all.filter((p) => p.threadId === null);
       const end = before === undefined ? feed.length : feed.findIndex((p) => p.id === before);
       if (before !== undefined && end < 0) throw new ChannelError('POST_NOT_FOUND', { id: String(before) });
-      const start = Math.max(0, end - max);
-      const page = feed.slice(start, end);
+      const archive = new Set(channelFeed && channel.kind === 'channel' ? channel.threadFolders?.groups?.archive : []);
+      const visible = (post) => !archive.has(post.id);
+      // Resolve cursors in the complete timeline so an archived boundary still works.
+      const through = channelFeed && before === undefined && typeof feedThrough === 'string' ? feed.findIndex((p) => p.id === feedThrough) : -1;
+      const inRange = feed.slice(Math.max(0, through), end).filter(visible);
+      const refresh = channelFeed && before === undefined && (feedThrough === null || through >= 0);
+      const page = refresh ? inRange : inRange.slice(-max);
+      const nextBefore = refresh
+        ? (through > 0 && feed.slice(0, through).some(visible) ? feed[through].id : null)
+        : (inRange.length > max ? page[0].id : null);
       const ids = new Set(page.map((p) => p.id));
       const threads = (await threadStore.list(channelId)).filter((th) => ids.has(th.threadId));
-      return { posts: clone(page), threads, summaries: summariesOf(all, ids), nextBefore: start > 0 ? page[0].id : null };
+      const activity = channel.kind === 'dm' && dmActivity.get(channelId);
+      if (channelFeed && activity && before === undefined) threads.push(clone(activity));
+      return { posts: clone(page), threads, summaries: summariesOf(all, ids), nextBefore };
     },
 
     /**
@@ -445,13 +465,14 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       const channels = (await store.channels()).filter((c) => !channelId || c.id === channelId);
       const hits = [];
       for (const channel of channels) {
+        const archive = new Set(channel.kind === 'channel' ? channel.threadFolders?.groups?.archive : []);
         for (const p of await store.snapshot(channel.id)) {
           if (p.deletedAt || !p.text) continue;
           const at = foldName(p.text).indexOf(q);
           if (at < 0) continue;
           const from = Math.max(0, at - 40);
           const snippet = `${from > 0 ? '…' : ''}${p.text.slice(from, at + q.length + 80)}${at + q.length + 80 < p.text.length ? '…' : ''}`;
-          hits.push({ channelId: channel.id, channelName: channel.name, postId: p.id, threadId: p.threadId, author: clone(p.author), at: p.at, snippet });
+          hits.push({ channelId: channel.id, channelName: channel.name, postId: p.id, threadId: p.threadId ?? (archive.has(p.id) ? p.id : null), author: clone(p.author), at: p.at, snippet });
         }
       }
       return { hits: hits.sort((a, b) => b.at - a.at).slice(0, max) };

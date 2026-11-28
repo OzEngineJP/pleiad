@@ -61,6 +61,11 @@ export function applyThreadPatch(current, patch, now) {
     }
     if (Object.keys(live).length) next.live = live; else delete next.live;
   }
+  if (patch.liveSince !== undefined) {
+    const entries = Object.entries(patch.liveSince).filter(([botId, at]) => next.live?.[botId] && Number.isFinite(at));
+    if (entries.length) next.liveSince = Object.fromEntries(entries);
+    else delete next.liveSince;
+  }
   if (patch.calls !== undefined) next.calls = num(patch.calls, next.calls);
   if (patch.digest !== undefined) {
     if (!patch.digest || typeof patch.digest !== 'object' || Array.isArray(patch.digest)) throw new Error('digest must be an object');

@@ -13,7 +13,7 @@ import { moreIcon } from '../icons.mjs';
 import { TODO_ICON } from '../session-todo.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
-import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom, vanishedTurnPost } from './post.mjs';
+import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom, vanishedTurnPost, paintActivity } from './post.mjs';
 import { retrySource, retryFailed } from './retry.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
@@ -80,11 +80,23 @@ export function createFeed(host) {
   const emptyNote = body.querySelector(':scope > .ch-empty');
 
   const postEls = new Map();
+  const activity = el('div');
+  const archiveOf = (channel) => (channel?.kind === 'channel' ? channel.threadFolders?.groups?.archive ?? [] : []);
+  let archiveRevision = 0;
+  let archivePostChanges = null;
+  const paintDmActivity = () => {
+    if (S.channel?.kind === 'dm') {
+      const running = paintActivity(activity, S.threads.null, S.posts, ctx);
+      log.append(activity);
+      if (running) log.querySelector('.ch-empty-feed')?.remove();
+    }
+  };
   const narrow = () => window.matchMedia?.('(max-width: 700px)').matches;
 
   // ---------------------------------------------------------------- 発言者・bot
   const ctx = {
     host,
+    liveSince: (post) => S.threads.null?.liveSince?.[post.turn?.botId],
     get bots() { return S.bots; },
     summaryOf: (id) => S.summaries[id],
     threadOf: (id) => S.threads[id],
@@ -232,7 +244,8 @@ export function createFeed(host) {
     return d;
   };
 
-  function paintAll() {
+  function paintAll(reuse = false) {
+    const previous = reuse ? new Map(postEls) : new Map();
     postEls.clear();
     const nodes = [];
     if (S.nextBefore) nodes.push(el('div', 'ch-older', t('channels:feed.older')));
@@ -240,13 +253,14 @@ export function createFeed(host) {
     for (const p of S.posts) {
       const key = new Date(p.at).toDateString();
       if (key !== day) { nodes.push(dayEl(p.at)); day = key; }
-      const node = renderPost(p, ctx);
+      const node = previous.get(p.id) ?? renderPost(p, ctx);
       postEls.set(p.id, node);
       nodes.push(node);
     }
     if (!S.posts.length) nodes.push(el('p', 'ch-empty-feed', S.channel?.kind === 'dm'
       ? t('channels:feed.emptyDm', { name: S.channel.name }) : t('channels:feed.emptyChannel')));
     log.replaceChildren(...nodes);
+    paintDmActivity();
   }
 
   function repaint(id) {
@@ -284,11 +298,16 @@ export function createFeed(host) {
 
   async function load(id) {
     const seq = ++S.seq;
+    archiveRevision += 1;
+    archivePostChanges = null;
+    S.loadingOlder = false;
     S.ready = false;
     S.queue = [];
     log.replaceChildren(el('p', 'ch-loading', t('channels:feed.loading')));
     try {
-      const [channel, page] = await Promise.all([host.invoke('channels.get', { channelId: id }), host.invoke('channels.read', { channelId: id, limit: PAGE }), loadBots()]);
+      const [channel] = await Promise.all([host.invoke('channels.get', { channelId: id }), loadBots()]);
+      if (seq !== S.seq) return;
+      const page = await host.invoke('channels.read', { channelId: id, limit: PAGE, channelFeed: true });
       if (seq !== S.seq) return;
       S.channel = channel;
       S.posts = (page.posts ?? []).filter((p) => shown(p, page.summaries));
@@ -296,6 +315,7 @@ export function createFeed(host) {
       S.summaries = page.summaries ?? {};
       S.threads = Object.fromEntries((page.threads ?? []).map((th) => [th.threadId, th]));
       S.nextBefore = page.nextBefore ?? null;
+      S.feedThrough = S.nextBefore;
       S.ready = true;
       paintHead();
       paintAll();
@@ -314,12 +334,13 @@ export function createFeed(host) {
   }
 
   async function loadOlder() {
-    if (S.loadingOlder || !S.nextBefore || !S.ready) return;
+    if (S.loadingOlder || archivePostChanges || !S.nextBefore || !S.ready) return;
     S.loadingOlder = true;
     const seq = S.seq;
+    const revision = archiveRevision;
     try {
-      const page = await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE });
-      if (seq !== S.seq) return;
+      const page = await host.invoke('channels.read', { channelId: S.id, before: S.nextBefore, limit: PAGE, channelFeed: true });
+      if (seq !== S.seq || revision !== archiveRevision) return;
       const older = (page.posts ?? []).filter((p) => !S.index.has(p.id) && shown(p, page.summaries));
       const before = log.scrollHeight - log.scrollTop;
       S.posts = [...older, ...S.posts];
@@ -327,9 +348,10 @@ export function createFeed(host) {
       Object.assign(S.summaries, page.summaries ?? {});
       for (const th of page.threads ?? []) S.threads[th.threadId] = th;
       S.nextBefore = page.nextBefore ?? null;
+      S.feedThrough = S.nextBefore;
       paintAll();
       log.scrollTop = log.scrollHeight - before;
-    } catch { /* 次のスクロールで取り直す */ } finally { S.loadingOlder = false; }
+    } catch { /* 次のスクロールで取り直す */ } finally { if (seq === S.seq) S.loadingOlder = false; }
   }
 
   // ---------------------------------------------------------------- 既読
@@ -455,6 +477,8 @@ export function createFeed(host) {
   function onPost(ev) {
     const { op, post: p } = ev;
     if (!p) return;
+    if (!p.threadId && archiveOf(S.channel).includes(p.id)) return;
+    if (!p.threadId && archivePostChanges) archivePostChanges.set(p.id, ev);
     // 取り下げた返信（スレッドの送り直し）は、要約の行の件数から外す（数え直しは次の読み込み）。
     // 流れに直接並ぶ投稿（DM の bot が黙って終えたターンの「…」・送り直した投稿）は列から外す
     if (op === 'withdraw') { if (p.threadId) onReply('delete', p); else dropPost(p.id); return; }
@@ -478,13 +502,77 @@ export function createFeed(host) {
     if (p.completedAt) markRead();
   }
 
+  // Keep the loaded history boundary even if that boundary post is archived.
+  async function refreshArchive() {
+    const seq = S.seq;
+    const revision = ++archiveRevision;
+    const changes = archivePostChanges = new Map();
+    try {
+      const page = await host.invoke('channels.read', { channelId: S.id, channelFeed: true, feedThrough: S.feedThrough });
+      if (seq !== S.seq || revision !== archiveRevision) return;
+      const hidden = new Set(archiveOf(S.channel));
+      const stick = nearBottom();
+      const before = new Map([...postEls].map(([id, node]) => [id, node.getBoundingClientRect().top]));
+      const logTop = log.getBoundingClientRect().top;
+      const anchor = S.posts.find((p) => !hidden.has(p.id) && before.get(p.id) >= logTop);
+      const scrollTop = log.scrollTop;
+      const posts = [];
+      for (const post of page.posts ?? []) {
+        const ev = changes.get(post.id);
+        if (hidden.has(post.id) || ev?.op === 'withdraw') continue;
+        const p = ev?.post ?? post;
+        if (shown(p, page.summaries)) posts.push(p);
+      }
+      const included = new Set(posts.map((p) => p.id));
+      const concurrent = S.posts.filter((p) => !hidden.has(p.id) && !included.has(p.id));
+      for (const p of posts) {
+        if (S.index.has(p.id)) continue;
+        if (page.summaries?.[p.id]) S.summaries[p.id] = page.summaries[p.id];
+        else delete S.summaries[p.id];
+        const thread = page.threads?.find((th) => th.threadId === p.id);
+        if (thread) S.threads[p.id] = thread;
+      }
+      S.posts = [...posts.map((p) => S.index.get(p.id) ?? p), ...concurrent];
+      S.index = new Map(S.posts.map((p) => [p.id, p]));
+      S.nextBefore = page.nextBefore ?? null;
+      paintAll(true);
+      if (stick) toBottom();
+      else if (anchor && postEls.has(anchor.id)) log.scrollTop += postEls.get(anchor.id).getBoundingClientRect().top - before.get(anchor.id);
+      else log.scrollTop = scrollTop;
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const options = { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' };
+      for (const [id, node] of postEls) {
+        if (!before.has(id)) node.animate?.([{ opacity: 0 }, { opacity: 1 }], options);
+        else {
+          const dy = before.get(id) - node.getBoundingClientRect().top;
+          if (dy) node.animate?.([{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }], options);
+        }
+      }
+    } catch (err) {
+      if (seq === S.seq && revision === archiveRevision) console.warn('Could not refresh archived channel posts', err);
+    } finally {
+      if (revision === archiveRevision) archivePostChanges = null;
+    }
+  }
+
   function onChannelsChanged(ev) {
-    if (ev.removed === S.id) { S.id = null; S.channel = null; root.hidden = true; composer.setDraftKey(null); clearHead(); if (emptyNote) emptyNote.hidden = false; return; }
-    if (ev.channel?.id === S.id) { S.channel = ev.channel; paintHead(); }
+    if (ev.removed === S.id) { S.seq += 1; S.id = null; S.channel = null; root.hidden = true; composer.setDraftKey(null); clearHead(); if (emptyNote) emptyNote.hidden = false; return; }
+    if (ev.channel?.id !== S.id) return;
+    if (!S.ready) { S.queue.push(ev); return; }
+    const was = new Set(archiveOf(S.channel));
+    S.channel = ev.channel;
+    paintHead();
+    const archive = archiveOf(S.channel);
+    if (archive.length !== was.size || archive.some((id) => !was.has(id))) refreshArchive();
   }
 
   const events = {
-    channelPost: (ev) => { if (isHere(ev.channelId)) { if (S.ready) onPost(ev); else S.queue.push(ev); } },
+    channelPost: (ev) => {
+      if (!isHere(ev.channelId)) return;
+      if (!S.ready) { S.queue.push(ev); return; }
+      onPost(ev);
+      paintDmActivity();
+    },
     channelReaction: (ev) => {
       if (!isHere(ev.channelId)) return;
       if (!S.ready) { S.queue.push(ev); return; }
@@ -495,6 +583,12 @@ export function createFeed(host) {
       if (!isHere(ev.channelId) || !ev.thread) return;
       if (!S.ready) { S.queue.push(ev); return; }
       S.threads[ev.threadId] = ev.thread;
+      if (ev.threadId == null) {
+        const stick = nearBottom();
+        paintDmActivity();
+        if (!S.posts.length && !activity.childElementCount) paintAll();
+        if (stick) toBottom();
+      }
       repaint(ev.threadId);
     },
     channelRead: () => {},
@@ -540,7 +634,9 @@ export function createFeed(host) {
       else paintHead();   // 別の面（bot のページなど）へ移ると hide() が見出しを戻すので、同じチャンネルへ戻ったときも描き直す
       const done = same ? Promise.resolve().then(() => { toBottom(); markRead(); }) : load(view.id);
       done.then(() => {
+        if (S.id !== view.id) return;
         if (view.threadId) host.openThread?.(view.id, view.threadId, { postId: view.postId });
+        else if (archiveOf(S.channel).includes(view.postId)) host.openThread?.(view.id, view.postId, { postId: view.postId });
         else if (view.postId) revealPost(view.postId);   // スレッドを開かない（流れの投稿）。通知の一覧の飛び先
         composer.focus();
       });

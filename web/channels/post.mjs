@@ -236,19 +236,45 @@ function watchClock(node) {
 }
 
 /** 状態の行（bot のターンの投稿・ルーティンの実行の根）。成功を緑の ✓ で見せない（終了は文字だけ） */
+function workingLine(since, writing) {
+  const row = el('div', 'post-state working');
+  row.append(runMark(t('channels:feed.state.working')), el('span', 'post-state-text',
+    t(writing ? 'channels:feed.state.writing' : 'channels:feed.state.thinking')));
+  if (Number.isFinite(since)) {
+    const clock = el('span', 'post-state-clock');
+    clock.dataset.since = String(since);
+    clock.textContent = durationText((Date.now() - since) / 1000);
+    row.append(el('span', 'post-state-dot', '·'), clock);
+    watchClock(clock);
+  }
+  return row;
+}
+
+export function unrepresentedActivity(thread, posts) {
+  const represented = new Set(posts.filter((p) => p.turn && !p.deletedAt
+    && (p.state === 'working' || p.state === 'waiting')).map((p) => p.turn.botId));
+  return Object.entries(thread?.live ?? {}).filter(([botId]) => !represented.has(botId))
+    .map(([botId, state]) => ({ botId, state, since: thread.liveSince?.[botId] }));
+}
+
+export function paintActivity(slot, thread, posts, ctx) {
+  const activity = unrepresentedActivity(thread, posts);
+  slot.replaceChildren(...activity.map(({ botId, state, since }) => {
+    const row = state === 'working' ? workingLine(since, false) : stateLine({ state });
+    const name = ctx.bots.get(botId)?.name;
+    if (name) row.append(el('span', 'post-state-dot', '·'), el('span', null, name));
+    return row;
+  }));
+  return activity.length > 0;
+}
+
 function stateLine(post, ctx) {
   const state = post.state;
   if (!state) return null;
   if (state === 'done' && !post.routine) return null;
   // bot の返事を待つ間: 返事の場所の 1 行「考えている · 12 秒」（文章を書き出したら「書いている」）。止めるのは入力欄の ■
   if (state === 'working' && post.turn) {
-    const row = el('div', 'post-state working');
-    const clock = el('span', 'post-state-clock');
-    clock.dataset.since = String(post.at);
-    clock.textContent = durationText((Date.now() - post.at) / 1000);
-    row.append(runMark(t('channels:feed.state.working')), el('span', 'post-state-text', t(hasText(post) || ctx?.streaming?.(post) ? 'channels:feed.state.writing' : 'channels:feed.state.thinking')), el('span', 'post-state-dot', '·'), clock);
-    watchClock(clock);
-    return row;
+    return workingLine(ctx?.liveSince?.(post) ?? post.at, hasText(post) || ctx?.streaming?.(post));
   }
   // 止めた返事: 文章が残っていれば止めた記録はスレッドの「■ 中断しました · 時刻」の行が持つ。何も書けずに止めたときだけ、返事の場所に 1 行
   if (state === 'stopped' && post.turn) {
