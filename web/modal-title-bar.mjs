@@ -19,12 +19,14 @@ export function watchModalTitleBar({ document, window, bar, send }) {
   root.setAttribute('data-modal-title-bar', '');
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const dialogs = new Set();
+  const fading = new Set();
   const pending = new Map();
   const installed = new WeakSet();
   const removed = new window.MutationObserver(() => {
     for (const dialog of dialogs) {
       if (dialog.isConnected) continue;
       dialogs.delete(dialog);
+      fading.delete(dialog);
       pending.get(dialog)?.abort();
       refresh();
     }
@@ -44,8 +46,11 @@ export function watchModalTitleBar({ document, window, bar, send }) {
   function update(now) {
     frame = 0;
     for (const dialog of dialogs) {
-      if (!dialog.matches(':modal')) dialogs.delete(dialog);
+      if (dialog.matches(':modal')) continue;
+      dialogs.delete(dialog);
+      fading.delete(dialog);
     }
+    if (!dialogs.size) removed.disconnect();
     colors.classList.toggle('animate', dialogs.size > 0);
     const backdrops = [...dialogs].map(dialog => rgb(window.getComputedStyle(dialog, '::backdrop').backgroundColor)).filter(Boolean);
     const css = window.getComputedStyle(colors);
@@ -55,7 +60,7 @@ export function watchModalTitleBar({ document, window, bar, send }) {
     };
     const key = JSON.stringify(result);
     if (key !== sent) { sent = key; send(result); }
-    if (now < until) frame = window.requestAnimationFrame(update);
+    if (now < until || fading.size) frame = window.requestAnimationFrame(update);
   }
   function refresh() {
     until = window.performance.now() + duration() + 34;
@@ -97,17 +102,27 @@ export function watchModalTitleBar({ document, window, bar, send }) {
 
   document.addEventListener('beforetoggle', event => {
     const dialog = event.target;
-    if (dialog.localName !== 'dialog') return;
+    if (dialog.localName !== 'dialog' || event.defaultPrevented) return;
     if (event.newState === 'open') {
       prepare(dialog);
       dialogs.add(dialog);
       if (dialogs.size === 1) removed.observe(document.body, { childList: true, subtree: true });
     } else {
       dialogs.delete(dialog);
+      fading.delete(dialog);
       if (!dialogs.size) removed.disconnect();
     }
     refresh();
   }, true);
+  function backdropTransition(event) {
+    if (event.pseudoElement !== '::backdrop' || event.propertyName !== 'background-color') return;
+    if (event.type === 'transitionrun' && dialogs.has(event.target)) fading.add(event.target);
+    else fading.delete(event.target);
+    refresh();
+  }
+  for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) {
+    document.addEventListener(type, backdropTransition, true);
+  }
   document.addEventListener('cancel', event => {
     const dialog = event.target;
     if (!dialogs.has(dialog)) return;

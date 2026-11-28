@@ -566,7 +566,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop body > main{--paper-tl:var(--r-l);--paper-tr:0px;border-radius:var(--paper-tl) var(--paper-tr) 0 0}
 :root.desktop body:is(.file-preview-open,.file-preview-leaving) > main{--paper-tr:0px}
 /* 帯は脇と同じ面のまま。閉じても左の 52px にレールが残るので、帯・紙の角は開いているときと同じにする。
-   --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る */
+   --bar-end は帯の右端の色。modal-title-bar.mjs が幕の色を重ねて OS に送る */
 .titlebar{--bar-end:var(--surface-0)}
 .modal-title-colors{position:absolute;visibility:hidden;pointer-events:none;background-color:var(--bar-end);color:var(--ink)}
 .modal-title-colors.animate{transition:background-color var(--dur) var(--ease-out),color var(--dur) var(--ease-out)}

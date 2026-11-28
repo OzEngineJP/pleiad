@@ -86,6 +86,13 @@ export default function(t) {
   second.showModal();
   paint();
   t.ok('2 枚目の幕を開くと 1 枚目の上に重ねる', sent.at(-1).color === blendTitleBarColor('#eceef4', [light, light]));
+  const transition = { target: second, pseudoElement: '::backdrop', propertyName: 'background-color' };
+  events.get('transitionrun')({ ...transition, type: 'transitionrun' });
+  paint();
+  const sampling = next.size === 1;
+  events.get('transitionend')({ ...transition, type: 'transitionend' });
+  paint();
+  t.ok('幕の描画が設定時間を超えても、トランジションが終わるまで色を読む', sampling && next.size === 0);
   let panel = true;
   second.addEventListener('cancel', event => {
     if (panel) { panel = false; event.preventDefault(); }
