@@ -34,7 +34,7 @@
     "pdfjs-dist": "5.5.207",
     "pleiad-agent": "github:OzEngineJP/pleiad-agent#ecec571e4177524d785156bc73cbe85c838c5b80",
     "smol-toml": "1.9.1",
-    "ws": "^8.21.3",
+    "ws": "^8.22.0",
     "yaml": "2.9.1",
     "zod": "^4.4.3"
   },
