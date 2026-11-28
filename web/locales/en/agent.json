@@ -1850,6 +1850,7 @@
       }
     },
     "channels": {
+      "nextActions": {"summary": "Get suggested next actions for a thread or direct message. Remove an accepted or dismissed suggestion from the list.", "channelId": "Channel ID.", "threadId": "Thread root post ID. Omit for the direct message feed.", "consumeId": "ID of the suggestion to accept or dismiss."},
       "organizeThreads": {"summary":"Change a channel's thread folders and order.","channelId":"Channel id.","action":"Change to make to the thread layout.","folderId":"Folder id, or root for the channel root.","name":"New folder name.","threadId":"Thread (root post) id.","beforeId":"Put the item before this id, or omit to place it last."},
       "list": {"summary": "List channels and DMs (with unread count, mentions of you and working threads; archived ones included)."},
       "get": {"summary": "Get one channel's definition (name, purpose, default folder, members, house rules).", "channelId": "Channel id."},

@@ -315,6 +315,15 @@ export function createChannelService({ dir, emit = () => {}, hooks = {}, now = D
       emitThread(thread);
     },
 
+    async nextActionContext({ channelId, threadId }) {
+      const channel = await need(channelId);
+      if (channel.archivedAt || (!threadId && channel.kind !== 'dm')) return null;
+      const all = await store.snapshot(channelId);
+      if (threadId && !all.some((p) => p.id === threadId && !p.threadId && !p.deletedAt && !p.withdrawnAt)) return null;
+      const posts = all.filter((p) => p.id === threadId || p.threadId === (threadId ?? null));
+      return { posts, latestHuman: posts.findLast((p) => p.author?.kind === 'human') };
+    },
+
     async read({ channelId, threadId, before, limit = LIMITS.readDefault, channelFeed = false, feedThrough }) {
       const channel = await need(channelId);
       const max = Math.min(Math.max(1, Math.floor(limit) || LIMITS.readDefault), LIMITS.readMax);

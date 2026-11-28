@@ -1231,7 +1231,10 @@ export const backend = {
     }
     const last = p.split("[agent]\n").at(-1).split("</conversation>")[0];
     const suggest = /suggest:([^\n]*)/.exec(last)?.[1]?.trim();
-    if (/suggest:/.test(last)) return { text: JSON.stringify({ suggestion: suggest || null }), usage };
+    if (/suggest:/.test(last)) {
+      const action = prompt.includes('with "suggestion" and "action"') ? /action:([^\n]*)/.exec(last)?.[1]?.trim() : undefined;
+      return { text: JSON.stringify({ suggestion: suggest || null, action }), usage };
+    }
     const title = /title:([^\n]*)/.exec(last)?.[1]?.trim();
     if (title) return { text: title, usage };
     return { text: last.split("\n").find((l) => l.trim())?.slice(0, 60) ?? "", usage };

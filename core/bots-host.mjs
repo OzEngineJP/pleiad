@@ -43,6 +43,7 @@ import { createBotEnablement } from './bots/enablement.mjs';
 import { createMemoryService } from './memory/service.mjs';
 import { createMemoryLearner } from './memory/learn.mjs';
 import { createDispatcher } from './bots/dispatch.mjs';
+import { createBotNextActions } from './bots/next-actions.mjs';
 import { createRoutineService } from './routines/service.mjs';
 import { clock as routinesClock } from './routines/clock.mjs';
 import { createWebhookReceiver } from './routines/webhook.mjs';
@@ -54,7 +55,11 @@ import { agentT } from './i18n.mjs';
 
 export function createBotHost(deps) {
   const { store, dataDir, emitGlobal } = deps;
-  const emit = (event) => emitGlobal({ ...event, sessionId: null });
+  let nextActions;
+  const emit = (event) => {
+    nextActions?.observe(event);
+    return emitGlobal({ ...event, sessionId: null });
+  };
   const emitSession = (sessionId, event) => emitGlobal({ ...event, sessionId });
   async function recordStartFailure(sessionId, error, { notify = false } = {}) {
     if (notify) emitSession(sessionId, { type: 'turnResult', outcome: 'error', error });
@@ -142,6 +147,14 @@ export function createBotHost(deps) {
   host.botRemoved = (botId) => { brain.purgeBot(botId); wakes?.clear(botId); };
   // ---- bots（S2）
   const bots = createBotService({ dataDir, channels, host, emit });
+  const suggestionsEnabled = async () => await enablement.allowed() && (await store.getPrefs()).composerSuggestions !== false;
+  nextActions = createBotNextActions({
+    snapshot: (scope) => channels.nextActionContext(scope).catch(() => null),
+    generate: async (args) => await suggestionsEnabled() && await bots.get({ botId: args.reply.author.botId })
+      ? deps.generateBotSuggestion?.(args) : null,
+    changed: ({ channelId, threadId }) => emit({ type: 'botNextActionsChanged', channelId, threadId }),
+  });
+  host.onNextActionReply = (args) => nextActions.complete(args).catch((err) => console.error('  bot next action:', err?.name ?? 'Error'));
   // ---- memory（S3）
   const memory = createMemoryService({ dataDir, channels, emit, withLayer: (layer, fn) => layer === 'user' ? fn() : bots.withActivity(layer, fn), localeOf: () => deps.currentLocale?.() ?? 'ja' });
   // ---- dispatch（S4）
@@ -198,6 +211,8 @@ export function createBotHost(deps) {
     },
     acquireBot: (botId) => bots.acquire(botId),
     opsDeps: () => ({ channels, bots, memory, memoryLearner: learner, brain, pulse, wakes, routines, botOfSession, botEnablement: enablement,
+      botNextActions: async (args) => await suggestionsEnabled()
+        ? nextActions.read(args, args.consumeId) : { suggestions: [], consumed: false },
       wake: guard('wake', (args) => dispatch.wakePost(args), { woken: false, reason: 'failed' }),
       // スレッドを投稿のところで分ける（channels.branchThread）。失敗は呼び出し側へ返す（画面が一行で知らせる）
       branchThread: async (args) => {

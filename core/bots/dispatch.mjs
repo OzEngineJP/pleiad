@@ -68,6 +68,7 @@ import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 import { isSilentReply, speakingParts, stripSilentMark } from './silence.mjs';
 import { answerOf, asksQuestion, excerpt } from './reactions.mjs';
 import { quotedPost } from './quotes.mjs';
+import { isNextActionTarget, nextActionRequest } from './next-actions.mjs';
 
 /** ターンの投稿の本文を書き換える間隔の下限（ms）。全接続へ配る間隔と同じ */
 export const PROGRESS_INTERVAL_MS = 1000;
@@ -322,7 +323,8 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     const inner = innerItems.length ? { ...innerItems[0].inner } : null;
     // 宛先として届いた投稿があるか（聞こえただけ・リアクションだけ・引き継ぎだけのターンは false）。無ければターンの投稿を後で作る
     const addressed = triggers.some((p) => !heardIds.has(p.id));
-    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? '')].join('\n'), triggers, inner, heardOnly, addressed, reactions };
+    const suggestionRequest = nextActionRequest(items, posts, channel, sb?.botId);
+    return { prompt: parts.join('\n'), payloadNotes, cursor, incomingText: [...triggers.map((p) => p.text), ...innerItems.map((i) => i.inner.why ?? '')].join('\n'), triggers, inner, heardOnly, addressed, reactions, suggestionRequest };
   }
 
   // ------------------------------------------------------------ 起こす
@@ -470,7 +472,8 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       let addressed = null;
       for (const botId of unique) {
         if (held.has(botId)) continue;
-        const woken = await wake({ botId, channel, threadId, post }).catch((e) => { log(`${botId} could not be woken:`, errText(e)); return null; });
+        const nextAction = isNextActionTarget(post, channel, botId);
+        const woken = await wake({ botId, channel, threadId, post, nextAction }).catch((e) => { log(`${botId} could not be woken:`, errText(e)); return null; });
         if (heard.length) addressed = woken;
       }
       if (heard.length) await overhear({ addressed, heard, channel, threadId, post, talkingTo: targets[0] ?? null });
@@ -772,12 +775,13 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
    * heard: @ の無い人の投稿を、宛先でない bot に聞こえた投稿として届ける（ADR 0128）。休憩中なら知らせずに配らない。
    * talkingTo: 聞こえた投稿が誰との話の続きか（bot の id。自分なら残さない。ADR 0128 の追記）
    */
-  async function wake({ botId, channel, threadId, post, approved = false, heard = false, talkingTo = null }) {
-    if (bots.withActivity) return bots.withActivity(botId, () => wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo }));
-    return wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo });
+  async function wake({ botId, channel, threadId, post, approved = false, heard = false, talkingTo = null, nextAction = false }) {
+    const args = { botId, channel, threadId, post, approved, heard, talkingTo, nextAction };
+    if (bots.withActivity) return bots.withActivity(botId, () => wakeOwned(args));
+    return wakeOwned(args);
   }
 
-  async function wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo }) {
+  async function wakeOwned({ botId, channel, threadId, post, approved, heard, talkingTo, nextAction }) {
     if (!await allowed()) return;
     const bot = await getBot(botId);
     if (!bot) return null;
@@ -791,7 +795,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     }
     // 呼んだのが別の bot なら、この会話のターンが終わったときに返事を返す相手として残す（人・ルーティン・外から来た文には返さない）
     const caller = post.author?.kind === 'bot' && post.author.botId !== botId ? post.author.botId : null;
-    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}), ...(heard && talkingTo && talkingTo !== botId ? { heardTo: talkingTo } : {}) });
+    const item = await inbox.add({ sessionId, botId, channelId: channel.id, threadId, postId: post.id, nextAction, ...(caller ? { caller } : {}), ...(heard ? { heard: true } : {}), ...(heard && talkingTo && talkingTo !== botId ? { heardTo: talkingTo } : {}) });
     if (threadId) await bumpCalls(channel.id, threadId);
     await pump(sessionId);
     return { sessionId, itemId: item?.id ?? null };
@@ -858,8 +862,9 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       const confirms = Boolean(target.control?.steerConfirms);
       await inbox.mark(ids, 'delivering');
       const callers = callersOf(group);
+      const suggestionRequest = rec.channelId === channel.id && rec.threadId === (group[0].threadId ?? null) ? built.suggestionRequest : null;
       if (confirms) {
-        liveSteers.set(message.id, { sessionId, ids, text: built.prompt, cursor: built.cursor, callers });
+        liveSteers.set(message.id, { sessionId, ids, text: built.prompt, cursor: built.cursor, callers, suggestionRequest });
         turn.control?.touch?.();
       }
       // 人がこのスレッドへ投稿した（聞こえただけでない）: 今の投稿をそこまでで確定し、続きは人の投稿の下の新しい投稿に出す（ADR 0117 の追記）。
@@ -883,7 +888,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
         continue;
       }
       if (!accepted) { liveSteers.delete(message.id); await inbox.mark(ids, 'pending'); return; }
-      if (!confirms) await steered(sessionId, ids, built.prompt, built.cursor, callers);
+      if (!confirms) await steered(sessionId, ids, built.prompt, built.cursor, callers, { suggestionRequest });
     }
   }
 
@@ -899,9 +904,12 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
   const lngOf = async (sessionId) => (await Promise.resolve(host.agentLocaleFor?.(sessionId)).catch(() => null)) ?? locale();
 
   /** 途中送信が渡った: 渡した印を残し、会話の画面へ出す */
-  async function steered(sessionId, ids, text, cursor, callers = [], { replay = false } = {}) {
+  async function steered(sessionId, ids, text, cursor, callers = [], { replay = false, suggestionRequest = null } = {}) {
     const rec = active.get(sessionId);
-    if (rec && !rec.ended) rec.receivedSteer = true;
+    if (rec && !rec.ended) {
+      rec.receivedSteer = true;
+      rec.suggestionRequest = suggestionRequest;
+    }
     await inbox.mark(ids, 'sent');
     if (rec && !rec.committed && cursor) rec.cursor = cursor;
     if (rec) for (const c of callers) rec.callers.set(c.botId, c);   // 渡った呼び出しの返事も、このターンの終わりに返す
@@ -931,7 +939,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
     if (!release) { deferForUpdate(sessionId); return; }
     try {
       await inbox.mark(ids, 'delivering');
-      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, startedAt: now(), taint: sb.taint, callers: callersOf(items) });
+      starting.set(sessionId, { inner: built.inner, heardOnly: built.heardOnly, addressed: built.addressed, suggestionRequest: built.suggestionRequest, itemIds: ids, payloadNotes: built.payloadNotes, incomingText: built.incomingText, cursor: built.cursor, channelId: channel.id, threadId, botId: items[0].botId, startedAt: now(), taint: sb.taint, callers: callersOf(items) });
       refreshThread(channel.id, threadId);
       const key = threadKeyOf(channel.id, threadId);
       // 待たない（ターンが終わるまで返らない）。始められなかったときだけここで片付ける
@@ -1053,6 +1061,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       startedAt: pre?.startedAt ?? turn.startedAtMs ?? now(),
       // 自分の心拍から起きたターン（inner: 結果の行の印）と、心拍が動いている bot か（呼ばれたターンの後にも流れへ 1 行足す。ADR 0126）
       inner: pre?.inner ?? null, pulseBot: Boolean(brain && bot.pulse?.on),
+      suggestionRequest: pre?.suggestionRequest ?? null,
       itemIds: pre?.itemIds ?? [], cursor: pre?.cursor ?? null, tail: null, callers: new Map((pre?.callers ?? []).map((c) => [c.botId, c])),
       // 宛先の投稿で起きたのでないターンは、見せるもの（文・提示・承認待ち）ができるまでターンの投稿（「…」）を作らない。黙って終えたら何も残らない。
       // 聞こえた投稿だけ（ADR 0128）・リアクションだけ・心拍の引き継ぎや予約した起こし（inner）で起きたターンと、
@@ -1329,7 +1338,7 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
         const live = liveSteers.get(event.messageId);
         if (!live) break;
         liveSteers.delete(event.messageId);
-        if (event.type === 'userMessage.delivered') steered(live.sessionId, live.ids, live.text, live.cursor, live.callers).catch((e) => log('could not record a delivered event:', errText(e)));
+        if (event.type === 'userMessage.delivered') steered(live.sessionId, live.ids, live.text, live.cursor, live.callers, { suggestionRequest: live.suggestionRequest }).catch((e) => log('could not record a delivered event:', errText(e)));
         else inbox.mark(live.ids, 'pending').catch(() => {});   // 読まれずに捨てられた。ターンの終わりに送り直す
         break;
       }
@@ -1550,6 +1559,9 @@ export function createDispatcher({ channels, bots, memory, brain = null, host, e
       if (rec.postId && !retry) ({ woke, reply, post } = await finalizePost(rec, state, ok, { limited }));
       else if (state === 'failed' && rec.channelId && POST_KINDS.has(rec.kind)) {
         await systemPost(rec.channelId, rec.threadId, agentT(locale(), 'channel.turn.failed', { error: rec.error ?? '' }), undefined, rec.taint);
+      }
+      if (ok && !interrupted && !rec.waiting.size && reply && rec.suggestionRequest) {
+        host.onNextActionReply?.({ request: rec.suggestionRequest, reply: post, turn, finishedAt: now() });
       }
       // 途中送信で前の投稿を確定していて、最後の投稿に返事が無いとき（何も言わずに終えた・まだ投稿が無い）は、前の投稿の返事を呼んだ bot へ返す（ADR 0117 の追記）
       if (!reply && rec.priorReply && (ok || state === 'failed') && !rec.stopped && !limited) reply = rec.priorReply;

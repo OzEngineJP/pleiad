@@ -60,22 +60,35 @@ export function suggestionGist(messages) {
 }
 
 /** モデルへ渡す 1 通（指示 + 要約） */
-export function suggestionPrompt(gist) {
-  return `${INSTRUCTION}\n\n<conversation>\n${gist}\n</conversation>`;
+export function suggestionPrompt(gist, { action = false } = {}) {
+  const instruction = action ? INSTRUCTION.replace(
+    `Return only JSON matching this schema: ${JSON.stringify(SCHEMA)}.`,
+    'Address the same bot without an @mention. Add an action phrase in the same language (at most 60 characters), without repeating the bot name. In English it follows "Ask [bot] to", so start with a bare verb. In Japanese it follows the bot name marked as the recipient, so use the morau form. Return only JSON with "suggestion" and "action".',
+  ) : INSTRUCTION;
+  return `${instruction}\n\n<conversation>\n${gist}\n</conversation>`;
 }
 
 /**
  * モデルの返り（{"suggestion": …} の JSON。前後に字や ``` が付くこともある）から候補を取り出す。
  * 1 行に畳み、前後の引用符を落とす。空・null・上限を超えたもの・JSON でないものは null
  */
-export function parseSuggestion(raw) {
+function suggestionJson(raw) {
   const text = String(raw ?? '');
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
-  let value;
-  try { value = JSON.parse(text.slice(start, end + 1))?.suggestion; } catch { return null; }
-  return cleanSuggestion(value);
+  try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
+}
+
+export function parseSuggestion(raw) {
+  return cleanSuggestion(suggestionJson(raw)?.suggestion);
+}
+
+export function parseActionSuggestion(raw) {
+  const value = suggestionJson(raw);
+  const text = cleanSuggestion(value?.suggestion);
+  const action = cleanSuggestion(value?.action);
+  return text && action && action.length <= 60 ? { text, action } : null;
 }
 
 /** 候補の文を 1 行に整える。使えなければ null（Claude の予測もここを通す） */
@@ -90,7 +103,7 @@ export function cleanSuggestion(value) {
  * 会話ごとの作りかけ。同じ会話で新しく始めたら前のものは止める（新しいターン・送信でも止める）。
  * run(signal) は生の返り（parseSuggestion で読む）を返す。onSuggestion(sessionId, text) は読めたときだけ呼ぶ
  */
-export function createSuggestionJobs({ onSuggestion, onError = () => {}, timeoutMs = SUGGESTION_TIMEOUT_MS } = {}) {
+export function createSuggestionJobs({ onSuggestion, onError = () => {}, timeoutMs = SUGGESTION_TIMEOUT_MS, parse = parseSuggestion } = {}) {
   const jobs = new Map();   // sessionId -> AbortController
   function cancel(sessionId) {
     const ac = jobs.get(sessionId);
@@ -109,7 +122,7 @@ export function createSuggestionJobs({ onSuggestion, onError = () => {}, timeout
       try {
         const raw = await run(ac.signal);
         if (ac.signal.aborted || jobs.get(sessionId) !== ac) return;
-        const text = parseSuggestion(raw);
+        const text = parse(raw);
         if (text) onSuggestion(sessionId, text);
       } catch (error) {
         if (!ac.signal.aborted) onError(sessionId, error);

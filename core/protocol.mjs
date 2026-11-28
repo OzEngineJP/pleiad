@@ -321,6 +321,7 @@ export const EVENTS = new Set([
   // ---- チャンネル・bot・記憶・ルーティン（docs/channels.md「WS の出来事」。どれも sessionId は null で全接続へ。リモートの端末にも届く）
   "channelsChanged", // { channel?: Channel, removed?: string } チャンネル・DM の定義と一覧の変化
   "channelPost",     // { channelId, op: add|edit|delete, post } 投稿の追加・編集・削除（bot のターンの投稿の進み具合は 1 秒に 1 回まで）
+  "botNextActionsChanged", // { channelId, threadId } 入力欄に出す bot の候補の変化
   "channelReaction", // { channelId, postId, reactions } リアクションの付け外し
   "channelThread",   // { channelId, threadId, thread: ThreadState } スレッドの状態（作業中・トークン・止めた印）
   "channelRead",     // { channelId, threadId?, readAt } 別の端末・窓での投稿一覧またはスレッドの既読

@@ -94,6 +94,9 @@ export function createThread(host) {
   const composer = createThreadComposer({
     host,
     bucket: () => S.channelId,
+    nextActionScope: () => S.ready && S.threadId && watching() && !S.channel?.archivedAt
+      ? { channelId: S.channelId, threadId: S.threadId, dm: S.channel?.kind === 'dm' } : null,
+    botOf: (id) => S.bots.get(id),
     candidates: () => candidates(),
     blockBots: () => (S.channel?.kind === 'channel' ? allBots() : []),
     suggest: () => suggestion(),
@@ -646,6 +649,7 @@ export function createThread(host) {
       S.thread = (page.threads ?? []).find((th) => th.threadId === threadId) ?? null;
       S.nextBefore = page.nextBefore ?? null;
       S.ready = true;
+      void composer.nextActions.load();
       windows = turnWindows(S.posts);
       paintHead();
       paintAll();
@@ -1065,6 +1069,8 @@ export function createThread(host) {
   });
 
   const events = {
+    botNextActionsChanged: (ev) => void composer.nextActions.load(ev),
+    prefs: () => queueMicrotask(() => void composer.nextActions.load()),
     'shell.start': (ev) => { if (S.ready) onShellStart(ev); },
     channelPost(ev) {
       if (ev.channelId !== S.channelId || !S.threadId) return;
@@ -1118,6 +1124,7 @@ export function createThread(host) {
       paintStop();
       paintPlaceholder();
       composer.refresh();
+      void composer.nextActions.load();
       paintSubs();
     },
     permission(ev) {
@@ -1176,6 +1183,7 @@ export function createThread(host) {
     todo?.load(null);
     S.seq++;
     S.threadId = null;
+    composer.nextActions.refresh();
     syncWatch();   // 閉じたら書きかけの流しを外す
     streams.forget();
     host.background?.watch([]);
@@ -1186,7 +1194,7 @@ export function createThread(host) {
   }
 
   return {
-    foregroundChanged() { syncWatch(); if (watching()) markRead(); },
+    foregroundChanged() { syncWatch(); if (watching()) { markRead(); void composer.nextActions.load(); } },
     completionScope() {
       return S.ready && S.threadId && watching() && nearBottom()
         ? { channelId: S.channelId, threadId: S.threadId, shownAt: shownReadPosition(S.posts) } : null;
@@ -1196,8 +1204,9 @@ export function createThread(host) {
       if (view?.kind !== 'channel') { if (S.threadId) close(); return; }
       if (S.channelId && view.id !== S.channelId && S.threadId) close();
       S.channelId = view.id;
+      void composer.nextActions.load();
     },
-    hide() { /* スレッドは開いたまま（Chats へ移って戻っても同じ所から） */ },
+    hide() { composer.nextActions.refresh(); }, // スレッドは開いたまま
     onEvent(ev, replay = false) {
       // 会話を読み直したときの流し直し（replay）の書きかけは使わない。スレッドの枠の返事の写しが、同じ分を重ならずに渡す
       if (replay && STREAM_TYPES.has(ev?.type)) return;
@@ -1206,12 +1215,12 @@ export function createThread(host) {
     /** 予定（schedule.json）が動いた: このスレッドへの返信の予定の行を描き直す */
     schedulesChanged() { composer.paintSchedules(); },
     /** 接続が戻った: ToDo を読み直す（その間の変更を取りこぼさないように） */
-    reconnected() { todo?.reconnected(); syncWatch({ force: true }); },   // つなぎ直した接続には枠が無い: 宣言し直して、書きかけの写しをもらう
+    reconnected() { todo?.reconnected(); syncWatch({ force: true }); void composer.nextActions.load(); },
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#chThread')) return null;
       return { sessionId: activeSession(), at: undefined };
     },
-    sideTabChanged() { syncWatch(); },   // Chats へ移ったら流しを外し、戻ったら宣言し直す
+    sideTabChanged() { syncWatch(); void composer.nextActions.load(); },
     /** テスト・ほかの部品が見る */
     get state() { return { deck: deck.state, threadId: S.threadId, channelId: S.channelId }; },
   };

@@ -1277,6 +1277,21 @@
       "input": "f25fa1c1b8ce"
     },
     {
+      "id": "channels.nextActions",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "ab08750f21a5"
+    },
+    {
       "id": "channels.organizeThreads",
       "risk": "write",
       "riskOf": false,
