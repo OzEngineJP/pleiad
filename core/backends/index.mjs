@@ -180,6 +180,7 @@ export function describeBackends() {
     description: b.description ?? "",
     defaultConnectionLabel: b.defaultConnectionLabel,
     managedConnection: b.defaultConnectionLabel ? Boolean(managedBackendIds) : undefined,
+    chatGptConnection: b.chatGptConnection && !managedBackendIds,
     // 短い名前・ロゴ・自動の圧縮の設定の行・設定を読む時点（エージェントの記述）。画面は id の表を持たずにこれを使う
     ...agentPresentation(b.id),
     // 候補を出せない印のエージェント（候補は内部呼出しで作る。分離して呼べない impossible・未対応の todo。入力設定で理由を出す。Issue #180）

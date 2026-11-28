@@ -93,7 +93,7 @@ export const COMMAND_REFUSE = [
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
   'hooksMatrix', 'setHookAgent', 'setHookRow', 'setHookGroup', 'setHookPlace', 'revertHookRow', 'removeHookPlace', 'resetHooksAgents',
   'setAutoCompaction', 'setConversationAutoCompaction', 'runShell', 'stopShell', 'skipShell', 'switchBackend', 'setMode',
-  'revealPath', 'openPath', 'openDefault', 'authLogin', 'authLogout', 'authSubmit', 'authCancel',
+  'revealPath', 'openPath', 'openDefault', 'authLogin', 'authLogout', 'authSubmit', 'authCancel', 'chatGptConnection',
   'plusStatus', 'plusLogin', 'plusLoginCancel', 'plusLogout',
   'attachFile', 'attachStart', 'attachChunk', 'attachFinish', 'attachCancel', 'attachImport', 'attachImportCancel',
   'uploadCheck', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadCancel',
