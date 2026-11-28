@@ -188,7 +188,9 @@ export default async function(t) {
     t.ok('Check does not download without consent', controller.snapshot().phase === 'available' && updater.downloads === 0);
     await controller.command('download');
     t.ok('Download never installs', controller.snapshot().phase === 'downloaded' && installed === 0);
-    await rejects('Downloaded update cannot switch channels', () => controller.command('preferences', { channel: 'beta', autoDownload: true, autoCheck: true }));
+    await controller.command('preferences', { channel: 'stable', autoDownload: true, autoCheck: false });
+    t.ok('Downloaded update keeps phase and target when autoCheck/autoDownload change', controller.snapshot().phase === 'downloaded' && controller.snapshot().target === '0.2.0' && controller.snapshot().autoDownload === true && controller.snapshot().autoCheck === false);
+    await controller.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: true });
     const checks = updater.checks; await controller.command('check');
     t.ok('Periodic check preserves downloaded update', updater.checks === checks + 1 && controller.snapshot().phase === 'downloaded' && controller.snapshot().target === '0.2.0');
     updater.fail = true; await controller.command('check'); updater.fail = false;
@@ -216,7 +218,38 @@ export default async function(t) {
     quiet.latest = '0.2.0'; await timed.auto();
     t.ok('Automatic check leaves an offered update alone', timed.snapshot().phase === 'available' && !await timed.auto() && quiet.checks === 3);
     await timed.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: false });
-    t.ok('Automatic check respects the opt-out', !await timed.auto() && quiet.checks === 3);
+    t.ok('Changing autoCheck alone preserves offered update', timed.snapshot().phase === 'available' && !timed.snapshot().autoCheck);
+    quiet.latest = null; await timed.command('check');
+    t.ok('Automatic check respects the opt-out', timed.snapshot().phase === 'current' && !await timed.auto() && quiet.checks === 4);
+    // downloading / installing 中は preferences を拒否し、downloaded 中は channel 切替だけ待機をクリアする
+    let finishDownload, finishInstall;
+    class ControllableUpdater extends EventEmitter {
+      async checkForUpdates() { this.emit('update-available', { version: '0.2.0', releaseNotes: 'notes', plyReleases: [{ version: '0.2.0', date: '2026-11-01', title: 'v0.2.0', body: 'body' }] }); }
+      async downloadUpdate() { await new Promise(resolve => { finishDownload = resolve; }); this.emit('update-downloaded'); }
+    }
+    const ctrlUpdater = new ControllableUpdater();
+    const prefsCtrl = new Updates({ updater: ctrlUpdater, version: '0.1.0', file: path.join(dir, 'prefs-phase.json'), enabled: true, install: () => new Promise(resolve => { finishInstall = resolve; }) });
+    await prefsCtrl.init();
+    await prefsCtrl.command('preferences', { channel: 'stable', autoDownload: false, autoCheck: true });
+    await prefsCtrl.command('check');
+    const downloadingRun = prefsCtrl.command('download');
+    await rejects('Preferences are rejected while downloading', () => prefsCtrl.command('preferences', { channel: 'beta', autoDownload: true, autoCheck: true }));
+    finishDownload(); await downloadingRun;
+    t.ok('Download finishes after rejected preferences', prefsCtrl.snapshot().phase === 'downloaded' && prefsCtrl.snapshot().target === '0.2.0');
+    const installingRun = prefsCtrl.command('install');
+    await rejects('Preferences are rejected while installing', () => prefsCtrl.command('preferences', { channel: 'beta', autoDownload: true, autoCheck: true }));
+    finishInstall(); await installingRun;
+    // busy が落ちていても downloading / installing 状態なら拒否し、phase を壊さない
+    for (const lockedPhase of ['downloading', 'installing']) {
+      prefsCtrl.state.phase = lockedPhase;
+      await rejects(`Preferences are rejected in ${lockedPhase} phase`, () => prefsCtrl.command('preferences', { channel: 'beta', autoDownload: true, autoCheck: true }));
+      t.ok(`${lockedPhase} phase is preserved after rejected preferences`, prefsCtrl.snapshot().phase === lockedPhase);
+    }
+    prefsCtrl.state.phase = 'downloaded';
+    await prefsCtrl.command('preferences', { channel: 'beta', autoDownload: false, autoCheck: true });
+    t.ok('Switching channel while downloaded clears the waiting update and applies the new channel',
+      prefsCtrl.snapshot().phase === 'idle' && prefsCtrl.snapshot().target === null && prefsCtrl.snapshot().notes === '' && prefsCtrl.snapshot().releases.length === 0
+      && prefsCtrl.snapshot().channel === 'beta' && ctrlUpdater.channel === 'beta' && ctrlUpdater.allowPrerelease && !ctrlUpdater.allowDowngrade);
     const persisted = make('0.2.0'); await persisted.init();
     t.ok('Manual checks and download preference persist', !persisted.snapshot().autoCheck && persisted.snapshot().autoDownload);
     await persisted.command('check');

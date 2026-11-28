@@ -50,15 +50,38 @@ export default async function (t) {
     t.ok('After the save the switches are usable again and show the new value', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'false') && beta.getAttribute('aria-checked') === 'true');
     t.ok('The saved preferences carry the toggled channel', calls.find(c => c[0] === 'preferences')?.[1]?.channel === 'beta');
 
-    // ダウンロード済みの間は変えられない（disabled ではなく押しを無視）
-    push({ ...base, phase: 'downloaded', target: '1.1.0' });
-    const before = calls.length;
-    t.ok('Downloaded: switches are marked unavailable but not disabled', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'true' && !nodes[id].disabled));
+    // ダウンロード済みの待機中は 3 スイッチとも操作でき、クリックで preferences を送る
+    const dlState = { ...base, phase: 'downloaded', target: '1.1.0' };
+    push(dlState);
+    const beforeDl = calls.length;
+    t.ok('Downloaded: all switches are enabled and rows are not dimmed', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'false' && !nodes[id].disabled && !nodes[id].parent.classList.contains('off')));
+    next = { ...dlState, autoDownload: true };
     nodes.updateAutomatic.onclick();
-    t.ok('Downloaded: a press does nothing', calls.length === before);
+    t.ok('Downloaded: clicking autoDownload sends preferences', calls.length === beforeDl + 1 && calls.at(-1)?.[0] === 'preferences' && calls.at(-1)?.[1]?.autoDownload === true);
+    release();
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+    t.ok('Downloaded: after saving autoDownload, switches stay enabled with updated value', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'false') && nodes.updateAutomatic.getAttribute('aria-checked') === 'true');
+    next = { ...base, phase: 'idle', target: null, channel: 'beta', autoDownload: true };
+    nodes.updateBeta.onclick();
+    t.ok('Downloaded: clicking beta sends preferences with channel beta', calls.length === beforeDl + 2 && calls.at(-1)?.[0] === 'preferences' && calls.at(-1)?.[1]?.channel === 'beta');
+    release();
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+    t.ok('Downloaded: after switching channel, beta is checked and switches remain enabled', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'false') && nodes.updateBeta.getAttribute('aria-checked') === 'true');
+
+    // checking / downloading / installing 中は aria-disabled="true"・親に .off・押しを無視
+    for (const lockedPhase of ['checking', 'downloading', 'installing']) {
+      push({ ...base, phase: lockedPhase, target: '1.1.0', progress: lockedPhase === 'downloading' ? 40 : null });
+      const before = calls.length;
+      t.ok(`${lockedPhase}: switches are aria-disabled and rows have .off`, SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'true' && !nodes[id].disabled && nodes[id].parent.classList.contains('off')));
+      nodes.updateAutomatic.onclick();
+      t.ok(`${lockedPhase}: a press does nothing`, calls.length === before);
+    }
+    const beforeIdle = calls.length;
     push(base);
+    t.ok('Back to idle: rows drop .off and switches re-enable', SWITCHES.every(id => nodes[id].getAttribute('aria-disabled') === 'false' && !nodes[id].parent.classList.contains('off')));
+    next = { ...base, autoDownload: true };
     nodes.updateAutomatic.onclick();
-    t.ok('Back to idle: a press saves again', calls.length === before + 1);
+    t.ok('Back to idle: a press saves again', calls.length === beforeIdle + 1);
     release?.();
     for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
 
